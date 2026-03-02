@@ -32,6 +32,9 @@ import {
   type Session,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
+  type BatchPRStatus,
+  type PRInfo,
+  type MergeReadiness,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -178,8 +181,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
-  /** Determine current status for a session by polling plugins. */
-  async function determineStatus(session: Session): Promise<SessionStatus> {
+  /**
+   * Determine current status for a session by polling plugins.
+   * When `cachedPRStatus` is provided (from a batched prefetch), it is used
+   * instead of making individual SCM calls — eliminating ~4 subprocess
+   * invocations per session per poll cycle.
+   */
+  async function determineStatus(
+    session: Session,
+    cachedPRStatus?: BatchPRStatus,
+  ): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
     if (!project) return session.status;
 
@@ -256,26 +267,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 4. Check PR state if PR exists
     if (session.pr && scm) {
       try {
-        const prState = await scm.getPRState(session.pr);
-        if (prState === PR_STATE.MERGED) return "merged";
-        if (prState === PR_STATE.CLOSED) return "killed";
-
-        // Check CI
-        const ciStatus = await scm.getCISummary(session.pr);
-        if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
-
-        // Check reviews
-        const reviewDecision = await scm.getReviewDecision(session.pr);
-        if (reviewDecision === "changes_requested") return "changes_requested";
-        if (reviewDecision === "approved") {
-          // Check merge readiness
-          const mergeReady = await scm.getMergeability(session.pr);
-          if (mergeReady.mergeable) return "mergeable";
-          return "approved";
-        }
-        if (reviewDecision === "pending") return "review_pending";
-
-        return "pr_open";
+        // Use pre-fetched batch data when available, otherwise fall back
+        // to individual SCM calls (4+ subprocess invocations per session).
+        const status = cachedPRStatus ?? (await fetchPRStatusIndividually(scm, session.pr));
+        return derivePRSessionStatus(status);
       } catch {
         // SCM check failed — keep current status
       }
@@ -290,6 +285,64 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return "working";
     }
     return session.status;
+  }
+
+  /**
+   * Fall back to individual SCM calls when batch data is not available.
+   * Preserves the original short-circuit call pattern to minimize subprocess
+   * invocations: stops as soon as the decisive status is known.
+   */
+  async function fetchPRStatusIndividually(scm: SCM, pr: PRInfo): Promise<BatchPRStatus> {
+    const prState = await scm.getPRState(pr);
+    const noopMerge: MergeReadiness = {
+      mergeable: false,
+      ciPassing: false,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    };
+
+    if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
+      return {
+        state: prState,
+        ciStatus: "none",
+        reviewDecision: "none",
+        mergeability: prState === "merged"
+          ? { mergeable: true, ciPassing: true, approved: true, noConflicts: true, blockers: [] }
+          : noopMerge,
+      };
+    }
+
+    // Short-circuit: if CI is failing, no need to check reviews or mergeability.
+    // reviewDecision is intentionally "none" here — derivePRSessionStatus
+    // short-circuits on ci_failed before inspecting the review decision.
+    const ciStatus = await scm.getCISummary(pr);
+    if (ciStatus === CI_STATUS.FAILING) {
+      return { state: prState, ciStatus, reviewDecision: "none", mergeability: noopMerge };
+    }
+
+    const reviewDecision = await scm.getReviewDecision(pr);
+    if (reviewDecision === "approved") {
+      const mergeability = await scm.getMergeability(pr);
+      return { state: prState, ciStatus, reviewDecision, mergeability };
+    }
+
+    // Not approved — no need to check mergeability
+    return { state: prState, ciStatus, reviewDecision, mergeability: noopMerge };
+  }
+
+  /** Map a BatchPRStatus to the appropriate SessionStatus. */
+  function derivePRSessionStatus(status: BatchPRStatus): SessionStatus {
+    if (status.state === PR_STATE.MERGED) return "merged";
+    if (status.state === PR_STATE.CLOSED) return "killed";
+    if (status.ciStatus === CI_STATUS.FAILING) return "ci_failed";
+    if (status.reviewDecision === "changes_requested") return "changes_requested";
+    if (status.reviewDecision === "approved") {
+      if (status.mergeability.mergeable) return "mergeable";
+      return "approved";
+    }
+    if (status.reviewDecision === "pending") return "review_pending";
+    return "pr_open";
   }
 
   /** Execute a reaction for a session. */
@@ -437,14 +490,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /** Poll a single session and handle state transitions. */
-  async function checkSession(session: Session): Promise<void> {
+  async function checkSession(
+    session: Session,
+    cachedPRStatus?: BatchPRStatus,
+  ): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
     const tracked = states.get(session.id);
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
-    const newStatus = await determineStatus(session);
+    const newStatus = await determineStatus(session, cachedPRStatus);
 
     if (newStatus !== oldStatus) {
       // State transition detected
@@ -524,6 +580,61 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Build a composite key for cross-repo PR deduplication: "owner/repo#number". */
+  function prKey(pr: PRInfo): string {
+    return `${pr.owner}/${pr.repo}#${pr.number}`;
+  }
+
+  /**
+   * Prefetch PR status for all sessions with PRs using a single batched
+   * GraphQL query per SCM plugin, replacing ~4N individual subprocess calls
+   * with 1 call per repo.  Returns a Map keyed by "owner/repo#number".
+   * On failure (or when the SCM plugin doesn't support batching), returns
+   * an empty map so callers fall back to individual calls.
+   */
+  async function prefetchBatchPRStatus(
+    sessions: Session[],
+  ): Promise<Map<string, BatchPRStatus>> {
+    // Group sessions with PRs by their SCM plugin name
+    const byPlugin = new Map<string, { scm: SCM; prs: PRInfo[] }>();
+    for (const s of sessions) {
+      if (!s.pr) continue;
+      const project = config.projects[s.projectId];
+      if (!project?.scm) continue;
+      const scm = registry.get<SCM>("scm", project.scm.plugin);
+      if (!scm?.getBatchPRStatus) continue;
+
+      const key = project.scm.plugin;
+      let entry = byPlugin.get(key);
+      if (!entry) {
+        entry = { scm, prs: [] };
+        byPlugin.set(key, entry);
+      }
+      entry.prs.push(s.pr);
+    }
+
+    // Execute batch queries in parallel (one per SCM plugin)
+    const allResults = new Map<string, BatchPRStatus>();
+    const batchPromises = [...byPlugin.values()].map(async ({ scm, prs }) => {
+      try {
+        const batchResult = await scm.getBatchPRStatus!(prs);
+        // Re-key from bare PR number to composite key (owner/repo#number).
+        // getBatchPRStatus returns Map<number, ...> which is safe within a
+        // single repo, but we need cross-repo uniqueness here.
+        for (const p of prs) {
+          const status = batchResult.get(p.number);
+          if (status) {
+            allResults.set(prKey(p), status);
+          }
+        }
+      } catch {
+        // Batch failed — sessions will fall back to individual calls
+      }
+    });
+    await Promise.all(batchPromises);
+    return allResults;
+  }
+
   /** Run one polling cycle across all sessions. */
   async function pollAll(): Promise<void> {
     // Re-entrancy guard: skip if previous poll is still running
@@ -542,8 +653,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         return tracked !== undefined && tracked !== s.status;
       });
 
-      // Poll all sessions concurrently
-      await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+      // Prefetch PR status for all sessions in a single batched API call.
+      // This replaces ~4N subprocess invocations with 1 GraphQL query per repo.
+      const batchPRStatus = await prefetchBatchPRStatus(sessionsToCheck);
+
+      // Poll all sessions concurrently, passing pre-fetched PR data
+      await Promise.allSettled(
+        sessionsToCheck.map((s) => {
+          const cached = s.pr ? batchPRStatus.get(prKey(s.pr)) : undefined;
+          return checkSession(s, cached);
+        }),
+      );
 
       // Prune stale entries from states and reactionTrackers for sessions
       // that no longer appear in the session list (e.g., after kill/cleanup)

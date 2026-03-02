@@ -22,6 +22,7 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
+  type BatchPRStatus,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -479,14 +480,10 @@ function createGitHubSCM(): SCM {
     },
 
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {
-      const blockers: string[] = [];
-
-      // First, check if the PR is merged
-      // GitHub returns mergeable=null for merged PRs, which is not useful
-      // Note: We only skip checks for merged PRs. Closed PRs still need accurate status.
+      // GitHub returns mergeable=null for merged PRs, which is not useful.
+      // We only skip checks for merged PRs. Closed PRs still need accurate status.
       const state = await this.getPRState(pr);
       if (state === "merged") {
-        // For merged PRs, return a clean result without querying mergeable status
         return {
           mergeable: true,
           ciPassing: true,
@@ -496,7 +493,6 @@ function createGitHubSCM(): SCM {
         };
       }
 
-      // Fetch PR details with merge state
       const raw = await gh([
         "pr",
         "view",
@@ -514,52 +510,215 @@ function createGitHubSCM(): SCM {
         isDraft: boolean;
       } = JSON.parse(raw);
 
-      // CI
       const ciStatus = await this.getCISummary(pr);
-      const ciPassing = ciStatus === CI_STATUS.PASSING || ciStatus === CI_STATUS.NONE;
-      if (!ciPassing) {
-        blockers.push(`CI is ${ciStatus}`);
-      }
-
-      // Reviews
-      const reviewDecision = (data.reviewDecision ?? "").toUpperCase();
-      const approved = reviewDecision === "APPROVED";
-      if (reviewDecision === "CHANGES_REQUESTED") {
-        blockers.push("Changes requested in review");
-      } else if (reviewDecision === "REVIEW_REQUIRED") {
-        blockers.push("Review required");
-      }
-
-      // Conflicts / merge state
-      const mergeable = (data.mergeable ?? "").toUpperCase();
-      const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
-      const noConflicts = mergeable === "MERGEABLE";
-      if (mergeable === "CONFLICTING") {
-        blockers.push("Merge conflicts");
-      } else if (mergeable === "UNKNOWN" || mergeable === "") {
-        blockers.push("Merge status unknown (GitHub is computing)");
-      }
-      if (mergeState === "BEHIND") {
-        blockers.push("Branch is behind base branch");
-      } else if (mergeState === "BLOCKED") {
-        blockers.push("Merge is blocked by branch protection");
-      } else if (mergeState === "UNSTABLE") {
-        blockers.push("Required checks are failing");
-      }
-
-      // Draft
-      if (data.isDraft) {
-        blockers.push("PR is still a draft");
-      }
-
-      return {
-        mergeable: blockers.length === 0,
-        ciPassing,
-        approved,
-        noConflicts,
-        blockers,
-      };
+      const reviewDecision = parseReviewDecision(data.reviewDecision);
+      return buildMergeReadiness(data, ciStatus, reviewDecision);
     },
+
+    async getBatchPRStatus(prs: PRInfo[]): Promise<Map<number, BatchPRStatus>> {
+      const results = new Map<number, BatchPRStatus>();
+      if (prs.length === 0) return results;
+
+      // Group PRs by owner/repo — typically all the same repo, but handle multiple
+      const byRepo = new Map<string, PRInfo[]>();
+      for (const pr of prs) {
+        const key = `${pr.owner}/${pr.repo}`;
+        let list = byRepo.get(key);
+        if (!list) {
+          list = [];
+          byRepo.set(key, list);
+        }
+        list.push(pr);
+      }
+
+      // Build and execute one GraphQL query per repo
+      for (const [, groupedPRs] of byRepo) {
+        const owner = groupedPRs[0].owner;
+        const repo = groupedPRs[0].repo;
+
+        // Deduplicate by PR number (callers may pass the same PR multiple times)
+        const repoPRs = [...new Map(groupedPRs.map((pr) => [pr.number, pr])).values()];
+
+        // Build parameterized GraphQL query with aliased PR fragments.
+        // Each PR number is passed as a typed variable ($pr0: Int!, $pr1: Int!)
+        // rather than interpolated into the query string (per CLAUDE.md security rules).
+        const varDecls = repoPRs.map((_, i) => `$pr${i}: Int!`).join(", ");
+        const prFragments = repoPRs
+          .map(
+            (_, i) => `pr${i}: pullRequest(number: $pr${i}) {
+          number
+          state
+          reviewDecision
+          mergeable
+          mergeStateStatus
+          isDraft
+          commits(last: 1) {
+            nodes {
+              commit {
+                statusCheckRollup {
+                  state
+                }
+              }
+            }
+          }
+        }`,
+          )
+          .join("\n        ");
+
+        const query = `query($owner: String!, $name: String!, ${varDecls}) {
+      repository(owner: $owner, name: $name) {
+        ${prFragments}
+      }
+    }`;
+
+        // Build gh CLI args: -f for string vars, -F for typed (integer) vars
+        const ghArgs = [
+          "api",
+          "graphql",
+          "-f",
+          `owner=${owner}`,
+          "-f",
+          `name=${repo}`,
+          "-f",
+          `query=${query}`,
+        ];
+        for (let i = 0; i < repoPRs.length; i++) {
+          ghArgs.push("-F", `pr${i}=${repoPRs[i].number}`);
+        }
+
+        try {
+          const raw = await gh(ghArgs);
+
+          const data: {
+            data: { repository: Record<string, BatchPRNode> };
+          } = JSON.parse(raw);
+
+          const repoData = data.data.repository;
+
+          for (let i = 0; i < repoPRs.length; i++) {
+            const prData = repoData[`pr${i}`];
+            if (!prData) continue;
+
+            const prState = parsePRState(prData.state);
+            const ciStatus = parseCIState(prData.commits);
+            const reviewDecision = parseReviewDecision(prData.reviewDecision);
+            const mergeability = buildMergeReadiness(prData, ciStatus, reviewDecision);
+
+            results.set(prData.number, {
+              state: prState,
+              ciStatus,
+              reviewDecision,
+              mergeability,
+            });
+          }
+        } catch {
+          // Query failed for this repo — callers will fall back to individual calls
+        }
+      }
+
+      return results;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Batch query helpers
+// ---------------------------------------------------------------------------
+
+/** Shape of a single PR node in the batched GraphQL response. */
+interface BatchPRNode {
+  number: number;
+  state: string;
+  reviewDecision: string | null;
+  mergeable: string;
+  mergeStateStatus: string;
+  isDraft: boolean;
+  commits: {
+    nodes: Array<{
+      commit: {
+        statusCheckRollup: { state: string } | null;
+      };
+    }>;
+  };
+}
+
+function parsePRState(state: string): PRState {
+  const s = state.toUpperCase();
+  if (s === "MERGED") return "merged";
+  if (s === "CLOSED") return "closed";
+  return "open";
+}
+
+function parseCIState(commits: BatchPRNode["commits"]): CIStatus {
+  const lastCommit = commits.nodes[0];
+  if (!lastCommit) return "none";
+  const rollup = lastCommit.commit.statusCheckRollup;
+  if (!rollup) return "none";
+
+  const s = rollup.state.toUpperCase();
+  if (s === "SUCCESS") return "passing";
+  if (s === "FAILURE" || s === "ERROR") return "failing";
+  if (s === "PENDING" || s === "EXPECTED") return "pending";
+  return "none";
+}
+
+function parseReviewDecision(decision: string | null): ReviewDecision {
+  const d = (decision ?? "").toUpperCase();
+  if (d === "APPROVED") return "approved";
+  if (d === "CHANGES_REQUESTED") return "changes_requested";
+  if (d === "REVIEW_REQUIRED") return "pending";
+  return "none";
+}
+
+function buildMergeReadiness(
+  prData: {
+    mergeable: string;
+    mergeStateStatus: string;
+    isDraft: boolean;
+  },
+  ciStatus: CIStatus,
+  reviewDecision: ReviewDecision,
+): MergeReadiness {
+  const blockers: string[] = [];
+
+  const ciPassing = ciStatus === CI_STATUS.PASSING || ciStatus === CI_STATUS.NONE;
+  if (!ciPassing) {
+    blockers.push(`CI is ${ciStatus}`);
+  }
+
+  const approved = reviewDecision === "approved";
+  if (reviewDecision === "changes_requested") {
+    blockers.push("Changes requested in review");
+  } else if (reviewDecision === "pending") {
+    blockers.push("Review required");
+  }
+
+  const mergeable = (prData.mergeable ?? "").toUpperCase();
+  const mergeState = (prData.mergeStateStatus ?? "").toUpperCase();
+  const noConflicts = mergeable === "MERGEABLE";
+  if (mergeable === "CONFLICTING") {
+    blockers.push("Merge conflicts");
+  } else if (mergeable === "UNKNOWN" || mergeable === "") {
+    blockers.push("Merge status unknown (GitHub is computing)");
+  }
+  if (mergeState === "BEHIND") {
+    blockers.push("Branch is behind base branch");
+  } else if (mergeState === "BLOCKED") {
+    blockers.push("Merge is blocked by branch protection");
+  } else if (mergeState === "UNSTABLE") {
+    blockers.push("Required checks are failing");
+  }
+
+  if (prData.isDraft) {
+    blockers.push("PR is still a draft");
+  }
+
+  return {
+    mergeable: blockers.length === 0,
+    ciPassing,
+    approved,
+    noConflicts,
+    blockers,
   };
 }
 

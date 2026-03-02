@@ -551,9 +551,27 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Batch Operations ---
+
+  /**
+   * Fetch PR state for multiple PRs in a single API call.
+   * Returns a Map keyed by PR number. Optional — callers fall back to
+   * individual getPRState/getCISummary/getReviewDecision/getMergeability
+   * calls when not implemented.
+   */
+  getBatchPRStatus?(prs: PRInfo[]): Promise<Map<number, BatchPRStatus>>;
 }
 
 // --- PR Types ---
+
+/** Aggregated PR status returned by getBatchPRStatus. */
+export interface BatchPRStatus {
+  state: PRState;
+  ciStatus: CIStatus;
+  reviewDecision: ReviewDecision;
+  mergeability: MergeReadiness;
+}
 
 export interface PRInfo {
   number: number;

@@ -863,4 +863,558 @@ describe("scm-github plugin", () => {
       expect(result.mergeable).toBe(false);
     });
   });
+
+  // ---- getBatchPRStatus ---------------------------------------------------
+
+  describe("getBatchPRStatus", () => {
+    const pr2: PRInfo = {
+      number: 99,
+      url: "https://github.com/acme/repo/pull/99",
+      title: "fix: bug",
+      owner: "acme",
+      repo: "repo",
+      branch: "fix/bug",
+      baseBranch: "main",
+      isDraft: false,
+    };
+
+    function makeGraphQLBatchResponse(
+      prs: Record<
+        string,
+        {
+          number: number;
+          state: string;
+          reviewDecision: string | null;
+          mergeable: string;
+          mergeStateStatus: string;
+          isDraft: boolean;
+          rollupState: string | null;
+        }
+      >,
+    ) {
+      const repository: Record<string, unknown> = {};
+      for (const [alias, prData] of Object.entries(prs)) {
+        repository[alias] = {
+          number: prData.number,
+          state: prData.state,
+          reviewDecision: prData.reviewDecision,
+          mergeable: prData.mergeable,
+          mergeStateStatus: prData.mergeStateStatus,
+          isDraft: prData.isDraft,
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: prData.rollupState
+                    ? { state: prData.rollupState }
+                    : null,
+                },
+              },
+            ],
+          },
+        };
+      }
+      return { data: { repository } };
+    }
+
+    it("fetches multiple PRs from the same repo in a single call", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr1: {
+            number: 99,
+            state: "MERGED",
+            reviewDecision: null,
+            mergeable: "UNKNOWN",
+            mergeStateStatus: "UNKNOWN",
+            isDraft: false,
+            rollupState: null,
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr, pr2]);
+
+      // Only one gh call for both PRs
+      expect(ghMock).toHaveBeenCalledTimes(1);
+      expect(results.size).toBe(2);
+
+      // PR 42: open, approved, CI passing, mergeable
+      const status42 = results.get(42)!;
+      expect(status42.state).toBe("open");
+      expect(status42.ciStatus).toBe("passing");
+      expect(status42.reviewDecision).toBe("approved");
+      expect(status42.mergeability.mergeable).toBe(true);
+      expect(status42.mergeability.blockers).toEqual([]);
+
+      // PR 99: merged
+      const status99 = results.get(99)!;
+      expect(status99.state).toBe("merged");
+      expect(status99.ciStatus).toBe("none");
+    });
+
+    it("returns correct status for a single PR", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: "CHANGES_REQUESTED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "FAILURE",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr]);
+      expect(results.size).toBe(1);
+
+      const status = results.get(42)!;
+      expect(status.state).toBe("open");
+      expect(status.ciStatus).toBe("failing");
+      expect(status.reviewDecision).toBe("changes_requested");
+      expect(status.mergeability.mergeable).toBe(false);
+      expect(status.mergeability.ciPassing).toBe(false);
+      expect(status.mergeability.blockers).toContain("CI is failing");
+      expect(status.mergeability.blockers).toContain("Changes requested in review");
+    });
+
+    it("returns empty map for empty input", async () => {
+      const results = await scm.getBatchPRStatus!([]);
+      expect(results.size).toBe(0);
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
+    it("returns empty map on GraphQL error", async () => {
+      mockGhError("API rate limit exceeded");
+      const results = await scm.getBatchPRStatus!([pr]);
+      expect(results.size).toBe(0);
+    });
+
+    it("maps all PR states correctly", async () => {
+      const prClosed: PRInfo = { ...pr, number: 77 };
+      const prMerged: PRInfo = { ...pr, number: 88 };
+
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr1: {
+            number: 77,
+            state: "CLOSED",
+            reviewDecision: null,
+            mergeable: "UNKNOWN",
+            mergeStateStatus: "UNKNOWN",
+            isDraft: false,
+            rollupState: null,
+          },
+          pr2: {
+            number: 88,
+            state: "MERGED",
+            reviewDecision: "APPROVED",
+            mergeable: "UNKNOWN",
+            mergeStateStatus: "UNKNOWN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr, prClosed, prMerged]);
+      expect(results.get(42)!.state).toBe("open");
+      expect(results.get(77)!.state).toBe("closed");
+      expect(results.get(88)!.state).toBe("merged");
+    });
+
+    it("maps all CI rollup states correctly", async () => {
+      const prPending: PRInfo = { ...pr, number: 10 };
+      const prError: PRInfo = { ...pr, number: 11 };
+      const prExpected: PRInfo = { ...pr, number: 12 };
+      const prNone: PRInfo = { ...pr, number: 13 };
+
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr1: {
+            number: 10,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "PENDING",
+          },
+          pr2: {
+            number: 11,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "ERROR",
+          },
+          pr3: {
+            number: 12,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "EXPECTED",
+          },
+          pr4: {
+            number: 13,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: null,
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([
+        pr,
+        prPending,
+        prError,
+        prExpected,
+        prNone,
+      ]);
+      expect(results.get(42)!.ciStatus).toBe("passing");
+      expect(results.get(10)!.ciStatus).toBe("pending");
+      expect(results.get(11)!.ciStatus).toBe("failing");
+      expect(results.get(12)!.ciStatus).toBe("pending");
+      expect(results.get(13)!.ciStatus).toBe("none");
+    });
+
+    it("maps all review decision values correctly", async () => {
+      const prApproved: PRInfo = { ...pr, number: 20 };
+      const prChanges: PRInfo = { ...pr, number: 21 };
+      const prRequired: PRInfo = { ...pr, number: 22 };
+      const prNone: PRInfo = { ...pr, number: 23 };
+
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 20,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr1: {
+            number: 21,
+            state: "OPEN",
+            reviewDecision: "CHANGES_REQUESTED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr2: {
+            number: 22,
+            state: "OPEN",
+            reviewDecision: "REVIEW_REQUIRED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr3: {
+            number: 23,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([
+        prApproved,
+        prChanges,
+        prRequired,
+        prNone,
+      ]);
+      expect(results.get(20)!.reviewDecision).toBe("approved");
+      expect(results.get(21)!.reviewDecision).toBe("changes_requested");
+      expect(results.get(22)!.reviewDecision).toBe("pending");
+      expect(results.get(23)!.reviewDecision).toBe("none");
+    });
+
+    it("computes mergeability blockers correctly", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: "CHANGES_REQUESTED",
+            mergeable: "CONFLICTING",
+            mergeStateStatus: "UNSTABLE",
+            isDraft: true,
+            rollupState: "FAILURE",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr]);
+      const m = results.get(42)!.mergeability;
+      expect(m.mergeable).toBe(false);
+      expect(m.ciPassing).toBe(false);
+      expect(m.approved).toBe(false);
+      expect(m.noConflicts).toBe(false);
+      expect(m.blockers).toContain("CI is failing");
+      expect(m.blockers).toContain("Changes requested in review");
+      expect(m.blockers).toContain("Merge conflicts");
+      expect(m.blockers).toContain("Required checks are failing");
+      expect(m.blockers).toContain("PR is still a draft");
+    });
+
+    it("reports BEHIND and BLOCKED merge states", async () => {
+      const prBehind: PRInfo = { ...pr, number: 30 };
+      const prBlocked: PRInfo = { ...pr, number: 31 };
+
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 30,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "BEHIND",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+          pr1: {
+            number: 31,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "BLOCKED",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([prBehind, prBlocked]);
+      expect(results.get(30)!.mergeability.blockers).toContain(
+        "Branch is behind base branch",
+      );
+      expect(results.get(31)!.mergeability.blockers).toContain(
+        "Merge is blocked by branch protection",
+      );
+    });
+
+    it("reports UNKNOWN mergeable state", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "UNKNOWN",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr]);
+      const m = results.get(42)!.mergeability;
+      expect(m.noConflicts).toBe(false);
+      expect(m.blockers).toContain("Merge status unknown (GitHub is computing)");
+    });
+
+    it("handles PRs from multiple repos with separate queries", async () => {
+      const prOtherRepo: PRInfo = {
+        number: 55,
+        url: "https://github.com/other/lib/pull/55",
+        title: "chore: update",
+        owner: "other",
+        repo: "lib",
+        branch: "chore/update",
+        baseBranch: "main",
+        isDraft: false,
+      };
+
+      // First call: acme/repo PRs
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: "APPROVED",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      // Second call: other/lib PRs
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 55,
+            state: "MERGED",
+            reviewDecision: null,
+            mergeable: "UNKNOWN",
+            mergeStateStatus: "UNKNOWN",
+            isDraft: false,
+            rollupState: null,
+          },
+        }),
+      );
+
+      const results = await scm.getBatchPRStatus!([pr, prOtherRepo]);
+
+      // Two gh calls — one per repo
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(results.size).toBe(2);
+      expect(results.get(42)!.state).toBe("open");
+      expect(results.get(55)!.state).toBe("merged");
+    });
+
+    it("deduplicates PRs with the same number", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      // Pass the same PR twice
+      const results = await scm.getBatchPRStatus!([pr, { ...pr }]);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+      expect(results.size).toBe(1);
+      expect(results.get(42)!.state).toBe("open");
+
+      // Verify only one alias was generated (pr0, not pr0 + pr1)
+      const queryArg = ghMock.mock.calls[0][1][7] as string; // -f query=...
+      expect(queryArg).toContain("pr0:");
+      expect(queryArg).not.toContain("pr1:");
+    });
+
+    it("handles missing alias in response gracefully", async () => {
+      // Response only has pr0, missing pr1
+      mockGh({
+        data: {
+          repository: {
+            pr0: {
+              number: 42,
+              state: "OPEN",
+              reviewDecision: null,
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              isDraft: false,
+              commits: {
+                nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }],
+              },
+            },
+            // pr1 is missing
+          },
+        },
+      });
+
+      const results = await scm.getBatchPRStatus!([pr, pr2]);
+      // Should still return the one that succeeded
+      expect(results.size).toBe(1);
+      expect(results.get(42)!.state).toBe("open");
+    });
+
+    it("handles empty commits array", async () => {
+      mockGh({
+        data: {
+          repository: {
+            pr0: {
+              number: 42,
+              state: "OPEN",
+              reviewDecision: "APPROVED",
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+              isDraft: false,
+              commits: { nodes: [] },
+            },
+          },
+        },
+      });
+
+      const results = await scm.getBatchPRStatus!([pr]);
+      expect(results.get(42)!.ciStatus).toBe("none");
+    });
+
+    it("passes correct GraphQL variables", async () => {
+      mockGh(
+        makeGraphQLBatchResponse({
+          pr0: {
+            number: 42,
+            state: "OPEN",
+            reviewDecision: null,
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            isDraft: false,
+            rollupState: "SUCCESS",
+          },
+        }),
+      );
+
+      await scm.getBatchPRStatus!([pr]);
+
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        expect.arrayContaining([
+          "api",
+          "graphql",
+          "-f",
+          "owner=acme",
+          "-f",
+          "name=repo",
+          // PR numbers passed as typed GraphQL variables (not interpolated)
+          "-F",
+          "pr0=42",
+        ]),
+        expect.any(Object),
+      );
+    });
+  });
 });
