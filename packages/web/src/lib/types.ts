@@ -127,16 +127,30 @@ export interface DashboardStats {
   needsReview: number;
 }
 
-/** SSE snapshot event from /api/events */
+/** Shape of a single session in SSE events. */
+export interface SSESessionEntry {
+  id: string;
+  status: SessionStatus;
+  activity: ActivityState | null;
+  attentionLevel: AttentionLevel;
+  lastActivityAt: string;
+}
+
+/** SSE snapshot event from /api/events — full state replacement. */
 export interface SSESnapshotEvent {
   type: "snapshot";
-  sessions: Array<{
-    id: string;
-    status: SessionStatus;
-    activity: ActivityState | null;
-    attentionLevel: AttentionLevel;
-    lastActivityAt: string;
-  }>;
+  sessions: SSESessionEntry[];
+}
+
+/**
+ * SSE diff event from /api/events — incremental update.
+ * Only contains sessions that changed since the last event.
+ * `removed` lists session IDs that no longer exist.
+ */
+export interface SSEDiffEvent {
+  type: "diff";
+  updated: SSESessionEntry[];
+  removed: string[];
 }
 
 /** SSE activity update event from /api/events */

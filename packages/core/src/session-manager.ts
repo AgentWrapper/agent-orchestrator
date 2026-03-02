@@ -162,9 +162,29 @@ export interface SessionManagerDeps {
   registry: PluginRegistry;
 }
 
+/** Cached enrichment result for a single session. */
+interface EnrichmentCacheEntry {
+  /** Metadata file mtime in milliseconds — used as the dirty flag. */
+  metaMtimeMs: number;
+  /** The fully enriched Session object from the last poll. */
+  session: Session;
+}
+
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const { config, registry } = deps;
+
+  /**
+   * Enrichment cache — avoids re-running expensive subprocess enrichment
+   * (tmux isAlive, JSONL parsing) for sessions whose metadata file has not
+   * changed since the last poll.
+   *
+   * Key: sessionId, Value: { metaMtimeMs, session }
+   *
+   * Cache is only used by list(). get() always does full enrichment because
+   * it is called for single-session detail views where freshness matters more.
+   */
+  const enrichmentCache = new Map<string, EnrichmentCacheEntry>();
 
   /**
    * Get the sessions directory for a project.
@@ -712,15 +732,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   async function list(projectId?: string): Promise<Session[]> {
     const allSessions = listAllSessions(projectId);
 
+    // Track which session IDs are still present so we can prune stale cache entries
+    const currentSessionIds = new Set<string>();
+
     const sessionPromises = allSessions.map(async ({ sessionName, projectId: sessionProjectId }) => {
       const project = config.projects[sessionProjectId];
       if (!project) return null;
 
       const sessionsDir = getProjectSessionsDir(project);
-      const raw = readMetadataRaw(sessionsDir, sessionName);
-      if (!raw) return null;
 
-      // Get file timestamps for createdAt/lastActivityAt
+      // Stat the metadata file first — we need mtime for both the dirty
+      // check and for lastActivityAt.
+      let metaMtimeMs: number | undefined;
       let createdAt: Date | undefined;
       let modifiedAt: Date | undefined;
       try {
@@ -728,9 +751,33 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         const stats = statSync(metaPath);
         createdAt = stats.birthtime;
         modifiedAt = stats.mtime;
+        metaMtimeMs = stats.mtimeMs;
       } catch {
         // If stat fails, timestamps will fall back to current time
       }
+
+      currentSessionIds.add(sessionName);
+
+      // ── Dirty flag: skip enrichment when metadata file is unchanged ──
+      // If the metadata mtime matches the cached value AND the cached
+      // session was in a terminal status (where activity is always "exited"
+      // and no subprocess checks are needed), reuse the cached result.
+      // Non-terminal sessions always re-enrich because their activity
+      // state comes from JSONL files that change independently of metadata.
+      if (metaMtimeMs !== undefined) {
+        const cached = enrichmentCache.get(sessionName);
+        if (
+          cached &&
+          cached.metaMtimeMs === metaMtimeMs &&
+          TERMINAL_SESSION_STATUSES.has(cached.session.status)
+        ) {
+          // Shallow copy so callers cannot mutate the cached object
+          return { ...cached.session };
+        }
+      }
+
+      const raw = readMetadataRaw(sessionsDir, sessionName);
+      if (!raw) return null;
 
       const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
@@ -740,10 +787,27 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
       await Promise.race([ensureHandleAndEnrich(session, sessionName, project, plugins), enrichTimeout]);
 
+      // Update the enrichment cache with the fresh result
+      if (metaMtimeMs !== undefined) {
+        enrichmentCache.set(sessionName, { metaMtimeMs, session });
+      }
+
       return session;
     });
 
     const results = await Promise.all(sessionPromises);
+
+    // Prune cache entries for sessions that no longer exist on disk.
+    // Only prune on unfiltered calls — a filtered list(projectId) only sees
+    // one project's sessions and would incorrectly evict entries from others.
+    if (!projectId) {
+      for (const cachedId of enrichmentCache.keys()) {
+        if (!currentSessionIds.has(cachedId)) {
+          enrichmentCache.delete(cachedId);
+        }
+      }
+    }
+
     return results.filter((s): s is Session => s !== null);
   }
 

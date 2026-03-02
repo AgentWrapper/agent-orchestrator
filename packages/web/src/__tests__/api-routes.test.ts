@@ -457,5 +457,22 @@ describe("API Routes", () => {
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
     });
+
+    it("initial snapshot includes all session fields", async () => {
+      const res = await eventsGET();
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      reader.cancel();
+      const text = new TextDecoder().decode(value);
+      const event = JSON.parse(text.replace("data: ", "").trim());
+      // Verify each session entry has the expected SSE fields
+      for (const s of event.sessions) {
+        expect(s).toHaveProperty("id");
+        expect(s).toHaveProperty("status");
+        expect(s).toHaveProperty("activity");
+        expect(s).toHaveProperty("attentionLevel");
+        expect(s).toHaveProperty("lastActivityAt");
+      }
+    });
   });
 });
