@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Dashboard } from "@/components/Dashboard";
+import { Dashboard, type ProjectOption } from "@/components/Dashboard";
 import type { DashboardSession } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
@@ -23,9 +23,11 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function Home() {
   let sessions: DashboardSession[] = [];
   let orchestratorId: string | null = null;
+  let projects: ProjectOption[] = [];
   const projectName = getProjectName();
   try {
     const { config, registry, sessionManager } = await getServices();
+    projects = Object.entries(config.projects).map(([id, p]) => ({ id, name: p.name }));
     const allSessions = await sessionManager.list();
 
     // Find the orchestrator session (any session ending with -orchestrator)
@@ -101,6 +103,6 @@ export default async function Home() {
   }
 
   return (
-    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} />
+    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} projects={projects} />
   );
 }
