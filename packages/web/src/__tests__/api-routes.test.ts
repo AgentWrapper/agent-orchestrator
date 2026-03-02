@@ -163,6 +163,7 @@ import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
+import { GET as configProjectsGET } from "@/app/api/config/projects/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -456,6 +457,29 @@ describe("API Routes", () => {
       expect(event.sessions.length).toBeGreaterThan(0);
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
+    });
+  });
+
+  // ── GET /api/config/projects ──────────────────────────────────────
+
+  describe("GET /api/config/projects", () => {
+    it("returns project list from config", async () => {
+      const res = await configProjectsGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.projects).toBeDefined();
+      expect(Array.isArray(data.projects)).toBe(true);
+      expect(data.projects).toHaveLength(1);
+      expect(data.projects[0]).toEqual({ id: "my-app", name: "My App" });
+    });
+
+    it("returns empty array when services fail", async () => {
+      const { getServices } = await import("@/lib/services");
+      (getServices as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Config not found"));
+      const res = await configProjectsGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.projects).toEqual([]);
     });
   });
 });

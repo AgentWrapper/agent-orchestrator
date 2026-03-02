@@ -17,13 +17,13 @@ const require = createRequire(import.meta.url);
 const DEFAULT_TERMINAL_PORT = 14800;
 
 /**
- * Check if a TCP port is available by attempting to connect to it on IPv4.
+ * Check if a TCP port is available by attempting to connect to it.
  * A successful connect means something is already listening (port in use).
  * ECONNREFUSED means nothing is listening (port free).
  *
- * Note: Only probes 127.0.0.1 (IPv4). Processes listening exclusively on
- * IPv6 (::1 with IPV6_V6ONLY=1) will not be detected — this is acceptable
- * since the dashboard binds to 0.0.0.0 by default.
+ * Connect-based detection is more reliable than bind-based because it works
+ * regardless of whether the occupying process is bound to 127.0.0.1, ::1,
+ * 0.0.0.0, or :: (IPv6 wildcard).
  */
 export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {

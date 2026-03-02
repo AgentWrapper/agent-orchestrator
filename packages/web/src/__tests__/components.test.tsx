@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
 import { ActivityDot } from "@/components/ActivityDot";
+import { SpawnDialog } from "@/components/SpawnDialog";
 import { makeSession, makePR } from "./helpers";
 
 // ── ActivityDot ───────────────────────────────────────────────────────
@@ -492,5 +493,169 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── SpawnDialog ─────────────────────────────────────────────────────
+
+const testProjects = [
+  { id: "my-app", name: "My App" },
+  { id: "backend", name: "Backend Service" },
+];
+
+describe("SpawnDialog", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders spawn button", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    expect(screen.getByText("Spawn Agent")).toBeInTheDocument();
+  });
+
+  it("opens dialog when button is clicked", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    expect(screen.getByText("Spawn")).toBeInTheDocument();
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
+  });
+
+  it("shows all projects in the selector", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    const select = screen.getByRole("combobox");
+    const options = Array.from(select.querySelectorAll("option"));
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toBe("My App (my-app)");
+    expect(options[1].textContent).toBe("Backend Service (backend)");
+  });
+
+  it("closes dialog when Cancel is clicked", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
+  });
+
+  it("closes dialog when close button is clicked", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
+  });
+
+  it("submits spawn request with project and issue", async () => {
+    const mockSession = makeSession({ id: "my-app-1", projectId: "my-app", status: "spawning" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ session: mockSession }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const onSpawned = vi.fn();
+
+    render(<SpawnDialog projects={testProjects} onSpawned={onSpawned} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+
+    // Fill in issue ID
+    const issueInput = screen.getByPlaceholderText("e.g. INT-1327 or 42");
+    fireEvent.change(issueInput, { target: { value: "INT-100" } });
+
+    // Submit
+    fireEvent.click(screen.getByText("Spawn"));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith("/api/spawn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: "my-app", issueId: "INT-100" }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(onSpawned).toHaveBeenCalledWith(mockSession);
+    });
+  });
+
+  it("submits without issueId when left empty", async () => {
+    const mockSession = makeSession({ id: "my-app-1", projectId: "my-app", status: "spawning" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ session: mockSession }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    fireEvent.click(screen.getByText("Spawn"));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith("/api/spawn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: "my-app" }),
+      });
+    });
+  });
+
+  it("displays error on failed spawn", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Project not found" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    fireEvent.click(screen.getByText("Spawn"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Project not found")).toBeInTheDocument();
+    });
+  });
+
+  it("closes dialog after successful spawn", async () => {
+    const mockSession = makeSession({ id: "my-app-1", status: "spawning" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ session: mockSession }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Spawn"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Project")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows issue ID input with optional label", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("(optional)")).toBeInTheDocument();
+  });
+
+  it("selects first project by default", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(select.value).toBe("my-app");
+  });
+
+  it("closes dialog on Escape key", () => {
+    render(<SpawnDialog projects={testProjects} />);
+    fireEvent.click(screen.getByText("Spawn Agent"));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
   });
 });
