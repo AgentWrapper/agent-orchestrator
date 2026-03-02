@@ -773,6 +773,484 @@ describe("reactions", () => {
     expect(mockNotifier.notify).not.toHaveBeenCalled();
   });
 
+  it("triggers auto-merge when approved-and-green reaction fires", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const pr = makePR();
+    const session = makeSession({ status: "pr_open", pr });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMerge = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMerge,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("mergeable");
+    // getMergeability should be called for the safety re-check
+    expect(mockSCM.getMergeability).toHaveBeenCalledWith(pr);
+    // mergePR should have been called
+    expect(mockSCM.mergePR).toHaveBeenCalledWith(pr);
+    // Should notify with merge.completed event
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "merge.completed" }),
+    );
+  });
+
+  it("blocks auto-merge when mergeability check fails", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      // getCISummary returns passing so determineStatus reaches "mergeable"
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      // First call: mergeable (for determineStatus), second call: blocked (for auto-merge re-check)
+      getMergeability: vi
+        .fn()
+        .mockResolvedValueOnce({
+          mergeable: true,
+          ciPassing: true,
+          approved: true,
+          noConflicts: true,
+          blockers: [],
+        })
+        .mockResolvedValueOnce({
+          mergeable: false,
+          ciPassing: true,
+          approved: true,
+          noConflicts: false,
+          blockers: ["Merge conflicts"],
+        }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMerge = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMerge,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // mergePR should NOT have been called because re-check found conflicts
+    expect(mockSCM.mergePR).not.toHaveBeenCalled();
+    // Should notify about the blocker
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Auto-merge blocked"),
+      }),
+    );
+  });
+
+  it("skips auto-merge when session PR disappears between status check and merge", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    // First call (from checkSession): session has a PR so determineStatus reaches "mergeable"
+    // Second call (from executeReaction auto-merge): session's PR has disappeared
+    const sessionWithPR = makeSession({ status: "pr_open", pr: makePR() });
+    const sessionWithoutPR = makeSession({ status: "pr_open", pr: null });
+    vi.mocked(mockSessionManager.get)
+      .mockResolvedValueOnce(sessionWithPR)
+      .mockResolvedValueOnce(sessionWithoutPR);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMerge = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMerge,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // mergePR should NOT have been called — the auto-merge guard detected no PR
+    expect(mockSCM.mergePR).not.toHaveBeenCalled();
+    // Should notify about the skip
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("no PR found"),
+      }),
+    );
+  });
+
+  it("skips auto-merge when no SCM plugin is configured", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const pr = makePR();
+    const session = makeSession({ status: "pr_open", pr });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMerge = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMerge,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // Remove SCM config from the project after lifecycle manager is created.
+    // determineStatus reads project.scm on each call, so we use sessionManager.get
+    // to remove it at the right time: after determineStatus (which needs SCM to
+    // reach "mergeable") but before executeReaction (which should find no SCM).
+    const originalGet = vi.mocked(mockSessionManager.get).getMockImplementation();
+    let getCallCount = 0;
+    vi.mocked(mockSessionManager.get).mockImplementation(async (id) => {
+      getCallCount++;
+      if (getCallCount === 2) {
+        // This is the call from executeReaction — remove SCM config now
+        delete configWithAutoMerge.projects["my-app"].scm;
+      }
+      return originalGet ? originalGet(id) : session;
+    });
+
+    await lm.check("app-1");
+
+    // mergePR should NOT have been called — no SCM available during auto-merge
+    expect(mockSCM.mergePR).not.toHaveBeenCalled();
+    // Should notify about the skip
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("no SCM plugin configured"),
+      }),
+    );
+  });
+
+  it("handles mergePR failure gracefully", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockRejectedValue(new Error("gh pr merge failed: branch protection")),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMerge = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMerge,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // mergePR was called but failed
+    expect(mockSCM.mergePR).toHaveBeenCalled();
+    // Should notify about the failure
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Auto-merge failed"),
+      }),
+    );
+  });
+
+  it("does not auto-merge when auto=false", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const configWithAutoMergeDisabled = {
+      ...config,
+      reactions: {
+        "approved-and-green": {
+          auto: false,
+          action: "auto-merge" as const,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMergeDisabled,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // mergePR should NOT have been called because auto=false
+    expect(mockSCM.mergePR).not.toHaveBeenCalled();
+  });
+
   it("notifies humans on significant transitions without reaction config", async () => {
     const mockNotifier: Notifier = {
       name: "mock-notifier",
