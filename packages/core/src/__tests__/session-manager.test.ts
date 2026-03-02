@@ -973,6 +973,65 @@ describe("list", () => {
     expect(mockAgent.getActivityState).toHaveBeenCalledTimes(2);
   });
 
+  it("does not prune cache entries from other projects on filtered list()", async () => {
+    // Add a second project to the config
+    const otherProjectPath = join(tmpDir, "other-app");
+    mkdirSync(otherProjectPath, { recursive: true });
+    config.projects["other-app"] = {
+      name: "Other App",
+      repo: "org/other-app",
+      path: otherProjectPath,
+      defaultBranch: "main",
+      sessionPrefix: "other",
+      scm: { plugin: "github" },
+      tracker: { plugin: "github" },
+    };
+    const otherSessionsDir = getSessionsDir(configPath, otherProjectPath);
+    mkdirSync(otherSessionsDir, { recursive: true });
+
+    // Create terminal sessions in both projects
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+    });
+    writeMetadata(otherSessionsDir, "other-1", {
+      worktree: "/tmp",
+      branch: "b",
+      status: "killed",
+      project: "other-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Unfiltered call — caches both sessions
+    const all = await sm.list();
+    expect(all).toHaveLength(2);
+
+    vi.clearAllMocks();
+
+    // Filtered call for "my-app" only — should NOT prune "other-1" from cache
+    const filtered = await sm.list("my-app");
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe("app-1");
+
+    vi.clearAllMocks();
+
+    // Unfiltered call again — "other-1" should still be cached (no enrichment)
+    const allAgain = await sm.list();
+    expect(allAgain).toHaveLength(2);
+    // other-1 is terminal + mtime unchanged → cache hit, no enrichment calls
+    expect(mockRuntime.isAlive).not.toHaveBeenCalled();
+    expect(mockAgent.getActivityState).not.toHaveBeenCalled();
+
+    // Clean up the other project's base dir
+    const otherBaseDir = getProjectBaseDir(configPath, otherProjectPath);
+    if (existsSync(otherBaseDir)) {
+      rmSync(otherBaseDir, { recursive: true, force: true });
+    }
+  });
+
   it("prunes cache entries for deleted sessions", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
