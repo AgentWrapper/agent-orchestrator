@@ -893,6 +893,114 @@ describe("list", () => {
     // lastActivityAt should NOT be downgraded to the older detection timestamp
     expect(sessions[0].lastActivityAt.getTime()).toBeGreaterThan(olderTimestamp.getTime());
   });
+
+  it("skips enrichment for cached terminal sessions with unchanged mtime", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First call — populates the enrichment cache
+    const first = await sm.list();
+    expect(first).toHaveLength(1);
+    expect(first[0].status).toBe("killed");
+    expect(first[0].activity).toBe("exited");
+
+    // Reset call counts so we can verify the second call skips enrichment
+    vi.clearAllMocks();
+
+    // Second call — metadata file unchanged, session is terminal → cache hit
+    const second = await sm.list();
+    expect(second).toHaveLength(1);
+    expect(second[0].status).toBe("killed");
+    expect(second[0].activity).toBe("exited");
+
+    // isAlive and getActivityState should NOT have been called on the second pass
+    expect(mockRuntime.isAlive).not.toHaveBeenCalled();
+    expect(mockAgent.getActivityState).not.toHaveBeenCalled();
+  });
+
+  it("re-enriches terminal sessions when metadata file changes", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First call — populates cache
+    const first = await sm.list();
+    expect(first[0].status).toBe("killed");
+
+    // Modify the metadata file — this changes mtime, invalidating the cache
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "done",
+      project: "my-app",
+    });
+
+    // Second call — mtime changed, so cache is invalidated
+    const second = await sm.list();
+    expect(second[0].status).toBe("done");
+    expect(second[0].activity).toBe("exited");
+  });
+
+  it("always re-enriches non-terminal sessions", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First call
+    await sm.list();
+    expect(mockAgent.getActivityState).toHaveBeenCalledTimes(1);
+
+    // Second call — non-terminal session, so enrichment runs again
+    // even though metadata file hasn't changed
+    await sm.list();
+    expect(mockAgent.getActivityState).toHaveBeenCalledTimes(2);
+  });
+
+  it("prunes cache entries for deleted sessions", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+    });
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp",
+      branch: "b",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // First call — caches both sessions
+    const first = await sm.list();
+    expect(first).toHaveLength(2);
+
+    // Delete one session's metadata file
+    deleteMetadata(sessionsDir, "app-2", false);
+
+    // Second call — app-2 should be gone, and its cache entry pruned
+    const second = await sm.list();
+    expect(second).toHaveLength(1);
+    expect(second[0].id).toBe("app-1");
+  });
 });
 
 describe("get", () => {
