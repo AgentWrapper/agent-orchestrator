@@ -316,15 +316,14 @@ describe("generateConfigFromUrl", () => {
     expect(project.tracker).toEqual({ plugin: "github" });
   });
 
-  it("sets bitbucket SCM and github tracker for Bitbucket repos", () => {
+  it("sets bitbucket SCM and jira tracker for Bitbucket repos", () => {
     const parsed = parseRepoUrl("https://bitbucket.org/team/app");
     const config = generateConfigFromUrl({ parsed, repoPath: tmpDir });
 
     const projects = config.projects as Record<string, Record<string, unknown>>;
     const project = projects.app;
     expect(project.scm).toEqual({ plugin: "bitbucket" });
-    // Bitbucket tracker not implemented, falls back to github
-    expect(project.tracker).toEqual({ plugin: "github" });
+    expect(project.tracker).toEqual({ plugin: "jira" });
   });
 
   it("does not set postCreate for non-JS projects", () => {

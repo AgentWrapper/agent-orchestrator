@@ -262,9 +262,14 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
   // (best available option since it's the only fully implemented SCM plugin).
   projectConfig.scm = { plugin: platform !== "unknown" ? platform : "github" };
 
-  // Tracker — same platform as SCM for known hosts, github as fallback
+  // Tracker — same platform as SCM for GitHub/GitLab, Jira for Bitbucket, github as fallback
   projectConfig.tracker = {
-    plugin: platform === "github" || platform === "gitlab" ? platform : "github",
+    plugin:
+      platform === "github" || platform === "gitlab"
+        ? platform
+        : platform === "bitbucket"
+          ? "jira"
+          : "github",
   };
 
   // Post-create commands based on detected package manager (JS ecosystem only)

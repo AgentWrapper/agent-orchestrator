@@ -65,11 +65,24 @@ projects:
 
     # Issue tracker (optional)
     tracker:
-      plugin: github           # github | linear | gitlab
+      plugin: github           # github | linear | gitlab | jira
+
+    # Jira tracker config (when plugin: jira)
+    # tracker:
+    #   plugin: jira
+    #   domain: yourcompany          # or yourcompany.atlassian.net
+    #   projectKey: PROJ             # Jira project key for JQL filtering
+    # Env vars: JIRA_EMAIL, JIRA_API_TOKEN, JIRA_DOMAIN
 
     # SCM (optional, usually auto-detected)
     scm:
-      plugin: github           # github | gitlab
+      plugin: github           # github | gitlab | bitbucket
+
+    # Bitbucket SCM config (when plugin: bitbucket)
+    # scm:
+    #   plugin: bitbucket
+    # Env vars: BITBUCKET_USERNAME (email), BITBUCKET_API_TOKEN
+    # Note: repo format is workspace/repo-slug (not owner/repo)
 ```
 
 ## Notifier channels
