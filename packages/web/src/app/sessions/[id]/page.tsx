@@ -11,7 +11,7 @@ import { type DashboardSession, type ActivityState, getAttentionLevel } from "@/
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getSessionTitle } from "@/lib/format";
-import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
+import { useMuxSessionActivity } from "@/hooks/useMuxSessionActivity";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import type { SessionPatch } from "@/lib/mux-protocol";
 import { projectSessionPath } from "@/lib/routes";
@@ -439,8 +439,8 @@ export default function SessionPage() {
     }
   }, []);
 
-  // Subscribe to SSE for real-time activity updates (title emoji)
-  const sseActivity = useSSESessionActivity(id, sessionProjectId ?? expectedProjectId ?? undefined);
+  // Get real-time activity updates from WebSocket (title emoji)
+  const sseActivity = useMuxSessionActivity(id);
 
   // Update document title based on session data + SSE activity override
   useEffect(() => {

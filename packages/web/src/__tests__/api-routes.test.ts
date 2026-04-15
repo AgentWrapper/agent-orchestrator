@@ -221,7 +221,6 @@ import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
 import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
-import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
@@ -1283,35 +1282,6 @@ describe("API Routes", () => {
       expect(res.status).toBe(409);
       const data = await res.json();
       expect(data.error).toMatch(/merged/);
-    });
-  });
-
-  // ── GET /api/events (SSE) ──────────────────────────────────────────
-
-  describe("GET /api/events", () => {
-    it("returns SSE content type", async () => {
-      const req = makeRequest("/api/events", { method: "GET" });
-      const res = await eventsGET(req);
-      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-      expect(res.headers.get("Cache-Control")).toBe("no-cache");
-    });
-
-    it("streams initial snapshot event", async () => {
-      const req = makeRequest("/api/events", { method: "GET" });
-      const res = await eventsGET(req);
-      const reader = res.body!.getReader();
-      const { value } = await reader.read();
-      reader.cancel();
-      const text = new TextDecoder().decode(value);
-      expect(text).toContain("data: ");
-      const jsonStr = text.replace("data: ", "").trim();
-      const event = JSON.parse(jsonStr);
-      expect(event.type).toBe("snapshot");
-      expect(event.correlationId).toBeTruthy();
-      expect(Array.isArray(event.sessions)).toBe(true);
-      expect(event.sessions.length).toBeGreaterThan(0);
-      expect(event.sessions[0]).toHaveProperty("id");
-      expect(event.sessions[0]).toHaveProperty("attentionLevel");
     });
   });
 

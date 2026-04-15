@@ -246,30 +246,6 @@ export interface DashboardOrchestratorLink {
   projectName: string;
 }
 
-/** SSE snapshot event from /api/events */
-export interface SSESnapshotEvent {
-  type: "snapshot";
-  correlationId?: string;
-  emittedAt?: string;
-  sessions: Array<{
-    id: string;
-    status: SessionStatus;
-    activity: ActivityState | null;
-    attentionLevel: AttentionLevel;
-    lastActivityAt: string;
-  }>;
-}
-
-/** SSE activity update event from /api/events */
-export interface SSEActivityEvent {
-  type: "session.activity";
-  sessionId: string;
-  activity: ActivityState | null;
-  status: SessionStatus;
-  attentionLevel: AttentionLevel;
-  timestamp: string;
-}
-
 /**
  * Returns true when this PR's enrichment data couldn't be fetched due to
  * API rate limiting. When true, CI status / review decision / mergeability

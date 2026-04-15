@@ -31,6 +31,10 @@ vi.mock("@/components/SessionDetail", () => ({
   },
 }));
 
+vi.mock("@/hooks/useMuxSessionActivity", () => ({
+  useMuxSessionActivity: () => null,
+}));
+
 function makeWorkerSession(): DashboardSession {
   return {
     id: "worker-1",
