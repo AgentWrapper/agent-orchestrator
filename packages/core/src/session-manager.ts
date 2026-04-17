@@ -1232,6 +1232,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       issueId: spawnConfig.issueId,
       issueContext,
       userPrompt: spawnConfig.prompt,
+      basePromptMode: spawnConfig.basePromptMode,
+      basePromptCustom: spawnConfig.basePromptCustom,
     });
 
     let systemPromptFile: string | undefined;

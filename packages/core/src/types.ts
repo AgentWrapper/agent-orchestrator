@@ -358,6 +358,9 @@ export function isOrchestratorSession(
   return true;
 }
 
+/** Which base prompt variant to use when spawning a session */
+export type BasePromptMode = "default" | "planning" | "custom";
+
 /** Config for creating a new session */
 export interface SessionSpawnConfig {
   projectId: string;
@@ -368,6 +371,10 @@ export interface SessionSpawnConfig {
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
+  /** Which base prompt variant to use. Defaults to "default" (unchanged BASE_AGENT_PROMPT). */
+  basePromptMode?: BasePromptMode;
+  /** Custom base prompt text. Required when basePromptMode === "custom". */
+  basePromptCustom?: string;
 }
 
 /** Config for creating an orchestrator session */
