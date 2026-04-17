@@ -197,10 +197,11 @@ export function SpawnSessionModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="spawn-modal-title"
-        className="w-full max-w-md rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-5 shadow-xl"
+        className="flex w-full max-w-md flex-col rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] shadow-xl"
+        style={{ maxHeight: "calc(100dvh - 2rem)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="mb-4 flex shrink-0 items-start justify-between gap-3 px-5 pt-5">
           <h2
             id="spawn-modal-title"
             className="text-[15px] font-semibold text-[var(--color-text-primary)]"
@@ -209,7 +210,7 @@ export function SpawnSessionModal({
             {projectName ? (
               <>
                 {" "}
-                in <span className="text-[var(--color-accent)]">{projectName}</span>
+                in <span className="text-[var(--color-accent-amber)]">{projectName}</span>
               </>
             ) : null}
           </h2>
@@ -231,7 +232,7 @@ export function SpawnSessionModal({
           </button>
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-3">
+        <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 pb-5">
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
               Issue ID (optional)
@@ -354,7 +355,7 @@ export function SpawnSessionModal({
                 "rounded px-3 py-1.5 text-[12px] font-medium text-white",
                 submitting || agentsLoading || agents.length === 0
                   ? "cursor-not-allowed bg-[var(--color-text-tertiary)]"
-                  : "bg-[var(--color-accent)] hover:opacity-90",
+                  : "bg-[var(--color-accent-amber)] hover:opacity-90",
               )}
             >
               {submitting ? "Spawning…" : "Spawn"}
