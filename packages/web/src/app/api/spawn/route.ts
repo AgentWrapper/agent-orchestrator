@@ -3,6 +3,9 @@ import { validateIdentifier, validateString, validateConfiguredProject } from "@
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import type { BasePromptMode } from "@aoagents/ao-core";
+
+const VALID_BASE_PROMPT_MODES = ["default", "planning", "custom"] as const;
 
 /** POST /api/spawn — Spawn a new session */
 export async function POST(request: NextRequest) {
@@ -33,6 +36,51 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Validate agent
+  if (body.agent !== undefined && body.agent !== null) {
+    if (typeof body.agent !== "string" || body.agent.trim().length === 0) {
+      return jsonWithCorrelation(
+        { error: "agent must be a non-empty string" },
+        { status: 400 },
+        correlationId,
+      );
+    }
+  }
+
+  // Validate basePromptMode
+  if (body.basePromptMode !== undefined && body.basePromptMode !== null) {
+    if (!VALID_BASE_PROMPT_MODES.includes(body.basePromptMode as BasePromptMode)) {
+      return jsonWithCorrelation(
+        { error: "basePromptMode must be one of: default, planning, custom" },
+        { status: 400 },
+        correlationId,
+      );
+    }
+  }
+
+  // Validate basePromptCustom (required when mode is "custom")
+  const basePromptMode = (body.basePromptMode as BasePromptMode) ?? undefined;
+  if (basePromptMode === "custom") {
+    if (
+      !body.basePromptCustom ||
+      typeof body.basePromptCustom !== "string" ||
+      body.basePromptCustom.trim().length === 0
+    ) {
+      return jsonWithCorrelation(
+        { error: "basePromptCustom is required when basePromptMode is custom" },
+        { status: 400 },
+        correlationId,
+      );
+    }
+    if (body.basePromptCustom.length > 8192) {
+      return jsonWithCorrelation(
+        { error: "basePromptCustom must be at most 8192 characters" },
+        { status: 400 },
+        correlationId,
+      );
+    }
+  }
+
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;
@@ -57,10 +105,29 @@ export async function POST(request: NextRequest) {
     const rawPrompt = (body.prompt as string) ?? undefined;
     const prompt = rawPrompt ? rawPrompt.replace(/[\r\n]/g, " ").trim() : undefined;
 
+    // Sanitize basePromptCustom: preserve \n \r \t, strip other C0 control chars
+    const rawCustom =
+      typeof body.basePromptCustom === "string" ? body.basePromptCustom : undefined;
+    // Strip C0 control chars (except \t \n \r) and DEL using charCode filtering
+    const basePromptCustom = rawCustom
+      ? [...rawCustom]
+          .filter((ch) => {
+            const code = ch.charCodeAt(0);
+            return code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127);
+          })
+          .join("")
+          .trim()
+      : undefined;
+
+    const agent = typeof body.agent === "string" ? body.agent.trim() || undefined : undefined;
+
     const session = await sessionManager.spawn({
       projectId,
       issueId: (body.issueId as string) ?? undefined,
       prompt: prompt || undefined,
+      agent,
+      basePromptMode,
+      basePromptCustom: basePromptCustom || undefined,
     });
 
     recordApiObservation({
