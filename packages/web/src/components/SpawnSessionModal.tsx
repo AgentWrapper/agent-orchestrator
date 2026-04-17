@@ -123,6 +123,7 @@ export function SpawnSessionModal({
       const stub: DashboardSession = {
         id: stubId,
         projectId,
+        displayName: null,
         status: "working",
         activity: null,
         branch: null,
