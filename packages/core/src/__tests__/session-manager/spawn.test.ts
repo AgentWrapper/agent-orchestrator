@@ -1288,6 +1288,52 @@ describe("spawn", () => {
     vi.useRealTimers();
   }, 20_000);
 
+  it("delivers worker prompts post-launch for opencode sessions", async () => {
+    vi.useFakeTimers();
+    const opencodeAgent: Agent = {
+      ...mockAgent,
+      name: "opencode",
+    };
+    const registryWithOpenCode: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return opencodeAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    const configWithOpenCode: OrchestratorConfig = {
+      ...config,
+      defaults: { ...config.defaults, agent: "opencode" },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agent: "opencode",
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithOpenCode, registry: registryWithOpenCode });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the authentication bug" });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    const session = await spawnPromise;
+
+    expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: undefined,
+      }),
+    );
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.stringContaining("Fix the authentication bug"),
+    );
+    expect(session.metadata.promptDelivered).toBe("true");
+    vi.useRealTimers();
+  });
+
   describe("rollback on failure", () => {
     it("cleans up reserved metadata when workspace creation fails", async () => {
       (mockWorkspace.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -1501,8 +1547,6 @@ describe("spawn", () => {
       const meta = readMetadataRaw(sessionsDir, "app-1");
       expect(meta?.["displayName"]).toBeUndefined();
     });
-  });
-
   describe("spawnOrchestrator", () => {
     it("throws when no workspace plugin is configured", async () => {
       const registryNoWorkspace: PluginRegistry = {

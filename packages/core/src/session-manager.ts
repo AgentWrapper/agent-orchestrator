@@ -1265,6 +1265,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
               strategy: opencodeIssueSessionStrategy,
             })
           : undefined;
+      const shouldUsePostLaunchPromptDelivery =
+        plugins.agent.promptDelivery === "post-launch" || plugins.agent.name === "opencode";
+      const promptForLaunchCommand = plugins.agent.name === "opencode" ? undefined : taskPrompt;
 
       const agentLaunchConfig = {
         sessionId,
@@ -1277,7 +1280,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
         workspacePath,
         issueId: spawnConfig.issueId,
-        prompt: taskPrompt,
+        prompt: promptForLaunchCommand,
         systemPromptFile,
         permissions: selection.permissions,
         model: selection.model,
@@ -1416,8 +1419,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // (e.g. Claude Code exits after -p, so we send the prompt after it starts
       // in interactive mode). Prompt delivery failure must NOT destroy the
       // session — the agent is running; user can retry with `ao send`.
+      const promptForPostLaunch =
+        plugins.agent.name === "opencode" ? taskPrompt : agentLaunchConfig.prompt;
       let promptDelivered = false;
-      if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+      if (shouldUsePostLaunchPromptDelivery && promptForPostLaunch) {
         const maxRetries = 3;
         const baseDelayMs = 3_000;
         let lastError: Error | undefined;
@@ -1427,7 +1432,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             // Wait for agent to start and be ready for input
             // Use exponential backoff: 3s, 6s, 9s between attempts
             await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
-            await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+            await plugins.runtime.sendMessage(handle, promptForPostLaunch);
             promptDelivered = true;
             break;
           } catch (err) {
