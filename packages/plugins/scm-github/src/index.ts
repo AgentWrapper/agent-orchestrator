@@ -1205,7 +1205,7 @@ function createGitHubSCM(): SCM {
         // Conflicts / merge state
         const mergeable = (data.mergeable ?? "").toUpperCase();
         const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
-        const noConflicts = mergeable === "MERGEABLE";
+        const noConflicts = mergeable !== "CONFLICTING";
         if (mergeable === "CONFLICTING") {
           blockers.push("Merge conflicts");
         } else if (mergeable === "UNKNOWN" || mergeable === "") {
