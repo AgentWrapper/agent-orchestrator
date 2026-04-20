@@ -238,7 +238,7 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(screen.getByText(/Terminal session has ended/i)).toBeInTheDocument();
+    expect(screen.getByText("Terminal ended")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
