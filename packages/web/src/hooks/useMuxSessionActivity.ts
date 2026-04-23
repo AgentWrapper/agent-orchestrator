@@ -1,13 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import type { ActivityState } from "@/lib/types";
-import { useMux } from "@/providers/MuxProvider";
+import { useMuxOptional } from "@/providers/MuxProvider";
 
 export function useMuxSessionActivity(
   sessionId: string,
 ): { activity: ActivityState | null } | null {
-  const mux = useMux();
-  const patch = mux.sessions.find((s) => s.id === sessionId);
-  if (!patch) return null;
-  return { activity: (patch.activity as ActivityState) ?? null };
+  const mux = useMuxOptional();
+  const patch = mux?.sessions.find((s) => s.id === sessionId);
+  return useMemo(
+    () => (patch ? { activity: (patch.activity as ActivityState) ?? null } : null),
+    [patch],
+  );
 }

@@ -59,8 +59,8 @@ interface SessionPatch {
  */
 export class SessionBroadcaster {
   private subscribers = new Set<(sessions: SessionPatch[]) => void>();
-  private _intervalId: ReturnType<typeof setInterval> | null = null;
-  private _polling = false;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private polling = false;
   private readonly baseUrl: string;
 
   constructor(nextPort: string) {
@@ -88,15 +88,15 @@ export class SessionBroadcaster {
 
     // Start polling if this is the first subscriber
     if (wasEmpty) {
-      this._intervalId = setInterval(() => {
-        if (this._polling) return;
-        this._polling = true;
+      this.intervalId = setInterval(() => {
+        if (this.polling) return;
+        this.polling = true;
         void this.fetchSnapshot()
           .then((sessions) => {
             if (sessions) this.broadcast(sessions);
           })
           .finally(() => {
-            this._polling = false;
+            this.polling = false;
           });
       }, 3000);
     }
@@ -147,9 +147,9 @@ export class SessionBroadcaster {
   }
 
   private disconnect(): void {
-    if (this._intervalId !== null) {
-      clearInterval(this._intervalId);
-      this._intervalId = null;
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
   }
 }
