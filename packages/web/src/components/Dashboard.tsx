@@ -113,6 +113,14 @@ function DoneCard({
               strokeWidth="1.8"
               viewBox="0 0 24 24"
             >
+            <svg
+              width="9"
+              height="9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              viewBox="0 0 24 24"
+            >
               <circle cx="18" cy="18" r="3" />
               <circle cx="6" cy="6" r="3" />
               <path d="M6 9v3a6 6 0 0 0 6 6h3" />
@@ -693,17 +701,17 @@ function DashboardInner({
                     >
                       {kanbanLevels.map((level) => (
                         <AttentionZone
-                        key={level}
-                        level={level}
-                        sessions={grouped[level]}
-                        onSend={handleSend}
-                        onKill={handleKill}
-                        onMerge={handleMerge}
-                        onRestore={handleRestore}
-                        compactMobile={isMobile}
-                        collapsed={isMobile && collapsedZones.has(level)}
-                        onToggle={isMobile ? handleZoneToggle : undefined}
-                      />
+                          key={level}
+                          level={level}
+                          sessions={grouped[level]}
+                          onSend={handleSend}
+                          onKill={handleKill}
+                          onMerge={handleMerge}
+                          onRestore={handleRestore}
+                          compactMobile={isMobile}
+                          collapsed={isMobile && collapsedZones.has(level)}
+                          onToggle={isMobile ? handleZoneToggle : undefined}
+                        />
                       ))}
                     </div>
                   </div>
