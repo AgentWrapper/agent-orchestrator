@@ -193,6 +193,7 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
   const debugParam = searchParams.get("debug");
   const showDebugBundleButton =
     !isMobile &&
@@ -478,6 +479,17 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const handleZoneToggle = (level: string) => {
+    setCollapsedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  };
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setMobileMenuOpen((current) => !current);
@@ -681,14 +693,17 @@ function DashboardInner({
                     >
                       {kanbanLevels.map((level) => (
                         <AttentionZone
-                          key={level}
-                          level={level}
-                          sessions={grouped[level]}
-                          onSend={handleSend}
-                          onKill={handleKill}
-                          onMerge={handleMerge}
-                          onRestore={handleRestore}
-                        />
+                        key={level}
+                        level={level}
+                        sessions={grouped[level]}
+                        onSend={handleSend}
+                        onKill={handleKill}
+                        onMerge={handleMerge}
+                        onRestore={handleRestore}
+                        compactMobile={isMobile}
+                        collapsed={isMobile && collapsedZones.has(level)}
+                        onToggle={isMobile ? handleZoneToggle : undefined}
+                      />
                       ))}
                     </div>
                   </div>
