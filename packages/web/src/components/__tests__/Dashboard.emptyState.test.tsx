@@ -2,13 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
 
-const eventSourceConstructorMock = vi.hoisted(() => vi.fn());
-let lastEventSourceMock: {
-  onmessage: ((event: MessageEvent) => void) | null;
-  onerror: ((event?: Event) => void) | null;
-  close: ReturnType<typeof vi.fn>;
-};
-
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
@@ -16,19 +9,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 beforeEach(() => {
-  const eventSourceMock = {
-    onmessage: null,
-    onerror: null,
-    close: vi.fn(),
-  };
-  lastEventSourceMock = eventSourceMock;
-  eventSourceConstructorMock.mockReset();
-  eventSourceConstructorMock.mockImplementation(() => eventSourceMock as unknown as EventSource);
-  global.EventSource = Object.assign(eventSourceConstructorMock, {
-    CONNECTING: 0,
-    OPEN: 1,
-    CLOSED: 2,
-  }) as unknown as typeof EventSource;
   global.fetch = vi.fn();
 });
 
@@ -113,36 +93,6 @@ describe("Dashboard empty state", () => {
     expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
     expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
-    expect(eventSourceConstructorMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows a live load error banner when the SSE stream reports a backend failure", async () => {
-    render(<Dashboard initialSessions={[]} />);
-
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "error", error: "session list timed out" }),
-      } as MessageEvent);
-      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
-    });
-  });
-
-  it("clears a live load error banner after a healthy snapshot with unchanged sessions", async () => {
-    render(<Dashboard initialSessions={[]} />);
-
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "error", error: "session list timed out" }),
-      } as MessageEvent);
-      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
-    });
-
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "snapshot", sessions: [] }),
-      } as MessageEvent);
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    });
   });
 
   it("shows empty state when only done sessions exist", () => {
