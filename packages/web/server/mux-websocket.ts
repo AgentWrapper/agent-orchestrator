@@ -93,7 +93,7 @@ export class SessionBroadcaster {
         this.polling = true;
         void this.fetchSnapshot()
           .then((sessions) => {
-            if (sessions) this.broadcast(sessions);
+            if (sessions && this.intervalId !== null) this.broadcast(sessions);
           })
           .finally(() => {
             this.polling = false;
