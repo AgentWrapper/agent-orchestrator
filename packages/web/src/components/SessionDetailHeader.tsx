@@ -12,6 +12,7 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { SessionDetailPRCard } from "./SessionDetailPRCard";
 import { askAgentToFix } from "./session-detail-agent-actions";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
+import type { PaneControls } from "./workspace/usePaneSizes";
 
 export interface OrchestratorZones {
   merge: number;
@@ -33,6 +34,7 @@ interface SessionDetailHeaderProps {
   projects: ProjectInfo[];
   orchestratorHref: string | null;
   orchestratorZones?: OrchestratorZones;
+  paneControls?: PaneControls;
   onToggleSidebar: () => void;
   onRestore: () => void;
   onKill: () => void;
@@ -77,6 +79,7 @@ export function SessionDetailHeader({
   projects,
   orchestratorHref,
   orchestratorZones,
+  paneControls,
   onToggleSidebar,
   onRestore,
   onKill,
@@ -85,6 +88,8 @@ export function SessionDetailHeader({
   const allGreen = pr ? isPRMergeReady(pr) : false;
   const [prPopoverOpen, setPrPopoverOpen] = useState(false);
   const prPopoverRef = useRef<HTMLDivElement>(null);
+  const [paneMenuOpen, setPaneMenuOpen] = useState(false);
+  const paneMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!prPopoverOpen) return;
@@ -103,6 +108,24 @@ export function SessionDetailHeader({
       document.removeEventListener("keydown", keyHandler);
     };
   }, [prPopoverOpen]);
+
+  useEffect(() => {
+    if (!paneMenuOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (paneMenuRef.current && !paneMenuRef.current.contains(event.target as Node)) {
+        setPaneMenuOpen(false);
+      }
+    };
+    const keyHandler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPaneMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
+  }, [paneMenuOpen]);
 
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
@@ -325,6 +348,75 @@ export function SessionDetailHeader({
             </svg>
             <span className="topbar-btn-label">Orchestrator</span>
           </a>
+        ) : null}
+
+        {paneControls ? (
+          <div className="topbar-pane-menu-wrap" ref={paneMenuRef}>
+            <button
+              type="button"
+              className={cn(
+                "dashboard-app-btn topbar-pane-menu-btn",
+                paneMenuOpen && "topbar-pane-menu-btn--open",
+              )}
+              onClick={() => setPaneMenuOpen((v) => !v)}
+              aria-label="View options"
+              aria-expanded={paneMenuOpen}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="5" cy="12" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="19" cy="12" r="1.6" />
+              </svg>
+            </button>
+            {paneMenuOpen && (
+              <div className="topbar-pane-menu" role="menu">
+                {[
+                  { idx: 0, label: "File tree", shortcut: "⌘⇧F" },
+                  { idx: 1, label: "File preview", shortcut: "⌘⇧P" },
+                  { idx: 2, label: "Terminal", shortcut: "⌘⇧Z" },
+                ].map(({ idx, label, shortcut }) => {
+                  const visible = !paneControls.collapsed[idx];
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={visible}
+                      className="topbar-pane-menu-item"
+                      onClick={() => paneControls.toggleCollapsed(idx)}
+                    >
+                      <span className="topbar-pane-menu-check" aria-hidden>
+                        {visible ? "✓" : ""}
+                      </span>
+                      <span className="topbar-pane-menu-label">{label}</span>
+                      <span className="topbar-pane-menu-shortcut">{shortcut}</span>
+                    </button>
+                  );
+                })}
+                <div className="topbar-pane-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-pane-menu-item"
+                  onClick={() => paneControls.setVerticalLayout(!paneControls.verticalLayout)}
+                >
+                  <span className="topbar-pane-menu-check" aria-hidden />
+                  <span className="topbar-pane-menu-label">
+                    {paneControls.verticalLayout
+                      ? "Switch to horizontal layout"
+                      : "Switch to vertical layout"}
+                  </span>
+                  <span className="topbar-pane-menu-shortcut" />
+                </button>
+              </div>
+            )}
+          </div>
         ) : null}
       </div>
     </header>

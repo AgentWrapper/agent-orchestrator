@@ -176,6 +176,7 @@ export function SessionDetail({
           projects={projects}
           orchestratorHref={orchestratorHref}
           orchestratorZones={orchestratorZones}
+          paneControls={paneControls}
           onToggleSidebar={handleToggleSidebar}
           onRestore={handleRestore}
           onKill={handleKill}
