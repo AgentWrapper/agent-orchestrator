@@ -339,7 +339,7 @@ export function registerSpawn(program: Command): void {
           process.exit(1);
         }
 
-        // Resolve preset prompt (mutually exclusive with --prompt)
+        // Resolve preset prompt (mutually exclusive with --prompt and issue args)
         let finalPrompt = opts.prompt;
         let trustedPrompt = false;
         if (opts.preset) {
@@ -347,9 +347,18 @@ export function registerSpawn(program: Command): void {
             console.error(chalk.red("Cannot use --preset and --prompt together."));
             process.exit(1);
           }
-          const preset = resolvePreset(opts.preset);
-          finalPrompt = preset.prompt;
-          trustedPrompt = true;
+          if (issue) {
+            console.error(chalk.red("Cannot use --preset with an issue argument."));
+            process.exit(1);
+          }
+          try {
+            const preset = resolvePreset(opts.preset);
+            finalPrompt = preset.prompt;
+            trustedPrompt = true;
+          } catch (err) {
+            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+            process.exit(1);
+          }
         }
 
         const claimOptions: SpawnClaimOptions = {
