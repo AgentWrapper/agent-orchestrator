@@ -22,6 +22,12 @@ import {
 } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
 import { sessionActivityMeta } from "./session-detail-utils";
+import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
+import { FileTree } from "./workspace/FileTree";
+import { ChangedFileList } from "./workspace/ChangedFileList";
+import { FilePreview } from "./workspace/FilePreview";
+import { DiffViewer } from "./workspace/DiffViewer";
+import { usePaneSizes } from "./workspace/usePaneSizes";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -64,6 +70,7 @@ export function SessionDetail({
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
+  const paneControls = usePaneSizes(session.id, [20, 40, 40]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -134,6 +141,19 @@ export function SessionDetail({
     };
   }, [session.id]);
 
+  // Cmd/Ctrl+Shift+F/P/Z toggles file-tree / preview / terminal panes.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || !e.shiftKey) return;
+      if (e.key === "F") { e.preventDefault(); paneControls.toggleCollapsed(0); }
+      if (e.key === "P") { e.preventDefault(); paneControls.toggleCollapsed(1); }
+      if (e.key === "Z") { e.preventDefault(); paneControls.toggleCollapsed(2); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [paneControls]);
+
   const handleToggleSidebar = useCallback(() => {
     if (isMobile) {
       setMobileSidebarOpen((v) => !v);
@@ -195,30 +215,62 @@ export function SessionDetail({
 
           <div className="dashboard-main dashboard-main--desktop">
             <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
-              <div className="flex-1 min-h-0 flex flex-col">
-                {!showTerminal ? (
-                  <div className="session-detail-terminal-placeholder h-full" />
-                ) : terminalEnded ? (
-                  <SessionEndedSummary
-                    session={session}
-                    headline={headline}
-                    pr={pr}
-                    dashboardHref={dashboardHref}
-                  />
-                ) : (
-                  <DirectTerminal
-                    sessionId={session.id}
-                    tmuxName={session.metadata?.tmuxName}
-                    startFullscreen={startFullscreen}
-                    variant={terminalVariant}
-                    appearance="dark"
-                    height="100%"
-                    isOpenCodeSession={isOpenCodeSession}
-                    reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                    autoFocus
-                  />
-                )}
-              </div>
+              <WorkspaceLayout session={session} paneControls={paneControls}>
+                {{
+                  fileTree: (selectedFile, opts) =>
+                    opts.showChangedOnly ? (
+                      <ChangedFileList
+                        sessionId={session.id}
+                        selectedFile={selectedFile}
+                        onFileSelected={opts.onFileSelected}
+                        scope={opts.scope}
+                        onBaseRefChange={opts.onBaseRefChange}
+                      />
+                    ) : (
+                      <FileTree
+                        sessionId={session.id}
+                        selectedFile={selectedFile}
+                        onFileSelected={opts.onFileSelected}
+                        showChangedOnly={opts.showChangedOnly}
+                        scope={opts.scope}
+                        onBaseRefChange={opts.onBaseRefChange}
+                      />
+                    ),
+                  preview: (selectedFile, opts) =>
+                    opts.diffMode ? (
+                      <DiffViewer
+                        sessionId={session.id}
+                        selectedFile={selectedFile}
+                        scope={opts.scope}
+                        baseRef={opts.baseRef}
+                      />
+                    ) : (
+                      <FilePreview sessionId={session.id} selectedFile={selectedFile} />
+                    ),
+                  terminal: !showTerminal ? (
+                    <div className="flex-1 min-h-0 session-detail-terminal-placeholder" />
+                  ) : terminalEnded ? (
+                    <SessionEndedSummary
+                      session={session}
+                      headline={headline}
+                      pr={pr}
+                      dashboardHref={dashboardHref}
+                    />
+                  ) : (
+                    <DirectTerminal
+                      sessionId={session.id}
+                      tmuxName={session.metadata?.tmuxName}
+                      startFullscreen={startFullscreen}
+                      variant={terminalVariant}
+                      appearance="dark"
+                      height="100%"
+                      isOpenCodeSession={isOpenCodeSession}
+                      reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+                      autoFocus
+                    />
+                  ),
+                }}
+              </WorkspaceLayout>
             </main>
           </div>
         </div>

@@ -78,7 +78,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
     );
 
     expect(screen.getAllByText("worker-2").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("link", { name: /PR #77/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /PR #77/i })).toBeInTheDocument();
   });
 
   it("shows PR info for sessions with enriched PRs", () => {
@@ -99,7 +99,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getAllByRole("link", { name: /PR #88/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /PR #88/i })).toBeInTheDocument();
   });
 
   it("renders the session detail shell for active sessions", () => {
@@ -151,7 +151,7 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getAllByRole("link", { name: /PR #89/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /PR #89/i })).toBeInTheDocument();
     expect(screen.getAllByText("worker-merged").length).toBeGreaterThan(0);
   });
 });

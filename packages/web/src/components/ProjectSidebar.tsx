@@ -25,6 +25,7 @@ interface ProjectSidebarProps {
   onRetry?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
 

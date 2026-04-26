@@ -1,0 +1,274 @@
+/* Shared compact top bar — used by session workspace and dashboard */
+
+.compact-top-bar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  gap: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.compact-top-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-top-bar__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.compact-top-bar__row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.compact-top-bar__branch {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  white-space: nowrap;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-top-bar__pr-info {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__ci {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__sidebar-toggle {
+  display: flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* Touch target: full bar height, square */
+  min-width: 40px;
+  min-height: 40px;
+  margin: 0;
+  margin-left: -12px; /* negate parent's padding-left so button is flush-left */
+  padding: 0;
+}
+
+.compact-top-bar__right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.compact-top-bar--dashboard .compact-top-bar__sidebar-toggle {
+  align-self: stretch;
+  margin-top: -6px;
+  margin-bottom: -6px;
+}
+
+/* Dashboard: multi-line when needed, priority controls stay tappable */
+.compact-top-bar--dashboard {
+  height: auto;
+  min-height: 40px;
+  align-items: flex-start;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  overflow: visible;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+@media (min-width: 1024px) {
+  .compact-top-bar--dashboard {
+    align-items: center;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .compact-top-bar--dashboard .compact-top-bar__sidebar-toggle {
+    align-self: center;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+}
+
+.compact-top-bar--dashboard .compact-top-bar__info {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+@media (min-width: 640px) {
+  .compact-top-bar--dashboard .compact-top-bar__info {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+}
+
+.dashboard-compact-top-bar__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(72vw, 420px);
+}
+
+.dashboard-compact-top-bar__subtitle {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+  max-width: min(90vw, 56ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+@media (min-width: 640px) {
+  .dashboard-compact-top-bar__subtitle {
+    display: block;
+    -webkit-line-clamp: unset;
+    white-space: nowrap;
+  }
+}
+
+.dashboard-compact-top-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-compact-top-bar__actions .dashboard-stat-cards {
+  gap: 6px;
+}
+
+.dashboard-compact-top-bar__actions .dashboard-stat-card {
+  padding: 4px 7px;
+}
+
+.dashboard-compact-top-bar__actions .dashboard-stat-card__value {
+  font-size: 15px;
+}
+
+.dashboard-compact-top-bar__actions .dashboard-stat-card__label {
+  font-size: 9px;
+}
+
+@media (max-width: 639px) {
+  .dashboard-compact-top-bar__actions .dashboard-stat-cards {
+    max-width: 100%;
+    justify-content: flex-end;
+  }
+
+  .dashboard-compact-top-bar__actions .orchestrator-btn {
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 640px) {
+  .compact-top-bar__info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .compact-top-bar__row2 {
+    font-size: 9px;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .compact-top-bar__branch {
+    font-size: 9px;
+    max-width: 120px;
+  }
+
+  .compact-top-bar__pr-info,
+  .compact-top-bar__ci {
+    display: none;
+  }
+
+  /* Dashboard title block: keep readable on narrow screens without forcing session PR hides */
+  .compact-top-bar--dashboard .compact-top-bar__info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@keyframes compact-top-bar-reconnect-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.compact-top-bar__reconnect-bar {
+  animation: compact-top-bar-reconnect-slide 1.4s ease-in-out infinite;
+}
+
+/* Pane toggles (Files / Preview / Terminal): same icon box so bottom accent lines up */
+.compact-top-bar__pane-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+}
+
+.compact-top-bar__pane-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+}

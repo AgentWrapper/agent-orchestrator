@@ -1,0 +1,976 @@
+/* Workspace IDE Layout Styles */
+
+@import "highlight.js/styles/github-dark.css";
+@import "./compact-top-bar.css";
+
+/* ── Container ─────────────────────────────────────────── */
+
+.workspace-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100dvh;
+  height: 100vh; /* fallback for older browsers */
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .workspace-container {
+    height: 100dvh;
+  }
+}
+
+/* ── Pane headers ──────────────────────────────────────── */
+
+.workspace-pane-header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  flex-shrink: 0;
+}
+
+.workspace-pane-header-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.workspace-pane-header-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover-overlay);
+}
+
+/* ── Separator ─────────────────────────────────────────── */
+
+.workspace-separator {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--color-border-subtle);
+  transition: background 0.15s;
+  flex-shrink: 0;
+  touch-action: none;
+}
+
+.workspace-separator:hover {
+  background: var(--color-accent);
+}
+
+.workspace-separator--horizontal {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* ── Empty / error states ──────────────────────────────── */
+
+.workspace-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--color-text-secondary);
+}
+
+.workspace-empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.workspace-empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ── File Tree ─────────────────────────────────────────── */
+
+.workspace-file-tree-list {
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 4px 0;
+  height: 100%;
+  background: var(--color-bg-base);
+}
+
+.workspace-preview-scroll {
+  background: var(--color-bg-base);
+}
+
+.workspace-file-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 22px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.1s;
+  white-space: nowrap;
+  min-width: max-content;
+}
+
+.workspace-file-tree-item:hover {
+  background-color: var(--color-bg-elevated);
+}
+
+.workspace-file-tree-item--selected {
+  background-color: var(--color-bg-elevated-hover) !important;
+}
+
+.workspace-file-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+  color: var(--color-text-tertiary);
+}
+
+.workspace-file-tree-chevron--open {
+  transform: rotate(90deg);
+}
+
+.workspace-file-tree-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.workspace-file-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.workspace-file-tree-item--selected .workspace-file-tree-name {
+  color: var(--color-accent);
+}
+
+.workspace-file-tree-badge {
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-right: 8px;
+}
+
+.workspace-file-tree-settings-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+}
+
+.workspace-file-tree-settings-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.workspace-file-tree-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.workspace-file-tree-settings-row input {
+  flex-shrink: 0;
+}
+
+/* ── Code Viewer (non-markdown files) ──────────────────── */
+
+.workspace-code-viewer {
+  margin: 0;
+  padding: 12px 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--preview-font-size, 13px);
+  line-height: calc(var(--preview-font-size, 13px) * 1.54);
+  background: var(--color-bg-base);
+}
+
+.workspace-code-line {
+  display: flex;
+  padding: 0 16px;
+}
+
+.workspace-code-line:hover {
+  background: var(--color-bg-elevated);
+}
+
+.workspace-code-gutter {
+  color: var(--color-text-tertiary);
+  user-select: none;
+  text-align: right;
+  min-width: 40px;
+  padding-right: 16px;
+  flex-shrink: 0;
+}
+
+.workspace-code-content {
+  flex: 1;
+  white-space: pre;
+  color: var(--color-text-primary);
+}
+
+.workspace-code-content .hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* ── Terminal Pane ─────────────────────────────────────── */
+
+.workspace-terminal-pane {
+  overflow: hidden;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* Align DirectTerminal's chrome bar with the workspace pane-header metrics
+   (height, padding, background) so the three panes read as one visual row. */
+.workspace-terminal-content .terminal-chrome-bar {
+  min-height: 32px;
+  padding: 0 12px;
+  background: var(--color-bg-surface);
+}
+
+/* Terminal content wrapper — fills remaining space after pane header */
+.workspace-terminal-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Prevent .xterm from inflating beyond its container via content width */
+.workspace-terminal-content .xterm {
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Override DirectTerminal styles inside workspace */
+.workspace-terminal-content .direct-terminal-container,
+.workspace-terminal-content > div {
+  max-height: none !important;
+  height: 100% !important;
+}
+
+/* Remove DirectTerminal's border inside workspace — the pane provides boundaries */
+.workspace-terminal-content > div {
+  border: none !important;
+}
+
+/* ── Markdown Preview — flat monochromatic, token-driven ─ */
+
+.workspace-markdown-preview {
+  padding: 24px 32px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
+  font-size: calc(var(--preview-font-size, 13px) + 1px);
+  line-height: 1.6;
+}
+
+/* Headings — 100gb-minimalist: monochrome grey ladder, size + weight */
+.workspace-markdown-preview h1 {
+  font-size: 2.14em;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 24px 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-default);
+  letter-spacing: -0.015em;
+}
+
+.workspace-markdown-preview h2 {
+  font-size: 1.57em;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--color-text-primary) 88%, var(--color-text-secondary));
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.workspace-markdown-preview h3 {
+  font-size: 1.29em;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text-primary) 70%, var(--color-text-secondary));
+  margin: 16px 0 8px;
+}
+
+.workspace-markdown-preview h4 {
+  font-size: 1.07em;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text-primary) 50%, var(--color-text-secondary));
+  margin: 14px 0 6px;
+}
+
+.workspace-markdown-preview h5,
+.workspace-markdown-preview h6 {
+  font-size: 0.86em;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 12px 0 6px;
+}
+
+/* Paragraphs */
+.workspace-markdown-preview p {
+  margin: 10px 0;
+  line-height: 1.7;
+  color: var(--color-text-primary);
+}
+
+/* Links — one accent pop */
+.workspace-markdown-preview a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.workspace-markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+/* Bold & italic — monochrome: weight + subtle highlight strip for distinction */
+.workspace-markdown-preview strong {
+  color: var(--color-text-primary);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  padding: 0 3px;
+  margin: 0 -1px;
+  border-radius: 2px;
+}
+
+.workspace-markdown-preview em {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Inline code — 100gb-minimalist: flat mono surface on bg-elevated */
+.workspace-markdown-preview :not(pre) > code {
+  background: var(--color-bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-subtle);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--color-text-primary);
+}
+
+/* Code blocks — flat surface, subtle border */
+.workspace-markdown-preview pre {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  padding: 14px 16px;
+  border-radius: 0 0 6px 6px;
+  overflow-x: auto;
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.workspace-markdown-preview pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Code block wrapper with language label + copy button */
+.workspace-md-code-block {
+  margin: 14px 0;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+.workspace-md-code-block > pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+.workspace-md-code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 60%, var(--color-bg-base));
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.workspace-md-code-block-lang {
+  color: var(--color-text-tertiary);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.workspace-md-code-block-copy {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.workspace-md-code-block-copy:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated-hover);
+  border-color: var(--color-border-subtle);
+}
+
+.workspace-md-code-block-copy--copied {
+  color: var(--color-accent);
+}
+
+/* Blockquotes */
+.workspace-markdown-preview blockquote {
+  margin: 12px 0;
+  padding: 8px 16px;
+  border-left: 3px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
+  color: var(--color-text-secondary);
+  border-radius: 0 4px 4px 0;
+}
+
+.workspace-markdown-preview blockquote p {
+  color: var(--color-text-secondary);
+}
+
+/* Lists */
+.workspace-markdown-preview ul,
+.workspace-markdown-preview ol {
+  margin: 10px 0;
+  padding-left: 24px;
+}
+
+.workspace-markdown-preview ul {
+  list-style: disc outside;
+}
+
+.workspace-markdown-preview ol {
+  list-style: decimal outside;
+}
+
+.workspace-markdown-preview ul ul {
+  list-style: circle outside;
+}
+
+.workspace-markdown-preview ul ul ul {
+  list-style: square outside;
+}
+
+.workspace-markdown-preview li {
+  margin: 4px 0;
+  color: var(--color-text-primary);
+}
+
+.workspace-markdown-preview li::marker {
+  color: var(--color-text-tertiary);
+}
+
+/* Task lists (checkboxes) */
+.workspace-markdown-preview input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: var(--color-accent);
+}
+
+/* Tables */
+.workspace-markdown-preview table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  width: 100%;
+  font-size: 13px;
+}
+
+.workspace-markdown-preview table th {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.workspace-markdown-preview table td {
+  border: 1px solid var(--color-border-subtle);
+  padding: 8px 12px;
+  color: var(--color-text-primary);
+}
+
+.workspace-markdown-preview table tr:hover td {
+  background: color-mix(in srgb, var(--color-bg-elevated) 50%, transparent);
+}
+
+/* Horizontal rule */
+.workspace-markdown-preview hr {
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+  margin: 24px 0;
+}
+
+/* Images */
+.workspace-markdown-preview img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+/* Dark-mode only: dim body prose so headings, bold and inline code
+   (all at text-primary) visibly pop above the surrounding paragraphs.
+   Light mode already has strong contrast between primary/secondary
+   so no override there. */
+.dark .workspace-markdown-preview,
+.dark .workspace-markdown-preview p,
+.dark .workspace-markdown-preview li,
+.dark .workspace-markdown-preview table td {
+  color: var(--color-text-secondary);
+}
+
+/* Keep h5/h6 one step brighter than the newly-dimmed body so the
+   smallest headings stay distinguishable from prose. */
+.dark .workspace-markdown-preview h5,
+.dark .workspace-markdown-preview h6 {
+  color: color-mix(in srgb, var(--color-text-primary) 38%, var(--color-text-secondary));
+}
+
+/* ── highlight.js overrides — IDE-style multi-hue from accent tokens ─ */
+
+.workspace-markdown-preview .hljs,
+.workspace-code-viewer .hljs {
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-primary);
+}
+
+/* Keywords: control flow, declarations, modifiers */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link,
+.hljs-variable.language_ {
+  color: var(--color-accent-violet);
+  font-weight: 600;
+}
+
+/* Strings and regex */
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_ {
+  color: var(--color-accent-green);
+}
+
+/* Numbers, booleans, symbols, template literals */
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-template-variable,
+.hljs-template-tag {
+  color: var(--color-accent-orange);
+}
+
+/* Types, built-ins, class names */
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__ {
+  color: var(--color-accent-yellow);
+}
+
+/* Function names and titles */
+.hljs-function .hljs-title,
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.function_.invoke__ {
+  color: var(--color-accent);
+}
+
+/* HTML/JSX tags, CSS selectors */
+.hljs-name,
+.hljs-tag,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--color-accent-red);
+}
+
+/* Attribute names, YAML/JSON keys, decorators / preprocessor meta */
+.hljs-attr,
+.hljs-attribute,
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-meta .hljs-string {
+  color: var(--color-accent-yellow);
+}
+
+/* Variables, params, properties — near default */
+.hljs-variable,
+.hljs-params,
+.hljs-property {
+  color: var(--color-text-primary);
+}
+
+/* Operators and punctuation */
+.hljs-operator,
+.hljs-punctuation {
+  color: var(--color-text-secondary);
+}
+
+/* Comments, docs, quotes */
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+/* Diff additions / deletions — semantic green/red */
+.hljs-addition {
+  color: var(--color-accent-green);
+  background: color-mix(in srgb, var(--color-accent-green) 12%, transparent);
+}
+
+.hljs-deletion {
+  color: var(--color-accent-red);
+  background: color-mix(in srgb, var(--color-accent-red) 12%, transparent);
+}
+
+/* Mermaid diagrams */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  margin: 16px 0;
+  background: var(--color-bg-secondary, #1e1e2e);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-error {
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: rgba(255, 80, 80, 0.1);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  border-radius: 6px;
+  color: #ff6b6b;
+  font-size: 13px;
+}
+
+.mermaid-error pre {
+  margin: 8px 0 0;
+  padding: 0;
+  background: none;
+  color: #ff9999;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* ── Diff Viewer ───────────────────────────────────────── */
+
+.workspace-diff-viewer {
+  margin: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--preview-font-size, 13px);
+  line-height: calc(var(--preview-font-size, 13px) * 1.54);
+  background: var(--color-bg-base);
+}
+
+.workspace-diff-hunk-header {
+  padding: 4px 16px;
+  background: rgba(56, 139, 253, 0.1);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.workspace-diff-line {
+  display: flex;
+  padding: 0 16px 0 0;
+  min-width: fit-content;
+}
+
+.workspace-diff-line--added {
+  background: rgba(63, 185, 80, 0.15);
+}
+
+.workspace-diff-line--removed {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.workspace-diff-gutter {
+  color: var(--color-text-tertiary);
+  user-select: none;
+  text-align: right;
+  min-width: 40px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  font-size: calc(var(--preview-font-size, 13px) - 1px);
+}
+
+.workspace-diff-marker {
+  user-select: none;
+  min-width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.workspace-diff-line--added .workspace-diff-marker { color: #3fb950; }
+.workspace-diff-line--removed .workspace-diff-marker { color: #f85149; }
+
+.workspace-diff-content {
+  flex: 1;
+  white-space: pre;
+}
+
+/* Active state for changed-files toggle */
+.workspace-pane-header-btn--active {
+  color: var(--color-accent) !important;
+  background: rgba(56, 139, 253, 0.15);
+}
+
+/* ── Scope pill (Local | Branch toggle) ────────────────── */
+
+.workspace-scope-pill {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  height: 20px;
+}
+
+.workspace-scope-pill-btn {
+  background: none;
+  border: none;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  transition: color 0.12s, background 0.12s;
+  text-transform: none;
+}
+
+.workspace-scope-pill-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover-overlay);
+}
+
+.workspace-scope-pill-btn--active {
+  color: var(--color-accent);
+  background: rgba(56, 139, 253, 0.15);
+}
+
+/* ── Changed File List (flat grouped, used when Δ is ON) ── */
+
+.changed-file-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
+  padding: 4px 0;
+  background: var(--color-bg-base);
+  font-size: 13px;
+}
+
+.changed-file-list-empty {
+  padding: 12px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.changed-file-list-dir-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: var(--color-bg-surface);
+  border: none;
+  border-bottom: 1px solid var(--color-border-subtle);
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.changed-file-list-dir-header:hover {
+  background: var(--color-bg-elevated);
+}
+
+.changed-file-list-dir-chevron {
+  font-size: 8px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  width: 10px;
+}
+
+.changed-file-list-dir-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.changed-file-list-dir-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-elevated);
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.changed-file-list-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 24px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  transition: background-color 0.1s;
+}
+
+.changed-file-list-file:hover {
+  background-color: var(--color-bg-elevated);
+}
+
+.changed-file-list-file--selected {
+  background-color: var(--color-bg-elevated-hover) !important;
+}
+
+.changed-file-list-file--selected .changed-file-list-file-name {
+  color: var(--color-accent);
+}
+
+.changed-file-list-file:focus {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.changed-file-list-file-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.changed-file-list-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.changed-file-list-file-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  padding-right: 4px;
+}
+
+.changed-file-list-file-status--M { color: var(--color-accent-yellow); }
+.changed-file-list-file-status--A { color: var(--color-accent-green); }
+.changed-file-list-file-status--D { color: var(--color-accent-red); }
+.changed-file-list-file-status--R { color: var(--color-accent-orange); }
+
+/* ── Diff scope label (passive, in diff viewer) ─────────── */
+
+.workspace-diff-scope-label {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 16px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-subtle);
+  letter-spacing: 0.04em;
+  user-select: none;
+}

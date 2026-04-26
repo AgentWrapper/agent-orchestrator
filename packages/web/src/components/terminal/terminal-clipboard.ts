@@ -52,6 +52,16 @@ export function registerClipboardHandlers(terminal: TerminalType): void {
       return false;
     }
 
+    // App shortcuts — return false so xterm skips them; the event still
+    // bubbles to the window-level handlers that implement the action.
+    // Cmd/Ctrl+P (no shift) — QuickOpen file search.
+    // Cmd/Ctrl+Shift+F/P/Z — toggle Files/Preview/Terminal panes.
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.altKey) {
+      if (!e.shiftKey && e.code === "KeyP") return false;
+      if (e.shiftKey && (e.code === "KeyF" || e.code === "KeyP" || e.code === "KeyZ")) return false;
+    }
+
     return true;
   });
 }
