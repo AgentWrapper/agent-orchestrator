@@ -447,6 +447,12 @@ describe("loadBuiltins", () => {
           create: () => ({ name: "tmux" }),
         };
       }
+      if (pkg === "@aoagents/ao-plugin-runtime-zellij") {
+        return {
+          manifest: { name: "zellij", slot: "runtime", description: "test", version: "0.0.0" },
+          create: () => ({ name: "zellij" }),
+        };
+      }
       // Throw for everything else to simulate not-installed
       throw new Error(`Module not found: ${pkg}`);
     };
@@ -456,10 +462,13 @@ describe("loadBuiltins", () => {
     // importFn should have been called for all builtin plugins
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-tmux");
+    expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-zellij");
 
     // The tmux plugin should be registered
     const tmux = registry.get("runtime", "tmux");
     expect(tmux).not.toBeNull();
+    const zellij = registry.get("runtime", "zellij");
+    expect(zellij).not.toBeNull();
   });
 });
 
@@ -514,6 +523,7 @@ describe("loadFromConfig", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-tmux");
+    expect(importedPackages).toContain("@aoagents/ao-plugin-runtime-zellij");
   });
 
   it("loads external package plugins from config.plugins", async () => {

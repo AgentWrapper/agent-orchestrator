@@ -32,7 +32,7 @@ port: 3000
 
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
-  runtime: tmux           # tmux | process
+  runtime: tmux           # tmux | zellij | process
   agent: claude-code      # claude-code | codex | aider | opencode
   # orchestrator:
   #   agent: claude-code

@@ -24,7 +24,7 @@ readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min
 # These apply to all projects unless overridden per-project.
 
 defaults:
-  runtime: tmux               # tmux | process
+  runtime: tmux               # tmux | zellij | process
   agent: claude-code          # claude-code | aider | codex | cursor | opencode
   workspace: worktree         # worktree | clone
   notifiers:
@@ -139,7 +139,7 @@ notificationRouting:
 # ── Available plugins ───────────────────────────────────────────────
 #
 # Agent:     claude-code, aider, codex, cursor, opencode
-# Runtime:   tmux, process
+# Runtime:   tmux, zellij, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab
 # Tracker:   github, linear, gitlab

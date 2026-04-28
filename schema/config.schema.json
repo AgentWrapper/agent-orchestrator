@@ -384,7 +384,7 @@
         "runtime": {
           "type": "string",
           "default": "tmux",
-          "description": "Default runtime plugin name."
+          "description": "Default runtime plugin name. Built-ins: tmux, zellij, process."
         },
         "agent": {
           "type": "string",

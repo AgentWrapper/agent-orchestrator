@@ -12,6 +12,7 @@ const nextConfig = {
     "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
     "@aoagents/ao-plugin-runtime-tmux",
+    "@aoagents/ao-plugin-runtime-zellij",
     "@aoagents/ao-plugin-scm-github",
     "@aoagents/ao-plugin-tracker-github",
     "@aoagents/ao-plugin-tracker-linear",

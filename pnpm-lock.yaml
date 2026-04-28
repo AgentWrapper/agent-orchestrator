@@ -94,6 +94,9 @@ importers:
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
+      '@aoagents/ao-plugin-runtime-zellij':
+        specifier: workspace:*
+        version: link:../plugins/runtime-zellij
       '@aoagents/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
@@ -207,6 +210,9 @@ importers:
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
+      '@aoagents/ao-plugin-runtime-zellij':
+        specifier: workspace:*
+        version: link:../plugins/runtime-zellij
       '@aoagents/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
@@ -465,6 +471,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/plugins/runtime-zellij:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/plugins/scm-github:
     dependencies:
       '@aoagents/ao-core':
@@ -632,6 +654,9 @@ importers:
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
+      '@aoagents/ao-plugin-runtime-zellij':
+        specifier: workspace:*
+        version: link:../plugins/runtime-zellij
       '@aoagents/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github

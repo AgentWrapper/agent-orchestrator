@@ -41,6 +41,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/runtime-tmux/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-runtime-zellij",
+        replacement: resolve(__dirname, "../plugins/runtime-zellij/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-agent-claude-code",
         replacement: resolve(__dirname, "../plugins/agent-claude-code/src/index.ts"),
       },

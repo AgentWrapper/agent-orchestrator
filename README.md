@@ -23,7 +23,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
-**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
+**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Zellij, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
 <div align="center">
 
@@ -190,7 +190,7 @@ Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | process                  |
+| Runtime   | tmux        | zellij, process          |
 | Agent     | claude-code | codex, aider, cursor, opencode   |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear, gitlab           |
