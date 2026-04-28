@@ -31,6 +31,7 @@ type ServerMessage =
   | { ch: "terminal"; id: string; type: "opened" }
   | { ch: "terminal"; id: string; type: "error"; message: string }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
+  | { ch: "sessions"; type: "error"; error: string }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
@@ -59,6 +60,7 @@ interface SessionPatch {
  */
 export class SessionBroadcaster {
   private subscribers = new Set<(sessions: SessionPatch[]) => void>();
+  private errorSubscribers = new Set<(error: string) => void>();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private polling = false;
   private readonly baseUrl: string;
@@ -68,20 +70,27 @@ export class SessionBroadcaster {
   }
 
   /**
-   * Subscribe to session patches. Returns an unsubscribe function.
+   * Subscribe to session patches and errors. Returns an unsubscribe function.
    * Sends an immediate snapshot to the new subscriber, then polling updates.
    */
-  subscribe(callback: (sessions: SessionPatch[]) => void): () => void {
+  subscribe(callback: (sessions: SessionPatch[]) => void, onError?: (error: string) => void): () => void {
     const wasEmpty = this.subscribers.size === 0;
     this.subscribers.add(callback);
+    if (onError) this.errorSubscribers.add(onError);
 
     // Immediately send a one-off snapshot to just this new subscriber
-    void this.fetchSnapshot().then((sessions) => {
-      if (sessions && this.subscribers.has(callback)) {
+    void this.fetchSnapshot().then((result) => {
+      if (result.sessions && this.subscribers.has(callback)) {
         try {
-          callback(sessions);
+          callback(result.sessions);
         } catch {
           // Isolate subscriber errors so one bad subscriber doesn't break others
+        }
+      } else if (result.error && onError && this.errorSubscribers.has(onError)) {
+        try {
+          onError(result.error);
+        } catch {
+          // Isolate subscriber errors
         }
       }
     });
@@ -92,8 +101,9 @@ export class SessionBroadcaster {
         if (this.polling) return;
         this.polling = true;
         void this.fetchSnapshot()
-          .then((sessions) => {
-            if (sessions && this.intervalId !== null) this.broadcast(sessions);
+          .then((result) => {
+            if (result.sessions && this.intervalId !== null) this.broadcast(result.sessions);
+            else if (result.error && this.intervalId !== null) this.broadcastError(result.error);
           })
           .finally(() => {
             this.polling = false;
@@ -103,6 +113,7 @@ export class SessionBroadcaster {
 
     return () => {
       this.subscribers.delete(callback);
+      if (onError) this.errorSubscribers.delete(onError);
       if (this.subscribers.size === 0) {
         this.disconnect();
       }
@@ -119,30 +130,37 @@ export class SessionBroadcaster {
     }
   }
 
-  /** One-shot HTTP fetch of the current session list. */
-  private async fetchSnapshot(): Promise<SessionPatch[] | null> {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+  private broadcastError(error: string): void {
+    for (const callback of this.errorSubscribers) {
       try {
-        const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (!res.ok) {
-          console.warn(`[SessionBroadcaster] fetchSnapshot failed: HTTP ${res.status}`);
-          return null;
-        }
-        const data = (await res.json()) as { sessions?: SessionPatch[] };
-        return data.sessions ?? null;
+        callback(error);
       } catch (err) {
-        clearTimeout(timeoutId);
-        console.warn("[SessionBroadcaster] fetchSnapshot error:", err instanceof Error ? err.message : err);
-        return null;
+        console.error("[MuxServer] Session error subscriber threw:", err);
       }
+    }
+  }
+
+  /** One-shot HTTP fetch of the current session list. */
+  private async fetchSnapshot(): Promise<{ sessions: SessionPatch[] | null; error: string | null }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    try {
+      const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        const msg = `Session fetch failed: HTTP ${res.status}`;
+        console.warn(`[SessionBroadcaster] ${msg}`);
+        return { sessions: null, error: msg };
+      }
+      const data = (await res.json()) as { sessions?: SessionPatch[] };
+      return { sessions: data.sessions ?? null, error: null };
     } catch (err) {
-      console.warn("[SessionBroadcaster] fetchSnapshot unexpected error:", err instanceof Error ? err.message : err);
-      return null;
+      clearTimeout(timeoutId);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+      return { sessions: null, error: msg };
     }
   }
 
@@ -521,15 +539,22 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           }
         } else if (msg.ch === "subscribe") {
           if (msg.topics.includes("sessions") && !sessionUnsubscribe) {
-            sessionUnsubscribe = broadcaster.subscribe((sessions) => {
-              if (ws.readyState !== WebSocket.OPEN) return;
-              if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
-                console.warn("[MuxServer] Skipping session snapshot — socket backpressured");
-                return;
-              }
-              const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions };
-              ws.send(JSON.stringify(snapMsg));
-            });
+            sessionUnsubscribe = broadcaster.subscribe(
+              (sessions) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
+                  console.warn("[MuxServer] Skipping session snapshot — socket backpressured");
+                  return;
+                }
+                const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions };
+                ws.send(JSON.stringify(snapMsg));
+              },
+              (error) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                const errMsg: ServerMessage = { ch: "sessions", type: "error", error };
+                ws.send(JSON.stringify(errMsg));
+              },
+            );
           }
         }
       } catch (err) {

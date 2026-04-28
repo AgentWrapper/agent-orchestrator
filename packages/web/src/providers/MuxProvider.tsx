@@ -11,6 +11,8 @@ interface MuxContextValue {
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   status: "connecting" | "connected" | "reconnecting" | "disconnected";
   sessions: SessionPatch[];
+  /** Last session-fetch error from the server, null when healthy. */
+  lastError: string | null;
 }
 
 const MuxContext = React.createContext<MuxContextValue | undefined>(undefined);
@@ -76,6 +78,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     "connecting",
   );
   const [sessions, setSessions] = useState<SessionPatch[]>([]);
+  const [lastError, setLastError] = useState<string | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
@@ -155,8 +158,13 @@ export function MuxProvider({ children }: { children: ReactNode }) {
             } else if (msg.type === "error") {
               console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
             }
-          } else if (msg.ch === "sessions" && msg.type === "snapshot") {
-            setSessions(msg.sessions);
+          } else if (msg.ch === "sessions") {
+            if (msg.type === "snapshot") {
+              setSessions(msg.sessions);
+              setLastError(null);
+            } else if (msg.type === "error") {
+              setLastError(msg.error);
+            }
           }
         } catch (err) {
           console.error("[MuxProvider] Error processing message:", err);
@@ -319,8 +327,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       resizeTerminal,
       status,
       sessions,
+      lastError,
     }),
-    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
+    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions, lastError],
   );
 
   return <MuxContext.Provider value={contextValue}>{children}</MuxContext.Provider>;

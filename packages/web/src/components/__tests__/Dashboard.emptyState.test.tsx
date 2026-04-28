@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Dashboard } from "../Dashboard";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -8,8 +8,29 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+let currentMuxLastError: string | null = null;
+
+vi.mock("@/providers/MuxProvider", () => ({
+  useMuxOptional: () => ({
+    subscribeTerminal: () => () => {},
+    writeTerminal: () => {},
+    openTerminal: () => {},
+    closeTerminal: () => {},
+    resizeTerminal: () => {},
+    // "connecting" so muxSessions stays undefined — prevents snapshot dispatch from
+    // immediately flipping liveSessionsResolved and masking the SSR load error.
+    status: "connecting" as const,
+    sessions: [],
+    lastError: currentMuxLastError,
+  }),
+  MuxProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+import { Dashboard } from "../Dashboard";
+
 beforeEach(() => {
   global.fetch = vi.fn();
+  currentMuxLastError = null;
 });
 
 describe("Dashboard empty state", () => {
@@ -93,6 +114,51 @@ describe("Dashboard empty state", () => {
     expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
     expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
+  });
+
+  it("shows live load-error banner when WS transport reports a fetch failure", async () => {
+    let forceUpdate: () => void = () => {};
+    function Wrapper() {
+      const [, tick] = useState(0);
+      forceUpdate = () => tick((n) => n + 1);
+      return <Dashboard initialSessions={[]} />;
+    }
+
+    render(<Wrapper />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await act(async () => {
+      currentMuxLastError = "Session fetch failed: HTTP 503";
+      forceUpdate();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
+    expect(screen.getByRole("alert")).toHaveTextContent("Session fetch failed: HTTP 503");
+  });
+
+  it("clears live load-error banner when the next WS snapshot succeeds", async () => {
+    let forceUpdate: () => void = () => {};
+    function Wrapper() {
+      const [, tick] = useState(0);
+      forceUpdate = () => tick((n) => n + 1);
+      return <Dashboard initialSessions={[]} />;
+    }
+
+    render(<Wrapper />);
+
+    await act(async () => {
+      currentMuxLastError = "Session fetch failed: HTTP 503";
+      forceUpdate();
+    });
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await act(async () => {
+      currentMuxLastError = null;
+      forceUpdate();
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows empty state when only done sessions exist", () => {
