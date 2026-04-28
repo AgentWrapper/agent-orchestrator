@@ -1,0 +1,33 @@
+packages/cli/package.json
+  8dac8ac3c6c591c1 15
+.github/workflows/canary.yml
+  8dac8ac3c6c591c1 61
+.github/workflows/release.yml
+  8dac8ac3c6c591c1 31
+.changeset/config.json
+  8dac8ac3c6c591c1 31
+.changeset/fixed-orchestrator-identity.md
+  8dac8ac3c6c591c1 1
+.changeset/fix-start-restore-and-codex-resume.md
+  8dac8ac3c6c591c1 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "255308cab13f1ce04c47b5899a98d1de118a4cb2",
+  "prompts": {
+    "8dac8ac3c6c591c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5ea8ace4-3030-48f8-ad9d-7a8c1302e210",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 3,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
