@@ -83,6 +83,10 @@ export function DirectTerminal({
       params.delete("fullscreen");
     }
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    const currentUrl = searchParams.toString()
+      ? `${pathname}?${searchParams.toString()}`
+      : pathname;
+    if (newUrl === currentUrl) return;
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
 

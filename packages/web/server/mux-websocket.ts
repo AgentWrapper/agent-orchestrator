@@ -225,16 +225,18 @@ interface ManagedTerminal {
   buffer: string[];
   bufferBytes: number;
   reattachAttempts: number;
+  idleCleanupTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const RING_BUFFER_MAX = 50 * 1024; // 50KB max per terminal
 const MAX_REATTACH_ATTEMPTS = 3;
+const TERMINAL_IDLE_CLEANUP_MS = 5_000;
 
 /**
  * TerminalManager manages PTY processes independently of WebSocket connections.
  * A single manager instance is shared across all mux connections.
  */
-class TerminalManager {
+export class TerminalManager {
   private terminals = new Map<string, ManagedTerminal>();
   private TMUX: string;
 
@@ -271,8 +273,14 @@ class TerminalManager {
         buffer: [],
         bufferBytes: 0,
         reattachAttempts: 0,
+        idleCleanupTimer: null,
       };
       this.terminals.set(id, terminal);
+    }
+
+    if (terminal.idleCleanupTimer) {
+      clearTimeout(terminal.idleCleanupTimer);
+      terminal.idleCleanupTimer = null;
     }
 
     // If PTY is already attached, we're done
@@ -400,9 +408,14 @@ class TerminalManager {
    * Automatically opens the terminal if needed.
    * @param onExit - called when the PTY exits and cannot be re-attached
    */
-  subscribe(id: string, callback: (data: string) => void, onExit?: (exitCode: number) => void): () => void {
+  subscribe(
+    id: string,
+    callback: (data: string) => void,
+    onExit?: (exitCode: number) => void,
+    tmuxName?: string,
+  ): () => void {
     // Ensure terminal is open
-    this.open(id);
+    this.open(id, tmuxName);
     const terminal = this.terminals.get(id);
     if (!terminal) {
       throw new Error(`Failed to open terminal: ${id}`);
@@ -416,13 +429,19 @@ class TerminalManager {
     return () => {
       terminal.subscribers.delete(callback);
       if (onExit) terminal.exitCallbacks.delete(onExit);
-      // Kill PTY and clean up when the last subscriber leaves
+      // Give React remounts and WebSocket reconnects a brief window to
+      // re-subscribe without tearing down the underlying attach process.
       if (terminal.subscribers.size === 0) {
-        if (terminal.pty) {
-          terminal.pty.kill();
-          terminal.pty = null;
-        }
-        this.terminals.delete(id);
+        if (terminal.idleCleanupTimer) return;
+        terminal.idleCleanupTimer = setTimeout(() => {
+          terminal.idleCleanupTimer = null;
+          if (terminal.subscribers.size > 0) return;
+          if (terminal.pty) {
+            terminal.pty.kill();
+            terminal.pty = null;
+          }
+          this.terminals.delete(id);
+        }, TERMINAL_IDLE_CLEANUP_MS);
       }
     };
   }
@@ -536,11 +555,17 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                     }
                   },
                   (exitCode) => {
-                    const exitedMsg: ServerMessage = { ch: "terminal", id, type: "exited", code: exitCode };
+                    const exitedMsg: ServerMessage = {
+                      ch: "terminal",
+                      id,
+                      type: "exited",
+                      code: exitCode,
+                    };
                     if (ws.readyState === WebSocket.OPEN) {
                       ws.send(JSON.stringify(exitedMsg));
                     }
                   },
+                  "tmuxName" in msg ? msg.tmuxName : undefined,
                 );
                 subscriptions.set(id, unsub);
               }

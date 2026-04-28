@@ -9,6 +9,10 @@ export interface ProjectRouteData {
   projectId: string;
   project: ProjectConfig | null;
   degradedProject: DegradedProjectEntry | null;
+  defaults: {
+    agent?: string;
+    runtime?: string;
+  };
   projects: ProjectInfo[];
 }
 
@@ -27,6 +31,10 @@ export const getProjectRouteData = cache(async function getProjectRouteData(
     projectId,
     project,
     degradedProject,
+    defaults: {
+      agent: config.defaults.agent,
+      runtime: config.defaults.runtime,
+    },
     projects: getAllProjects(),
   };
 });

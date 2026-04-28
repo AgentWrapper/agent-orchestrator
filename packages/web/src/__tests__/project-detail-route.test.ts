@@ -7,6 +7,7 @@ import {
   getProjectDir,
   loadGlobalConfig,
   registerProjectInGlobalConfig,
+  saveGlobalConfig,
 } from "@aoagents/ao-core";
 
 const invalidatePortfolioServicesCache = vi.fn();
@@ -169,6 +170,33 @@ describe("/api/projects/[id]", () => {
         path: repoDir,
         agent: "codex",
         runtime: "tmux",
+      }),
+    });
+  });
+
+  it("GET includes effective defaults for settings placeholders", async () => {
+    const repoDir = path.join(tempRoot, "demo-defaults");
+    mkdirSync(repoDir, { recursive: true });
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const globalConfig = loadGlobalConfig(configPath);
+    if (!globalConfig) throw new Error("Expected global config");
+    globalConfig.defaults.agent = "codex";
+    globalConfig.defaults.runtime = "process";
+    saveGlobalConfig(globalConfig, configPath);
+
+    const { GET } = await import("@/app/api/projects/[id]/route");
+    const response = await GET(makeRequest("GET", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      project: expect.objectContaining({
+        id: effectiveId,
+        defaults: {
+          agent: "codex",
+          runtime: "process",
+        },
       }),
     });
   });

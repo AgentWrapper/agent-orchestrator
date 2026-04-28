@@ -70,6 +70,38 @@ describe("ProjectSettingsForm", () => {
     });
   });
 
+  it("uses effective defaults as behavior placeholders", () => {
+    render(
+      <ProjectSettingsForm
+        projectId="docs"
+        initialValues={{
+          agent: "",
+          runtime: "",
+          trackerPlugin: "",
+          scmPlugin: "",
+          reactions: "{}",
+          defaults: {
+            agent: "codex",
+            runtime: "process",
+            trackerPlugin: "linear",
+            scmPlugin: "gitlab",
+          },
+          identity: {
+            projectId: "docs",
+            path: "/tmp/docs",
+            repo: "org/repo",
+            defaultBranch: "main",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Agent")).toHaveAttribute("placeholder", "codex");
+    expect(screen.getByLabelText("Runtime")).toHaveAttribute("placeholder", "process");
+    expect(screen.getByLabelText("Tracker plugin")).toHaveAttribute("placeholder", "linear");
+    expect(screen.getByLabelText("SCM plugin")).toHaveAttribute("placeholder", "gitlab");
+  });
+
   it("shows an inline error for a 400 without losing form state", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,

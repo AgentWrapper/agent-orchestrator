@@ -32,6 +32,7 @@ describe("ProjectSettingsPage", () => {
     hoisted.getProjectRouteDataMock.mockResolvedValue({
       projectId: "docs",
       degradedProject: null,
+      defaults: { agent: "codex", runtime: "tmux" },
       projects: [{ id: "docs", name: "Docs" }],
       project: {
         name: "Docs",
@@ -62,6 +63,7 @@ describe("ProjectSettingsPage", () => {
     hoisted.getProjectRouteDataMock.mockResolvedValue({
       projectId: "broken",
       project: null,
+      defaults: { agent: "claude-code", runtime: "tmux" },
       projects: [{ id: "broken", name: "Broken" }],
       degradedProject: {
         projectId: "broken",

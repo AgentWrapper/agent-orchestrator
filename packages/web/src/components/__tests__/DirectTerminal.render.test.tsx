@@ -145,6 +145,16 @@ describe("DirectTerminal render", () => {
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
   });
 
+  it("does not replace the current URL when fullscreen state already matches", async () => {
+    render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Connected")).toBeInTheDocument(),
+    );
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
   it("keeps restart and fullscreen actions available in chromeless mode", async () => {
     render(
       <DirectTerminal
