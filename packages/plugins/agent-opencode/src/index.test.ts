@@ -20,19 +20,32 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   };
 });
 
-vi.mock("node:child_process", () => ({
-  execFile: (...args: unknown[]) => {
+vi.mock("node:child_process", () => {
+  const customSym = Symbol.for("nodejs.util.promisify.custom");
+  // Standard execFile callback signature: (err, stdout, stderr) as separate args.
+  const execFileMock = (...args: unknown[]) => {
     const callback = args[args.length - 1];
     if (typeof callback === "function") {
       const result = mockExecFileAsync(...args.slice(0, -1));
       if (result && typeof result.then === "function") {
         result
-          .then((r: { stdout: string; stderr: string }) => callback(null, r))
-          .catch((e: Error) => callback(e));
+          .then((r: { stdout: string; stderr: string }) =>
+            (callback as (e: Error | null, o: string, s: string) => void)(
+              null,
+              r.stdout ?? "",
+              r.stderr ?? "",
+            ),
+          )
+          .catch((e: Error) => (callback as (e: Error) => void)(e));
       }
     }
-  },
-}));
+    return undefined;
+  };
+  // promisify(execFile) custom resolution: returns {stdout, stderr} object.
+  (execFileMock as unknown as Record<symbol, unknown>)[customSym] = (...args: unknown[]) =>
+    mockExecFileAsync(...args);
+  return { execFile: execFileMock };
+});
 
 import { create, manifest, default as defaultExport } from "./index.js";
 

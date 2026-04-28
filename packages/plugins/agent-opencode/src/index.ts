@@ -19,10 +19,30 @@ import {
   type WorkspaceHooksConfig,
   type OpenCodeAgentConfig,
 } from "@aoagents/ao-core";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, type ExecFileOptions } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+// Variant of execFileAsync that closes the child's stdin immediately after
+// spawn. opencode's CLI reads from stdin when it sees a pipe and hangs
+// waiting for input that never arrives — polling `opencode session list
+// --format json` would otherwise orphan one process per call, leaking
+// ~150MB each. Used only for opencode invocations.
+const runOpencode = (
+  args: readonly string[],
+  options?: ExecFileOptions,
+): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = execFile("opencode", args as string[], options ?? {}, (err, stdout, stderr) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    });
+    child?.stdin?.end();
+  });
 
 interface OpenCodeSessionListEntry {
   id: string;
@@ -158,8 +178,7 @@ async function findOpenCodeSession(
   session: Session,
 ): Promise<OpenCodeSessionListEntry | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "opencode",
+    const { stdout } = await runOpencode(
       ["session", "list", "--format", "json"],
       { timeout: 30_000 },
     );
