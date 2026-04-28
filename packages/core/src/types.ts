@@ -436,7 +436,7 @@ export interface RuntimeMetrics {
 
 export interface AttachInfo {
   /** How to connect: tmux attach, docker exec, SSH, web URL, etc. */
-  type: "tmux" | "docker" | "ssh" | "web" | "process";
+  type: "tmux" | "zellij" | "docker" | "ssh" | "web" | "process";
   /** For tmux: session name. For docker: container ID. For web: URL. */
   target: string;
   /** Optional: command to run to attach */

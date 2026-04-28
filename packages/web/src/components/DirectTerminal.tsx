@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import type { TerminalTarget } from "@/lib/mux-protocol";
 
 import { getStoredFontSize } from "./terminal/terminal-font";
 import { TerminalControls } from "./terminal/TerminalControls";
@@ -18,6 +19,8 @@ interface DirectTerminalProps {
   sessionId: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
   tmuxName?: string;
+  /** Runtime-specific terminal attachment target. Prefer this over tmuxName for non-tmux runtimes. */
+  terminalTarget?: TerminalTarget;
   startFullscreen?: boolean;
   /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
@@ -39,6 +42,7 @@ interface DirectTerminalProps {
 export function DirectTerminal({
   sessionId,
   tmuxName,
+  terminalTarget,
   startFullscreen = false,
   variant = "agent",
   appearance = "theme",
@@ -69,7 +73,7 @@ export function DirectTerminal({
     variant,
     fontSize,
     autoFocus,
-    tmuxName,
+    terminalTarget: terminalTarget ?? (tmuxName ? { runtime: "tmux", sessionName: tmuxName } : undefined),
   });
 
   useFullscreenResize(fullscreen, sessionId, terminalInstance, fitAddon, terminalRef);

@@ -9,6 +9,7 @@
       "@aoagents/ao-cli",
       "@aoagents/ao",
       "@aoagents/ao-plugin-runtime-tmux",
+      "@aoagents/ao-plugin-runtime-zellij",
       "@aoagents/ao-plugin-runtime-process",
       "@aoagents/ao-plugin-agent-claude-code",
       "@aoagents/ao-plugin-agent-codex",

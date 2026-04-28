@@ -9,7 +9,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
@@ -17,10 +17,14 @@ import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js
 // across the boundary. Keep both in sync when updating the protocol.
 
 // ── Client → Server ──
+type TerminalTarget =
+  | { runtime: "tmux"; sessionName?: string }
+  | { runtime: "zellij"; sessionName: string };
+
 type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string }
+  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string; target?: TerminalTarget }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };
@@ -216,9 +220,37 @@ try {
   console.warn("[MuxServer] node-pty not available — mux server will be disabled.", err);
 }
 
+function findZellij(): string {
+  const candidates = [
+    process.env.ZELLIJ_PATH,
+    "/opt/homebrew/bin/zellij",
+    "/usr/local/bin/zellij",
+    "/usr/bin/zellij",
+  ].filter((candidate): candidate is string => !!candidate);
+
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, ["--version"], {
+      stdio: "ignore",
+      timeout: 5000,
+    });
+    if (!result.error) {
+      return candidate;
+    }
+  }
+
+  return "zellij";
+}
+
+interface ResolvedTerminalTarget {
+  runtime: "tmux" | "zellij";
+  sessionName: string;
+  command: string;
+  args: string[];
+}
+
 interface ManagedTerminal {
   id: string;
-  tmuxSessionId: string;
+  target: ResolvedTerminalTarget;
   pty: IPty | null;
   subscribers: Set<(data: string) => void>;
   exitCallbacks: Set<(exitCode: number) => void>;
@@ -236,35 +268,82 @@ const MAX_REATTACH_ATTEMPTS = 3;
  */
 class TerminalManager {
   private terminals = new Map<string, ManagedTerminal>();
-  private TMUX: string;
+  private readonly TMUX: string;
+  private readonly ZELLIJ: string;
 
   constructor(tmuxPath?: string) {
     this.TMUX = tmuxPath ?? findTmux();
+    this.ZELLIJ = findZellij();
+  }
+
+  private resolveTarget(
+    id: string,
+    requestedTarget?: TerminalTarget,
+    existing?: ManagedTerminal,
+  ): ResolvedTerminalTarget {
+    if (!requestedTarget && existing) {
+      return existing.target;
+    }
+
+    if (requestedTarget?.runtime === "zellij") {
+      if (!validateSessionId(requestedTarget.sessionName)) {
+        throw new Error(`Invalid Zellij session name: ${requestedTarget.sessionName}`);
+      }
+      return {
+        runtime: "zellij",
+        sessionName: requestedTarget.sessionName,
+        command: this.ZELLIJ,
+        args: ["attach", requestedTarget.sessionName],
+      };
+    }
+
+    const tmuxSessionId =
+      requestedTarget?.runtime === "tmux" && requestedTarget.sessionName
+        ? requestedTarget.sessionName
+        : resolveTmuxSession(id, this.TMUX);
+    if (!tmuxSessionId) {
+      throw new Error(`Session not found: ${id}`);
+    }
+
+    return {
+      runtime: "tmux",
+      sessionName: tmuxSessionId,
+      command: this.TMUX,
+      args: ["attach-session", "-t", tmuxSessionId],
+    };
+  }
+
+  private enableTmuxUi(sessionName: string): void {
+    const mouseProc = spawn(this.TMUX, ["set-option", "-t", sessionName, "mouse", "on"]);
+    mouseProc.on("error", (err) => {
+      console.error(`[MuxServer] Failed to set mouse mode for ${sessionName}:`, err.message);
+    });
+
+    const statusProc = spawn(this.TMUX, ["set-option", "-t", sessionName, "status", "off"]);
+    statusProc.on("error", (err) => {
+      console.error(`[MuxServer] Failed to hide status bar for ${sessionName}:`, err.message);
+    });
   }
 
   /**
    * Open/attach to a terminal. If already open, just return.
    * If has subscribers but PTY crashed, re-attach.
    */
-  open(id: string, tmuxName?: string): string {
+  open(id: string, requestedTarget?: TerminalTarget): ResolvedTerminalTarget {
     // Validate and resolve
     if (!validateSessionId(id)) {
       throw new Error(`Invalid session ID: ${id}`);
     }
 
-    // Use provided tmuxName, or reuse from existing terminal entry, or resolve
     const existing = this.terminals.get(id);
-    const tmuxSessionId = tmuxName ?? existing?.tmuxSessionId ?? resolveTmuxSession(id, this.TMUX);
-    if (!tmuxSessionId) {
-      throw new Error(`Session not found: ${id}`);
-    }
+    const target = this.resolveTarget(id, requestedTarget, existing);
 
     // Get or create terminal entry
     let terminal = this.terminals.get(id);
     if (!terminal) {
       terminal = {
         id,
-        tmuxSessionId,
+        target,
         pty: null,
         subscribers: new Set(),
         exitCallbacks: new Set(),
@@ -277,20 +356,12 @@ class TerminalManager {
 
     // If PTY is already attached, we're done
     if (terminal.pty) {
-      return tmuxSessionId;
+      return terminal.target;
     }
 
-    // Enable mouse mode
-    const mouseProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
-    mouseProc.on("error", (err) => {
-      console.error(`[MuxServer] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
-    });
-
-    // Hide the status bar
-    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
-    statusProc.on("error", (err) => {
-      console.error(`[MuxServer] Failed to hide status bar for ${tmuxSessionId}:`, err.message);
-    });
+    if (target.runtime === "tmux") {
+      this.enableTmuxUi(target.sessionName);
+    }
 
     // Build environment
     const homeDir = process.env.HOME || homedir();
@@ -310,7 +381,7 @@ class TerminalManager {
     }
 
     // Spawn PTY
-    const pty = ptySpawn(this.TMUX, ["attach-session", "-t", tmuxSessionId], {
+    const pty = ptySpawn(target.command, target.args, {
       name: "xterm-256color",
       cols: 80,
       rows: 24,
@@ -319,6 +390,7 @@ class TerminalManager {
     });
 
     terminal.pty = pty;
+    terminal.target = target;
 
     // Wire up data events
     pty.onData((data: string) => {
@@ -371,8 +443,8 @@ class TerminalManager {
       }
     });
 
-    console.log(`[MuxServer] Opened terminal ${id} (tmux: ${tmuxSessionId})`);
-    return tmuxSessionId;
+    console.log(`[MuxServer] Opened terminal ${id} (${target.runtime}: ${target.sessionName})`);
+    return target;
   }
 
   /**
@@ -501,7 +573,13 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           try {
             if (type === "open") {
               // Validate session exists
-              terminalManager.open(id, "tmuxName" in msg ? msg.tmuxName : undefined);
+              const target =
+                "target" in msg && msg.target
+                  ? msg.target
+                  : "tmuxName" in msg && msg.tmuxName
+                    ? { runtime: "tmux" as const, sessionName: msg.tmuxName }
+                    : undefined;
+              terminalManager.open(id, target);
 
               // Send opened confirmation (idempotent — safe to send on re-open)
               const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };

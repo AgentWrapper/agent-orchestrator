@@ -24,6 +24,7 @@ export type {
   CanonicalRuntimeState,
   CanonicalRuntimeReason,
   DashboardAttentionZoneMode,
+  RuntimeHandle,
 } from "@aoagents/ao-core/types";
 
 import {
@@ -48,6 +49,7 @@ import {
   type CanonicalRuntimeState,
   type CanonicalRuntimeReason,
   type DashboardAttentionZoneMode,
+  type RuntimeHandle,
 } from "@aoagents/ao-core/types";
 import type { AgentReportedState } from "@aoagents/ao-core";
 
@@ -112,6 +114,7 @@ export interface DashboardSession {
   createdAt: string;
   lastActivityAt: string;
   pr: DashboardPR | null;
+  runtimeHandle?: RuntimeHandle | null;
   metadata: Record<string, string>;
   agentReportAudit?: DashboardAgentReportAuditEntry[];
   attentionLevel?: AttentionLevel;

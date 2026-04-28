@@ -5,9 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
+  type RuntimeHandle,
   TERMINAL_STATUSES,
   NON_RESTORABLE_STATUSES,
 } from "@/lib/types";
+import type { TerminalTarget } from "@/lib/mux-protocol";
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -36,6 +38,53 @@ const DirectTerminal = dynamic(
     ),
   },
 );
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseRuntimeHandle(raw: string | undefined): RuntimeHandle | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || !isRecord(parsed.data)) return null;
+    if (typeof parsed.id !== "string" || typeof parsed.runtimeName !== "string") return null;
+    return {
+      id: parsed.id,
+      runtimeName: parsed.runtimeName,
+      data: parsed.data,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getTerminalTarget(session: DashboardSession): TerminalTarget | undefined {
+  const runtimeHandle =
+    session.runtimeHandle ?? parseRuntimeHandle(session.metadata["runtimeHandle"]);
+
+  if (runtimeHandle?.runtimeName === "zellij") {
+    const zellijSessionName = runtimeHandle.data["zellijSessionName"];
+    return {
+      runtime: "zellij",
+      sessionName:
+        typeof zellijSessionName === "string" && zellijSessionName.length > 0
+          ? zellijSessionName
+          : runtimeHandle.id,
+    };
+  }
+
+  if (runtimeHandle?.runtimeName === "tmux") {
+    return {
+      runtime: "tmux",
+      sessionName: session.metadata["tmuxName"] ?? runtimeHandle.id,
+    };
+  }
+
+  const tmuxName = session.metadata["tmuxName"];
+  return tmuxName ? { runtime: "tmux", sessionName: tmuxName } : undefined;
+}
 
 interface SessionDetailProps {
   session: DashboardSession;
@@ -77,6 +126,7 @@ export function SessionDetail({
   const headline = getSessionTitle(session);
 
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
+  const terminalTarget = getTerminalTarget(session);
 
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
@@ -209,6 +259,7 @@ export function SessionDetail({
                   <DirectTerminal
                     sessionId={session.id}
                     tmuxName={session.metadata?.tmuxName}
+                    terminalTarget={terminalTarget}
                     startFullscreen={startFullscreen}
                     variant={terminalVariant}
                     appearance="dark"

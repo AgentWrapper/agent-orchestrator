@@ -8,6 +8,7 @@ const {
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
+  zellijPlugin,
   claudePlugin,
   codexPlugin,
   opencodePlugin,
@@ -42,6 +43,7 @@ const {
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
+    zellijPlugin: { manifest: { name: "zellij" } },
     claudePlugin: { manifest: { name: "claude-code" } },
     codexPlugin: { manifest: { name: "codex" } },
     opencodePlugin: { manifest: { name: "opencode" } },
@@ -68,6 +70,7 @@ vi.mock("@aoagents/ao-core", () => ({
 }));
 
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
+vi.mock("@aoagents/ao-plugin-runtime-zellij", () => ({ default: zellijPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));

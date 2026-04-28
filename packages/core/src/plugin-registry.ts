@@ -38,6 +38,7 @@ function makeKey(slot: PluginSlot, name: string): string {
 const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = [
   // Runtimes
   { slot: "runtime", name: "tmux", pkg: "@aoagents/ao-plugin-runtime-tmux" },
+  { slot: "runtime", name: "zellij", pkg: "@aoagents/ao-plugin-runtime-zellij" },
   { slot: "runtime", name: "process", pkg: "@aoagents/ao-plugin-runtime-process" },
   // Agents
   { slot: "agent", name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },

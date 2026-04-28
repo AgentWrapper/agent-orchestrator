@@ -2,10 +2,14 @@ import type { AttentionLevel } from "./types";
 
 // ── Client → Server ──
 
+export type TerminalTarget =
+  | { runtime: "tmux"; sessionName?: string }
+  | { runtime: "zellij"; sessionName: string };
+
 export type ClientMessage =
   | { ch: "terminal"; id: string; type: "data"; data: string }
   | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string }
+  | { ch: "terminal"; id: string; type: "open"; tmuxName?: string; target?: TerminalTarget }
   | { ch: "terminal"; id: string; type: "close" }
   | { ch: "system"; type: "ping" }
   | { ch: "subscribe"; topics: ("sessions")[] };

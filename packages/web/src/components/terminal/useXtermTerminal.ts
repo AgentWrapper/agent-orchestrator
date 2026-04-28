@@ -12,6 +12,7 @@ import type { Terminal as TerminalType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 import { useMux } from "@/hooks/useMux";
+import type { TerminalTarget } from "@/lib/mux-protocol";
 import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
 
 import { registerClipboardHandlers } from "./terminal-clipboard";
@@ -23,8 +24,8 @@ export interface UseXtermTerminalOptions {
   variant: TerminalVariant;
   fontSize: number;
   autoFocus: boolean;
-  /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
-  tmuxName?: string;
+  /** Runtime-specific terminal attachment target. */
+  terminalTarget?: TerminalTarget;
 }
 
 export interface UseXtermTerminalResult {
@@ -48,7 +49,7 @@ export function useXtermTerminal(
   sessionId: string,
   options: UseXtermTerminalOptions,
 ): UseXtermTerminalResult {
-  const { appearance, variant, fontSize, autoFocus, tmuxName } = options;
+  const { appearance, variant, fontSize, autoFocus, terminalTarget } = options;
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
   const {
@@ -234,7 +235,7 @@ export function useXtermTerminal(
         // hazard if subscribeTerminal ever fires synchronously.
         let programmaticScroll = false;
 
-        openTerminal(sessionId, tmuxName);
+        openTerminal(sessionId, terminalTarget);
 
         unsubscribe = subscribeTerminal(sessionId, (data) => {
           if (selectionActive) {
@@ -320,7 +321,7 @@ export function useXtermTerminal(
   }, [
     appearance,
     sessionId,
-    tmuxName,
+    terminalTarget,
     variant,
     resolvedTheme,
     terminalThemes,
