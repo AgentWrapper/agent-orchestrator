@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
-import type { ClientMessage, ServerMessage, SessionPatch } from "@/lib/mux-protocol";
+import type { ClientMessage, ServerMessage, SessionPatch, TerminalTarget } from "@/lib/mux-protocol";
 
 interface MuxContextValue {
   subscribeTerminal: (id: string, callback: (data: string) => void) => () => void;
   writeTerminal: (id: string, data: string) => void;
-  openTerminal: (id: string, tmuxName?: string) => void;
+  openTerminal: (id: string, target?: TerminalTarget) => void;
   closeTerminal: (id: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   status: "connecting" | "connected" | "reconnecting" | "disconnected";
@@ -71,7 +71,7 @@ function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath
 export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
-  const openedTerminalsRef = useRef(new Map<string, string | undefined>());
+  const openedTerminalsRef = useRef(new Map<string, TerminalTarget | undefined>());
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
     "connecting",
   );
@@ -105,12 +105,12 @@ export function MuxProvider({ children }: { children: ReactNode }) {
         reconnectAttempt.current = 0;
 
         // Re-open previously opened terminals
-        for (const [terminalId, tmuxName] of openedTerminalsRef.current) {
+        for (const [terminalId, target] of openedTerminalsRef.current) {
           const openMsg: ClientMessage = {
             ch: "terminal",
             id: terminalId,
             type: "open",
-            ...(tmuxName && { tmuxName }),
+            ...(target && { target }),
           };
           ws.send(JSON.stringify(openMsg));
         }
@@ -137,7 +137,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
                 }
               }
             } else if (msg.type === "opened") {
-              // Terminal opened successfully — preserve existing tmuxName
+              // Terminal opened successfully — preserve existing target
               if (!openedTerminalsRef.current.has(msg.id)) {
                 openedTerminalsRef.current.set(msg.id, undefined);
               }
@@ -272,14 +272,14 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const openTerminal = useCallback((id: string, tmuxName?: string) => {
-    openedTerminalsRef.current.set(id, tmuxName);
+  const openTerminal = useCallback((id: string, target?: TerminalTarget) => {
+    openedTerminalsRef.current.set(id, target);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const msg: ClientMessage = {
         ch: "terminal",
         id,
         type: "open",
-        ...(tmuxName && { tmuxName }),
+        ...(target && { target }),
       };
       wsRef.current.send(JSON.stringify(msg));
     }

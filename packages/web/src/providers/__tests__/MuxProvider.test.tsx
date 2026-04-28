@@ -481,6 +481,53 @@ describe("MuxProvider terminal operations", () => {
     })).toBe(true);
   });
 
+  it("openTerminal sends runtime target when provided", async () => {
+    const { result, ws } = await setupConnected();
+    act(() =>
+      result.current.openTerminal("session-abc", { runtime: "zellij", sessionName: "session-abc" }),
+    );
+    const openMessage = ws.sentMessages
+      .map((m) => JSON.parse(m) as Record<string, unknown>)
+      .find((p) => p.ch === "terminal" && p.type === "open" && p.id === "session-abc");
+
+    expect(openMessage).toMatchObject({
+      target: { runtime: "zellij", sessionName: "session-abc" },
+    });
+  });
+
+  it("re-opens runtime targets on reconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+      act(() =>
+        result.current.openTerminal("session-abc", {
+          runtime: "zellij",
+          sessionName: "session-abc",
+        }),
+      );
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+
+      const openMessage = ws2.sentMessages
+        .map((m) => JSON.parse(m) as Record<string, unknown>)
+        .find((p) => p.ch === "terminal" && p.type === "open" && p.id === "session-abc");
+
+      expect(openMessage).toMatchObject({
+        target: { runtime: "zellij", sessionName: "session-abc" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closeTerminal sends close message", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.openTerminal("session-abc"));

@@ -188,6 +188,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
           state: normalizeDashboardPRState(session.lifecycle.pr.state),
         }
       : null,
+    runtimeHandle: session.runtimeHandle,
     metadata: session.metadata,
     agentReportAudit: [],
   });

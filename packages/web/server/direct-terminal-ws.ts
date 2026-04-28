@@ -96,7 +96,7 @@ const isMainModule =
 
 if (isMainModule) {
   const TMUX = findTmux();
-  console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
+  console.log(`[DirectTerminal] Using tmux fallback: ${TMUX}`);
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
   const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
