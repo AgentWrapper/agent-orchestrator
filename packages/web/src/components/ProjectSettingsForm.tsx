@@ -15,6 +15,12 @@ interface ProjectSettingsFormProps {
     trackerPlugin: string;
     scmPlugin: string;
     reactions: string;
+    defaults?: {
+      agent?: string;
+      runtime?: string;
+      trackerPlugin?: string;
+      scmPlugin?: string;
+    };
     identity: {
       projectId: string;
       path: string;
@@ -123,28 +129,28 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
             label="Agent"
             value={agent}
             onChange={setAgent}
-            placeholder="claude-code"
+            placeholder={initialValues.defaults?.agent ?? "claude-code"}
           />
           <EditableField
             id="runtime"
             label="Runtime"
             value={runtime}
             onChange={setRuntime}
-            placeholder="tmux"
+            placeholder={initialValues.defaults?.runtime ?? "tmux"}
           />
           <EditableField
             id="tracker-plugin"
             label="Tracker plugin"
             value={trackerPlugin}
             onChange={setTrackerPlugin}
-            placeholder="github"
+            placeholder={initialValues.defaults?.trackerPlugin ?? "github"}
           />
           <EditableField
             id="scm-plugin"
             label="SCM plugin"
             value={scmPlugin}
             onChange={setScmPlugin}
-            placeholder="github"
+            placeholder={initialValues.defaults?.scmPlugin ?? "github"}
           />
         </div>
 

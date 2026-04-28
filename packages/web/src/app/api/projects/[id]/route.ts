@@ -128,6 +128,10 @@ export async function GET(
           tracker: state.project?.tracker,
           scm: state.project?.scm,
           reactions: state.project?.reactions,
+          defaults: {
+            agent: state.config.defaults.agent,
+            runtime: state.config.defaults.runtime,
+          },
         },
       },
       { status: 200 },

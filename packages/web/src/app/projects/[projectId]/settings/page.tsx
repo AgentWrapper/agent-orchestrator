@@ -69,6 +69,12 @@ export default async function ProjectSettingsPage(props: {
             trackerPlugin: project.tracker?.plugin ?? "",
             scmPlugin: project.scm?.plugin ?? "",
             reactions: JSON.stringify(project.reactions ?? {}, null, 2),
+            defaults: {
+              agent: routeData.defaults.agent,
+              runtime: routeData.defaults.runtime,
+              trackerPlugin: project.tracker?.plugin,
+              scmPlugin: project.scm?.plugin,
+            },
             identity: {
               projectId,
               path: project.path,

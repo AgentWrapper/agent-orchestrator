@@ -21,6 +21,10 @@ interface ProjectSettingsResponse {
     tracker?: { plugin?: string };
     scm?: { plugin?: string };
     reactions?: Record<string, unknown>;
+    defaults?: {
+      agent?: string;
+      runtime?: string;
+    };
   };
   error?: string;
   degraded?: boolean;
@@ -96,6 +100,12 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
       trackerPlugin: project.tracker?.plugin ?? "",
       scmPlugin: project.scm?.plugin ?? "",
       reactions: JSON.stringify(project.reactions ?? {}, null, 2),
+      defaults: {
+        agent: project.defaults?.agent,
+        runtime: project.defaults?.runtime,
+        trackerPlugin: project.tracker?.plugin,
+        scmPlugin: project.scm?.plugin,
+      },
       identity: {
         projectId,
         path: project.path,
