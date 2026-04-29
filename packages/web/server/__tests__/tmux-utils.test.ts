@@ -775,6 +775,36 @@ describe("resolveTmuxSession", () => {
       );
     });
 
+    it("prefers the project-scoped storageKey when session IDs collide", () => {
+      const fs = {
+        readdir: () => [
+          "aaaaaaaaaaaa-alpha",
+          "bbbbbbbbbbbb-beta",
+        ],
+        exists: (p: string) =>
+          p.endsWith("/aaaaaaaaaaaa-alpha/sessions/app-1") ||
+          p.endsWith("/bbbbbbbbbbbb-beta/sessions/app-1"),
+        homedir: () => "/home/user",
+      };
+      const mockExec = vi.fn()
+        .mockImplementationOnce(() => {
+          throw new Error("session not found"); // exact match fails
+        })
+        .mockImplementationOnce(() => {
+          return ""; // project-scoped candidate succeeds
+        });
+
+      const result = resolveTmuxSession("app-1", TMUX, mockExec, fs, "beta");
+
+      expect(result).toBe("bbbbbbbbbbbb-beta-app-1");
+      expect(mockExec).toHaveBeenNthCalledWith(
+        2,
+        TMUX,
+        ["has-session", "-t", "=bbbbbbbbbbbb-beta-app-1"],
+        { timeout: 5000 },
+      );
+    });
+
     it("accepts wrapped storageKeys with spaces/unicode in the project name", () => {
       // Legacy storageKeys use basename(projectPath), which has no character
       // restrictions on-disk. Regexes that reject spaces or unicode would

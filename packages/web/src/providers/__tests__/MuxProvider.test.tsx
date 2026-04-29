@@ -244,7 +244,12 @@ describe("MuxProvider connection lifecycle", () => {
   });
 
   it("falls back gracefully when fetch fails", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network"); }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network");
+      }),
+    );
     renderHook(() => useMux(), { wrapper });
     await flushInit();
     // Still creates a WebSocket (using defaults)
@@ -252,8 +257,16 @@ describe("MuxProvider connection lifecycle", () => {
   });
 
   it("sets disconnected status when WebSocket constructor throws", async () => {
-    vi.stubGlobal("WebSocket", vi.fn(() => { throw new Error("unavailable"); }));
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    vi.stubGlobal(
+      "WebSocket",
+      vi.fn(() => {
+        throw new Error("unavailable");
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false })),
+    );
     const { result } = renderHook(() => useMux(), { wrapper });
     await flushInit();
     expect(result.current.status).toBe("disconnected");
@@ -271,10 +284,12 @@ describe("MuxProvider connection lifecycle", () => {
 
       act(() => result.current.openTerminal("session-abc"));
       // Confirm open message sent on ws1
-      expect(ws1.sentMessages.some((m) => {
-        const p = JSON.parse(m) as Record<string, unknown>;
-        return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
-      })).toBe(true);
+      expect(
+        ws1.sentMessages.some((m) => {
+          const p = JSON.parse(m) as Record<string, unknown>;
+          return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
+        }),
+      ).toBe(true);
 
       // Disconnect + reconnect
       act(() => ws1.simulateClose());
@@ -286,10 +301,12 @@ describe("MuxProvider connection lifecycle", () => {
       act(() => ws2.simulateOpen());
 
       // session-abc should be re-opened on ws2
-      expect(ws2.sentMessages.some((m) => {
-        const p = JSON.parse(m) as Record<string, unknown>;
-        return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
-      })).toBe(true);
+      expect(
+        ws2.sentMessages.some((m) => {
+          const p = JSON.parse(m) as Record<string, unknown>;
+          return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
+        }),
+      ).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -329,7 +346,9 @@ describe("MuxProvider message handling", () => {
     const { result, ws } = await setupConnected();
 
     const received: string[] = [];
-    act(() => { result.current.subscribeTerminal("s1", (d) => received.push(d)); });
+    act(() => {
+      result.current.subscribeTerminal("s1", (d) => received.push(d));
+    });
     act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "data", data: "hello" }));
 
     expect(received).toContain("hello");
@@ -354,10 +373,12 @@ describe("MuxProvider message handling", () => {
       const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       act(() => ws2.simulateOpen());
 
-      expect(ws2.sentMessages.some((m) => {
-        const p = JSON.parse(m) as Record<string, unknown>;
-        return p.ch === "terminal" && p.id === "s1";
-      })).toBe(true);
+      expect(
+        ws2.sentMessages.some((m) => {
+          const p = JSON.parse(m) as Record<string, unknown>;
+          return p.ch === "terminal" && p.id === "s1";
+        }),
+      ).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -367,7 +388,9 @@ describe("MuxProvider message handling", () => {
     const { result, ws } = await setupConnected();
 
     const received: string[] = [];
-    act(() => { result.current.subscribeTerminal("s1", (d) => received.push(d)); });
+    act(() => {
+      result.current.subscribeTerminal("s1", (d) => received.push(d));
+    });
     act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "exited", code: 1 }));
 
     expect(received.some((m) => m.includes("exited"))).toBe(true);
@@ -407,7 +430,9 @@ describe("MuxProvider message handling", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { result, ws } = await setupConnected();
 
-    act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "error", message: "PTY failed" }));
+    act(() =>
+      ws.simulateMessage({ ch: "terminal", id: "s1", type: "error", message: "PTY failed" }),
+    );
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("Terminal error"), expect.any(String));
     expect(result.current.status).toBe("connected");
     spy.mockRestore();
@@ -416,11 +441,21 @@ describe("MuxProvider message handling", () => {
   it("updates sessions on snapshot message", async () => {
     const { result, ws } = await setupConnected();
 
-    act(() => ws.simulateMessage({
-      ch: "sessions",
-      type: "snapshot",
-      sessions: [{ id: "s1", status: "working", activity: null, attentionLevel: "working", lastActivityAt: "" }],
-    }));
+    act(() =>
+      ws.simulateMessage({
+        ch: "sessions",
+        type: "snapshot",
+        sessions: [
+          {
+            id: "s1",
+            status: "working",
+            activity: null,
+            attentionLevel: "working",
+            lastActivityAt: "",
+          },
+        ],
+      }),
+    );
 
     expect(result.current.sessions.length).toBe(1);
     expect(result.current.sessions[0].id).toBe("s1");
@@ -458,10 +493,12 @@ describe("MuxProvider terminal operations", () => {
   it("writeTerminal sends data message", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.writeTerminal("s1", "hello\n"));
-    expect(ws.sentMessages.some((m) => {
-      const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "data" && p.data === "hello\n";
-    })).toBe(true);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "data" && p.data === "hello\n";
+      }),
+    ).toBe(true);
   });
 
   it("writeTerminal is no-op when WebSocket is not open", async () => {
@@ -475,38 +512,48 @@ describe("MuxProvider terminal operations", () => {
   it("openTerminal sends open message when connected", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.openTerminal("session-abc"));
-    expect(ws.sentMessages.some((m) => {
-      const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
-    })).toBe(true);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "open" && p.id === "session-abc";
+      }),
+    ).toBe(true);
   });
 
   it("closeTerminal sends close message", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.openTerminal("session-abc"));
     act(() => result.current.closeTerminal("session-abc"));
-    expect(ws.sentMessages.some((m) => {
-      const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "close" && p.id === "session-abc";
-    })).toBe(true);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "close" && p.id === "session-abc";
+      }),
+    ).toBe(true);
   });
 
   it("resizeTerminal sends resize message with cols and rows", async () => {
     const { result, ws } = await setupConnected();
     act(() => result.current.resizeTerminal("session-abc", 120, 40));
-    expect(ws.sentMessages.some((m) => {
-      const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "resize" && p.cols === 120 && p.rows === 40;
-    })).toBe(true);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "resize" && p.cols === 120 && p.rows === 40;
+      }),
+    ).toBe(true);
   });
 
   it("subscribeTerminal sends open for untracked terminal", async () => {
     const { result, ws } = await setupConnected();
-    act(() => { result.current.subscribeTerminal("session-new", () => {}); });
-    expect(ws.sentMessages.some((m) => {
-      const p = JSON.parse(m) as Record<string, unknown>;
-      return p.ch === "terminal" && p.type === "open" && p.id === "session-new";
-    })).toBe(true);
+    act(() => {
+      result.current.subscribeTerminal("session-new", () => {});
+    });
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "terminal" && p.type === "open" && p.id === "session-new";
+      }),
+    ).toBe(true);
   });
 
   it("subscribeTerminal unsubscribe stops data delivery", async () => {
@@ -514,13 +561,64 @@ describe("MuxProvider terminal operations", () => {
     const received: string[] = [];
     let unsub!: () => void;
 
-    act(() => { unsub = result.current.subscribeTerminal("s1", (d) => received.push(d)); });
+    act(() => {
+      unsub = result.current.subscribeTerminal("s1", (d) => received.push(d));
+    });
     act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "data", data: "before" }));
     act(() => unsub());
     act(() => ws.simulateMessage({ ch: "terminal", id: "s1", type: "data", data: "after" }));
 
     expect(received).toContain("before");
     expect(received).not.toContain("after");
+  });
+
+  it("keeps terminal subscribers scoped by project id", async () => {
+    const { result, ws } = await setupConnected();
+    const alpha: string[] = [];
+    const beta: string[] = [];
+
+    act(() => {
+      result.current.subscribeTerminal("app-1", (data) => alpha.push(data), "alpha");
+      result.current.subscribeTerminal("app-1", (data) => beta.push(data), "beta");
+    });
+
+    act(() =>
+      ws.simulateMessage({
+        ch: "terminal",
+        id: "app-1",
+        projectId: "alpha",
+        type: "data",
+        data: "a",
+      }),
+    );
+    act(() =>
+      ws.simulateMessage({
+        ch: "terminal",
+        id: "app-1",
+        projectId: "beta",
+        type: "data",
+        data: "b",
+      }),
+    );
+
+    expect(alpha).toEqual(["a"]);
+    expect(beta).toEqual(["b"]);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return (
+          p.ch === "terminal" && p.type === "open" && p.id === "app-1" && p.projectId === "alpha"
+        );
+      }),
+    ).toBe(true);
+    expect(
+      ws.sentMessages.some((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return (
+          p.ch === "terminal" && p.type === "open" && p.id === "app-1" && p.projectId === "beta"
+        );
+      }),
+    ).toBe(true);
   });
 });
 
@@ -548,7 +646,10 @@ describe("buildMuxWsUrl", () => {
   });
 
   it("uses path-based URL when port is empty (reverse proxy)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false })),
+    );
     Object.defineProperty(window, "location", {
       writable: true,
       value: { protocol: "http:", host: "localhost", hostname: "localhost", port: "" },

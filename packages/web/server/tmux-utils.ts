@@ -60,7 +60,11 @@ const defaultFs: FsAdapter = {
  * it finds a live tmux session — otherwise a stale metadata dir from
  * one project could shadow the live session of another.
  */
-function findStorageKeysForSession(sessionId: string, fs: FsAdapter): string[] {
+function findStorageKeysForSession(
+  sessionId: string,
+  fs: FsAdapter,
+  projectId?: string,
+): string[] {
   const aoBase = join(fs.homedir(), ".agent-orchestrator");
   let entries: string[];
   try {
@@ -70,14 +74,19 @@ function findStorageKeysForSession(sessionId: string, fs: FsAdapter): string[] {
   }
 
   const matches: string[] = [];
+  const projectMatches: string[] = [];
   for (const entry of entries) {
     if (!STORAGE_KEY_PATTERN.test(entry)) continue;
     const sessionFile = join(aoBase, entry, "sessions", sessionId);
     if (fs.exists(sessionFile)) {
-      matches.push(entry);
+      if (projectId && (entry === projectId || entry.endsWith(`-${projectId}`))) {
+        projectMatches.push(entry);
+      } else {
+        matches.push(entry);
+      }
     }
   }
-  return matches;
+  return [...projectMatches, ...matches];
 }
 
 /**
@@ -146,6 +155,7 @@ export function resolveTmuxSession(
   tmuxPath: string,
   execFn: typeof execFileSync = execFileSync,
   fs: FsAdapter = defaultFs,
+  projectId?: string,
 ): string | null {
   // Try exact match first using = prefix for exact matching (e.g., "ao-orchestrator")
   // Without =, tmux uses prefix matching: "ao-1" would match "ao-15"
@@ -161,7 +171,7 @@ export function resolveTmuxSession(
   // even when the storageKey is wrapped (`{hash}-{projectName}`). Walk
   // every candidate so a stale metadata dir in one project can't shadow
   // the live session of another project with the same sessionId.
-  for (const storageKey of findStorageKeysForSession(sessionId, fs)) {
+  for (const storageKey of findStorageKeysForSession(sessionId, fs, projectId)) {
     const tmuxName = `${storageKey}-${sessionId}`;
     try {
       execFn(tmuxPath, ["has-session", "-t", `=${tmuxName}`], { timeout: 5000 });

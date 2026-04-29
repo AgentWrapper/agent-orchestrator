@@ -16,6 +16,7 @@ export { resolveMonoFontFamily } from "./terminal/terminal-font";
 
 interface DirectTerminalProps {
   sessionId: string;
+  projectId?: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
   tmuxName?: string;
   startFullscreen?: boolean;
@@ -38,6 +39,7 @@ interface DirectTerminalProps {
  */
 export function DirectTerminal({
   sessionId,
+  projectId,
   tmuxName,
   startFullscreen = false,
   variant = "agent",
@@ -69,6 +71,7 @@ export function DirectTerminal({
     variant,
     fontSize,
     autoFocus,
+    projectId,
     tmuxName,
   });
 
