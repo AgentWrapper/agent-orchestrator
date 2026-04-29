@@ -477,7 +477,7 @@ function ProjectSidebarInner({
                   <Link
                     href={projectHref}
                     onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                       e.preventDefault();
                       e.stopPropagation();
                       navigate(projectHref);
