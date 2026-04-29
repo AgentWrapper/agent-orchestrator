@@ -4,6 +4,7 @@ import { getAttentionLevel } from "@/lib/types";
 import { filterWorkerSessions } from "@/lib/project-utils";
 
 export const dynamic = "force-dynamic";
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export async function GET(request: Request) {
   try {
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
         ? projectFilter
         : undefined;
 
-    const coreSessions = await sessionManager.listCached(requestedProjectId);
+    const coreSessions = await sessionManager.listLocal(requestedProjectId);
     const visibleSessions = filterWorkerSessions(coreSessions, projectFilter, config.projects);
 
     // Convert to dashboard format
@@ -33,12 +34,12 @@ export async function GET(request: Request) {
       lastActivityAt: session.lastActivityAt,
     }));
 
-    return Response.json({ sessions: patches });
+    return Response.json({ sessions: patches }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.error("[GET /api/sessions/patches]", err);
     return Response.json(
       { error: err instanceof Error ? err.message : "Failed to fetch session patches" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

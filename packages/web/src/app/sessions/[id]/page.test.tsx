@@ -213,7 +213,7 @@ describe("SessionPage project polling", () => {
 
     expect(
       vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions?view=sidebar"),
-    ).toHaveLength(3);
+    ).toHaveLength(6);
   });
 
   it("does not deadlock project polling after a cached worker poll is skipped", async () => {
@@ -886,6 +886,121 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
     ]);
   });
 
+  it("refreshes the sidebar immediately when mux sees a new session id", async () => {
+    const workerSession = makeWorkerSession();
+    const newWorkerSession: DashboardSession = {
+      ...makeWorkerSession(),
+      id: "worker-2",
+      branch: "feat/new-worker",
+      issueId: "https://linear.app/test/issue/INT-101",
+      issueUrl: "https://linear.app/test/issue/INT-101",
+      issueLabel: "INT-101",
+      summary: "New worker session",
+    };
+    let sidebarFetchCount = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [{ id: "my-app", name: "My App", sessionPrefix: "my-app" }],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => workerSession,
+        } as Response;
+      }
+
+      if (url === "/api/sessions?view=sidebar") {
+        sidebarFetchCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sessions: sidebarFetchCount === 1 ? [workerSession] : [workerSession, newWorkerSession],
+          }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ orchestratorId: "my-app-orchestrator" }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          gcTime: 0,
+          retry: false,
+        },
+      },
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <SessionPage />
+      </QueryClientProvider>,
+    );
+    await flushAsyncWork();
+
+    mockMuxState.current = {
+      status: "connected",
+      sessions: [
+        {
+          id: "worker-1",
+          status: "working",
+          activity: "active",
+          attentionLevel: "working",
+          lastActivityAt: workerSession.lastActivityAt,
+        },
+        {
+          id: "worker-2",
+          status: "working",
+          activity: "active",
+          attentionLevel: "working",
+          lastActivityAt: newWorkerSession.lastActivityAt,
+        },
+      ],
+    };
+
+    await act(async () => {
+      view.rerender(
+        <QueryClientProvider client={queryClient}>
+          <SessionPage />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushAsyncWork();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushAsyncWork();
+
+    const latestProps = projectSidebarSpy.mock.lastCall?.[0] as {
+      sessions?: DashboardSession[] | null;
+    };
+
+    expect(latestProps.sessions?.map((session) => session.id)).toEqual([
+      "worker-1",
+      "worker-2",
+    ]);
+  });
 
   it("redirects the legacy session URL to the project-scoped route for clean projects", async () => {
     mockPathname = "/sessions/worker-1";

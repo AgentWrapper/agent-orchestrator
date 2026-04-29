@@ -1554,9 +1554,12 @@ describe("API Routes", () => {
     it("returns patches array with lightweight fields", async () => {
       const res = await patchesGET(makeRequest("http://localhost:3000/api/sessions/patches"));
       expect(res.status).toBe(200);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
       expect(data.sessions.length).toBe(testSessions.length);
+      expect(mockSessionManager.listLocal).toHaveBeenCalled();
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
     it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {

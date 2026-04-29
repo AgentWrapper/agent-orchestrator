@@ -12,7 +12,10 @@ import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 import { type DashboardOrchestratorLink } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 function compareOrchestratorRecency(
   a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string },
@@ -125,7 +128,7 @@ export async function GET(request: Request) {
           orchestrators,
           sessions: [],
         },
-        { status: 200 },
+        { status: 200, headers: NO_STORE_HEADERS },
         correlationId,
       );
     }
@@ -187,7 +190,7 @@ export async function GET(request: Request) {
         orchestratorId,
         orchestrators,
       },
-      { status: 200 },
+      { status: 200, headers: NO_STORE_HEADERS },
       correlationId,
     );
   } catch (err) {
@@ -206,7 +209,7 @@ export async function GET(request: Request) {
     }
     return jsonWithCorrelation(
       { error: err instanceof Error ? err.message : "Failed to list sessions" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
       correlationId,
     );
   }
