@@ -95,6 +95,21 @@ describe("ProjectSidebar", () => {
     expect(dashboardLink).toHaveAttribute("href", "/projects/project-2");
   });
 
+  it("uses client navigation for the per-row dashboard button", () => {
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Project Two dashboard/ }));
+
+    expect(mockPush).toHaveBeenCalledWith("/projects/project-2");
+  });
+
   it("project toggle expands/collapses without navigating", () => {
     render(
       <ProjectSidebar

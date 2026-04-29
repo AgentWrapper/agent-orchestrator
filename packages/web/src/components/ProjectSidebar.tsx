@@ -477,8 +477,10 @@ function ProjectSidebarInner({
                   <Link
                     href={projectHref}
                     onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
                       e.stopPropagation();
-                      onMobileClose?.();
+                      navigate(projectHref);
                     }}
                     className="project-sidebar__proj-action"
                     aria-label={`Open ${project.name} dashboard`}
