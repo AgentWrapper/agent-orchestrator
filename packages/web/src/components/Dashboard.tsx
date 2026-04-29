@@ -800,6 +800,7 @@ function DashboardInner({
                     active={activeTab === "verification"}
                     projectId={projectId}
                     projects={projects}
+                    sessions={sessions}
                   />
                 )}
               </div>

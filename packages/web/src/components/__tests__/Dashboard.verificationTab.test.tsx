@@ -120,6 +120,6 @@ describe("Dashboard verification tab", () => {
     await waitFor(() => {
       expect(screen.queryByRole("link", { name: "검증 탭 추가" })).not.toBeInTheDocument();
     });
-    expect(screen.getByText("검증 대기 중인 이슈가 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText(/검증 대기 중인 이슈가 없습니다/)).toBeInTheDocument();
   });
 });
