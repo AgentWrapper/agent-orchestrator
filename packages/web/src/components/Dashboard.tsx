@@ -25,6 +25,7 @@ import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { VerificationTab } from "./VerificationTab";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -41,6 +42,7 @@ interface DashboardProps {
 const SIMPLE_KANBAN_LEVELS = ["working", "pending", "action", "merge"] as const;
 const DETAILED_KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
+type DashboardTab = "agents" | "verification";
 
 function formatRelativeTimeCompact(isoDate: string | null): string {
   if (!isoDate) return "just now";
@@ -72,6 +74,17 @@ function mergeOrchestrators(
   }
 
   return [...merged.values()];
+}
+
+function normalizeDashboardTab(value: string | null): DashboardTab {
+  return value === "verification" ? "verification" : "agents";
+}
+
+function dashboardTabHref(projectId: string | undefined, tab: DashboardTab): string {
+  const baseHref = projectId ? projectDashboardPath(projectId) : "/";
+  const params = new URLSearchParams();
+  if (tab !== "agents") params.set("tab", tab);
+  return params.size > 0 ? `${baseHref}?${params.toString()}` : baseHref;
 }
 
 function DoneCard({
@@ -176,6 +189,7 @@ function DashboardInner({
   const visibleDashboardLoadError =
     loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
   const searchParams = useSearchParams();
+  const activeTab = normalizeDashboardTab(searchParams.get("tab"));
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
@@ -615,134 +629,178 @@ function DashboardInner({
             <main className="dashboard-main dashboard-main--desktop overflow-y-auto">
               <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
-                <h1 className="dashboard-main__title">Dashboard</h1>
+                <h1 className="dashboard-main__title">대시보드</h1>
                 <p className="dashboard-main__subtitle">
-                  Live agent sessions, pull requests, and merge status.
+                  작업 지시, 세션 흐름, 검증 상태를 한곳에서 확인합니다.
                 </p>
               </div>
 
               <div className="dashboard-main__body">
-                {loadErrorBanner}
-                {anyRateLimited && !rateLimitDismissed && (
-                  <div className="dashboard-alert mb-4 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-                    <svg
-                      className="h-3.5 w-3.5 shrink-0"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <path d="M12 8v4M12 16h.01" />
-                    </svg>
-                    <span className="flex-1">
-                      GitHub API rate limited — PR data (CI status, review state, sizes) may be
-                      stale. Will retry automatically on next refresh.
-                    </span>
-                    <button
-                      onClick={() => setRateLimitDismissed(true)}
-                      className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-                      aria-label="Dismiss"
-                    >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
+                <nav
+                  className="mb-4 flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border-subtle)] pb-2"
+                  aria-label="대시보드 탭"
+                >
+                  <Link
+                    href={dashboardTabHref(projectId, "agents")}
+                    className={[
+                      "border px-3 py-1.5 text-[11px] font-semibold hover:no-underline",
+                      activeTab === "agents"
+                        ? "border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]"
+                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]",
+                    ].join(" ")}
+                    aria-current={activeTab === "agents" ? "page" : undefined}
+                  >
+                    에이전트
+                  </Link>
+                  <Link
+                    href={dashboardTabHref(projectId, "verification")}
+                    className={[
+                      "border px-3 py-1.5 text-[11px] font-semibold hover:no-underline",
+                      activeTab === "verification"
+                        ? "border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]"
+                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]",
+                    ].join(" ")}
+                    aria-current={activeTab === "verification" ? "page" : undefined}
+                  >
+                    검증
+                  </Link>
+                </nav>
 
-                {allProjectsView && (
-                  <ProjectOverviewGrid
-                    overviews={projectOverviews}
-                    onSpawnOrchestrator={handleSpawnOrchestrator}
-                    spawningProjectIds={spawningProjectIds}
-                    spawnErrors={spawnErrors}
-                    attentionZones={attentionZones}
-                  />
-                )}
-
-                {!allProjectsView && hasAnySessions && (
-                  <div className="kanban-board-wrap">
-                    <div
-                      className="kanban-board"
-                      data-columns={kanbanLevels.length}
-                      style={
-                        {
-                          "--kanban-column-count": kanbanLevels.length,
-                        } as React.CSSProperties
-                      }
-                    >
-                      {kanbanLevels.map((level) => (
-                        <AttentionZone
-                          key={level}
-                          level={level}
-                          sessions={grouped[level]}
-                          onSend={handleSend}
-                          onKill={handleKill}
-                          onMerge={handleMerge}
-                          onRestore={handleRestore}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {showEmptyState ? (
-                  <EmptyState
-                    orchestratorHref={orchestratorHref}
-                    onSpawnOrchestrator={
-                      canSpawnProjectOrchestrator && activeProject
-                        ? () => {
-                            void handleSpawnOrchestrator(activeProject);
-                          }
-                        : null
-                    }
-                    spawnLabel={isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
-                    spawnDisabled={isSpawningCurrentProject}
-                  />
-                ) : null}
-
-                {!allProjectsView && currentProjectSpawnError ? (
-                  <p className="mt-3 text-[11px] text-[var(--color-status-error)]">
-                    {currentProjectSpawnError}
-                  </p>
-                ) : null}
-
-                {!allProjectsView && grouped.done.length > 0 && (
-                  <div className="done-bar mt-6">
-                    <button
-                      type="button"
-                      className="done-bar__toggle"
-                      onClick={() => setDoneExpanded((v) => !v)}
-                      aria-expanded={doneExpanded}
-                    >
-                      <svg
-                        className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                      >
-                        <path d="m9 18 6-6-6-6" />
-                      </svg>
-                      <span className="done-bar__label">Done / Terminated</span>
-                      <span className="done-bar__count">{grouped.done.length}</span>
-                    </button>
-                    {doneExpanded && (
-                      <div className="done-bar__cards">
-                        {grouped.done.map((session) => (
-                          <DoneCard key={session.id} session={session} onRestore={handleRestore} />
-                        ))}
+                {activeTab === "agents" ? (
+                  <>
+                    {loadErrorBanner}
+                    {anyRateLimited && !rateLimitDismissed && (
+                      <div className="dashboard-alert mb-4 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+                        <svg
+                          className="h-3.5 w-3.5 shrink-0"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 8v4M12 16h.01" />
+                        </svg>
+                        <span className="flex-1">
+                          GitHub API rate limited — PR data (CI status, review state, sizes) may be
+                          stale. Will retry automatically on next refresh.
+                        </span>
+                        <button
+                          onClick={() => setRateLimitDismissed(true)}
+                          className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+                          aria-label="Dismiss"
+                        >
+                          <svg
+                            className="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
                     )}
-                  </div>
+
+                    {allProjectsView && (
+                      <ProjectOverviewGrid
+                        overviews={projectOverviews}
+                        onSpawnOrchestrator={handleSpawnOrchestrator}
+                        spawningProjectIds={spawningProjectIds}
+                        spawnErrors={spawnErrors}
+                        attentionZones={attentionZones}
+                      />
+                    )}
+
+                    {!allProjectsView && hasAnySessions && (
+                      <div className="kanban-board-wrap">
+                        <div
+                          className="kanban-board"
+                          data-columns={kanbanLevels.length}
+                          style={
+                            {
+                              "--kanban-column-count": kanbanLevels.length,
+                            } as React.CSSProperties
+                          }
+                        >
+                          {kanbanLevels.map((level) => (
+                            <AttentionZone
+                              key={level}
+                              level={level}
+                              sessions={grouped[level]}
+                              onSend={handleSend}
+                              onKill={handleKill}
+                              onMerge={handleMerge}
+                              onRestore={handleRestore}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {showEmptyState ? (
+                      <EmptyState
+                        orchestratorHref={orchestratorHref}
+                        onSpawnOrchestrator={
+                          canSpawnProjectOrchestrator && activeProject
+                            ? () => {
+                                void handleSpawnOrchestrator(activeProject);
+                              }
+                            : null
+                        }
+                        spawnLabel={isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
+                        spawnDisabled={isSpawningCurrentProject}
+                      />
+                    ) : null}
+
+                    {!allProjectsView && currentProjectSpawnError ? (
+                      <p className="mt-3 text-[11px] text-[var(--color-status-error)]">
+                        {currentProjectSpawnError}
+                      </p>
+                    ) : null}
+
+                    {!allProjectsView && grouped.done.length > 0 && (
+                      <div className="done-bar mt-6">
+                        <button
+                          type="button"
+                          className="done-bar__toggle"
+                          onClick={() => setDoneExpanded((v) => !v)}
+                          aria-expanded={doneExpanded}
+                        >
+                          <svg
+                            className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <path d="m9 18 6-6-6-6" />
+                          </svg>
+                          <span className="done-bar__label">Done / Terminated</span>
+                          <span className="done-bar__count">{grouped.done.length}</span>
+                        </button>
+                        {doneExpanded && (
+                          <div className="done-bar__cards">
+                            {grouped.done.map((session) => (
+                              <DoneCard
+                                key={session.id}
+                                session={session}
+                                onRestore={handleRestore}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <VerificationTab
+                    active={activeTab === "verification"}
+                    projectId={projectId}
+                    projects={projects}
+                  />
                 )}
               </div>
             </main>
