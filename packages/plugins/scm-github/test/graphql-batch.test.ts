@@ -963,6 +963,53 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       expect(result.shouldRefresh).toBe(true); // Not a cache hit — real error
       expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 1]"));
     });
+
+    it("should suppress repeated transient network warnings until connectivity returns", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        log: vi.fn(),
+        recordSuccess: vi.fn(),
+        recordError: vi.fn(),
+      };
+      const networkError = new Error(
+        "Command failed: gh api\nerror connecting to api.github.com\ncheck your internet connection",
+      );
+
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await expect(shouldRefreshPREnrichment(prs, [], mockObserver)).resolves.toMatchObject({
+        shouldRefresh: true,
+      });
+
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await expect(shouldRefreshPREnrichment(prs, [], mockObserver)).resolves.toMatchObject({
+        shouldRefresh: true,
+      });
+
+      expect(mockObserver.log).toHaveBeenCalledTimes(1);
+
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: 'HTTP/2 200\neTag: "abc123"',
+        stderr: "",
+      });
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(mockObserver.log).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("Guard 2: Commit Status ETag - Pending CI PRs", () => {

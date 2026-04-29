@@ -88,6 +88,8 @@ const etagCache: ETagCache = {
   reviewComments: new LRUCache(MAX_REVIEW_COMMENTS_ETAGS),
 };
 
+const transientNetworkWarningKeys = new Set<string>();
+
 /**
  * Result of checking if PR data has changed via ETag guards.
  */
@@ -113,6 +115,7 @@ export function clearETagCache(): void {
   etagCache.prList.clear();
   etagCache.commitStatus.clear();
   etagCache.reviewComments.clear();
+  transientNetworkWarningKeys.clear();
 }
 
 /**
@@ -392,6 +395,40 @@ function extractErrorOutput(err: unknown): string | null {
   return combined.length > 0 ? combined : null;
 }
 
+function isTransientNetworkError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return [
+    "error connecting to api.github.com",
+    "check your internet connection",
+    "could not resolve host",
+    "failed to connect to api.github.com",
+    "network is unreachable",
+    "connection timed out",
+    "connection reset",
+  ].some((pattern) => normalized.includes(pattern));
+}
+
+function warnETagGuardFailure(
+  observer: BatchObserver | undefined,
+  guard: string,
+  key: string,
+  message: string,
+): void {
+  const warningKey = `${guard}:${key}`;
+  if (isTransientNetworkError(message)) {
+    if (transientNetworkWarningKeys.has(warningKey)) {
+      return;
+    }
+    transientNetworkWarningKeys.add(warningKey);
+  }
+
+  observer?.log("warn", `[${guard}] ${message}`);
+}
+
+function markETagGuardSuccess(guard: string, key: string): void {
+  transientNetworkWarningKeys.delete(`${guard}:${key}`);
+}
+
 /**
  * Extract ETag from HTTP response output.
  * Used on both 200 and 304 paths — RFC 7232 allows servers to rotate
@@ -438,6 +475,7 @@ async function checkPRListETag(
       // Re-read ETag on 304 — RFC 7232 allows rotated validators
       const rotatedETag = extractETag(output);
       if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
+      markETagGuardSuccess("ETag Guard 1", repoKey);
       return false;
     }
 
@@ -447,6 +485,7 @@ async function checkPRListETag(
       setPRListETag(owner, repo, newETag);
     }
 
+    markETagGuardSuccess("ETag Guard 1", repoKey);
     // PR list changed - cost: 1 REST point
     return true;
   } catch (err) {
@@ -465,7 +504,12 @@ async function checkPRListETag(
     if (is304(errorMsg)) {
       return false;
     }
-    observer?.log("warn", `[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    warnETagGuardFailure(
+      observer,
+      "ETag Guard 1",
+      repoKey,
+      `PR list check failed for ${repoKey}: ${errorMsg}`,
+    );
     return true; // Assume changed to be safe
   }
 }
@@ -509,6 +553,7 @@ async function checkCommitStatusETag(
     if (is304(output)) {
       const rotatedETag = extractETag(output);
       if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
+      markETagGuardSuccess("ETag Guard 2", commitKey);
       return false;
     }
 
@@ -518,6 +563,7 @@ async function checkCommitStatusETag(
       setCommitStatusETag(owner, repo, sha, newETag);
     }
 
+    markETagGuardSuccess("ETag Guard 2", commitKey);
     // CI status changed - cost: 1 REST point
     return true;
   } catch (err) {
@@ -533,7 +579,12 @@ async function checkCommitStatusETag(
     if (is304(errorMsg)) {
       return false;
     }
-    observer?.log("warn", `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`);
+    warnETagGuardFailure(
+      observer,
+      "ETag Guard 2",
+      commitKey,
+      `Commit status check failed for ${commitKey}: ${errorMsg}`,
+    );
     return true; // Assume changed to be safe
   }
 }
