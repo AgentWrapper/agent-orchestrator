@@ -105,6 +105,43 @@ describe("list", () => {
     expect(readMetadataRaw(sessionsDir, "app-1")!["codexThreadId"]).toBe("thread-1");
   });
 
+  it("listLocal reads metadata without runtime or agent probes", async () => {
+    const runtimeWithSpy: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentWithSpy: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+      getSessionInfo: vi.fn().mockResolvedValue({ summary: "Live summary" }),
+    };
+    const registryWithSpies: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithSpy;
+        if (slot === "agent") return agentWithSpy;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/w1",
+      branch: "feat/a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSpies });
+    const sessions = await sm.listLocal("my-app");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("app-1");
+    expect(runtimeWithSpy.isAlive).not.toHaveBeenCalled();
+    expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
+    expect(agentWithSpy.getSessionInfo).not.toHaveBeenCalled();
+  });
+
   it("does not backfill role onto foreign bare-id orchestrator records (issue #1048)", async () => {
     // Regression guard for PR #1075 review comment: a legacy record whose id
     // is `{projectId}-orchestrator` (pre-numbered scheme, wrong prefix) must

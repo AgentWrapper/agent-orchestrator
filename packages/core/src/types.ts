@@ -1881,6 +1881,8 @@ export interface SessionManager {
 export interface OpenCodeSessionManager extends SessionManager {
   /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
+  /** List sessions from local metadata only, without live runtime or agent probes. */
+  listLocal(projectId?: string): Promise<Session[]>;
   listCached(projectId?: string): Promise<Session[]>;
   invalidateCache(): void;
 }

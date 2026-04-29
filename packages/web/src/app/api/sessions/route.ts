@@ -78,15 +78,20 @@ export async function GET(request: Request) {
     const activeOnly = searchParams.get("active") === "true";
     const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
     const fresh = searchParams.get("fresh") === "true";
+    const sidebarView = searchParams.get("view") === "sidebar";
 
     const { config, registry, sessionManager } = await getServices();
     const requestedProjectId =
       projectFilter && projectFilter !== "all" && config.projects[projectFilter]
         ? projectFilter
         : undefined;
-    const coreSessions = fresh
-      ? await sessionManager.list(requestedProjectId)
-      : await sessionManager.listCached(requestedProjectId);
+    // Sidebar navigation should be local and predictable: the live "fresh"
+    // path may probe runtimes, agents, OpenCode discovery, and tracker metadata.
+    const coreSessions = sidebarView
+      ? await sessionManager.listLocal(requestedProjectId)
+      : fresh
+        ? await sessionManager.list(requestedProjectId)
+        : await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = requestedProjectId
       ? listPreferredProjectOrchestrators(visibleSessions, config.projects)
@@ -106,7 +111,12 @@ export async function GET(request: Request) {
         startedAt,
         outcome: "success",
         statusCode: 200,
-        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length, fresh },
+        data: {
+          orchestratorOnly: true,
+          orchestratorCount: orchestrators.length,
+          fresh,
+          sidebarView,
+        },
       });
 
       return jsonWithCorrelation(
@@ -143,10 +153,12 @@ export async function GET(request: Request) {
       dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);
     }
 
-    const metadataSettled = await settlesWithin(
-      enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
-      METADATA_ENRICH_TIMEOUT_MS,
-    );
+    const metadataSettled = sidebarView
+      ? true
+      : await settlesWithin(
+          enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
+          METADATA_ENRICH_TIMEOUT_MS,
+        );
 
     if (metadataSettled) {
       // PR enrichment: read from session metadata (written by CLI lifecycle).
@@ -165,7 +177,7 @@ export async function GET(request: Request) {
       startedAt,
       outcome: "success",
       statusCode: 200,
-      data: { sessionCount: dashboardSessions.length, activeOnly, fresh },
+      data: { sessionCount: dashboardSessions.length, activeOnly, fresh, sidebarView },
     });
 
     return jsonWithCorrelation(

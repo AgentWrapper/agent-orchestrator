@@ -105,6 +105,7 @@ const multiProjectSessions: Session[] = [
 
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
+  listLocal: vi.fn(async () => testSessions),
   listCached: vi.fn(async () => testSessions),
   invalidateCache: vi.fn(),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
@@ -257,6 +258,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Re-set default return values
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
+  (mockSessionManager.listLocal as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
@@ -404,6 +406,50 @@ describe("API Routes", () => {
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
       expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+    });
+
+    it("uses local metadata only for sidebar view requests", async () => {
+      (mockSessionManager.listLocal as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+      const metadataSpy = vi.spyOn(serialize, "enrichSessionsMetadata");
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app&view=sidebar"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.listLocal).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+      expect(metadataSpy).not.toHaveBeenCalled();
+
+      metadataSpy.mockRestore();
+    });
+
+    it("uses local metadata only for sidebar orchestrator lookups", async () => {
+      (mockSessionManager.listLocal as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest(
+          "http://localhost:3000/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar",
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("app-orchestrator");
+      expect(data.sessions).toEqual([]);
+      expect(mockSessionManager.listLocal).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("my-app");
     });
 
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {

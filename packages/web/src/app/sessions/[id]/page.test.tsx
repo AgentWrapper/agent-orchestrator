@@ -139,7 +139,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -147,7 +147,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -181,20 +181,20 @@ describe("SessionPage project polling", () => {
       expect.any(Object),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions?fresh=true",
-      expect.any(Object),
+      "/api/sessions?view=sidebar",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
-      expect.any(Object),
+      "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     expect(
       vi
         .mocked(fetch)
         .mock.calls.filter(
-          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
+          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar",
         ),
     ).toHaveLength(1);
 
@@ -207,12 +207,12 @@ describe("SessionPage project polling", () => {
       vi
         .mocked(fetch)
         .mock.calls.filter(
-          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
+          ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar",
         ),
     ).toHaveLength(1);
 
     expect(
-      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions?fresh=true"),
+      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions?view=sidebar"),
     ).toHaveLength(3);
   });
 
@@ -244,7 +244,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -252,7 +252,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -260,7 +260,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&fresh=true") {
+      if (url === "/api/sessions?project=my-app&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -282,8 +282,8 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions?project=my-app&fresh=true",
-      expect.any(Object),
+      "/api/sessions?project=my-app&view=sidebar",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -375,7 +375,7 @@ describe("SessionPage project polling", () => {
         });
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -438,7 +438,7 @@ describe("SessionPage project polling", () => {
         return Promise.reject(new DOMException("Aborted", "AbortError"));
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -497,7 +497,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -505,7 +505,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -527,7 +527,7 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/projects")).toHaveLength(2);
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?fresh=true")).toHaveLength(
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?view=sidebar")).toHaveLength(
       2,
     );
   });
@@ -556,7 +556,7 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -564,7 +564,7 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return new Promise<Response>((_, reject) => {
           init?.signal?.addEventListener(
             "abort",
@@ -616,13 +616,13 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response);
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -690,7 +690,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: false,
           status: 500,
@@ -698,7 +698,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -751,7 +751,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         sidebarFetchCount += 1;
         if (sidebarFetchCount === 1) {
           return {
@@ -768,7 +768,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -840,13 +840,13 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response);
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -911,7 +911,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -919,7 +919,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=my-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -963,7 +963,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -971,7 +971,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?project=broken-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=broken-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -1018,7 +1018,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?fresh=true") {
+      if (url === "/api/sessions?view=sidebar") {
         return {
           ok: true,
           status: 200,
@@ -1026,7 +1026,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
         } as Response;
       }
 
-      if (url === "/api/sessions?project=other-app&orchestratorOnly=true&fresh=true") {
+      if (url === "/api/sessions?project=other-app&orchestratorOnly=true&view=sidebar") {
         return {
           ok: true,
           status: 200,
