@@ -8,13 +8,27 @@ const {
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
+  processPlugin,
+  aiderPlugin,
   claudePlugin,
   codexPlugin,
+  cursorPlugin,
   opencodePlugin,
   worktreePlugin,
+  clonePlugin,
   scmPlugin,
+  scmGitlabPlugin,
+  terminalIterm2Plugin,
+  terminalWebPlugin,
   trackerGithubPlugin,
+  trackerGitlabPlugin,
   trackerLinearPlugin,
+  notifierComposioPlugin,
+  notifierDesktopPlugin,
+  notifierDiscordPlugin,
+  notifierOpenClawPlugin,
+  notifierSlackPlugin,
+  notifierWebhookPlugin,
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
   const mockGetGlobalConfigPath = vi.fn();
@@ -42,13 +56,27 @@ const {
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
+    processPlugin: { manifest: { name: "process" } },
+    aiderPlugin: { manifest: { name: "aider" } },
     claudePlugin: { manifest: { name: "claude-code" } },
     codexPlugin: { manifest: { name: "codex" } },
+    cursorPlugin: { manifest: { name: "cursor" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
+    clonePlugin: { manifest: { name: "clone" } },
     scmPlugin: { manifest: { name: "github" } },
+    scmGitlabPlugin: { manifest: { name: "gitlab" } },
+    terminalIterm2Plugin: { manifest: { name: "iterm2" } },
+    terminalWebPlugin: { manifest: { name: "web" } },
     trackerGithubPlugin: { manifest: { name: "github" } },
+    trackerGitlabPlugin: { manifest: { name: "gitlab" } },
     trackerLinearPlugin: { manifest: { name: "linear" } },
+    notifierComposioPlugin: { manifest: { name: "composio" } },
+    notifierDesktopPlugin: { manifest: { name: "desktop" } },
+    notifierDiscordPlugin: { manifest: { name: "discord" } },
+    notifierOpenClawPlugin: { manifest: { name: "openclaw" } },
+    notifierSlackPlugin: { manifest: { name: "slack" } },
+    notifierWebhookPlugin: { manifest: { name: "webhook" } },
   };
 });
 
@@ -68,13 +96,27 @@ vi.mock("@aoagents/ao-core", () => ({
 }));
 
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
+vi.mock("@aoagents/ao-plugin-runtime-process", () => ({ default: processPlugin }));
+vi.mock("@aoagents/ao-plugin-agent-aider", () => ({ default: aiderPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
+vi.mock("@aoagents/ao-plugin-agent-cursor", () => ({ default: cursorPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
+vi.mock("@aoagents/ao-plugin-workspace-clone", () => ({ default: clonePlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
+vi.mock("@aoagents/ao-plugin-scm-gitlab", () => ({ default: scmGitlabPlugin }));
+vi.mock("@aoagents/ao-plugin-terminal-iterm2", () => ({ default: terminalIterm2Plugin }));
+vi.mock("@aoagents/ao-plugin-terminal-web", () => ({ default: terminalWebPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
+vi.mock("@aoagents/ao-plugin-tracker-gitlab", () => ({ default: trackerGitlabPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: trackerLinearPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-composio", () => ({ default: notifierComposioPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-desktop", () => ({ default: notifierDesktopPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-discord", () => ({ default: notifierDiscordPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-openclaw", () => ({ default: notifierOpenClawPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-slack", () => ({ default: notifierSlackPlugin }));
+vi.mock("@aoagents/ao-plugin-notifier-webhook", () => ({ default: notifierWebhookPlugin }));
 
 describe("services", () => {
   beforeEach(() => {
@@ -118,6 +160,26 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
+  });
+
+  it("registers built-in plugins that the web server must bundle statically", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(processPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(aiderPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(clonePlugin);
+    expect(mockRegister).toHaveBeenCalledWith(scmGitlabPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(trackerGitlabPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierComposioPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierDesktopPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierDiscordPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierOpenClawPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierSlackPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(notifierWebhookPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(terminalIterm2Plugin);
+    expect(mockRegister).toHaveBeenCalledWith(terminalWebPlugin);
   });
 
   it("caches initialized services across repeated calls", async () => {

@@ -617,6 +617,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@aoagents/ao-plugin-agent-aider':
+        specifier: workspace:*
+        version: link:../plugins/agent-aider
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
@@ -629,18 +632,54 @@ importers:
       '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
+      '@aoagents/ao-plugin-notifier-composio':
+        specifier: workspace:*
+        version: link:../plugins/notifier-composio
+      '@aoagents/ao-plugin-notifier-desktop':
+        specifier: workspace:*
+        version: link:../plugins/notifier-desktop
+      '@aoagents/ao-plugin-notifier-discord':
+        specifier: workspace:*
+        version: link:../plugins/notifier-discord
+      '@aoagents/ao-plugin-notifier-openclaw':
+        specifier: workspace:*
+        version: link:../plugins/notifier-openclaw
+      '@aoagents/ao-plugin-notifier-slack':
+        specifier: workspace:*
+        version: link:../plugins/notifier-slack
+      '@aoagents/ao-plugin-notifier-webhook':
+        specifier: workspace:*
+        version: link:../plugins/notifier-webhook
+      '@aoagents/ao-plugin-runtime-process':
+        specifier: workspace:*
+        version: link:../plugins/runtime-process
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
       '@aoagents/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
+      '@aoagents/ao-plugin-scm-gitlab':
+        specifier: workspace:*
+        version: link:../plugins/scm-gitlab
+      '@aoagents/ao-plugin-terminal-iterm2':
+        specifier: workspace:*
+        version: link:../plugins/terminal-iterm2
+      '@aoagents/ao-plugin-terminal-web':
+        specifier: workspace:*
+        version: link:../plugins/terminal-web
       '@aoagents/ao-plugin-tracker-github':
         specifier: workspace:*
         version: link:../plugins/tracker-github
+      '@aoagents/ao-plugin-tracker-gitlab':
+        specifier: workspace:*
+        version: link:../plugins/tracker-gitlab
       '@aoagents/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
+      '@aoagents/ao-plugin-workspace-clone':
+        specifier: workspace:*
+        version: link:../plugins/workspace-clone
       '@aoagents/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
