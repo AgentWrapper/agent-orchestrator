@@ -180,6 +180,8 @@ export function sessionToDashboard(session: Session): DashboardSession {
     displayName: session.metadata["displayName"] ?? null,
     summary,
     summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
+    agentSessionId: session.agentInfo?.agentSessionId ?? null,
+    agentCost: session.agentInfo?.cost ?? null,
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr

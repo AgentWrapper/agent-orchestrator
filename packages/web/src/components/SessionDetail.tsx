@@ -25,6 +25,8 @@ import { sessionActivityMeta } from "./session-detail-utils";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
+type SessionDetailTab = "agent" | "tokens-skills";
+
 const DirectTerminal = dynamic(
   () => import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
   {
@@ -67,6 +69,7 @@ export function SessionDetail({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [activeTab, setActiveTab] = useState<SessionDetailTab>("agent");
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
   const isRestorable = terminalEnded && !NON_RESTORABLE_STATUSES.has(session.status);
@@ -195,8 +198,31 @@ export function SessionDetail({
 
           <div className="dashboard-main dashboard-main--desktop">
             <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
+              <div className="session-detail-tabs" role="tablist" aria-label="세션 상세 탭">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "agent"}
+                  className="session-detail-tab"
+                  onClick={() => setActiveTab("agent")}
+                >
+                  에이전트
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "tokens-skills"}
+                  className="session-detail-tab"
+                  onClick={() => setActiveTab("tokens-skills")}
+                >
+                  토큰·스킬
+                </button>
+              </div>
+
               <div className="flex-1 min-h-0 flex flex-col">
-                {!showTerminal ? (
+                {activeTab === "tokens-skills" ? (
+                  <TokensSkillsPanel session={session} />
+                ) : !showTerminal ? (
                   <div className="session-detail-terminal-placeholder h-full" />
                 ) : terminalEnded ? (
                   <SessionEndedSummary
@@ -236,5 +262,77 @@ export function SessionDetail({
         />
       </div>
     </SidebarContext.Provider>
+  );
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("ko-KR").format(value);
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat("ko-KR", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value < 1 ? 4 : 2,
+  }).format(value);
+}
+
+function TokensSkillsPanel({ session }: { session: DashboardSession }) {
+  const cost = session.agentCost;
+  const totalTokens = cost ? cost.inputTokens + cost.outputTokens : null;
+  const skillRows = [
+    { label: "에이전트", value: session.metadata["agent"] },
+    { label: "모델", value: session.metadata["model"] },
+    { label: "권한 모드", value: session.metadata["permissions"] },
+    { label: "서브에이전트", value: session.metadata["subagent"] },
+    { label: "내부 세션", value: session.agentSessionId },
+  ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+
+  return (
+    <div className="session-detail-info-panel">
+      <section className="session-detail-info-section" aria-labelledby="session-token-title">
+        <div className="session-detail-info-section__header">
+          <h2 id="session-token-title">토큰 사용량</h2>
+          {cost ? <span>{formatUsd(cost.estimatedCostUsd)}</span> : null}
+        </div>
+        {cost && totalTokens !== null ? (
+          <div className="session-detail-token-grid">
+            <MetricBlock label="입력 토큰" value={formatTokenCount(cost.inputTokens)} />
+            <MetricBlock label="출력 토큰" value={formatTokenCount(cost.outputTokens)} />
+            <MetricBlock label="전체 토큰" value={formatTokenCount(totalTokens)} />
+            <MetricBlock label="예상 비용" value={formatUsd(cost.estimatedCostUsd)} />
+          </div>
+        ) : (
+          <p className="session-detail-info-empty">이 세션에서 수집된 토큰 데이터가 없습니다.</p>
+        )}
+      </section>
+
+      <section className="session-detail-info-section" aria-labelledby="session-skills-title">
+        <div className="session-detail-info-section__header">
+          <h2 id="session-skills-title">스킬 구성</h2>
+        </div>
+        {skillRows.length > 0 ? (
+          <dl className="session-detail-skill-list">
+            {skillRows.map((row) => (
+              <div key={row.label} className="session-detail-skill-list__row">
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="session-detail-info-empty">이 세션에 기록된 스킬 정보가 없습니다.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function MetricBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="session-detail-metric-block">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }

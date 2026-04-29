@@ -109,12 +109,20 @@ export interface DashboardSession {
   summary: string | null;
   /** True when the summary is a low-quality fallback (e.g. truncated spawn prompt) */
   summaryIsFallback: boolean;
+  agentSessionId: string | null;
+  agentCost: DashboardAgentCost | null;
   createdAt: string;
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
   agentReportAudit?: DashboardAgentReportAuditEntry[];
   attentionLevel?: AttentionLevel;
+}
+
+export interface DashboardAgentCost {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
 }
 
 export interface DashboardAgentReportAuditSnapshot {

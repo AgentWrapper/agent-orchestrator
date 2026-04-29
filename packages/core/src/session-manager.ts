@@ -1357,6 +1357,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
         ...(spawnConfig.prompt ? { userPrompt: spawnConfig.prompt } : {}),
         ...(displayName ? { displayName } : {}),
+        ...(selection.model ? { model: selection.model } : {}),
+        ...(selection.permissions ? { permissions: selection.permissions } : {}),
+        ...(agentLaunchConfig.subagent ? { subagent: agentLaunchConfig.subagent } : {}),
       },
     };
 
@@ -1379,6 +1382,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
         agent: selection.agentName, // Persist agent name for lifecycle manager
+        model: selection.model,
+        permissions: selection.permissions,
+        subagent: agentLaunchConfig.subagent,
         createdAt: createdAt.toISOString(),
         runtimeHandle: handle,
         opencodeSessionId: reusedOpenCodeSessionId,
