@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -203,7 +211,7 @@ exit 0`,
       encoding: "utf8",
     });
 
-    const commands = readFileSync(commandLog, "utf8");
+    const commands = existsSync(commandLog) ? readFileSync(commandLog, "utf8") : "";
     rmSync(tempRoot, { recursive: true, force: true });
 
     expect(result.status).toBe(0);

@@ -225,7 +225,7 @@ check_launcher() {
       return
     fi
     if [ -t 0 ]; then
-      printf '  Launcher refresh needs elevated permissions. Retrying with sudo...\n'
+      printf '  Launcher refresh failed. Retrying with sudo...\n'
       if (cd "$REPO_ROOT/packages/ao" && sudo npm link --force >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
         fixed "ao launcher refreshed with sudo npm link --force"
         return

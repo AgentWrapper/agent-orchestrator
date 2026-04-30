@@ -200,7 +200,7 @@ if [ "$SMOKE_ONLY" = false ]; then
       if npm link --force 2>/dev/null; then
         :
       elif [ -t 0 ]; then
-        printf '  Launcher refresh needs elevated permissions. Retrying with sudo...\n'
+        printf '  Launcher refresh failed. Retrying with sudo...\n'
         sudo npm link --force
       else
         printf 'ERROR: Launcher refresh failed. Run manually: cd %s/packages/ao && sudo npm link --force\n' "$REPO_ROOT"

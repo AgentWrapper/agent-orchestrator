@@ -140,7 +140,7 @@ cd packages/ao
 if npm link --force 2>/dev/null; then
   :
 elif [ "$INTERACTIVE" = true ]; then
-  echo "  Launcher refresh needs elevated permissions. Retrying with sudo..."
+  echo "  Launcher refresh failed. Retrying with sudo..."
   sudo npm link --force
 else
   echo "ERROR: Launcher refresh failed. Run manually: cd packages/ao && sudo npm link --force"
