@@ -1,0 +1,40 @@
+packages/web/src/components/SessionCard.tsx
+  4515c52800cf1fcc 652-676,678-685
+packages/web/src/__tests__/components.test.tsx
+  4515c52800cf1fcc 325-390
+packages/ao/bin/postinstall.js
+  64f98e6bccb3de18 10-14,20,38,48,52-79,81-82,88,101,105,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4e27bbf104a8f05e49238476273b561f92971278",
+  "prompts": {
+    "4515c52800cf1fcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "75c36544-a339-4d25-9a76-77d4758a8486",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 86,
+      "overriden_lines": 0
+    },
+    "64f98e6bccb3de18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07a8fc84-f335-46f2-8707-059dad5cc430",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 145,
+      "overriden_lines": 0
+    }
+  }
+}
