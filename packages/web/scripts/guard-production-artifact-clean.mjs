@@ -1,8 +1,8 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, normalize, join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { join, normalize, resolve } from "node:path";
 
 const webDir = normalize(resolve(process.cwd()));
 const runningPath = join(homedir(), ".agent-orchestrator", "running.json");
@@ -27,34 +27,64 @@ function readRunningState() {
   }
 }
 
-function lsof(args) {
+function execText(command, args) {
   try {
-    return execFileSync("lsof", args, {
+    return execFileSync(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-  } catch {
-    return "";
+  } catch (error) {
+    return error && error.code === "ENOENT" ? null : "";
   }
+}
+
+function lsof(args) {
+  return execText("lsof", args);
 }
 
 function processCwd(pid) {
   const output = lsof(["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
+  if (!output) return null;
   const cwdLine = output.split("\n").find((line) => line.startsWith("n"));
   return cwdLine ? normalize(cwdLine.slice(1)) : null;
 }
 
+function pidsListeningOnPort(port) {
+  const lsofOutput = lsof(["-ti", `:${port}`, "-sTCP:LISTEN"]);
+  if (lsofOutput !== null) {
+    return lsofOutput
+      .split("\n")
+      .map((pid) => pid.trim())
+      .filter((pid) => /^\d+$/.test(pid));
+  }
+
+  if (process.platform !== "win32") return [];
+
+  const netstatOutput = execText("netstat", ["-ano", "-p", "tcp"]);
+  if (!netstatOutput) return [];
+
+  return netstatOutput
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter((columns) => columns.length >= 5)
+    .filter((columns) => columns[1]?.endsWith(`:${port}`) && columns[3] === "LISTENING")
+    .map((columns) => columns[4])
+    .filter((pid) => typeof pid === "string" && /^\d+$/.test(pid));
+}
+
 const running = readRunningState();
 if (running) {
-  const pids = lsof(["-ti", `:${running.port}`, "-sTCP:LISTEN"])
-    .split("\n")
-    .map((pid) => pid.trim())
-    .filter((pid) => /^\d+$/.test(pid));
+  const pids = pidsListeningOnPort(running.port);
+  const matchingPid =
+    process.platform === "win32" ? pids[0] : pids.find((pid) => processCwd(pid) === webDir);
 
-  const matchingPid = pids.find((pid) => processCwd(pid) === webDir);
   if (matchingPid) {
+    const checkoutDetail =
+      process.platform === "win32"
+        ? "AO dashboard is running on the configured port"
+        : "AO dashboard is running from this checkout";
     console.error(
-      `Refusing to delete production dashboard artifacts while AO dashboard is running from this checkout (PID ${matchingPid}, port ${running.port}).\n` +
+      `Refusing to delete production dashboard artifacts while ${checkoutDetail} (PID ${matchingPid}, port ${running.port}).\n` +
         "Stop it first with `ao stop`, or rebuild through `ao start --rebuild` / `ao dashboard --rebuild` so AO can stop the old dashboard safely.",
     );
     process.exit(1);

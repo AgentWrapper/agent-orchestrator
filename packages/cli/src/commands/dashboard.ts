@@ -103,8 +103,8 @@ export function registerDashboard(program: Command): void {
 
         process.exit(code ?? 0);
       });
+      /* c8 ignore stop */
     });
-  /* c8 ignore stop */
 }
 
 /**
