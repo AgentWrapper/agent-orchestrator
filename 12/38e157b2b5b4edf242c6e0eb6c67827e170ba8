@@ -1,0 +1,23 @@
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  024df4bfb8902060 1283-1288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1238e157b2b5b4edf242c6e0eb6c67827e170ba8",
+  "prompts": {
+    "024df4bfb8902060": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dde46-c8f6-7122-a611-179d527e9844",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 6,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
