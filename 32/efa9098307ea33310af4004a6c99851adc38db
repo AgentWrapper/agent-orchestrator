@@ -1,0 +1,25 @@
+packages/web/package.json
+  db2489671a1d40be 19
+packages/cli/src/lib/dashboard-rebuild.ts
+  db2489671a1d40be 112,114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "32efa9098307ea33310af4004a6c99851adc38db",
+  "prompts": {
+    "db2489671a1d40be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17bad325-141b-4dbe-a874-260e387e94ca",
+        "model": "<synthetic>"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 2,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
