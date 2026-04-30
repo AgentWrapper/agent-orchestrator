@@ -13,6 +13,14 @@ const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockUnlinkSync, moc
     mockMkdirSync: vi.fn(),
   }));
 
+const { mockExecFileSync } = vi.hoisted(() => ({
+  mockExecFileSync: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
+}));
+
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual("node:fs");
   return {
@@ -44,6 +52,7 @@ import {
   getUpdateCommand,
   getCacheDir,
   readCachedUpdateInfo,
+  fetchGitLatestState,
   fetchLatestVersion,
   invalidateCache,
   writeCache,
@@ -61,6 +70,7 @@ describe("update-check", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockExistsSync.mockReturnValue(false);
+    mockExecFileSync.mockReturnValue("");
   });
 
   afterEach(() => {
@@ -127,39 +137,51 @@ describe("update-check", () => {
   describe("classifyInstallPath", () => {
     it("returns 'npm-global' for /usr/local/lib/node_modules path", () => {
       expect(
-        classifyInstallPath("/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'npm-global' for nvm global path", () => {
       expect(
-        classifyInstallPath("/home/user/.nvm/versions/node/v20.0.0/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/.nvm/versions/node/v20.0.0/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'npm-global' for Windows global path", () => {
       expect(
-        classifyInstallPath("C:\\Users\\test\\AppData\\Roaming\\npm\\lib\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
+        classifyInstallPath(
+          "C:\\Users\\test\\AppData\\Roaming\\npm\\lib\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'pnpm-global' for pnpm global store path", () => {
       expect(
-        classifyInstallPath("/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("pnpm-global");
     });
 
     it("returns 'unknown' for local pnpm node_modules/.pnpm (not global)", () => {
       mockExistsSync.mockReturnValue(false);
       expect(
-        classifyInstallPath("/home/user/my-project/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/my-project/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("unknown");
     });
 
     it("returns 'unknown' for local project node_modules (npx)", () => {
       mockExistsSync.mockReturnValue(false);
       expect(
-        classifyInstallPath("/home/user/my-project/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/my-project/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("unknown");
     });
 
@@ -189,9 +211,7 @@ describe("update-check", () => {
 
     it("returns 'unknown' when .git does not exist at the resolved repo root", () => {
       mockExistsSync.mockReturnValue(false);
-      expect(
-        classifyInstallPath("/tmp/random/path/update-check.ts"),
-      ).toBe("unknown");
+      expect(classifyInstallPath("/tmp/random/path/update-check.ts")).toBe("unknown");
     });
   });
 
@@ -358,6 +378,51 @@ describe("update-check", () => {
       mockReadFileSync.mockReturnValue("");
       expect(readCachedUpdateInfo()).toBeNull();
     });
+
+    it("returns null when cache install method differs", () => {
+      const currentVersion = getCurrentVersion();
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: currentVersion,
+          installMethod: "npm-global",
+        }),
+      );
+      expect(readCachedUpdateInfo("pnpm-global")).toBeNull();
+    });
+
+    it("treats legacy cache entries without installMethod as unsafe for git installs", () => {
+      const currentVersion = getCurrentVersion();
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: currentVersion,
+        }),
+      );
+      expect(readCachedUpdateInfo("git")).toBeNull();
+    });
+
+    it("returns null when git cache was checked at a different HEAD", () => {
+      const currentVersion = getCurrentVersion();
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return "new-head\n";
+        return "";
+      });
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "origin/main",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: currentVersion,
+          installMethod: "git",
+          isOutdated: true,
+          currentRevisionAtCheck: "old-head",
+        }),
+      );
+
+      expect(readCachedUpdateInfo("git")).toBeNull();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -375,7 +440,9 @@ describe("update-check", () => {
         currentVersionAtCheck: "0.2.2",
       });
 
-      expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("ao"), { recursive: true });
+      expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("ao"), {
+        recursive: true,
+      });
       expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
       const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
       expect(written.latestVersion).toBe("0.3.0");
@@ -408,6 +475,54 @@ describe("update-check", () => {
           currentVersionAtCheck: "0.2.2",
         }),
       ).not.toThrow();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // fetchGitLatestState
+  // -----------------------------------------------------------------------
+
+  describe("fetchGitLatestState", () => {
+    it("returns not behind when HEAD matches origin/main", async () => {
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse") return "abc123\n";
+        return "";
+      });
+
+      const state = await fetchGitLatestState("/repo");
+
+      expect(state).toEqual({
+        ref: "origin/main",
+        headRevision: "abc123",
+        latestRevision: "abc123",
+        isBehind: false,
+      });
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        "git",
+        ["fetch", "origin", "main"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    });
+
+    it("returns behind when HEAD is an ancestor of origin/main", async () => {
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return "local\n";
+        if (args[0] === "rev-parse" && args[1] === "origin/main") return "remote\n";
+        return "";
+      });
+
+      const state = await fetchGitLatestState("/repo");
+
+      expect(state?.isBehind).toBe(true);
+      expect(state?.latestRevision).toBe("remote");
+    });
+
+    it("returns null when git commands fail", async () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("git failed");
+      });
+
+      await expect(fetchGitLatestState("/repo")).resolves.toBeNull();
     });
   });
 
@@ -522,7 +637,7 @@ describe("update-check", () => {
       );
       mockExistsSync.mockReturnValue(false);
 
-      const info = await checkForUpdate();
+      const info = await checkForUpdate({ installMethod: "npm-global" });
       expect(info.isOutdated).toBe(true);
       expect(info.latestVersion).toBe("0.3.0");
       expect(mockFetch).not.toHaveBeenCalled();
@@ -580,6 +695,7 @@ describe("update-check", () => {
       const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
       expect(written.latestVersion).toBe("0.3.0");
       expect(written.currentVersionAtCheck).toBe(getCurrentVersion());
+      expect(written.installMethod).toBe("unknown");
     });
 
     it("does NOT write cache when fetch fails", async () => {
@@ -636,6 +752,113 @@ describe("update-check", () => {
       expect(typeof info.recommendedCommand).toBe("string");
       expect(info.recommendedCommand.length).toBeGreaterThan(0);
     });
+
+    it("uses cached npm-global data for npm-global installs", async () => {
+      const currentVersion = getCurrentVersion();
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) {
+          return JSON.stringify({
+            latestVersion: "0.3.0",
+            checkedAt: new Date().toISOString(),
+            currentVersionAtCheck: currentVersion,
+            installMethod: "npm-global",
+          });
+        }
+        return JSON.stringify({ name: "not-ao" });
+      });
+
+      const info = await checkForUpdate({ installMethod: "npm-global" });
+
+      expect(info.latestVersion).toBe("0.3.0");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("uses npm registry and npm-global command for npm-global installs", async () => {
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) throw new Error("ENOENT");
+        return JSON.stringify({ name: "not-ao" });
+      });
+      mockExistsSync.mockReturnValue(false);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ version: "0.3.0" }),
+      });
+
+      const info = await checkForUpdate({ force: true, installMethod: "npm-global" });
+      expect(info.installMethod).toBe("npm-global");
+      expect(info.latestVersion).toBe("0.3.0");
+      expect(info.recommendedCommand).toBe("npm install -g @aoagents/ao@latest");
+    });
+
+    it("uses npm registry and pnpm-global command for pnpm-global installs", async () => {
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) throw new Error("ENOENT");
+        return JSON.stringify({ name: "not-ao" });
+      });
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ version: "0.3.0" }),
+      });
+
+      const info = await checkForUpdate({ force: true, installMethod: "pnpm-global" });
+      expect(info.installMethod).toBe("pnpm-global");
+      expect(info.latestVersion).toBe("0.3.0");
+      expect(info.recommendedCommand).toBe("pnpm add -g @aoagents/ao@latest");
+    });
+
+    it("uses cached git state without consulting npm registry", async () => {
+      const currentVersion = getCurrentVersion();
+      mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return "abc\n";
+        return "";
+      });
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) {
+          return JSON.stringify({
+            latestVersion: "origin/main",
+            checkedAt: new Date().toISOString(),
+            currentVersionAtCheck: currentVersion,
+            installMethod: "git",
+            isOutdated: false,
+            currentRevisionAtCheck: "abc",
+            latestRevisionAtCheck: "abc",
+          });
+        }
+        return JSON.stringify({ name: "@aoagents/ao" });
+      });
+
+      const info = await checkForUpdate();
+
+      expect(info.installMethod).toBe("git");
+      expect(info.isOutdated).toBe(false);
+      expect(info.latestVersion).toBe("origin/main");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("checks git source installs against origin/main when cache is stale", async () => {
+      mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) throw new Error("ENOENT");
+        return JSON.stringify({ name: "@aoagents/ao" });
+      });
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return "local\n";
+        if (args[0] === "rev-parse" && args[1] === "origin/main") return "remote\n";
+        return "";
+      });
+
+      const info = await checkForUpdate({ force: true, installMethod: "git", repoRoot: "/repo" });
+
+      expect(info.installMethod).toBe("git");
+      expect(info.isOutdated).toBe(true);
+      expect(info.latestVersion).toBe("origin/main");
+      expect(info.recommendedCommand).toBe("ao update");
+      expect(mockFetch).not.toHaveBeenCalled();
+      const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+      expect(written.installMethod).toBe("git");
+      expect(written.isOutdated).toBe(true);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -691,7 +914,36 @@ describe("update-check", () => {
       const output = stderrSpy.mock.calls[0]![0] as string;
       expect(output).toContain("Update available");
       expect(output).toContain("99.0.0");
-      expect(output).toContain("ao update");
+      expect(output).toContain("npm install -g @aoagents/ao@latest");
+    });
+
+    it("prints git update notice from cached git state", () => {
+      const currentVersion = getCurrentVersion();
+      mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return "local\n";
+        return "";
+      });
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.endsWith("update-check.json")) {
+          return JSON.stringify({
+            latestVersion: "origin/main",
+            checkedAt: new Date().toISOString(),
+            currentVersionAtCheck: currentVersion,
+            installMethod: "git",
+            isOutdated: true,
+            currentRevisionAtCheck: "local",
+          });
+        }
+        return JSON.stringify({ name: "@aoagents/ao" });
+      });
+
+      maybeShowUpdateNotice();
+
+      const output = stderrSpy.mock.calls[0]![0] as string;
+      expect(output).toContain("Update available from origin/main");
+      expect(output).toContain("Run: ao update");
+      expect(output).not.toContain("99.0.0");
     });
 
     it("does not print when versions match (not outdated)", () => {
