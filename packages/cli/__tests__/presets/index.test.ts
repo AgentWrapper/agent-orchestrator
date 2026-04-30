@@ -46,4 +46,9 @@ describe("backlog preset", () => {
     expect(backlogPreset.prompt).toContain("\n");
     expect(backlogPreset.prompt.split("\n").length).toBeGreaterThan(10);
   });
+
+  it("does not accept an issue argument", () => {
+    // Backlog is a standalone analysis task, not tied to any specific issue
+    expect(backlogPreset.acceptsIssue).toBeFalsy();
+  });
 });

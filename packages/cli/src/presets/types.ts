@@ -9,4 +9,9 @@ export interface Preset {
   readonly description: string;
   /** The full prompt/instructions sent to the spawned agent */
   readonly prompt: string;
+  /**
+   * Whether this preset accepts an issue argument (e.g. `ao spawn 42 --preset triage`).
+   * Defaults to false — most presets are standalone tasks unrelated to a specific issue.
+   */
+  readonly acceptsIssue?: boolean;
 }

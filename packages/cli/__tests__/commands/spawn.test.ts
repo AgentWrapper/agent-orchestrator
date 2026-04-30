@@ -936,7 +936,7 @@ describe("spawn --preset", () => {
     expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
-  it("rejects --preset with an issue argument", async () => {
+  it("rejects an issue argument when the preset doesn't accept one (backlog)", async () => {
     await expect(
       program.parseAsync(["node", "test", "spawn", "42", "--preset", "backlog"]),
     ).rejects.toThrow("process.exit(1)");
@@ -945,7 +945,7 @@ describe("spawn --preset", () => {
       .mocked(console.error)
       .mock.calls.map((c) => String(c[0]))
       .join("\n");
-    expect(errors).toContain("Cannot use --preset with an issue argument");
+    expect(errors).toContain('Preset "backlog" does not accept an issue argument');
     expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 });
