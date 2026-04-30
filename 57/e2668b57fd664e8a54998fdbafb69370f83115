@@ -1,0 +1,25 @@
+packages/cli/__tests__/lib/update-check.test.ts
+  1ccc0b1128525390 16,18-24,28,82-88,331,348,362,375,414,424-426,522,526,659,932
+packages/cli/src/lib/update-check.ts
+  1ccc0b1128525390 10,16,53,170-176,179-183,221-224,293,295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "57e2668b57fd664e8a54998fdbafb69370f83115",
+  "prompts": {
+    "1ccc0b1128525390": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de02a-2b54-7360-bc3d-06ea46e3947d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 17,
+      "accepted_lines": 50,
+      "overriden_lines": 0
+    }
+  }
+}
