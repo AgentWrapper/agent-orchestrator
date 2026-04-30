@@ -1,0 +1,25 @@
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  024df4bfb8902060 5,38-41,54,287-322
+packages/core/src/__tests__/session-manager.test.ts
+  024df4bfb8902060 4,8-11,40,73-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7ab0e39854ef017f7eb0d9ffbdf4097966e63e16",
+  "prompts": {
+    "024df4bfb8902060": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dde46-c8f6-7122-a611-179d527e9844",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 121,
+      "total_deletions": 3,
+      "accepted_lines": 118,
+      "overriden_lines": 0
+    }
+  }
+}
