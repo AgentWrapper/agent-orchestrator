@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { DashboardSession } from "@/lib/types";
@@ -114,7 +113,12 @@ export function SpawnSessionModal({
       if (basePromptMode !== "default") {
         body.basePromptMode = basePromptMode;
       }
-      if (basePromptMode === "custom" && customBasePrompt.trim()) {
+      if (basePromptMode === "custom") {
+        if (!customBasePrompt.trim()) {
+          setError("A custom base prompt is required when Custom mode is selected.");
+          setSubmitting(false);
+          return;
+        }
         body.basePromptCustom = customBasePrompt.trim();
       }
 
@@ -186,9 +190,9 @@ export function SpawnSessionModal({
     ],
   );
 
-  if (typeof document === "undefined" || !open) return null;
+  if (!open) return null;
 
-  return createPortal(
+  return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
       role="presentation"
@@ -364,7 +368,6 @@ export function SpawnSessionModal({
           </div>
         </form>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
