@@ -1,0 +1,29 @@
+packages/cli/src/commands/doctor.ts
+  1ccc0b1128525390 19-25,86-91,167,221-222,246-247,249-250,401-402,409-416
+packages/cli/__tests__/commands/doctor.test.ts
+  1ccc0b1128525390 14-15,30-31,43-46,61,63-64,231-233
+packages/cli/src/lib/update-check.ts
+  1ccc0b1128525390 10,33,37-40,50-51,81-88,113,120,132,168-173,201-202,209-215,222-231,260-304,329-333,335,340,345-348,358-384,390-391,419-420,424-434
+packages/cli/__tests__/lib/update-check.test.ts
+  1ccc0b1128525390 16-23,55,73,140-142,148-150,156-158,164-166,173-175,182-184,214,381-425,443-445,481-528,640,698,755-861,917-946
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d5c9e9e0a9f2676a60a73d89435c5bb9ae9d7022",
+  "prompts": {
+    "1ccc0b1128525390": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de02a-2b54-7360-bc3d-06ea46e3947d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 458,
+      "total_deletions": 55,
+      "accepted_lines": 450,
+      "overriden_lines": 0
+    }
+  }
+}
