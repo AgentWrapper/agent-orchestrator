@@ -15,7 +15,7 @@
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
     "dev:direct-terminal": "node scripts/dev-direct-terminal.mjs",
-    "prebuild": "rimraf .next dist-server",
+    "prebuild": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
     "build": "next build && tsc -p tsconfig.server.json && node scripts/stamp-version.js",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rimraf .next dist-server",
+    "clean": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
     "screenshot": "tsx e2e/screenshot.ts",
     "screenshot:install": "npx playwright install chromium"
   },

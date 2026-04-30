@@ -1258,7 +1258,7 @@ async function runStartup(
     const isMonorepo = existsSync(resolve(webDir, "server"));
     const willUseDevServer = isMonorepo && opts?.dev === true;
     if (opts?.rebuild) {
-      await rebuildDashboardProductionArtifacts(webDir);
+      await rebuildDashboardProductionArtifacts(webDir, [port]);
     } else if (!willUseDevServer) {
       await preflight.checkBuilt(webDir);
       await clearStaleCacheIfNeeded(webDir);

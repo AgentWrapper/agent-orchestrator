@@ -3,8 +3,8 @@
  * running dashboard processes, and rebuilds production artifacts.
  */
 
-import { resolve } from "node:path";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { normalize, resolve } from "node:path";
 import ora from "ora";
 import { exec, execSilent } from "./shell.js";
 
@@ -24,7 +24,7 @@ export function assertDashboardRebuildSupported(webDir: string): void {
   if (isInstalledUnderNodeModules(webDir)) {
     throw new Error(
       "Dashboard rebuild is only available from a source checkout. " +
-      "Run `ao update`, or reinstall with `npm install -g @aoagents/ao@latest`.",
+        "Run `ao update`, or reinstall with `npm install -g @aoagents/ao@latest`.",
     );
   }
 }
@@ -42,6 +42,65 @@ export async function findRunningDashboardPid(port: number): Promise<string | nu
   return pid;
 }
 
+async function getProcessCwd(pid: string): Promise<string | null> {
+  const output = await execSilent("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"]);
+  if (!output) return null;
+
+  const cwdLine = output.split("\n").find((line) => line.startsWith("n"));
+  const cwd = cwdLine?.slice(1).trim();
+  return cwd ? normalize(cwd) : null;
+}
+
+/**
+ * Find live dashboard server PIDs whose current working directory is webDir.
+ */
+export async function findRunningDashboardPidsForWebDir(
+  webDir: string,
+  ports: readonly number[],
+): Promise<string[]> {
+  const expectedCwd = normalize(resolve(webDir));
+  const pids = new Set<string>();
+
+  for (const port of ports) {
+    const output = await execSilent("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
+    if (!output) continue;
+    for (const rawPid of output.split("\n")) {
+      const pid = rawPid.trim();
+      if (!/^\d+$/.test(pid)) continue;
+      const cwd = await getProcessCwd(pid);
+      if (cwd === expectedCwd) pids.add(pid);
+    }
+  }
+
+  return [...pids];
+}
+
+/**
+ * Stop any live production dashboard serving from webDir before mutating .next.
+ */
+export async function stopRunningDashboardsForWebDir(
+  webDir: string,
+  ports: readonly number[],
+): Promise<void> {
+  const pids = await findRunningDashboardPidsForWebDir(webDir, ports);
+  if (pids.length === 0) return;
+
+  console.log(
+    `Stopping running dashboard${pids.length === 1 ? "" : "s"} before rebuilding .next (PID${pids.length === 1 ? "" : "s"} ${pids.join(", ")})...`,
+  );
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), "SIGTERM");
+    } catch {
+      // Process already exited (ESRCH) — that's fine.
+    }
+  }
+
+  for (const port of ports) {
+    await waitForPortFree(port, 5000);
+  }
+}
+
 /**
  * Wait for a port to be free (no process listening).
  * Throws if the port is still busy after the timeout.
@@ -53,7 +112,9 @@ export async function waitForPortFree(port: number, timeoutMs: number): Promise<
     if (!pid) return;
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error(`Port ${port} still in use after ${timeoutMs}ms — old process did not exit in time`);
+  throw new Error(
+    `Port ${port} still in use after ${timeoutMs}ms — old process did not exit in time`,
+  );
 }
 
 /**
@@ -119,9 +180,13 @@ export async function clearStaleCacheIfNeeded(webDir: string): Promise<void> {
  * Rebuild dashboard production artifacts (Next.js build + server compilation)
  * from a source checkout. Throws if called from an npm global install.
  */
-export async function rebuildDashboardProductionArtifacts(webDir: string): Promise<void> {
+export async function rebuildDashboardProductionArtifacts(
+  webDir: string,
+  ports: readonly number[] = [],
+): Promise<void> {
   assertDashboardRebuildSupported(webDir);
 
+  await stopRunningDashboardsForWebDir(webDir, ports);
   await cleanNextCache(webDir);
 
   const workspaceRoot = resolve(webDir, "../..");
@@ -138,4 +203,3 @@ export async function rebuildDashboardProductionArtifacts(webDir: string): Promi
     );
   }
 }
-
