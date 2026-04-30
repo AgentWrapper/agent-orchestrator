@@ -1,0 +1,27 @@
+packages/web/src/components/AddProjectModal.tsx
+  7c28b0b929b22923 76-77
+packages/web/src/components/__tests__/AddProjectModal.test.tsx
+  7c28b0b929b22923 52,56,62
+packages/web/src/__tests__/filesystem-browse-api.test.ts
+  7c28b0b929b22923 36,39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "79e8c6637b56b9abb5e6818c9193f93ea288526d",
+  "prompts": {
+    "7c28b0b929b22923": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de031-8d04-7030-97f8-4c8630900e70",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 688,
+      "total_deletions": 51,
+      "accepted_lines": 687,
+      "overriden_lines": 0
+    }
+  }
+}
