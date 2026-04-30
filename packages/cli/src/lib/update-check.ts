@@ -7,12 +7,13 @@
  *   - `ao doctor` (version freshness check)
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { getCliVersion } from "../options/version.js";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ const FETCH_TIMEOUT_MS = 3000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_GIT_REMOTE = "origin";
 const DEFAULT_GIT_BRANCH = "main";
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Install detection
@@ -165,10 +167,20 @@ export function getCurrentVersion(): string {
 // Update command mapping
 // ---------------------------------------------------------------------------
 
-export function getGitUpdateRef(): string {
+export interface GitUpdateTarget {
+  remote: string;
+  branch: string;
+  ref: string;
+}
+
+export function getGitUpdateTarget(): GitUpdateTarget {
   const remote = process.env["AO_UPDATE_GIT_REMOTE"] || DEFAULT_GIT_REMOTE;
   const branch = process.env["AO_UPDATE_GIT_BRANCH"] || DEFAULT_GIT_BRANCH;
-  return `${remote}/${branch}`;
+  return { remote, branch, ref: `${remote}/${branch}` };
+}
+
+export function getGitUpdateRef(): string {
+  return getGitUpdateTarget().ref;
 }
 
 export function getUpdateCommand(method: InstallMethod): string {
@@ -206,12 +218,10 @@ export function readCachedUpdateInfo(installMethod = detectInstallMethod()): Cac
 
     if (!data.latestVersion || !data.checkedAt) return null;
 
-    // Legacy cache entries were npm-registry based. They are unsafe for git/source installs.
-    if (!data.installMethod) {
-      if (installMethod === "git") return null;
-    } else if (data.installMethod !== installMethod) {
-      return null;
-    }
+    // Legacy cache entries predate install-method scoping, so treat them as unsafe
+    // for every install method rather than guessing which update channel produced them.
+    if (!data.installMethod) return null;
+    if (data.installMethod !== installMethod) return null;
 
     // Cache is stale if user upgraded since the check
     const currentVersion = getCurrentVersion();
@@ -280,11 +290,9 @@ export async function fetchGitLatestState(
   repoRoot = getCurrentRepoRoot(),
 ): Promise<GitLatestState | null> {
   try {
-    const remote = process.env["AO_UPDATE_GIT_REMOTE"] || DEFAULT_GIT_REMOTE;
-    const branch = process.env["AO_UPDATE_GIT_BRANCH"] || DEFAULT_GIT_BRANCH;
-    const ref = `${remote}/${branch}`;
+    const { remote, branch, ref } = getGitUpdateTarget();
 
-    runGit(["fetch", remote, branch], repoRoot);
+    await execFileAsync("git", ["fetch", remote, branch], { cwd: repoRoot });
     const headRevision = runGit(["rev-parse", "HEAD"], repoRoot);
     const latestRevision = runGit(["rev-parse", ref], repoRoot);
 

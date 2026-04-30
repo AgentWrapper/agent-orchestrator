@@ -13,11 +13,19 @@ const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockUnlinkSync, moc
     mockMkdirSync: vi.fn(),
   }));
 
-const { mockExecFileSync } = vi.hoisted(() => ({
+const { mockExecFileSync, mockExecFile } = vi.hoisted(() => ({
   mockExecFileSync: vi.fn(),
+  mockExecFile: vi.fn((...args: unknown[]) => {
+    const callback = args.at(-1);
+    if (typeof callback === "function") {
+      callback(null, "", "");
+    }
+    return null;
+  }),
 }));
 
 vi.mock("node:child_process", () => ({
+  execFile: (...args: unknown[]) => mockExecFile(...args),
   execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 }));
 
@@ -71,6 +79,13 @@ describe("update-check", () => {
     vi.resetAllMocks();
     mockExistsSync.mockReturnValue(false);
     mockExecFileSync.mockReturnValue("");
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const callback = args.at(-1);
+      if (typeof callback === "function") {
+        callback(null, "", "");
+      }
+      return null;
+    });
   });
 
   afterEach(() => {
@@ -313,6 +328,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
 
@@ -329,6 +345,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: old,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       expect(readCachedUpdateInfo()).toBeNull();
@@ -342,6 +359,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: recent,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       expect(readCachedUpdateInfo()).not.toBeNull();
@@ -354,6 +372,7 @@ describe("update-check", () => {
           latestVersion: "0.5.0",
           checkedAt: now,
           currentVersionAtCheck: "9.9.9",
+          installMethod: "unknown",
         }),
       );
       expect(readCachedUpdateInfo()).toBeNull();
@@ -392,7 +411,7 @@ describe("update-check", () => {
       expect(readCachedUpdateInfo("pnpm-global")).toBeNull();
     });
 
-    it("treats legacy cache entries without installMethod as unsafe for git installs", () => {
+    it("treats legacy cache entries without installMethod as unsafe for all installs", () => {
       const currentVersion = getCurrentVersion();
       mockReadFileSync.mockReturnValue(
         JSON.stringify({
@@ -402,6 +421,9 @@ describe("update-check", () => {
         }),
       );
       expect(readCachedUpdateInfo("git")).toBeNull();
+      expect(readCachedUpdateInfo("npm-global")).toBeNull();
+      expect(readCachedUpdateInfo("pnpm-global")).toBeNull();
+      expect(readCachedUpdateInfo("unknown")).toBeNull();
     });
 
     it("returns null when git cache was checked at a different HEAD", () => {
@@ -497,10 +519,11 @@ describe("update-check", () => {
         latestRevision: "abc123",
         isBehind: false,
       });
-      expect(mockExecFileSync).toHaveBeenCalledWith(
+      expect(mockExecFile).toHaveBeenCalledWith(
         "git",
         ["fetch", "origin", "main"],
         expect.objectContaining({ cwd: "/repo" }),
+        expect.any(Function),
       );
     });
 
@@ -633,6 +656,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
+          installMethod: "npm-global",
         }),
       );
       mockExistsSync.mockReturnValue(false);
@@ -905,6 +929,7 @@ describe("update-check", () => {
           latestVersion: "99.0.0",
           checkedAt: new Date().toISOString(),
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
 
