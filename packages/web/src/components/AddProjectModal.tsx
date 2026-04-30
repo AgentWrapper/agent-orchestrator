@@ -72,14 +72,9 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         const body = (await response.json().catch(() => null)) as
           | { error?: string; entries?: BrowseEntry[] }
           | null;
-        const isBrowseDisabled = response.status === 404 && body?.error === "Not found";
         setBrowseEntries([]);
-        setSelectedBrowsePath(isBrowseDisabled ? "" : options?.selectedPath ?? path);
-        setBrowseError(
-          isBrowseDisabled
-            ? "Directory browsing is unavailable in this environment. Set AO_ALLOW_FILESYSTEM_BROWSE=1 to enable it."
-            : body?.error ?? "Failed to browse directories.",
-        );
+        setSelectedBrowsePath(options?.selectedPath ?? path);
+        setBrowseError(body?.error ?? "Failed to browse directories.");
         return;
       }
 

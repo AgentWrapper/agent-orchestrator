@@ -71,5 +71,3 @@ and add `ao` to the `plugins=(...)` list in `~/.zshrc`.
 ## Multi-Project Rollout
 
 Portfolio mode is enabled by default. Users do not need to set `AO_ENABLE_PORTFOLIO` unless they explicitly want to disable portfolio/project-management flows.
-
-The web add-project directory picker is separately gated by `AO_ALLOW_FILESYSTEM_BROWSE=1`. Treat this as a release requirement for the multi-project rollout: without it, users can still use config- and CLI-based project registration, but the web filesystem browser in the add-project flow is unavailable.
