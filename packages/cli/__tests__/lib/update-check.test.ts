@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
 
 // ---------------------------------------------------------------------------
 // Mocks — hoisted so they're available before module import
@@ -12,6 +13,18 @@ const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockUnlinkSync, moc
     mockUnlinkSync: vi.fn(),
     mockMkdirSync: vi.fn(),
   }));
+
+const { mockSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual("node:child_process");
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => mockSpawn(...args),
+  };
+});
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual("node:fs");
@@ -45,6 +58,7 @@ import {
   getCacheDir,
   readCachedUpdateInfo,
   fetchLatestVersion,
+  fetchLatestGitBranchVersion,
   invalidateCache,
   writeCache,
   checkForUpdate,
@@ -61,6 +75,7 @@ describe("update-check", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockExistsSync.mockReturnValue(false);
+    mockSpawn.mockReset();
   });
 
   afterEach(() => {
@@ -127,39 +142,51 @@ describe("update-check", () => {
   describe("classifyInstallPath", () => {
     it("returns 'npm-global' for /usr/local/lib/node_modules path", () => {
       expect(
-        classifyInstallPath("/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'npm-global' for nvm global path", () => {
       expect(
-        classifyInstallPath("/home/user/.nvm/versions/node/v20.0.0/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/.nvm/versions/node/v20.0.0/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'npm-global' for Windows global path", () => {
       expect(
-        classifyInstallPath("C:\\Users\\test\\AppData\\Roaming\\npm\\lib\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js"),
+        classifyInstallPath(
+          "C:\\Users\\test\\AppData\\Roaming\\npm\\lib\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js",
+        ),
       ).toBe("npm-global");
     });
 
     it("returns 'pnpm-global' for pnpm global store path", () => {
       expect(
-        classifyInstallPath("/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("pnpm-global");
     });
 
     it("returns 'unknown' for local pnpm node_modules/.pnpm (not global)", () => {
       mockExistsSync.mockReturnValue(false);
       expect(
-        classifyInstallPath("/home/user/my-project/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/my-project/node_modules/.pnpm/@aoagents+ao-cli@0.2.2/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("unknown");
     });
 
     it("returns 'unknown' for local project node_modules (npx)", () => {
       mockExistsSync.mockReturnValue(false);
       expect(
-        classifyInstallPath("/home/user/my-project/node_modules/@aoagents/ao-cli/dist/lib/update-check.js"),
+        classifyInstallPath(
+          "/home/user/my-project/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
       ).toBe("unknown");
     });
 
@@ -189,9 +216,7 @@ describe("update-check", () => {
 
     it("returns 'unknown' when .git does not exist at the resolved repo root", () => {
       mockExistsSync.mockReturnValue(false);
-      expect(
-        classifyInstallPath("/tmp/random/path/update-check.ts"),
-      ).toBe("unknown");
+      expect(classifyInstallPath("/tmp/random/path/update-check.ts")).toBe("unknown");
     });
   });
 
@@ -293,6 +318,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
 
@@ -309,6 +335,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: old,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       expect(readCachedUpdateInfo()).toBeNull();
@@ -322,6 +349,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: recent,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       expect(readCachedUpdateInfo()).not.toBeNull();
@@ -337,6 +365,33 @@ describe("update-check", () => {
         }),
       );
       expect(readCachedUpdateInfo()).toBeNull();
+    });
+
+    it("returns null when cache was written for a different install method", () => {
+      const now = new Date().toISOString();
+      const currentVersion = getCurrentVersion();
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: now,
+          currentVersionAtCheck: currentVersion,
+          installMethod: "npm-global",
+        }),
+      );
+      expect(readCachedUpdateInfo("git")).toBeNull();
+    });
+
+    it("returns null when cache is missing install method", () => {
+      const now = new Date().toISOString();
+      const currentVersion = getCurrentVersion();
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: now,
+          currentVersionAtCheck: currentVersion,
+        }),
+      );
+      expect(readCachedUpdateInfo("git")).toBeNull();
     });
 
     it("returns null on invalid JSON", () => {
@@ -375,7 +430,9 @@ describe("update-check", () => {
         currentVersionAtCheck: "0.2.2",
       });
 
-      expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("ao"), { recursive: true });
+      expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("ao"), {
+        recursive: true,
+      });
       expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
       const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
       expect(written.latestVersion).toBe("0.3.0");
@@ -486,6 +543,85 @@ describe("update-check", () => {
     });
   });
 
+  describe("fetchLatestGitBranchVersion", () => {
+    function mockGitProcess(code: number, stdout = "") {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter & { setEncoding: (encoding: BufferEncoding) => void };
+        kill: () => void;
+      };
+      child.stdout = new EventEmitter() as EventEmitter & {
+        setEncoding: (encoding: BufferEncoding) => void;
+      };
+      child.stdout.setEncoding = vi.fn();
+      child.kill = vi.fn();
+
+      setImmediate(() => {
+        if (stdout) {
+          child.stdout.emit("data", stdout);
+        }
+        child.emit("exit", code);
+      });
+
+      return child;
+    }
+
+    it("fetches the configured branch and reads its package version from the remote-tracking ref", async () => {
+      mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
+      mockReadFileSync.mockReturnValue(JSON.stringify({ name: "@aoagents/ao" }));
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        if (args.join(" ") === "remote get-url upstream") {
+          return mockGitProcess(1);
+        }
+        if (args.join(" ") === "remote get-url origin") {
+          return mockGitProcess(0, "https://github.com/ComposioHQ/agent-orchestrator.git\n");
+        }
+        if (args.join(" ") === "fetch origin main") {
+          return mockGitProcess(0);
+        }
+        if (args.join(" ") === "show origin/main:packages/ao/package.json") {
+          return mockGitProcess(0, JSON.stringify({ version: "0.3.0" }));
+        }
+        return mockGitProcess(1);
+      });
+
+      await expect(fetchLatestGitBranchVersion()).resolves.toBe("0.3.0");
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "git",
+        ["fetch", "origin", "main"],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "ignore"] }),
+      );
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "git",
+        ["show", "origin/main:packages/ao/package.json"],
+        expect.anything(),
+      );
+    });
+
+    it("does not read a stale ref when fetch fails", async () => {
+      mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
+      mockReadFileSync.mockReturnValue(JSON.stringify({ name: "@aoagents/ao" }));
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        if (args.join(" ") === "remote get-url upstream") {
+          return mockGitProcess(1);
+        }
+        if (args.join(" ") === "remote get-url origin") {
+          return mockGitProcess(0, "https://github.com/ComposioHQ/agent-orchestrator.git\n");
+        }
+        if (args.join(" ") === "fetch origin main") {
+          return mockGitProcess(1);
+        }
+        throw new Error(`unexpected git command: ${args.join(" ")}`);
+      });
+
+      await expect(fetchLatestGitBranchVersion()).resolves.toBeNull();
+      expect(mockSpawn).not.toHaveBeenCalledWith(
+        "git",
+        ["show", "origin/main:packages/ao/package.json"],
+        expect.anything(),
+      );
+    });
+  });
+
   // -----------------------------------------------------------------------
   // invalidateCache
   // -----------------------------------------------------------------------
@@ -518,6 +654,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       mockExistsSync.mockReturnValue(false);
@@ -536,6 +673,7 @@ describe("update-check", () => {
           latestVersion: "0.3.0",
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       mockExistsSync.mockReturnValue(false);
@@ -580,6 +718,7 @@ describe("update-check", () => {
       const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
       expect(written.latestVersion).toBe("0.3.0");
       expect(written.currentVersionAtCheck).toBe(getCurrentVersion());
+      expect(written.installMethod).toBeDefined();
     });
 
     it("does NOT write cache when fetch fails", async () => {
@@ -682,6 +821,7 @@ describe("update-check", () => {
           latestVersion: "99.0.0",
           checkedAt: new Date().toISOString(),
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
 
@@ -701,6 +841,7 @@ describe("update-check", () => {
           latestVersion: currentVersion,
           checkedAt: new Date().toISOString(),
           currentVersionAtCheck: currentVersion,
+          installMethod: "unknown",
         }),
       );
       maybeShowUpdateNotice();

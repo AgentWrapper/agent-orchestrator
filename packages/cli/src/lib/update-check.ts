@@ -7,6 +7,7 @@
  *   - `ao doctor` (version freshness check)
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -33,6 +34,7 @@ interface CacheData {
   latestVersion: string;
   checkedAt: string;
   currentVersionAtCheck: string;
+  installMethod?: InstallMethod;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,16 +97,14 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
     // Note: /.pnpm/ alone is NOT a global signal — pnpm creates node_modules/.pnpm/
     // for local installs too. Only pnpm/global paths indicate a global install.
     const isPnpmGlobal =
-      resolvedPath.includes("/pnpm/global/") ||
-      resolvedPath.includes("\\pnpm\\global\\");
+      resolvedPath.includes("/pnpm/global/") || resolvedPath.includes("\\pnpm\\global\\");
 
     if (isPnpmGlobal) {
       return "pnpm-global";
     }
 
     const isNpmGlobal =
-      resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\");
+      resolvedPath.includes("/lib/node_modules/") || resolvedPath.includes("\\lib\\node_modules\\");
 
     if (isNpmGlobal) {
       return "npm-global";
@@ -180,7 +180,7 @@ function getCachePath(): string {
 }
 
 /** Read cached update info. Returns null if missing, expired, corrupt, or version-mismatched. */
-export function readCachedUpdateInfo(): CacheData | null {
+export function readCachedUpdateInfo(installMethod = detectInstallMethod()): CacheData | null {
   try {
     const raw = readFileSync(getCachePath(), "utf-8");
     const data = JSON.parse(raw) as CacheData;
@@ -190,6 +190,13 @@ export function readCachedUpdateInfo(): CacheData | null {
     // Cache is stale if user upgraded since the check
     const currentVersion = getCurrentVersion();
     if (data.currentVersionAtCheck && data.currentVersionAtCheck !== currentVersion) {
+      return null;
+    }
+
+    // Cache entries are install-method specific: git/source installs compare
+    // against the update branch, while global package installs compare against
+    // the npm registry. Never reuse one method's answer for another method.
+    if (!data.installMethod || data.installMethod !== installMethod) {
       return null;
     }
 
@@ -241,6 +248,91 @@ export async function fetchLatestVersion(): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Git branch fetch
+// ---------------------------------------------------------------------------
+
+function getSourceRepoRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
+}
+
+function gitOutput(args: string[], cwd: string): Promise<string | null> {
+  return new Promise((resolveOutput) => {
+    const child = spawn("git", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+
+    let stdout = "";
+    let settled = false;
+
+    const finish = (output: string | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolveOutput(output);
+    };
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, FETCH_TIMEOUT_MS);
+
+    child.stdout.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", () => finish(null));
+    child.on("exit", (code) => finish(code === 0 ? stdout.trim() : null));
+  });
+}
+
+async function hasGitRemote(repoRoot: string, remote: string): Promise<boolean> {
+  return (await gitOutput(["remote", "get-url", remote], repoRoot)) !== null;
+}
+
+async function resolveUpdateRemote(repoRoot: string): Promise<string> {
+  return (await hasGitRemote(repoRoot, "upstream")) ? "upstream" : "origin";
+}
+
+async function readPackageVersionFromGitRef(repoRoot: string, ref: string): Promise<string | null> {
+  const raw = await gitOutput(["show", `${ref}:packages/ao/package.json`], repoRoot);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the version from the same git branch that `ao update` pulls.
+ *
+ * Important: only read the remote-tracking ref after a successful fetch. This
+ * avoids using stale FETCH_HEAD or stale refs when the network fetch fails.
+ */
+export async function fetchLatestGitBranchVersion(): Promise<string | null> {
+  const repoRoot = getSourceRepoRoot();
+  if (!isAgentOrchestratorRepoRoot(repoRoot)) {
+    return null;
+  }
+
+  const remote = await resolveUpdateRemote(repoRoot);
+  const branch = process.env["AO_UPDATE_BRANCH"] || "main";
+  const fetchResult = await gitOutput(["fetch", remote, branch], repoRoot);
+  if (fetchResult === null) {
+    return null;
+  }
+
+  return readPackageVersionFromGitRef(repoRoot, `${remote}/${branch}`);
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
 
@@ -252,7 +344,7 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
 
   // Try cache first (unless forced)
   if (!opts?.force) {
-    const cached = readCachedUpdateInfo();
+    const cached = readCachedUpdateInfo(installMethod);
     if (cached) {
       return {
         currentVersion,
@@ -265,8 +357,9 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
     }
   }
 
-  // Fetch from registry
-  const latestVersion = await fetchLatestVersion();
+  // Fetch from the source that matches the install/update method.
+  const latestVersion =
+    installMethod === "git" ? await fetchLatestGitBranchVersion() : await fetchLatestVersion();
   const now = new Date().toISOString();
 
   if (latestVersion) {
@@ -274,6 +367,7 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
       latestVersion,
       checkedAt: now,
       currentVersionAtCheck: currentVersion,
+      installMethod,
     });
   }
 

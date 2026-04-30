@@ -5,9 +5,7 @@ import { Command } from "commander";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  mockRunRepoScript,
-} = vi.hoisted(() => ({
+const { mockRunRepoScript } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
 }));
 
@@ -45,6 +43,7 @@ vi.mock("../../src/lib/update-check.js", () => ({
   invalidateCache: () => mockInvalidateCache(),
   getCurrentVersion: () => mockGetCurrentVersion(),
   getUpdateCommand: (...args: unknown[]) => mockGetUpdateCommand(...args),
+  isVersionOutdated: (current: string, latest: string) => current !== latest,
 }));
 
 const { mockPromptConfirm } = vi.hoisted(() => ({
@@ -56,8 +55,9 @@ vi.mock("../../src/lib/prompts.js", () => ({
 }));
 
 // Mock child_process.spawn for npm install tests
-const { mockSpawn } = vi.hoisted(() => ({
+const { mockSpawn, mockSpawnSync } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
+  mockSpawnSync: vi.fn(),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -65,10 +65,11 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     spawn: (...args: unknown[]) => mockSpawn(...args),
+    spawnSync: (...args: unknown[]) => mockSpawnSync(...args),
   };
 });
 
-import { registerUpdate } from "../../src/commands/update.js";
+import { parseAoVersionOutput, registerUpdate } from "../../src/commands/update.js";
 import { EventEmitter } from "node:events";
 
 function makeNpmUpdateInfo(overrides = {}) {
@@ -102,11 +103,15 @@ describe("update command", () => {
     mockRunRepoScript.mockResolvedValue(0);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
-    mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
+    mockCheckForUpdate.mockResolvedValue(
+      makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }),
+    );
     mockInvalidateCache.mockReset();
     mockPromptConfirm.mockReset();
     mockPromptConfirm.mockResolvedValue(false);
     mockSpawn.mockReset();
+    mockSpawnSync.mockReset();
+    mockSpawnSync.mockReturnValue({ status: 0, stdout: "0.3.0\n", stderr: "" });
     origStdinTTY = process.stdin.isTTY;
     origStdoutTTY = process.stdout.isTTY;
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -187,9 +192,9 @@ describe("update command", () => {
         new Error("Script not found: ao-update.sh. Expected at: /tmp/ao-update.sh"),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(mockSpawn).not.toHaveBeenCalled();
       expect(mockCheckForUpdate).not.toHaveBeenCalled();
@@ -234,7 +239,9 @@ describe("update command", () => {
     });
 
     it("prints already up to date when not outdated", async () => {
-      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }));
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }),
+      );
 
       const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update"]);
@@ -246,9 +253,9 @@ describe("update command", () => {
         makeNpmUpdateInfo({ latestVersion: null, isOutdated: false }),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(vi.mocked(console.error)).toHaveBeenCalledWith(
         expect.stringContaining("Could not reach npm registry"),
       );
@@ -289,8 +296,56 @@ describe("update command", () => {
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(mockSpawn).toHaveBeenCalledWith("npm", expect.arrayContaining(["install"]), expect.anything());
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "npm",
+        expect.arrayContaining(["install"]),
+        expect.anything(),
+      );
       expect(mockInvalidateCache).toHaveBeenCalled();
+    });
+
+    it("accepts prefixed ao --version output when verifying npm updates", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(0));
+      mockSpawnSync.mockReturnValue({ status: 0, stdout: "ao version 0.3.0\n", stderr: "" });
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockInvalidateCache).toHaveBeenCalled();
+    });
+
+    it("uses a shell for runnable ao verification on Windows only", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(0));
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawnSync).toHaveBeenCalledWith(
+        "ao",
+        ["--version"],
+        expect.objectContaining({ shell: process.platform === "win32" }),
+      );
+    });
+
+    it("exits non-zero when npm update leaves the runnable ao binary stale", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn.mockReturnValue(createMockChild(0));
+      mockSpawnSync.mockReturnValue({ status: 0, stdout: "0.2.2\n", stderr: "" });
+
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+        expect.stringContaining("runnable `ao` in PATH"),
+      );
     });
 
     it("exits non-zero when npm install fails", async () => {
@@ -299,9 +354,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(1));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
 
@@ -327,9 +382,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(null, "SIGTERM"));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(vi.mocked(console.error)).not.toHaveBeenCalledWith(
         expect.stringContaining("exited with code null"),
@@ -346,9 +401,7 @@ describe("update command", () => {
       mockSpawn.mockReturnValue(child);
       setTimeout(() => child.emit("error", new Error("ENOENT: npm not found")), 0);
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("ENOENT");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow("ENOENT");
     });
 
     it("does nothing when user declines prompt", async () => {
@@ -378,7 +431,9 @@ describe("update command", () => {
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Could not detect install method"));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Could not detect install method"),
+      );
       expect(mockRunRepoScript).not.toHaveBeenCalled();
     });
 
@@ -406,5 +461,15 @@ describe("update command", () => {
       await program.parseAsync(["node", "test", "update"]);
       expect(mockGetUpdateCommand).toHaveBeenCalledWith("npm-global");
     });
+  });
+});
+
+describe("parseAoVersionOutput", () => {
+  it("parses bare semver output", () => {
+    expect(parseAoVersionOutput("0.3.0\n")).toBe("0.3.0");
+  });
+
+  it("parses prefixed ao version output", () => {
+    expect(parseAoVersionOutput("ao version 0.3.0\n")).toBe("0.3.0");
   });
 });
