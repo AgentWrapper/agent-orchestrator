@@ -1,0 +1,23 @@
+packages/ao/bin/postinstall.js
+  c6442bcb47dac620 38-52,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "78617cc3b2be6dbe2ac62be624f5def9f57369ee",
+  "prompts": {
+    "c6442bcb47dac620": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de01c-f441-7e43-b68d-4b07476b6f41",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 18171,
+      "total_deletions": 1,
+      "accepted_lines": 18171,
+      "overriden_lines": 0
+    }
+  }
+}
