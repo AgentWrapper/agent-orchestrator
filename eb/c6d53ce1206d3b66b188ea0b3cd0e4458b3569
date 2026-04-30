@@ -1,0 +1,29 @@
+scripts/setup.sh
+  b9085ec2ac17f144 143
+packages/cli/src/assets/scripts/ao-update.sh
+  b9085ec2ac17f144 203
+packages/cli/__tests__/scripts/update-script.test.ts
+  b9085ec2ac17f144 2-10,214
+packages/cli/src/assets/scripts/ao-doctor.sh
+  b9085ec2ac17f144 228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ebc6d53ce1206d3b66b188ea0b3cd0e4458b3569",
+  "prompts": {
+    "b9085ec2ac17f144": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de02a-3669-75d3-a94e-e0d96e86be6c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 5,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
