@@ -181,7 +181,7 @@ describe("ao-doctor.sh", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("FIXED");
-    expect(npmCommands).toContain("link");
+    expect(npmCommands).toContain("link --force");
     expect(result.stdout).toContain("launcher");
     expect(result.stdout).toContain("stale temp files");
     expect(staleStillExists).toBe(false);

@@ -220,18 +220,18 @@ check_launcher() {
   fi
 
   if [ "$SCRIPT_LAYOUT" = "source-checkout" ] && [ "$FIX_MODE" = true ] && command -v npm >/dev/null 2>&1 && [ -d "$REPO_ROOT/packages/ao" ]; then
-    if (cd "$REPO_ROOT/packages/ao" && npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
-      fixed "ao launcher refreshed with npm link"
+    if (cd "$REPO_ROOT/packages/ao" && npm link --force >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
+      fixed "ao launcher refreshed with npm link --force"
       return
     fi
     if [ -t 0 ]; then
-      printf '  Permission denied. Retrying with sudo...\n'
-      if (cd "$REPO_ROOT/packages/ao" && sudo npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
-        fixed "ao launcher refreshed with sudo npm link"
+      printf '  Launcher refresh needs elevated permissions. Retrying with sudo...\n'
+      if (cd "$REPO_ROOT/packages/ao" && sudo npm link --force >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
+        fixed "ao launcher refreshed with sudo npm link --force"
         return
       fi
     fi
-    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/ao && sudo npm link"
+    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/ao && sudo npm link --force"
     return
   fi
 

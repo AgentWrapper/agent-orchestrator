@@ -197,13 +197,13 @@ if [ "$SMOKE_ONLY" = false ]; then
     printf '\nRefreshing ao launcher...\n'
     (
       cd "$REPO_ROOT/packages/ao"
-      if npm link 2>/dev/null; then
+      if npm link --force 2>/dev/null; then
         :
       elif [ -t 0 ]; then
-        printf '  Permission denied. Retrying with sudo...\n'
-        sudo npm link
+        printf '  Launcher refresh needs elevated permissions. Retrying with sudo...\n'
+        sudo npm link --force
       else
-        printf 'ERROR: Permission denied. Run manually: cd %s/packages/ao && sudo npm link\n' "$REPO_ROOT"
+        printf 'ERROR: Launcher refresh failed. Run manually: cd %s/packages/ao && sudo npm link --force\n' "$REPO_ROOT"
         exit 1
       fi
     )

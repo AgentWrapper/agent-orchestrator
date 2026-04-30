@@ -76,7 +76,7 @@ esac\nexit 0`,
     expect(commands).toContain("pnpm install");
     expect(commands).toContain("pnpm --filter @aoagents/ao-core clean");
     expect(commands).toContain("pnpm --filter @aoagents/ao-cli build");
-    expect(commands).toContain("npm link");
+    expect(commands).toContain("npm link --force");
   });
 
   it("syncs the fork with upstream via gh and fast-forwards the local checkout from upstream", () => {
@@ -146,14 +146,77 @@ esac\nexit 0`,
     expect(commands).not.toContain("git fetch origin main");
   });
 
+  it("uses forced npm link so stale global ao shims are overwritten", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
+    const fakeRepo = join(tempRoot, "repo");
+    mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
+
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const commandLog = join(tempRoot, "commands.log");
+
+    createFakeBinary(
+      binDir,
+      "git",
+      `case "$*" in
+  "remote get-url upstream") exit 1 ;;
+  "rev-parse --is-inside-work-tree") printf 'true\n' ;;
+  "status --porcelain") ;;
+  "branch --show-current") printf 'main\n' ;;
+  "fetch origin main") ;;
+  "rev-parse HEAD") printf 'oldsha000\n' ;;
+  "rev-parse origin/main") printf 'newsha111\n' ;;
+  "pull --ff-only origin main") ;;
+esac
+exit 0`,
+    );
+    createFakeBinary(
+      binDir,
+      "pnpm",
+      `if [ "$1" = "--version" ]; then printf '9.15.4\n'; fi
+exit 0`,
+    );
+    createFakeBinary(
+      binDir,
+      "npm",
+      `printf 'npm %s\n' "$*" >> ${JSON.stringify(commandLog)}
+if [ "$*" = "link" ]; then
+  printf 'npm error code EEXIST\n' >&2
+  exit 1
+fi
+exit 0`,
+    );
+    createFakeBinary(
+      binDir,
+      "node",
+      `if [ "$1" = "--version" ]; then printf 'v20.11.1\n'; fi
+exit 0`,
+    );
+
+    const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ""}`,
+        AO_REPO_ROOT: fakeRepo,
+      },
+      encoding: "utf8",
+    });
+
+    const commands = readFileSync(commandLog, "utf8");
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(commands).toContain("npm link --force");
+    expect(commands).not.toContain("npm link\n");
+    expect(result.stdout).not.toContain("Permission denied");
+  });
+
   it("runs the built-in smoke commands in smoke-only mode", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
-    writeFileSync(
-      join(fakeRepo, "packages", "ao", "bin", "ao.js"),
-      "#!/usr/bin/env node\n",
-    );
+    writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
 
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -270,7 +333,11 @@ exit 0`,
       "pnpm",
       `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
     );
-    createFakeBinary(binDir, "npm", `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`);
+    createFakeBinary(
+      binDir,
+      "npm",
+      `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+    );
     createFakeBinary(
       binDir,
       "node",
