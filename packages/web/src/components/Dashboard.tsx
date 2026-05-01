@@ -105,14 +105,7 @@ function DoneCard({
             className="done-card__pr"
             onClick={(e) => e.stopPropagation()}
           >
-            <svg
-              width="9"
-              height="9"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              viewBox="0 0 24 24"
-            >
+            
             <svg
               width="9"
               height="9"
@@ -201,7 +194,9 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
-  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
+  const [collapsedZones, setCollapsedZones] = useState<Set<AttentionLevel>>(
+    () => new Set(kanbanLevels)
+  );
   const debugParam = searchParams.get("debug");
   const showDebugBundleButton =
     !isMobile &&
@@ -487,7 +482,7 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
-  const handleZoneToggle = (level: string) => {
+  const handleZoneToggle = (level: AttentionLevel) => {
     setCollapsedZones((prev) => {
       const next = new Set(prev);
       if (next.has(level)) {
