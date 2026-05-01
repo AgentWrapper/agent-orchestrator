@@ -39,6 +39,7 @@
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
+    "@aoagents/ao-plugin-agent-hermes": "workspace:*",
     "@aoagents/ao-plugin-notifier-composio": "workspace:*",
     "@aoagents/ao-plugin-notifier-desktop": "workspace:*",
     "@aoagents/ao-plugin-notifier-discord": "workspace:*",
