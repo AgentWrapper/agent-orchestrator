@@ -1,0 +1,49 @@
+{
+  "$schema": "https://unpkg.com/knip@6.6.0/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.{js,mjs,ts}", ".github/scripts/*.{js,mjs,ts}"]
+    },
+    "packages/ao": {
+      "entry": ["bin/*.js"]
+    },
+    "packages/cli": {
+      "entry": ["src/index.ts", "__tests__/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/core": {
+      "entry": ["src/index.ts", "__tests__/**/*.test.ts", "src/**/*.test.ts", "rollup.config.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/web": {
+      "entry": [
+        "server/start-all.ts",
+        "server/direct-terminal-ws.ts",
+        "server/mux-websocket.ts",
+        "server/**/*.test.ts",
+        "scripts/*.{mjs,ts}",
+        "e2e/**/*.ts",
+        "src/**/*.{test,spec}.{ts,tsx}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "server/**/*.ts"],
+      "next": {
+        "entry": [
+          "next.config.js",
+          "src/app/**/{page,layout,loading,error,global-error,not-found,template,default,route}.{ts,tsx,js,jsx}",
+          "src/app/{icon,apple-icon,favicon}.{ts,tsx}",
+          "src/app/{icon,apple-icon}-*/**/{icon,apple-icon}.{ts,tsx}",
+          "src/app/{manifest,robots,sitemap}.{ts,js}",
+          "src/{middleware,instrumentation}.{ts,js}"
+        ]
+      }
+    },
+    "packages/integration-tests": {
+      "entry": ["src/**/*.integration.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/plugins/*": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  }
+}

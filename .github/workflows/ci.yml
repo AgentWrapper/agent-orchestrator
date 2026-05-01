@@ -24,6 +24,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
 
+  knip:
+    name: Knip (unused exports — advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run knip (advisory — warning only)
+        run: pnpm knip
+        continue-on-error: true
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

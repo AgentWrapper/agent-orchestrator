@@ -19,6 +19,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --filter '!@aoagents/ao-web' test",
     "test:integration": "pnpm --filter @aoagents/ao-integration-tests test:integration",
+    "knip": "knip",
     "clean": "pnpm -r clean",
     "changeset": "changeset",
     "version-packages": "changeset version",
@@ -35,6 +36,7 @@
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "istanbul-lib-coverage": "^3.2.2",
+    "knip": "^6.6.0",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.55.0"
   },
