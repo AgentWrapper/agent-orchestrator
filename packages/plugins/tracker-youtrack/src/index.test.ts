@@ -92,6 +92,25 @@ describe("tracker-youtrack plugin", () => {
     it("returns a Tracker with correct name", () => {
       expect(tracker.name).toBe("youtrack");
     });
+
+    it("captures plugin config for host and token", async () => {
+      vi.stubEnv("YOUTRACK_HOST", "");
+      vi.stubEnv("YOUTRACK_TOKEN", "");
+      const configuredTracker = create({
+        host: "https://configured.youtrack.cloud/",
+        token: "configured-token",
+      });
+
+      mockFetchOk(sampleIssue);
+      await configuredTracker.getIssue("PROJ-123", project);
+
+      expect(fetchMock.mock.calls[0][0]).toContain(
+        "https://configured.youtrack.cloud/api/issues/PROJ-123",
+      );
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(
+        "Bearer configured-token",
+      );
+    });
   });
 
   describe("getIssue", () => {
@@ -224,14 +243,14 @@ describe("tracker-youtrack plugin", () => {
       mockFetchOk([]);
       await tracker.listIssues!({ state: "closed" }, project);
       const url = fetchMock.mock.calls[0][0];
-      expect(url).toContain("Resolved");
+      expect(decodeURIComponent(url)).toContain("#Resolved");
     });
 
     it("filters by open state", async () => {
       mockFetchOk([]);
       await tracker.listIssues!({ state: "open" }, project);
       const url = fetchMock.mock.calls[0][0];
-      expect(url).toContain("-Resolved");
+      expect(decodeURIComponent(url)).toContain("#Unresolved");
     });
 
     it("filters by labels via tag query syntax", async () => {
@@ -366,18 +385,20 @@ describe("tracker-youtrack plugin", () => {
   describe("error handling", () => {
     it("throws when YOUTRACK_TOKEN is missing", async () => {
       vi.stubEnv("YOUTRACK_TOKEN", "");
-      await expect(tracker.getIssue("PROJ-123", project)).rejects.toThrow(
+      const trackerWithoutToken = create();
+      await expect(trackerWithoutToken.getIssue("PROJ-123", project)).rejects.toThrow(
         "YOUTRACK_TOKEN",
       );
     });
 
     it("throws when YOUTRACK_HOST is missing", async () => {
       vi.stubEnv("YOUTRACK_HOST", "");
+      const trackerWithoutHost = create();
       const noHostProject = {
         ...project,
         tracker: { plugin: "youtrack", projectId: "PROJ" },
       } as ProjectConfig;
-      await expect(tracker.getIssue("PROJ-123", noHostProject)).rejects.toThrow(
+      await expect(trackerWithoutHost.getIssue("PROJ-123", noHostProject)).rejects.toThrow(
         "YOUTRACK_HOST",
       );
     });

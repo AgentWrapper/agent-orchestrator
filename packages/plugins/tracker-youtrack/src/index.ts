@@ -23,24 +23,32 @@ import type {
 const REQUEST_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
-// Auth helpers
+// Config helpers
 // ---------------------------------------------------------------------------
 
-function getHost(project: ProjectConfig): string {
-  const fromConfig = project.tracker?.["host"] as string | undefined;
-  const fromEnv = process.env["YOUTRACK_HOST"];
-  const host = fromConfig ?? fromEnv;
+function configString(
+  config: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = config?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeHost(host: string | undefined): string | undefined {
+  return host?.replace(/\/+$/, "");
+}
+
+function resolveHost(project: ProjectConfig, defaultHost: string | undefined): string {
+  const host = normalizeHost((project.tracker?.["host"] as string | undefined) ?? defaultHost);
   if (!host) {
     throw new Error(
       "YouTrack host is required: set YOUTRACK_HOST env var or tracker.host in project config",
     );
   }
-  // Strip trailing slash
-  return host.replace(/\/+$/, "");
+  return host;
 }
 
-function getToken(): string {
-  const token = process.env["YOUTRACK_TOKEN"];
+function requireToken(token: string | undefined): string {
   if (!token) {
     throw new Error(
       "YOUTRACK_TOKEN environment variable is required for the YouTrack tracker plugin",
@@ -55,6 +63,7 @@ function getToken(): string {
 
 async function youtrackFetch<T>(
   host: string,
+  token: string,
   path: string,
   options: { method?: string; body?: Record<string, unknown> } = {},
 ): Promise<T> {
@@ -69,7 +78,7 @@ async function youtrackFetch<T>(
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${getToken()}`,
+        Authorization: `Bearer ${token}`,
       },
     };
 
@@ -103,10 +112,11 @@ async function youtrackFetch<T>(
  */
 async function executeCommand(
   host: string,
+  token: string,
   identifier: string,
   query: string,
 ): Promise<void> {
-  await youtrackFetch(host, `/commands`, {
+  await youtrackFetch(host, token, `/commands`, {
     method: "POST",
     body: { query, issues: [{ idReadable: identifier }] },
   });
@@ -221,14 +231,18 @@ const ISSUE_FIELDS =
 // Tracker implementation
 // ---------------------------------------------------------------------------
 
-function createYouTrackTracker(): Tracker {
+function createYouTrackTracker(config?: Record<string, unknown>): Tracker {
+  const defaultHost = normalizeHost(configString(config, "host") ?? process.env["YOUTRACK_HOST"]);
+  const token = configString(config, "token") ?? process.env["YOUTRACK_TOKEN"];
+
   return {
     name: "youtrack",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
       const issue = await youtrackFetch<YouTrackIssue>(
         host,
+        requireToken(token),
         `/issues/${identifier}?fields=${ISSUE_FIELDS}`,
       );
 
@@ -245,16 +259,17 @@ function createYouTrackTracker(): Tracker {
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
       const issue = await youtrackFetch<YouTrackIssue>(
         host,
+        requireToken(token),
         `/issues/${identifier}?fields=id,resolved,customFields(name,$type,value(name,$type))`,
       );
       return issue.resolved !== null;
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
       return `${host}/issue/${identifier}`;
     },
 
@@ -304,7 +319,7 @@ function createYouTrackTracker(): Tracker {
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
       const projectShortName = project.tracker?.["projectId"] as string | undefined;
 
       // Build YouTrack query string
@@ -315,9 +330,9 @@ function createYouTrackTracker(): Tracker {
       }
 
       if (filters.state === "closed") {
-        queryParts.push("State: {Resolved}");
+        queryParts.push("#Resolved");
       } else if (filters.state === "open") {
-        queryParts.push("State: -Resolved");
+        queryParts.push("#Unresolved");
       }
       // "all" = no state filter
 
@@ -335,7 +350,7 @@ function createYouTrackTracker(): Tracker {
       const limit = filters.limit ?? 30;
 
       const url = `/issues?fields=${ISSUE_FIELDS}&$top=${limit}&query=${encodeURIComponent(query)}`;
-      const issues = await youtrackFetch<YouTrackIssue[]>(host, url);
+      const issues = await youtrackFetch<YouTrackIssue[]>(host, requireToken(token), url);
 
       return issues.map((issue) => ({
         id: issue.idReadable,
@@ -354,7 +369,8 @@ function createYouTrackTracker(): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
+      const authToken = requireToken(token);
 
       // Handle state change using command API
       if (update.state) {
@@ -367,12 +383,12 @@ function createYouTrackTracker(): Tracker {
           command = "State Open";
         }
 
-        await executeCommand(host, identifier, command);
+        await executeCommand(host, authToken, identifier, command);
       }
 
       // Handle assignee
       if (update.assignee) {
-        await executeCommand(host, identifier, `Assignee ${update.assignee}`);
+        await executeCommand(host, authToken, identifier, `Assignee ${update.assignee}`);
       }
 
       // Handle labels — map to YouTrack tags via the command API.
@@ -383,19 +399,19 @@ function createYouTrackTracker(): Tracker {
       // command does not abort the rest.
       if (update.labels && update.labels.length > 0) {
         for (const label of update.labels) {
-          await executeCommand(host, identifier, `tag ${label}`);
+          await executeCommand(host, authToken, identifier, `tag ${label}`);
         }
       }
 
       if (update.removeLabels && update.removeLabels.length > 0) {
         for (const label of update.removeLabels) {
-          await executeCommand(host, identifier, `remove tag ${label}`);
+          await executeCommand(host, authToken, identifier, `remove tag ${label}`);
         }
       }
 
       // Handle comment
       if (update.comment) {
-        await youtrackFetch(host, `/issues/${identifier}/comments`, {
+        await youtrackFetch(host, authToken, `/issues/${identifier}/comments`, {
           method: "POST",
           body: { text: update.comment },
         });
@@ -403,7 +419,8 @@ function createYouTrackTracker(): Tracker {
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
-      const host = getHost(project);
+      const host = resolveHost(project, defaultHost);
+      const authToken = requireToken(token);
       const projectId = project.tracker?.["projectId"] as string | undefined;
       if (!projectId) {
         throw new Error(
@@ -414,6 +431,7 @@ function createYouTrackTracker(): Tracker {
       // Resolve project internal ID
       const projects = await youtrackFetch<YouTrackProject[]>(
         host,
+        authToken,
         `/admin/projects?fields=id,shortName,name&query=${encodeURIComponent(projectId)}`,
       );
       const targetProject = projects.find((p) => p.shortName === projectId);
@@ -427,10 +445,15 @@ function createYouTrackTracker(): Tracker {
         project: { id: targetProject.id },
       };
 
-      const created = await youtrackFetch<YouTrackIssue>(host, `/issues?fields=${ISSUE_FIELDS}`, {
-        method: "POST",
-        body,
-      });
+      const created = await youtrackFetch<YouTrackIssue>(
+        host,
+        authToken,
+        `/issues?fields=${ISSUE_FIELDS}`,
+        {
+          method: "POST",
+          body,
+        },
+      );
 
       // Apply assignee and priority via a single chained command (single-token values
       // chain safely with spaces).
@@ -453,9 +476,12 @@ function createYouTrackTracker(): Tracker {
 
       if (commands.length > 0) {
         try {
-          await executeCommand(host, created.idReadable, commands.join(" "));
-        } catch {
-          // Commands are best-effort; creation already succeeded
+          await executeCommand(host, authToken, created.idReadable, commands.join(" "));
+        } catch (error) {
+          console.warn(
+            `[youtrack] Failed to apply post-create fields to ${created.idReadable}:`,
+            error,
+          );
         }
       }
 
@@ -465,9 +491,12 @@ function createYouTrackTracker(): Tracker {
       if (input.labels && input.labels.length > 0) {
         for (const label of input.labels) {
           try {
-            await executeCommand(host, created.idReadable, `tag ${label}`);
-          } catch {
-            // Best-effort
+            await executeCommand(host, authToken, created.idReadable, `tag ${label}`);
+          } catch (error) {
+            console.warn(
+              `[youtrack] Failed to apply tag "${label}" to ${created.idReadable}:`,
+              error,
+            );
           }
         }
       }
@@ -497,8 +526,8 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): Tracker {
-  return createYouTrackTracker();
+export function create(config?: Record<string, unknown>): Tracker {
+  return createYouTrackTracker(config);
 }
 
 export default { manifest, create } satisfies PluginModule<Tracker>;
