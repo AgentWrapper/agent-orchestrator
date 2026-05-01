@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 
-const webDir = normalize(resolve(process.cwd()));
+function canonicalPath(path) {
+  try {
+    return normalize(realpathSync(path));
+  } catch {
+    return normalize(resolve(path));
+  }
+}
+
+const webDir = canonicalPath(process.cwd());
 const runningPath = join(homedir(), ".agent-orchestrator", "running.json");
 
 function isPidAlive(pid) {
@@ -32,6 +40,7 @@ function execText(command, args) {
     return execFileSync(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
     }).trim();
   } catch (error) {
     return error && error.code === "ENOENT" ? null : "";
@@ -46,7 +55,7 @@ function processCwd(pid) {
   const output = lsof(["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
   if (!output) return null;
   const cwdLine = output.split("\n").find((line) => line.startsWith("n"));
-  return cwdLine ? normalize(cwdLine.slice(1)) : null;
+  return cwdLine ? canonicalPath(cwdLine.slice(1)) : null;
 }
 
 function pidsListeningOnPort(port) {

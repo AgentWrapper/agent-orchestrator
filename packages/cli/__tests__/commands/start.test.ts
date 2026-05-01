@@ -1219,6 +1219,26 @@ describe("start command — orchestrator session strategy display", () => {
     expect(output).not.toContain("tmux attach");
   });
 
+  it("passes the requested and reassigned dashboard ports to rebuild", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const webDir = await import("../../src/lib/web-dir.js");
+    vi.mocked(webDir.findWebDir).mockReturnValue(tmpDir);
+    vi.mocked(webDir.isPortAvailable).mockResolvedValue(false);
+    vi.mocked(webDir.findFreePort).mockResolvedValue(3001);
+    mkdirSync(join(tmpDir, "server"), { recursive: true });
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const dashboardRebuild = await import("../../src/lib/dashboard-rebuild.js");
+
+    await program.parseAsync(["node", "test", "start", "--rebuild", "--no-orchestrator"]);
+
+    expect(dashboardRebuild.rebuildDashboardProductionArtifacts).toHaveBeenCalledWith(tmpDir, [
+      3000,
+      3001,
+    ]);
+  });
+
   it("opens the most recent orchestrator session page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
     mockConfigRef.current = makeConfig({
       "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
