@@ -22,6 +22,7 @@ import {
 } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
 import { sessionActivityMeta } from "./session-detail-utils";
+import { SpawnSessionModal } from "./SpawnSessionModal";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -66,6 +67,8 @@ export function SessionDetail({
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
   const [showTerminal, setShowTerminal] = useState(false);
   const pr = session.pr;
   const terminalEnded = TERMINAL_STATUSES.has(session.status);
@@ -143,6 +146,7 @@ export function SessionDetail({
   }, [isMobile]);
 
   return (
+    <>
     <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen }}>
       <div className="dashboard-app-shell">
         <SessionDetailHeader
@@ -183,6 +187,10 @@ export function SessionDetail({
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
                 onMobileClose={() => setMobileSidebarOpen(false)}
+                onSpawnSession={(pid) => {
+                  setSpawnProjectId(pid);
+                  setSpawnOpen(true);
+                }}
               />
             </div>
           ) : null}
@@ -236,5 +244,13 @@ export function SessionDetail({
         />
       </div>
     </SidebarContext.Provider>
+    {spawnProjectId ? (
+      <SpawnSessionModal
+        projectId={spawnProjectId}
+        open={spawnOpen}
+        onClose={() => { setSpawnOpen(false); setSpawnProjectId(undefined); }}
+      />
+    ) : null}
+    </>
   );
 }

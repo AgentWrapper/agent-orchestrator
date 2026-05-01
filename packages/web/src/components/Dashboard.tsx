@@ -25,6 +25,7 @@ import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { SpawnSessionModal } from "./SpawnSessionModal";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -200,6 +201,9 @@ function DashboardInner({
   const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
   const [doneExpanded, setDoneExpanded] = useState(false);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
+  const [optimisticSessions, setOptimisticSessions] = useState<DashboardSession[]>([]);
   const sessionsRef = useRef(sessions);
 
   sessionsRef.current = sessions;
@@ -226,9 +230,12 @@ function DashboardInner({
   const currentProjectSpawnError = projectId ? (spawnErrors[projectId] ?? null) : null;
 
   const displaySessions = useMemo(() => {
-    if (allProjectsView || !activeSessionId) return projectSessions;
-    return projectSessions.filter((s) => s.id === activeSessionId);
-  }, [projectSessions, allProjectsView, activeSessionId]);
+    const sseIds = new Set(projectSessions.map((s) => s.id));
+    const validStubs = optimisticSessions.filter((s) => !sseIds.has(s.id));
+    const merged = [...validStubs, ...projectSessions];
+    if (allProjectsView || !activeSessionId) return merged;
+    return merged.filter((s) => s.id === activeSessionId);
+  }, [projectSessions, optimisticSessions, allProjectsView, activeSessionId]);
 
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
@@ -407,6 +414,14 @@ function DashboardInner({
     },
     [showToast],
   );
+
+  const handleSessionCreated = useCallback((session: DashboardSession) => {
+    if (session.id.startsWith("spawning-")) {
+      setOptimisticSessions((prev) => [session, ...prev.filter((s) => s.id !== session.id)]);
+    } else {
+      setOptimisticSessions([]);
+    }
+  }, []);
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
@@ -610,6 +625,10 @@ function DashboardInner({
                   collapsed={sidebarCollapsed}
                   onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
                   onMobileClose={() => setMobileMenuOpen(false)}
+                  onSpawnSession={(pid) => {
+                    setSpawnProjectId(pid);
+                    setSpawnOpen(true);
+                  }}
                 />
               </div>
             )}
@@ -754,6 +773,15 @@ function DashboardInner({
           </div>
         </div>
       </>
+      {(spawnProjectId ?? projectId) ? (
+        <SpawnSessionModal
+          projectId={(spawnProjectId ?? projectId)!}
+          projectName={spawnProjectId === projectId ? projectName : spawnProjectId}
+          open={spawnOpen}
+          onClose={() => { setSpawnOpen(false); setSpawnProjectId(undefined); }}
+          onSessionCreated={handleSessionCreated}
+        />
+      ) : null}
     </SidebarContext.Provider>
   );
 }
