@@ -1,0 +1,33 @@
+packages/web/scripts/guard-production-artifact-clean.mjs
+  2ea05d012bab0ad1 1-3,6-29,31,33-35,38-48,53,55-56,58-62
+packages/cli/src/commands/dashboard.ts
+  2ea05d012bab0ad1 35
+packages/cli/src/lib/dashboard-rebuild.ts
+  2ea05d012bab0ad1 27,45-103,115-117,183-186,189
+packages/web/package.json
+  2ea05d012bab0ad1 18,26
+packages/cli/__tests__/commands/dashboard.test.ts
+  2ea05d012bab0ad1 102-104,142-143,159-160,168-169,252,286-320
+packages/cli/src/commands/start.ts
+  2ea05d012bab0ad1 1261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a28e2b14db146dc8ad4fa8fcab9bf0aa325a0446",
+  "prompts": {
+    "2ea05d012bab0ad1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de02a-42a5-71b0-82b1-63cbaa615d1a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 206,
+      "total_deletions": 61,
+      "accepted_lines": 167,
+      "overriden_lines": 0
+    }
+  }
+}

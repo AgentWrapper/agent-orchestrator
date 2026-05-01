@@ -1,0 +1,25 @@
+packages/cli/src/commands/dashboard.ts
+  2ea05d012bab0ad1 35,106
+packages/web/scripts/guard-production-artifact-clean.mjs
+  2ea05d012bab0ad1 1,3-4,6-29,31,33-35,38-40,45-46,48-51,75-76,80-81,86,88-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e4876346efac474c2e5f48f55ba618a4ebb7c887",
+  "prompts": {
+    "2ea05d012bab0ad1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de02a-42a5-71b0-82b1-63cbaa615d1a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 43,
+      "total_deletions": 13,
+      "accepted_lines": 43,
+      "overriden_lines": 0
+    }
+  }
+}
