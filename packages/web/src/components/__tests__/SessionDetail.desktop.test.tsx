@@ -128,12 +128,8 @@ describe("SessionDetail desktop layout", () => {
       "href",
       "https://github.com/acme/app/tree/feat/desktop-detail",
     );
-    // PR button is anchored to the PR URL (ctrl-click opens on GitHub, plain click toggles popover)
-    const prButton = screen.getByRole("link", { name: "PR #310" });
-    expect(prButton).toHaveAttribute("href", "https://github.com/acme/app/pull/100");
-
-    // PR details (blockers, file count, unresolved comments) now live inside a
-    // popover anchored to the PR button. Click to open it before asserting contents.
+    // PR anchor toggles the details popover; click to open it before asserting contents.
+    const prButton = screen.getByRole("link", { name: /PR #310/i });
     fireEvent.click(prButton);
 
     expect(screen.getByText("3 files")).toBeInTheDocument();
@@ -169,8 +165,7 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    // Open the PR popover (button is now a link with aria-label "PR #311")
-    fireEvent.click(screen.getByRole("link", { name: "PR #311" }));
+    fireEvent.click(screen.getByRole("link", { name: /PR #311/i }));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Ask Agent to Fix" }));

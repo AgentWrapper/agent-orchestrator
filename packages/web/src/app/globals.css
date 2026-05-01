@@ -23,6 +23,7 @@
  */
 
 @import "tailwindcss";
+@import "../components/workspace/workspace.css";
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
@@ -1196,6 +1197,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .dashboard-app-header__actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1258,6 +1260,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .dashboard-app-btn--amber:hover {
   background: color-mix(in srgb, var(--color-accent-amber) 20%, transparent);
   color: var(--color-accent-amber);
+}
+
+.dashboard-app-btn--active {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  color: var(--color-accent);
 }
 
 /* Session headline in topbar */
@@ -1341,6 +1349,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-decoration: underline;
 }
 
+.topbar-session-id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Danger button variant (kill) */
 .dashboard-app-btn--danger {
   color: var(--color-status-error);
@@ -1350,19 +1368,107 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-status-error);
 }
 
+/* ── Compact icon-button cluster ────────────────────────────────────────── */
+
+/* Wrapper: buttons flush together, fat separators between groups */
+.topbar-btn-cluster {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 26px;
+}
+
+/* Each icon button */
+.topbar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 7px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+.topbar-icon-btn:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+.topbar-icon-btn:active {
+  background: var(--color-bg-elevated);
+}
+
+/* Active state — pane is visible. Amber underline (inset box-shadow stays
+   within the cluster's overflow: hidden) instead of a background fill, so the
+   3 pane toggles read as a tab-bar rather than a selected-chip group. */
+.topbar-icon-btn--active {
+  color: var(--color-text-primary);
+  box-shadow: inset 0 -2px 0 0 var(--color-accent-amber);
+}
+.topbar-icon-btn--active:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent-amber) 12%, transparent);
+}
+
+/* Amber — orchestrator */
+.topbar-icon-btn--amber {
+  color: var(--color-accent-amber);
+}
+.topbar-icon-btn--amber:hover {
+  background: color-mix(in srgb, var(--color-accent-amber) 15%, transparent);
+  color: var(--color-accent-amber);
+}
+
+/* Danger — kill */
+.topbar-icon-btn--danger {
+  color: var(--color-status-error);
+}
+.topbar-icon-btn--danger:hover {
+  background: color-mix(in srgb, var(--color-status-error) 15%, transparent);
+  color: var(--color-status-error);
+}
+
+/* Fat group separator inside cluster */
+.topbar-cluster-sep {
+  width: 1px;
+  height: 100%;
+  background: var(--color-border-default);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
 /* PR button wrapper — positioned for popover anchor */
 .topbar-pr-btn-wrap {
   position: relative;
 }
 
-/* PR button extras (base styles come from .dashboard-app-btn) */
+/* PR button extras */
 .topbar-pr-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 .topbar-pr-btn--open {
   background: var(--color-bg-elevated);
+}
+
+/* PR label — hide on very narrow screens */
+.topbar-pr-label {
+  display: inline;
+}
+@media (max-width: 400px) {
+  .topbar-pr-label { display: none; }
 }
 
 /* Status dot on PR button */
@@ -1412,6 +1518,77 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     right: auto;
     left: 0;
     width: calc(100vw - 16px);
+  }
+}
+
+/* Pane overflow menu (⋯) */
+.topbar-pane-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.topbar-pane-menu-btn {
+  padding: 4px 8px;
+}
+.topbar-pane-menu-btn--open {
+  background: var(--color-bg-elevated);
+}
+.topbar-pane-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 240px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.topbar-pane-menu-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.topbar-pane-menu-item:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+.topbar-pane-menu-check {
+  color: var(--color-accent-amber);
+  font-size: 11px;
+  text-align: center;
+}
+.topbar-pane-menu-label {
+  white-space: nowrap;
+}
+.topbar-pane-menu-shortcut {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-family: var(--font-mono), monospace;
+}
+.topbar-pane-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border-subtle);
+}
+@media (max-width: 640px) {
+  .topbar-pane-menu {
+    position: fixed;
+    top: auto;
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
   }
 }
 
