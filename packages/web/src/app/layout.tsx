@@ -23,7 +23,6 @@ export async function generateMetadata(): Promise<Metadata> {
       default: `ao | ${projectName}`,
     },
     description: "Dashboard for managing parallel AI coding agents",
-    manifest:"/manifest.json",
     appleWebApp: {
       capable: true,
       statusBarStyle: "black-translucent",
