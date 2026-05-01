@@ -75,7 +75,7 @@ export function DirectTerminal({
     tmuxName,
   });
 
-  useFullscreenResize(fullscreen, sessionId, terminalInstance, fitAddon, terminalRef);
+  useFullscreenResize(fullscreen, sessionId, projectId, terminalInstance, fitAddon, terminalRef);
 
   // Sync fullscreen to URL query param
   useEffect(() => {

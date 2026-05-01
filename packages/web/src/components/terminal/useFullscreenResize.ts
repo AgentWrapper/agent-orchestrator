@@ -16,6 +16,7 @@ import { useMux } from "@/hooks/useMux";
 export function useFullscreenResize(
   fullscreen: boolean,
   sessionId: string,
+  projectId: string | undefined,
   terminalInstance: RefObject<TerminalType | null>,
   fitAddon: RefObject<FitAddonType | null>,
   containerRef: RefObject<HTMLDivElement | null>,
@@ -56,7 +57,7 @@ export function useFullscreenResize(
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+      resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
     };
 
     rafId = requestAnimationFrame(resizeTerminal);
@@ -96,5 +97,5 @@ export function useFullscreenResize(
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
-  }, [fullscreen, sessionId, resizeTerminalMux, containerRef, fitAddon, terminalInstance]);
+  }, [fullscreen, sessionId, projectId, resizeTerminalMux, containerRef, fitAddon, terminalInstance]);
 }

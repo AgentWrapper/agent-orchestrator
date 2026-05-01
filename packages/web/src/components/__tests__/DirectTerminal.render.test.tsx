@@ -4,6 +4,9 @@ import { DirectTerminal } from "../DirectTerminal";
 
 const replaceMock = vi.fn();
 let searchParams = new URLSearchParams();
+const { useFullscreenResizeMock } = vi.hoisted(() => ({
+  useFullscreenResizeMock: vi.fn(),
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock }),
@@ -13,6 +16,10 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("next-themes", () => ({
   useTheme: () => ({ resolvedTheme: "dark" }),
+}));
+
+vi.mock("../terminal/useFullscreenResize", () => ({
+  useFullscreenResize: useFullscreenResizeMock,
 }));
 
 class MockTerminal {
@@ -105,6 +112,7 @@ describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
     replaceMock.mockReset();
+    useFullscreenResizeMock.mockReset();
     MockWebSocket.instances = [];
     Object.defineProperty(document, "fonts", {
       configurable: true,
@@ -185,5 +193,18 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("passes projectId to fullscreen resize hook for scoped mux resize", () => {
+    render(<DirectTerminal sessionId="app-1" projectId="project-a" />);
+
+    expect(useFullscreenResizeMock).toHaveBeenCalledWith(
+      false,
+      "app-1",
+      "project-a",
+      expect.any(Object),
+      expect.any(Object),
+      expect.any(Object),
+    );
   });
 });
