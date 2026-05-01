@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DirectTerminal } from "../DirectTerminal";
 
 const replaceMock = vi.fn();
+const subscribeTerminalMock = vi.fn(() => vi.fn());
+const writeTerminalMock = vi.fn();
+const openTerminalMock = vi.fn();
+const closeTerminalMock = vi.fn();
+const resizeTerminalMock = vi.fn();
 let searchParams = new URLSearchParams();
+let muxStatus: "connecting" | "connected" | "reconnecting" | "disconnected" = "connected";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock }),
@@ -47,10 +53,18 @@ class MockTerminal {
   onData() {
     return { dispose() {} };
   }
+  onScroll() {
+    return { dispose() {} };
+  }
 }
 
 class MockFitAddon {
   fit() {}
+}
+
+class MockResizeObserver {
+  observe() {}
+  disconnect() {}
 }
 
 function MockWebLinksAddon() {
@@ -90,12 +104,12 @@ vi.mock("@xterm/addon-web-links", () => ({
 
 vi.mock("@/hooks/useMux", () => ({
   useMux: () => ({
-    subscribeTerminal: vi.fn(() => vi.fn()),
-    writeTerminal: vi.fn(),
-    openTerminal: vi.fn(),
-    closeTerminal: vi.fn(),
-    resizeTerminal: vi.fn(),
-    status: "connected",
+    subscribeTerminal: subscribeTerminalMock,
+    writeTerminal: writeTerminalMock,
+    openTerminal: openTerminalMock,
+    closeTerminal: closeTerminalMock,
+    resizeTerminal: resizeTerminalMock,
+    status: muxStatus,
     sessions: [],
     terminals: [],
   }),
@@ -104,7 +118,13 @@ vi.mock("@/hooks/useMux", () => ({
 describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
+    muxStatus = "connected";
     replaceMock.mockReset();
+    subscribeTerminalMock.mockClear();
+    writeTerminalMock.mockClear();
+    openTerminalMock.mockClear();
+    closeTerminalMock.mockClear();
+    resizeTerminalMock.mockClear();
     MockWebSocket.instances = [];
     Object.defineProperty(document, "fonts", {
       configurable: true,
@@ -118,6 +138,7 @@ describe("DirectTerminal render", () => {
       },
     });
     vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -137,9 +158,7 @@ describe("DirectTerminal render", () => {
   it("renders the shared accent chrome for orchestrator terminals", async () => {
     render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
 
-    await waitFor(() =>
-      expect(screen.getByText("Connected")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Connected")).toBeInTheDocument());
 
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
@@ -165,9 +184,7 @@ describe("DirectTerminal render", () => {
   it("switches the terminal shell between inline and fullscreen positioning", async () => {
     const { container } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument());
 
     const terminalShell = container.firstElementChild;
     expect(terminalShell).not.toBeNull();
@@ -185,5 +202,29 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("does not double-open on the initial connecting-to-connected transition", async () => {
+    muxStatus = "connecting";
+    const { rerender } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    muxStatus = "connected";
+    rerender(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() => expect(openTerminalMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("re-opens the terminal when mux reconnects", async () => {
+    const { rerender } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() => expect(openTerminalMock).toHaveBeenCalledTimes(1));
+
+    muxStatus = "reconnecting";
+    rerender(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    muxStatus = "connected";
+    rerender(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+
+    await waitFor(() => expect(openTerminalMock).toHaveBeenCalledTimes(2));
   });
 });
