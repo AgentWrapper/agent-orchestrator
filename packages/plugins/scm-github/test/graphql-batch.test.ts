@@ -28,6 +28,7 @@ import {
   shouldRefreshPREnrichment,
   checkReviewCommentsETag,
   setExecFileAsync,
+  checkReviewCommentsETag,
 } from "../src/graphql-batch.js";
 
 // Mock execFile using the injection function
@@ -1010,6 +1011,75 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
 
       expect(mockObserver.log).toHaveBeenCalledTimes(2);
     });
+
+    it("should clear Guard 1 suppression after catch-path 304 recovery", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      const networkError = new Error("error connecting to api.github.com");
+
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+      expect(mockObserver.log).toHaveBeenCalledTimes(1);
+
+      const notModifiedError = new Error("gh exits with code 1 on 304");
+      (notModifiedError as Error & { stdout?: string }).stdout = 'HTTP/2 304\netag: "rotated"';
+      mockExecFileImpl.mockRejectedValueOnce(notModifiedError);
+      await expect(shouldRefreshPREnrichment(prs, [], mockObserver)).resolves.toMatchObject({
+        shouldRefresh: false,
+      });
+
+      mockExecFileImpl.mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(mockObserver.log).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not suppress repeated non-transient Guard 1 warnings", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      const nonTransientError = new Error("GraphQL query parse failed");
+
+      mockExecFileImpl.mockRejectedValueOnce(nonTransientError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+      mockExecFileImpl.mockRejectedValueOnce(nonTransientError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(mockObserver.log).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("Guard 2: Commit Status ETag - Pending CI PRs", () => {
@@ -1205,6 +1275,58 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
 
       expect(result.shouldRefresh).toBe(false);
     });
+
+    it("should clear Guard 2 suppression after catch-path 304 recovery", async () => {
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "pending" });
+      setPRListETag("owner", "repo", "etag-pr-list");
+
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      const networkError = new Error("failed to connect to api.github.com");
+
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: 'HTTP/2 304', stderr: "" })
+        .mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: 'HTTP/2 304', stderr: "" })
+        .mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+      expect(mockObserver.log).toHaveBeenCalledTimes(1);
+
+      const notModifiedError = new Error("gh exits with code 1 on 304");
+      (notModifiedError as Error & { stdout?: string }).stdout = 'HTTP/2 304\netag: "rotated-2"';
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: 'HTTP/2 304', stderr: "" })
+        .mockRejectedValueOnce(notModifiedError);
+      await expect(shouldRefreshPREnrichment(prs, [], mockObserver)).resolves.toMatchObject({
+        shouldRefresh: false,
+      });
+
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: 'HTTP/2 304', stderr: "" })
+        .mockRejectedValueOnce(networkError);
+      await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(mockObserver.log).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("Multiple Repositories", () => {
@@ -1388,6 +1510,62 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       expect(result).toBe(true); // Not a cache hit
       expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 3]"));
     });
+  });
+});
+
+describe("checkReviewCommentsETag - Guard 3 throttling", () => {
+  beforeEach(() => {
+    clearETagCache();
+    mockExecFileImpl.mockClear();
+  });
+
+  it("suppresses repeated transient Guard 3 warnings and resets on success", async () => {
+    const mockObserver = {
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn(),
+      log: vi.fn(),
+    };
+    const networkError = new Error("dial tcp 140.82.112.6:443: connect: network is unreachable");
+
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await expect(checkReviewCommentsETag("owner", "repo", 12, mockObserver)).resolves.toBe(true);
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await expect(checkReviewCommentsETag("owner", "repo", 12, mockObserver)).resolves.toBe(true);
+    expect(mockObserver.log).toHaveBeenCalledTimes(1);
+
+    mockExecFileImpl.mockResolvedValueOnce({
+      stdout: 'HTTP/2 200\netag: "review-etag"',
+      stderr: "",
+    });
+    await expect(checkReviewCommentsETag("owner", "repo", 12, mockObserver)).resolves.toBe(true);
+
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await expect(checkReviewCommentsETag("owner", "repo", 12, mockObserver)).resolves.toBe(true);
+    expect(mockObserver.log).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears Guard 3 suppression after catch-path 304 recovery", async () => {
+    const mockObserver = {
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn(),
+      log: vi.fn(),
+    };
+    const networkError = new Error("tls handshake timeout");
+
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await checkReviewCommentsETag("owner", "repo", 34, mockObserver);
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await checkReviewCommentsETag("owner", "repo", 34, mockObserver);
+    expect(mockObserver.log).toHaveBeenCalledTimes(1);
+
+    const notModifiedError = new Error("gh exits with code 1 on 304");
+    (notModifiedError as Error & { stdout?: string }).stdout = 'HTTP/2 304\netag: "review-rotated"';
+    mockExecFileImpl.mockRejectedValueOnce(notModifiedError);
+    await expect(checkReviewCommentsETag("owner", "repo", 34, mockObserver)).resolves.toBe(false);
+
+    mockExecFileImpl.mockRejectedValueOnce(networkError);
+    await checkReviewCommentsETag("owner", "repo", 34, mockObserver);
+    expect(mockObserver.log).toHaveBeenCalledTimes(2);
   });
 });
 

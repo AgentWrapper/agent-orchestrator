@@ -88,6 +88,23 @@ const etagCache: ETagCache = {
   reviewComments: new LRUCache(MAX_REVIEW_COMMENTS_ETAGS),
 };
 
+const TRANSIENT_NETWORK_PATTERNS = [
+  "error connecting to api.github.com",
+  "check your internet connection",
+  "could not resolve host",
+  "failed to connect to api.github.com",
+  "network is unreachable",
+  "connection timed out",
+  "connection reset",
+  "ssl",
+  "tls",
+  "certificate",
+  "dial tcp",
+] as const;
+
+const MAX_TRANSIENT_WARNING_KEYS =
+  (MAX_PR_LIST_ETAGS + MAX_COMMIT_STATUS_ETAGS + MAX_REVIEW_COMMENTS_ETAGS) * 2;
+
 const transientNetworkWarningKeys = new Set<string>();
 
 /**
@@ -397,15 +414,32 @@ function extractErrorOutput(err: unknown): string | null {
 
 function isTransientNetworkError(message: string): boolean {
   const normalized = message.toLowerCase();
-  return [
-    "error connecting to api.github.com",
-    "check your internet connection",
-    "could not resolve host",
-    "failed to connect to api.github.com",
-    "network is unreachable",
-    "connection timed out",
-    "connection reset",
-  ].some((pattern) => normalized.includes(pattern));
+  return TRANSIENT_NETWORK_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function pruneTransientNetworkWarningKeys(): void {
+  if (transientNetworkWarningKeys.size < MAX_TRANSIENT_WARNING_KEYS) {
+    return;
+  }
+
+  const activeWarningKeys = new Set<string>();
+  for (const repoKey of etagCache.prList.keys()) activeWarningKeys.add(`ETag Guard 1:${repoKey}`);
+  for (const commitKey of etagCache.commitStatus.keys())
+    activeWarningKeys.add(`ETag Guard 2:${commitKey}`);
+  for (const reviewKey of etagCache.reviewComments.keys())
+    activeWarningKeys.add(`ETag Guard 3:${reviewKey}`);
+
+  for (const key of transientNetworkWarningKeys) {
+    if (!activeWarningKeys.has(key)) {
+      transientNetworkWarningKeys.delete(key);
+    }
+  }
+
+  while (transientNetworkWarningKeys.size >= MAX_TRANSIENT_WARNING_KEYS) {
+    const oldestKey = transientNetworkWarningKeys.values().next().value;
+    if (!oldestKey) break;
+    transientNetworkWarningKeys.delete(oldestKey);
+  }
 }
 
 function warnETagGuardFailure(
@@ -416,6 +450,7 @@ function warnETagGuardFailure(
 ): void {
   const warningKey = `${guard}:${key}`;
   if (isTransientNetworkError(message)) {
+    pruneTransientNetworkWarningKeys();
     if (transientNetworkWarningKeys.has(warningKey)) {
       return;
     }
@@ -494,6 +529,7 @@ async function checkPRListETag(
     if (output && is304(output)) {
       const rotatedETag = extractETag(output);
       if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
+      markETagGuardSuccess("ETag Guard 1", repoKey);
       return false;
     }
 
@@ -572,6 +608,7 @@ async function checkCommitStatusETag(
     if (output && is304(output)) {
       const rotatedETag = extractETag(output);
       if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
+      markETagGuardSuccess("ETag Guard 2", commitKey);
       return false;
     }
 
@@ -626,6 +663,7 @@ export async function checkReviewCommentsETag(
     if (is304(output)) {
       const rotatedETag = extractETag(output);
       if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
+      markETagGuardSuccess("ETag Guard 3", cacheKey);
       return false;
     }
 
@@ -634,12 +672,14 @@ export async function checkReviewCommentsETag(
       etagCache.reviewComments.set(cacheKey, newETag);
     }
 
+    markETagGuardSuccess("ETag Guard 3", cacheKey);
     return true;
   } catch (err) {
     const output = extractErrorOutput(err);
     if (output && is304(output)) {
       const rotatedETag = extractETag(output);
       if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
+      markETagGuardSuccess("ETag Guard 3", cacheKey);
       return false;
     }
 
@@ -647,7 +687,12 @@ export async function checkReviewCommentsETag(
     if (is304(errorMsg)) {
       return false;
     }
-    observer?.log("warn", `[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`);
+    warnETagGuardFailure(
+      observer,
+      "ETag Guard 3",
+      cacheKey,
+      `Review comments check failed for ${cacheKey}: ${errorMsg}`,
+    );
     return true; // Assume changed to be safe
   }
 }
