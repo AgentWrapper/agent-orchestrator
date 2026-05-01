@@ -1,0 +1,34 @@
+packages/core/src/__tests__/activity-events.test.ts
+  c3ed7e24948439d5 96-124,195
+packages/core/src/__tests__/events-fts-integration.test.ts
+  c3ed7e24948439d5 6,12-13,21,61-68,72-73
+packages/core/src/__tests__/query-activity-events.test.ts
+  c3ed7e24948439d5 5,108-131
+packages/core/src/events-db.ts
+  c3ed7e24948439d5 26,47-56,77-84,99,104-115,123-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e5d796b9ef974704190dc224534621eb72746cfd",
+  "prompts": {
+    "c3ed7e24948439d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de31b-8da9-7ac1-a853-bb6a71b2c123",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 109,
+      "total_deletions": 27,
+      "accepted_lines": 107,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
