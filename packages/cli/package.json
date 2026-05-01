@@ -48,8 +48,6 @@
     "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
-    "@aoagents/ao-plugin-terminal-iterm2": "workspace:*",
-    "@aoagents/ao-plugin-terminal-web": "workspace:*",
     "@aoagents/ao-plugin-tracker-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-linear": "workspace:*",
     "@aoagents/ao-plugin-workspace-clone": "workspace:*",

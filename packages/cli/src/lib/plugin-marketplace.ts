@@ -31,8 +31,7 @@ function isPluginSlot(value: unknown): value is PluginSlot {
     value === "workspace" ||
     value === "tracker" ||
     value === "scm" ||
-    value === "notifier" ||
-    value === "terminal"
+    value === "notifier"
   );
 }
 

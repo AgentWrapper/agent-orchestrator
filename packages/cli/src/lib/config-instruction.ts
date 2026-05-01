@@ -144,6 +144,5 @@ notificationRouting:
 # SCM:       github, gitlab
 # Tracker:   github, linear, gitlab
 # Notifier:  desktop, discord, slack, webhook, composio, openclaw
-# Terminal:  iterm2, web
 `.trim();
 }

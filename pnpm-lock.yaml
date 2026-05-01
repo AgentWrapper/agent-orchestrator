@@ -97,12 +97,6 @@ importers:
       '@aoagents/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
-      '@aoagents/ao-plugin-terminal-iterm2':
-        specifier: workspace:*
-        version: link:../plugins/terminal-iterm2
-      '@aoagents/ao-plugin-terminal-web':
-        specifier: workspace:*
-        version: link:../plugins/terminal-web
       '@aoagents/ao-plugin-tracker-github':
         specifier: workspace:*
         version: link:../plugins/tracker-github
@@ -232,12 +226,6 @@ importers:
       '@aoagents/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
-      '@aoagents/ao-plugin-terminal-iterm2':
-        specifier: workspace:*
-        version: link:../plugins/terminal-iterm2
-      '@aoagents/ao-plugin-terminal-web':
-        specifier: workspace:*
-        version: link:../plugins/terminal-web
       '@types/node':
         specifier: ^25.2.3
         version: 25.6.0
@@ -482,38 +470,6 @@ importers:
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
   packages/plugins/scm-gitlab:
-    dependencies:
-      '@aoagents/ao-core':
-        specifier: workspace:*
-        version: link:../../core
-    devDependencies:
-      '@types/node':
-        specifier: ^25.2.3
-        version: 25.6.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
-
-  packages/plugins/terminal-iterm2:
-    dependencies:
-      '@aoagents/ao-core':
-        specifier: workspace:*
-        version: link:../../core
-    devDependencies:
-      '@types/node':
-        specifier: ^25.2.3
-        version: 25.6.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
-
-  packages/plugins/terminal-web:
     dependencies:
       '@aoagents/ao-core':
         specifier: workspace:*

@@ -369,7 +369,7 @@ export function registerPlugin(program: Command): void {
     .option("--name <name>", "Display/plugin name")
     .option(
       "--slot <slot>",
-      "Plugin slot: runtime | agent | workspace | tracker | scm | notifier | terminal",
+      "Plugin slot: runtime | agent | workspace | tracker | scm | notifier",
     )
     .option("--description <description>", "Short plugin description")
     .option("--author <author>", "Package author")
@@ -394,7 +394,6 @@ export function registerPlugin(program: Command): void {
           "tracker",
           "scm",
           "notifier",
-          "terminal",
         ];
         const isInteractive = process.stdin.isTTY && opts.nonInteractive !== true;
         let name = opts.name;

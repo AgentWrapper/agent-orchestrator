@@ -6,15 +6,14 @@ import type { ObservabilityLevel } from "./observability.js";
  * This file defines ALL interfaces and types that the system uses.
  * Every plugin, CLI command, and web API route builds against these.
  *
- * Architecture: 8 plugin slots + core services
+ * Architecture: 6 plugin slots + core services
  *   1. Runtime    — where sessions execute (tmux, docker, k8s, process)
  *   2. Agent      — AI coding tool (claude-code, codex, aider)
  *   3. Workspace  — code isolation (worktree, clone)
  *   4. Tracker    — issue tracking (github, linear, jira)
  *   5. SCM        — source platform + PR/CI/reviews (github, gitlab)
  *   6. Notifier   — push notifications (desktop, slack, webhook)
- *   7. Terminal   — human interaction UI (iterm2, web, none)
- *   8. Lifecycle Manager (core, not pluggable)
+ *   7. Lifecycle Manager (core, not pluggable)
  */
 
 // =============================================================================
@@ -407,7 +406,7 @@ export interface Runtime {
   /** Get resource metrics (uptime, memory, etc.) */
   getMetrics?(handle: RuntimeHandle): Promise<RuntimeMetrics>;
 
-  /** Get info needed to attach a human to this session (for Terminal plugin) */
+  /** Get info needed to attach a human to this session */
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
 }
 
@@ -1098,27 +1097,6 @@ export interface NotifyContext {
 }
 
 // =============================================================================
-// TERMINAL — Plugin Slot 7
-// =============================================================================
-
-/**
- * Terminal manages how humans view/interact with running sessions.
- * Opens IDE tabs, browser windows, or terminal sessions.
- */
-export interface Terminal {
-  readonly name: string;
-
-  /** Open a session for human interaction */
-  openSession(session: Session): Promise<void>;
-
-  /** Open all sessions for a project */
-  openAll(sessions: Session[]): Promise<void>;
-
-  /** Check if a session is already open in a tab/window */
-  isSessionOpen?(session: Session): Promise<boolean>;
-}
-
-// =============================================================================
 // EVENTS
 // =============================================================================
 
@@ -1609,8 +1587,7 @@ export type PluginSlot =
   | "workspace"
   | "tracker"
   | "scm"
-  | "notifier"
-  | "terminal";
+  | "notifier";
 
 /** Plugin manifest — what every plugin exports */
 export interface PluginManifest {

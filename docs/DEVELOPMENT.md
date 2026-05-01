@@ -11,12 +11,12 @@ packages/
 ├── core/          # Types, services, config — the engine
 ├── cli/           # `ao` command (depends on core + all plugins)
 ├── web/           # Next.js dashboard (depends on core)
-└── plugins/       # 21 plugin packages across 8 slots
+└── plugins/       # 19 plugin packages across 6 slots
 ```
 
 **Build order matters**: core must be built before cli, web, or plugins.
 
-### Eight Plugin Slots
+### Six Plugin Slots
 
 Every abstraction is a swappable plugin. All interfaces are defined in [`packages/core/src/types.ts`](../packages/core/src/types.ts).
 
@@ -28,7 +28,6 @@ Every abstraction is a swappable plugin. All interfaces are defined in [`package
 | Tracker   | `Tracker`   | `github`      | `linear`                                 |
 | SCM       | `SCM`       | `github`      | —                                        |
 | Notifier  | `Notifier`  | `desktop`     | `slack`, `webhook`, `composio`           |
-| Terminal  | `Terminal`  | `iterm2`      | `web`                                    |
 | Lifecycle | —           | (core)        | Non-pluggable                            |
 
 ### Hash-Based Namespacing

@@ -26,7 +26,6 @@ packages/
     scm-github/           scm-gitlab/
     notifier-desktop/     notifier-slack/   notifier-webhook/
     notifier-composio/    notifier-openclaw/
-    terminal-iterm2/      terminal-web/
   integration-tests/      # E2E tests
 ```
 
@@ -79,7 +78,7 @@ pnpm format:check
 
 ## Architecture
 
-### Plugin System (8 Slots)
+### Plugin System (7 Slots)
 
 Every abstraction is a pluggable interface defined in `packages/core/src/types.ts`:
 
@@ -91,7 +90,6 @@ Every abstraction is a pluggable interface defined in `packages/core/src/types.t
 | Tracker | github | Issue tracking (GitHub, Linear, GitLab) |
 | SCM | github | PR, CI, reviews |
 | Notifier | desktop | Notification delivery |
-| Terminal | iterm2 | Human attachment UI |
 | Lifecycle | core (non-pluggable) | State machine + polling |
 
 ### Session Lifecycle

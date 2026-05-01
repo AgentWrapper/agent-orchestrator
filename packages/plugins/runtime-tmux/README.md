@@ -80,7 +80,7 @@ Kills tmux session: `tmux kill-session -t my-app-3` (ignores errors if already d
 
 ## Attaching to Sessions
 
-For Terminal plugins (iTerm2, web):
+To attach a human to a session:
 
 ```typescript
 const attachInfo = await runtime.getAttachInfo(handle);

@@ -4,7 +4,7 @@ Core services, types, and configuration for the Agent Orchestrator system.
 
 ## What's Here
 
-- **`src/types.ts`** — All TypeScript interfaces (Runtime, Agent, Workspace, Tracker, SCM, Notifier, Terminal, Session, events)
+- **`src/types.ts`** — All TypeScript interfaces (Runtime, Agent, Workspace, Tracker, SCM, Notifier, Session, events)
 - **`src/services/`** — Core services (SessionManager, LifecycleManager, PluginRegistry)
 - **`src/config.ts`** — Configuration loading + Zod schemas
 - **`src/utils/`** — Shared utilities (shell escaping, metadata parsing, etc.)
@@ -23,7 +23,6 @@ Every interface the system uses is defined here. If you're working on any part o
 - `Tracker` — issue tracking (GitHub Issues, Linear)
 - `SCM` — PR/CI/reviews (GitHub, GitLab)
 - `Notifier` — push notifications (desktop, Slack, webhook)
-- `Terminal` — human interaction UI (iTerm2, web)
 - `Session` — running agent instance (state, metadata, handles)
 - `OrchestratorEvent` — events emitted by lifecycle manager
 - `PluginModule` — what every plugin exports
@@ -101,7 +100,6 @@ Loads plugins and provides access to them:
 - tracker-github, tracker-linear, tracker-gitlab
 - scm-github, scm-gitlab
 - notifier-desktop, notifier-discord, notifier-slack, notifier-composio, notifier-openclaw, notifier-webhook
-- terminal-iterm2, terminal-web
 
 ### `src/config.ts` — Configuration Loading
 

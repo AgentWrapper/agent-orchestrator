@@ -62,9 +62,6 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
   { slot: "notifier", name: "slack", pkg: "@aoagents/ao-plugin-notifier-slack" },
   { slot: "notifier", name: "webhook", pkg: "@aoagents/ao-plugin-notifier-webhook" },
-  // Terminals
-  { slot: "terminal", name: "iterm2", pkg: "@aoagents/ao-plugin-terminal-iterm2" },
-  { slot: "terminal", name: "web", pkg: "@aoagents/ao-plugin-terminal-web" },
 ];
 
 function matchesNotifierPlugin(

@@ -23,8 +23,6 @@
       "@aoagents/ao-plugin-notifier-slack",
       "@aoagents/ao-plugin-notifier-webhook",
       "@aoagents/ao-plugin-notifier-composio",
-      "@aoagents/ao-plugin-terminal-iterm2",
-      "@aoagents/ao-plugin-terminal-web",
       "@aoagents/ao-web"
     ]
   ],

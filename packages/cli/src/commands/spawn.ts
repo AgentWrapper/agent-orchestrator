@@ -175,7 +175,7 @@ async function spawnSession(
         const tmuxTarget = session.runtimeHandle?.id ?? session.id;
         await exec("open-iterm-tab", [tmuxTarget]);
       } catch {
-        // Terminal plugin not available
+        // open-iterm-tab helper not available — ignore
       }
     }
 
