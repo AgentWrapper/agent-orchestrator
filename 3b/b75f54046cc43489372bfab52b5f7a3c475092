@@ -1,0 +1,30 @@
+packages/core/src/events-db.ts
+  c3ed7e24948439d5 27,89-99,130
+packages/core/src/activity-events.ts
+  c3ed7e24948439d5 56,63-73,154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3bb75f54046cc43489372bfab52b5f7a3c475092",
+  "prompts": {
+    "c3ed7e24948439d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de31b-8da9-7ac1-a853-bb6a71b2c123",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 2,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
