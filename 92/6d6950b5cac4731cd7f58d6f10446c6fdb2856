@@ -1,0 +1,30 @@
+packages/core/src/__tests__/session-manager/restore.test.ts
+  cd7b75ac9192db03 555-590
+packages/core/src/session-manager.ts
+  cd7b75ac9192db03 431-439,2913,2915,2917-2920
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "926d6950b5cac4731cd7f58d6f10446c6fdb2856",
+  "prompts": {
+    "cd7b75ac9192db03": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de358-8ab1-7ea1-b2b9-e6b77c7e464a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 2,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
