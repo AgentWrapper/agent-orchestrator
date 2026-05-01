@@ -215,8 +215,11 @@ check_launcher() {
   local ao_path
   ao_path="$(command -v ao 2>/dev/null || true)"
   if [ -n "$ao_path" ]; then
-    pass "ao launcher resolves to $ao_path"
-    return
+    if [ -x "$ao_path" ]; then
+      pass "ao launcher resolves to $ao_path"
+      return
+    fi
+    warn "ao launcher resolves to $ao_path, but its target is missing or not executable"
   fi
 
   if [ "$SCRIPT_LAYOUT" = "source-checkout" ] && [ "$FIX_MODE" = true ] && command -v npm >/dev/null 2>&1 && [ -d "$REPO_ROOT/packages/ao" ]; then
@@ -230,6 +233,7 @@ check_launcher() {
         fixed "ao launcher refreshed with sudo npm link --force"
         return
       fi
+      printf 'ERROR: sudo npm link --force failed. Inspect npm output above.\n' >&2
     fi
     warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/ao && sudo npm link --force"
     return

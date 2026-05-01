@@ -137,12 +137,19 @@ pnpm build
 echo ""
 echo "Linking CLI globally..."
 cd packages/ao
-if npm link --force 2>/dev/null; then
-  :
+npm_link_error="$(mktemp)"
+if npm link --force 2>"$npm_link_error"; then
+  rm -f "$npm_link_error"
 elif [ "$INTERACTIVE" = true ]; then
+  rm -f "$npm_link_error"
   echo "  Launcher refresh failed. Retrying with sudo..."
-  sudo npm link --force
+  if ! sudo npm link --force; then
+    echo "ERROR: sudo npm link --force failed. Inspect npm output above." >&2
+    exit 1
+  fi
 else
+  cat "$npm_link_error" >&2
+  rm -f "$npm_link_error"
   echo "ERROR: Launcher refresh failed. Run manually: cd packages/ao && sudo npm link --force"
   exit 1
 fi

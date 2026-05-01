@@ -197,12 +197,19 @@ if [ "$SMOKE_ONLY" = false ]; then
     printf '\nRefreshing ao launcher...\n'
     (
       cd "$REPO_ROOT/packages/ao"
-      if npm link --force 2>/dev/null; then
-        :
+      npm_link_error="$(mktemp)"
+      if npm link --force 2>"$npm_link_error"; then
+        rm -f "$npm_link_error"
       elif [ -t 0 ]; then
+        rm -f "$npm_link_error"
         printf '  Launcher refresh failed. Retrying with sudo...\n'
-        sudo npm link --force
+        if ! sudo npm link --force; then
+          printf 'ERROR: sudo npm link --force failed. Inspect npm output above.\n' >&2
+          exit 1
+        fi
       else
+        cat "$npm_link_error" >&2
+        rm -f "$npm_link_error"
         printf 'ERROR: Launcher refresh failed. Run manually: cd %s/packages/ao && sudo npm link --force\n' "$REPO_ROOT"
         exit 1
       fi
