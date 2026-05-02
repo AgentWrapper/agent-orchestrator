@@ -8,7 +8,7 @@ import { atomicWriteFileSync } from "./atomic-write.js";
 import { detectScmPlatform } from "./config-generator.js";
 import { withFileLockSync } from "./file-lock.js";
 import { ProjectResolveError } from "./types.js";
-import { generateSessionPrefix } from "./paths.js";
+import { deriveSessionPrefixFromProjectPath, generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
 
 function globalConfigLockPath(configPath: string): string {
@@ -590,7 +590,11 @@ function normalizeLegacyRepoValue(
 }
 
 function getRegisteredSessionPrefix(entry: GlobalProjectEntry, projectId: string): string {
-  return entry.sessionPrefix ?? generateSessionPrefix(basename(entry.path ?? projectId));
+  if (entry.sessionPrefix) return entry.sessionPrefix;
+  if (entry.path?.trim()) {
+    return deriveSessionPrefixFromProjectPath(resolve(entry.path.trim()));
+  }
+  return generateSessionPrefix(projectId);
 }
 
 function findSessionPrefixOwner(
@@ -708,7 +712,7 @@ export function registerProjectInGlobalConfig(
     const requestedSessionPrefix =
       existing?.sessionPrefix ??
       localConfig?.sessionPrefix ??
-      generateSessionPrefix(basename(requestedProjectPath));
+      deriveSessionPrefixFromProjectPath(requestedProjectPath);
     const source = existing?.source ?? (repoIdentity ? "ao-project-add" : "local");
     const registeredAt = existing?.registeredAt ?? Math.floor(Date.now() / 1000);
     const explicitSessionPrefix = !existing?.sessionPrefix && Boolean(localConfig?.sessionPrefix);
@@ -803,7 +807,7 @@ export function resolveProjectIdentity(
   const sessionPrefix =
     typeof entry.sessionPrefix === "string" && entry.sessionPrefix.length > 0
       ? entry.sessionPrefix
-      : generateSessionPrefix(basename(projectPath));
+      : deriveSessionPrefixFromProjectPath(resolve(projectPath));
   const defaultBranch =
     typeof entry.defaultBranch === "string" && entry.defaultBranch.length > 0
       ? entry.defaultBranch

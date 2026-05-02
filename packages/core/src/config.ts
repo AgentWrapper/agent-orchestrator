@@ -24,20 +24,17 @@ import {
   type LoadedConfig,
   type OrchestratorConfig,
 } from "./types.js";
-import { generateSessionPrefix } from "./paths.js";
+import {
+  deriveSessionPrefixFromProjectPath,
+  generateSessionPrefix,
+  sanitizeIdentifierComponent,
+} from "./paths.js";
 import {
   getGlobalConfigPath,
   isCanonicalGlobalConfigPath,
   loadGlobalConfig,
 } from "./global-config.js";
 import { loadEffectiveProjectConfig } from "./project-resolver.js";
-
-const STORAGE_KEY_COMPONENT_PATTERN = /^[a-zA-Z0-9_-]+$/;
-
-function sanitizeStorageKeyComponent(value: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return STORAGE_KEY_COMPONENT_PATTERN.test(sanitized) ? sanitized : "project";
-}
 
 function inferScmPlugin(project: {
   repo?: string;
@@ -83,8 +80,15 @@ export function generateLegacyWrappedStorageKey(configPath: string, projectPath:
   const resolvedConfigPath = realpathSync(configPath);
   const configDir = dirname(resolvedConfigPath);
   const hash = createHash("sha256").update(configDir).digest("hex").slice(0, 12);
-  const projectBasename = basename(resolve(configDir, projectPath));
-  return `${hash}-${sanitizeStorageKeyComponent(projectBasename)}`;
+  const resolvedProjectPath = resolve(configDir, projectPath);
+  const projectBasename = basename(resolvedProjectPath);
+  let component = sanitizeIdentifierComponent(projectBasename);
+  // Avoid collisions when distinct paths sanitize to the generic fallback (e.g. "/" vs "..").
+  if (component === "project") {
+    const pathFingerprint = createHash("sha256").update(resolvedProjectPath).digest("hex").slice(0, 8);
+    component = `project-${pathFingerprint}`;
+  }
+  return `${hash}-${component}`;
 }
 
 function applyWrappedLocalStorageKeys(configPath: string, parsed: unknown): unknown {
@@ -592,8 +596,7 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     // This preserves the long-standing semantics on this branch, where
     // `/repos/integrator` becomes `int` regardless of the config key.
     if (!project.sessionPrefix) {
-      const safePathComponent = sanitizeStorageKeyComponent(basename(project.path));
-      project.sessionPrefix = generateSessionPrefix(safePathComponent);
+      project.sessionPrefix = deriveSessionPrefixFromProjectPath(project.path);
     }
 
     const inferredPlugin = inferScmPlugin(project);

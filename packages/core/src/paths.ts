@@ -52,8 +52,23 @@ export function generateProjectId(projectPath: string): string {
   return basename(projectPath);
 }
 
+/** Safe fragment for session prefixes, tmux names, and legacy storage-key suffix segments. */
+const IDENTIFIER_COMPONENT_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Normalize an arbitrary basename/path fragment into `[a-zA-Z0-9_-]+`.
+ * Used by session prefix generation and legacy wrapped storage keys so dot paths
+ * and filesystem punctuation cannot leak invalid characters into runtime names.
+ */
+export function sanitizeIdentifierComponent(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return IDENTIFIER_COMPONENT_PATTERN.test(sanitized) ? sanitized : "project";
+}
+
 /**
  * Generate session prefix from project ID using clean heuristics.
+ *
+ * Input is sanitized first so callers may pass raw path basenames safely.
  *
  * Rules:
  * 1. ≤4 chars: use as-is (lowercase)
@@ -62,20 +77,22 @@ export function generateProjectId(projectPath: string): string {
  * 4. Single word: first 3 chars (integrator → int)
  */
 export function generateSessionPrefix(projectId: string): string {
-  if (projectId.length <= 4) {
-    return projectId.toLowerCase();
+  const safe = sanitizeIdentifierComponent(projectId.trim());
+
+  if (safe.length <= 4) {
+    return safe.toLowerCase();
   }
 
   // CamelCase: extract uppercase letters
-  const uppercase = projectId.match(/[A-Z]/g);
+  const uppercase = safe.match(/[A-Z]/g);
   if (uppercase && uppercase.length > 1) {
     return uppercase.join("").toLowerCase();
   }
 
   // kebab-case or snake_case: use initials
-  if (projectId.includes("-") || projectId.includes("_")) {
-    const separator = projectId.includes("-") ? "-" : "_";
-    return projectId
+  if (safe.includes("-") || safe.includes("_")) {
+    const separator = safe.includes("-") ? "-" : "_";
+    return safe
       .split(separator)
       .map((word) => word[0])
       .join("")
@@ -83,7 +100,24 @@ export function generateSessionPrefix(projectId: string): string {
   }
 
   // Single word: first 3 characters
-  return projectId.slice(0, 3).toLowerCase();
+  return safe.slice(0, 3).toLowerCase();
+}
+
+/**
+ * Derive a tmux-safe session prefix from an on-disk project path.
+ *
+ * When the path basename sanitizes to the generic `"project"` fallback (e.g. `"."`,
+ * `".."`, `"/"`), prefixes would otherwise collide (`generateSessionPrefix("project")` → `pro`).
+ * In that case we seed prefix generation from a stable synthetic token keyed by the resolved path.
+ */
+export function deriveSessionPrefixFromProjectPath(absoluteOrRelativeProjectPath: string): string {
+  const resolved = resolve(absoluteOrRelativeProjectPath);
+  const base = basename(resolved);
+  if (sanitizeIdentifierComponent(base) !== "project") {
+    return generateSessionPrefix(base);
+  }
+  const suffix = createHash("sha256").update(resolved).digest("hex").slice(0, 8);
+  return generateSessionPrefix(`x-${suffix}`);
 }
 
 // =============================================================================

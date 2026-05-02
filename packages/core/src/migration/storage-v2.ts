@@ -23,11 +23,11 @@ import {
   unlinkSync,
   type Dirent,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseKeyValueContent } from "../key-value.js";
-import { generateSessionPrefix } from "../paths.js";
+import { deriveSessionPrefixFromProjectPath, generateSessionPrefix } from "../paths.js";
 import { atomicWriteFileSync } from "../atomic-write.js";
 import { withFileLockSync } from "../file-lock.js";
 
@@ -213,7 +213,7 @@ function extractProjectPrefixes(globalConfigPath?: string): string[] {
         return entry["sessionPrefix"].trim();
       }
       if (entry && typeof entry["path"] === "string" && entry["path"].trim()) {
-        return generateSessionPrefix(basename(entry["path"].trim()));
+        return deriveSessionPrefixFromProjectPath(resolve(entry["path"].trim()));
       }
       return generateSessionPrefix(projectId);
     })));
