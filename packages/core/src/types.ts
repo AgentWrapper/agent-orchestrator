@@ -1687,6 +1687,9 @@ export interface SessionMetadata {
   summary?: string;
   project?: string;
   agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle
+  model?: string;
+  permissions?: AgentPermissionMode;
+  subagent?: string;
   createdAt?: string;
   runtimeHandle?: RuntimeHandle;
   restoredAt?: string;

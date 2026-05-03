@@ -2016,6 +2016,134 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     var(--color-bg-base);
 }
 
+.session-detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 7px 10px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+}
+
+.session-detail-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.session-detail-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.session-detail-tab[aria-selected="true"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.session-detail-info-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  color: var(--color-text-primary);
+}
+
+.session-detail-info-section {
+  max-width: 960px;
+  border-top: 1px solid var(--color-border-default);
+  padding: 18px 0 24px;
+}
+
+.session-detail-info-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.session-detail-info-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.session-detail-info-section__header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-detail-info-section__header span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-detail-token-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.session-detail-metric-block {
+  min-width: 0;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  padding: 12px;
+}
+
+.session-detail-metric-block span,
+.session-detail-skill-list dt {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.session-detail-metric-block strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.session-detail-skill-list {
+  display: grid;
+  max-width: 720px;
+  margin: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.session-detail-skill-list__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 11px 0;
+}
+
+.session-detail-skill-list dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.session-detail-info-empty {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
 .session-page-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -5372,6 +5500,19 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 @media (max-width: 640px) {
   .dashboard-title {
     font-size: 19px;
+  }
+
+  .session-detail-info-panel {
+    padding: 14px;
+  }
+
+  .session-detail-token-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .session-detail-skill-list__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 
   .kanban-column {

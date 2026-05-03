@@ -145,6 +145,41 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText("The empty state text needs to be shorter.")).toBeInTheDocument();
   });
 
+  it("shows token and skill details in their dedicated tab", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-tokens",
+          projectId: "my-app",
+          agentSessionId: "codex-session-1",
+          agentCost: {
+            inputTokens: 1200,
+            outputTokens: 340,
+            estimatedCostUsd: 0.0123,
+          },
+          metadata: {
+            agent: "codex",
+            model: "gpt-5.4",
+            permissions: "auto-edit",
+            subagent: "reviewer",
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "토큰·스킬" }));
+
+    expect(screen.getByRole("heading", { name: "토큰 사용량" })).toBeInTheDocument();
+    expect(screen.getByText("1,200")).toBeInTheDocument();
+    expect(screen.getByText("340")).toBeInTheDocument();
+    expect(screen.getByText("1,540")).toBeInTheDocument();
+    expect(screen.getByText("codex")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
+    expect(screen.getByText("auto-edit")).toBeInTheDocument();
+    expect(screen.getByText("reviewer")).toBeInTheDocument();
+    expect(screen.getByText("codex-session-1")).toBeInTheDocument();
+  });
+
   it("sends unresolved comments back to the agent and shows sent state", async () => {
     vi.useFakeTimers();
 
