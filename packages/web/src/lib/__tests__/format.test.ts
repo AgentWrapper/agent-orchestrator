@@ -68,6 +68,11 @@ describe("humanizeBranch", () => {
     expect(humanizeBranch("session/ao-52")).toBe("Ao 52");
   });
 
+  it("hides suffixes on generated session branches even without a session id", () => {
+    expect(humanizeBranch("session/ao-52-k7f2m")).toBe("Ao 52");
+    expect(humanizeBranch("session/ao-52-manual-branch-name")).toBe("Ao 52");
+  });
+
   it("handles orchestrator/ prefix", () => {
     expect(humanizeBranch("orchestrator/ao-orchestrator-8")).toBe("Ao Orchestrator 8");
   });
@@ -75,6 +80,11 @@ describe("humanizeBranch", () => {
   it("returns empty when the branch is just the session ID (session/)", () => {
     // Signals to getSessionTitle that this branch carries no task info.
     expect(humanizeBranch("session/ao-42", "ao-42")).toBe("");
+  });
+
+  it("returns empty when the branch is a suffixed session branch", () => {
+    expect(humanizeBranch("session/ao-42-k7f2m", "ao-42")).toBe("");
+    expect(humanizeBranch("session/ao-42-manual-branch-name", "ao-42")).toBe("");
   });
 
   it("returns empty when the branch is just the session ID (orchestrator/)", () => {

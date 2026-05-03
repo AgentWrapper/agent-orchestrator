@@ -24,6 +24,7 @@ import type { DashboardSession } from "./types.js";
  *   humanizeBranch("session/ao-52", "ao-52")          // → ""
  */
 export function humanizeBranch(branch: string, sessionId?: string): string {
+  const isSessionBranch = branch.startsWith("session/");
   // Remove common prefixes (keep in sync with actual branch-generation logic
   // in packages/core/src/session-manager.ts — `session/`, `orchestrator/`, and
   // `feat/` are produced by spawn()/spawnOrchestrator()).
@@ -32,15 +33,25 @@ export function humanizeBranch(branch: string, sessionId?: string): string {
     "",
   );
 
+  const displayText = isSessionBranch
+    ? withoutPrefix.replace(/^([A-Za-z0-9][A-Za-z0-9_-]*-\d+)-.+$/, "$1")
+    : withoutPrefix;
+
+  const sessionBranchBase =
+    sessionId &&
+    displayText === sessionId
+      ? sessionId
+      : displayText;
+
   // If the remaining text is just the session ID (e.g. "ao-42" or
   // "ao-orchestrator-8"), there's no task signal here — return empty so the
   // caller can fall through to the next fallback (displayName, summary, …).
-  if (sessionId && withoutPrefix === sessionId) {
+  if (sessionId && sessionBranchBase === sessionId) {
     return "";
   }
 
   // Replace hyphens and underscores with spaces, then title-case each word
-  return withoutPrefix
+  return displayText
     .replace(/[-_]/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();

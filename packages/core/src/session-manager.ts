@@ -14,6 +14,7 @@
 import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
 import { execFile } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
@@ -103,6 +104,8 @@ import {
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+const SESSION_BRANCH_RANDOM_SUFFIX_LENGTH = 5;
+const SESSION_BRANCH_SUFFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -138,6 +141,14 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function createSessionBranchSuffix(length = SESSION_BRANCH_RANDOM_SUFFIX_LENGTH): string {
+  let suffix = "";
+  for (let i = 0; i < length; i += 1) {
+    suffix += SESSION_BRANCH_SUFFIX_ALPHABET[randomInt(SESSION_BRANCH_SUFFIX_ALPHABET.length)];
+  }
+  return suffix;
 }
 
 /** Re-export so existing core test-utils + session-manager call sites keep working. */
@@ -785,7 +796,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
           const ref = trimmed.split(/\s+/)[1] ?? "";
           const match = ref.match(
-            new RegExp(`refs/heads/session/${escapeRegex(project.sessionPrefix)}-(\\d+)$`),
+            new RegExp(`refs/heads/session/${escapeRegex(project.sessionPrefix)}-(\\d+)(?:-.+)?$`),
           );
           if (!match) return [];
 
@@ -1187,7 +1198,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             .replace(/^-+|-+$/g, "");
       branch = `feat/${slug || sessionId}`;
     } else {
-      branch = `session/${sessionId}`;
+      branch = `session/${sessionId}-${createSessionBranchSuffix()}`;
     }
 
     // Create workspace (if workspace plugin is available)
