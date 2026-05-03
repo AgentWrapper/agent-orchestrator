@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 describe("kill", () => {
-  it("destroys runtime, workspace, and keeps terminated metadata", async () => {
+  it("destroys runtime, workspace, and marks session terminated (no immediate archive)", async () => {
     const managedWorktree = join(
       getProjectWorktreesDir("my-app"),
       "app-1",
@@ -63,9 +63,11 @@ describe("kill", () => {
 
     expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
     expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
-    const meta = readMetadataRaw(sessionsDir, "app-1");
-    expect(meta).not.toBeNull();
-    expect(meta!["status"]).toMatch(/killed|terminated/);
+    // Session stays in active dir so the kanban can show it as Terminated.
+    // cleanup() archives it on the next pass via the idempotency path.
+    const remaining = readMetadataRaw(sessionsDir, "app-1");
+    expect(remaining).not.toBeNull();
+    expect(remaining?.["lifecycle"]).toContain('"state":"terminated"');
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {

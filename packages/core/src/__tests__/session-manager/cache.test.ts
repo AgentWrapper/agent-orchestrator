@@ -110,7 +110,7 @@ describe("listCached", () => {
     expect(afterSpawn).toHaveLength(1);
   });
 
-  it("reflects session status change immediately after kill (cache invalidated)", async () => {
+  it("reflects session state change immediately after kill (cache invalidated)", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/w1",
       branch: "feat/a",
@@ -123,15 +123,16 @@ describe("listCached", () => {
     // Warm cache
     const before = await sm.listCached();
     expect(before).toHaveLength(1);
-    expect(before[0].status).toBe("working");
+    expect(before[0]?.status).toBe("working");
 
-    // Kill invalidates cache
+    // Kill invalidates cache but keeps the session in the active dir
+    // so the kanban can show it in the Terminated column.
     await sm.kill("app-1");
 
-    // listCached must hit disk and see the session is now terminated
+    // listCached must hit disk and see the updated state
     const after = await sm.listCached();
     expect(after).toHaveLength(1);
-    expect(after[0].status).toMatch(/killed|terminated/);
+    expect(after[0]?.status).toBe("killed");
   });
 
   it("explicit invalidateCache() forces the next listCached to re-read disk", async () => {

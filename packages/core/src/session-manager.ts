@@ -1861,6 +1861,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         orchestratorSessionStrategy === "ignore"
       ) {
         await kill(sessionId, { purgeOpenCode: orchestratorSessionStrategy === "delete" });
+        // Explicitly archive the terminated session so reserveSessionId() can
+        // claim the same name for the replacement. kill() intentionally keeps
+        // terminated sessions in the active dir for kanban visibility, but the
+        // delete/ignore strategies need the slot to be free immediately.
+        // deleteMetadata() is a no-op when the file is absent, so no try/catch
+        // needed — real IO errors should propagate rather than be swallowed.
         deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId);
         return spawnOrchestrator(orchestratorConfig);
       }
@@ -2106,6 +2112,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // (which could double-purge opencode or race with concurrent kills).
     const existingLifecycle = parseCanonicalLifecycle(raw);
     if (existingLifecycle?.session.state === "terminated") {
+      // Session was already terminated (kill() keeps it in the active dir so the
+      // kanban can show it in the Terminated column). Delete it now that a second
+      // caller is asking to kill it — this is how cleanup() eventually removes it.
+      deleteMetadata(sessionsDir, sessionId);
+      invalidateCache();
       return { cleaned: false, alreadyTerminated: true };
     }
 
@@ -2181,6 +2192,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     updateMetadata(sessionsDir, sessionId, {
       ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
+      // Mark OpenCode cleanup in active metadata so the flag survives into the
+      // eventual archive (written by cleanup() via the idempotency path above).
+      // the deleted session ID for future reuse (mirrors markArchivedOpenCodeCleanup).
       ...(didPurgeOpenCodeSession && {
         opencodeSessionId: "",
         opencodeCleanedAt: new Date().toISOString(),
@@ -2519,7 +2533,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     };
 
     const restoreForDelivery = async (reason: string, session: Session): Promise<Session> => {
-      if (session.lifecycle.session.state === "done") {
+      if (
+        session.lifecycle.session.state === "done" ||
+        session.lifecycle.session.state === "terminated"
+      ) {
         throw new Error(`Cannot send to session ${sessionId}: ${reason}`);
       }
 

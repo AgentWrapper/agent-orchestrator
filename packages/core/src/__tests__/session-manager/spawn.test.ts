@@ -1568,6 +1568,40 @@ describe("spawn", () => {
       expect(mockWorkspace.create).not.toHaveBeenCalled();
     });
 
+    it("ensureOrchestrator restores a terminated orchestrator on ao start (kill then restart)", async () => {
+      // Simulates the fix from #1503: kill() keeps terminated sessions in the active
+      // dir so ensureOrchestrator() can find and restore them on the next ao start.
+      const lifecycle = createInitialCanonicalLifecycle("orchestrator");
+      lifecycle.session.state = "terminated";
+      lifecycle.session.reason = "manually_killed";
+      lifecycle.session.terminatedAt = new Date().toISOString();
+      lifecycle.session.lastTransitionAt = lifecycle.session.terminatedAt;
+      lifecycle.runtime.state = "missing";
+      lifecycle.runtime.reason = "tmux_missing";
+      const worktreePath = join(tmpDir, "terminated-orchestrator");
+      mkdirSync(worktreePath, { recursive: true });
+      lifecycle.runtime.handle = makeHandle("old-rt");
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: worktreePath,
+        branch: "orchestrator/app-orchestrator",
+        status: "terminated",
+        project: "my-app",
+        ...buildLifecycleMetadataPatch(lifecycle),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.ensureOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      // Workspace was reused (not recreated)
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
+      // New runtime was created for the restored session
+      expect(mockRuntime.create).toHaveBeenCalled();
+      // Old runtime was cleaned up
+      expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("old-rt"));
+    });
+
     it("cleans up reserved metadata on workspace creation failure", async () => {
       (mockWorkspace.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("workspace creation failed"),
