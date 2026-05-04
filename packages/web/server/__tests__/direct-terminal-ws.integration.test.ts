@@ -208,14 +208,7 @@ describe("mux terminal open", () => {
   it("sends error response for nonexistent tmux session", async () => {
     const ws = await connectMux();
 
-    ws.send(
-      JSON.stringify({
-        ch: "terminal",
-        id: "missing-session",
-        tmuxName: `nonexistent-${Date.now()}`,
-        type: "open",
-      }),
-    );
+    ws.send(JSON.stringify({ ch: "terminal", id: `nonexistent-${Date.now()}`, type: "open" }));
 
     const msg = await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "error");
     expect(typeof msg.message).toBe("string");
