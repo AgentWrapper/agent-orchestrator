@@ -8,8 +8,11 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+
+const execFileAsync = promisify(execFile);
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -223,14 +226,14 @@ class TerminalManager {
     return projectId ? `${projectId}:${id}` : id;
   }
 
-  private resolveExactTmuxName(id: string, tmuxName?: string): string | null {
+  private async resolveExactTmuxName(id: string, tmuxName?: string): Promise<string | null> {
     const trimmed = tmuxName?.trim();
     if (!trimmed) return null;
     if (!validateTmuxTarget(trimmed)) {
       throw new Error(`Invalid tmux target for session: ${id}`);
     }
     try {
-      execFileSync(this.TMUX, ["has-session", "-t", `=${trimmed}`], { timeout: 5000 });
+      await execFileAsync(this.TMUX, ["has-session", "-t", `=${trimmed}`], { timeout: 5000 });
       return trimmed;
     } catch {
       throw new Error(`Session not found: ${id}`);
@@ -241,7 +244,7 @@ class TerminalManager {
    * Open/attach to a terminal. If already open, just return.
    * If has subscribers but PTY crashed, re-attach.
    */
-  open(id: string, projectId?: string, tmuxName?: string): string {
+  async open(id: string, projectId?: string, tmuxName?: string): Promise<string> {
     if (!validateSessionId(id)) {
       throw new Error(`Invalid session ID: ${id}`);
     }
@@ -249,7 +252,7 @@ class TerminalManager {
     const key = this.terminalKey(id, projectId);
     const existing = this.terminals.get(key);
     const tmuxSessionId =
-      this.resolveExactTmuxName(id, tmuxName) ??
+      (await this.resolveExactTmuxName(id, tmuxName)) ??
       existing?.tmuxSessionId ??
       resolveTmuxSession(id, this.TMUX, undefined, undefined, projectId);
     if (!tmuxSessionId) {
@@ -347,6 +350,12 @@ class TerminalManager {
       console.log(`[MuxServer] PTY exited for ${id} with code ${exitCode}`);
       terminal.pty = null;
 
+      const notifyExit = () => {
+        for (const cb of terminal.exitCallbacks) {
+          cb(exitCode);
+        }
+      };
+
       // Re-attach if subscribers are still present, up to MAX_REATTACH_ATTEMPTS.
       // The cap prevents an unbounded respawn loop when the PTY crashes immediately
       // after every attach (e.g. resource exhaustion or a broken tmux session).
@@ -355,21 +364,21 @@ class TerminalManager {
         console.log(
           `[MuxServer] Re-attaching to ${id} (attempt ${terminal.reattachAttempts}/${MAX_REATTACH_ATTEMPTS})`,
         );
-        try {
-          this.open(id, projectId, tmuxSessionId);
-          terminal.reattachAttempts = 0; // reset on successful attach
-          return; // re-attached — don't notify exit
-        } catch (err) {
-          console.error(`[MuxServer] Failed to re-attach ${id}:`, err);
-        }
+        this.open(id, projectId, tmuxSessionId).then(
+          () => {
+            terminal.reattachAttempts = 0;
+          },
+          (err) => {
+            console.error(`[MuxServer] Failed to re-attach ${id}:`, err);
+            notifyExit();
+          },
+        );
+        return;
       } else if (terminal.reattachAttempts >= MAX_REATTACH_ATTEMPTS) {
         console.error(`[MuxServer] Max re-attach attempts reached for ${id}, giving up`);
       }
 
-      // Notify subscribers that the terminal has exited (re-attach failed or no subscribers)
-      for (const cb of terminal.exitCallbacks) {
-        cb(exitCode);
-      }
+      notifyExit();
     });
 
     console.log(`[MuxServer] Opened terminal ${id} (tmux: ${tmuxSessionId})`);
@@ -401,14 +410,14 @@ class TerminalManager {
    * Automatically opens the terminal if needed.
    * @param onExit - called when the PTY exits and cannot be re-attached
    */
-  subscribe(
+  async subscribe(
     id: string,
     projectId: string | undefined,
     callback: (data: string) => void,
     onExit?: (exitCode: number) => void,
-  ): () => void {
+  ): Promise<() => void> {
     // Ensure terminal is open
-    this.open(id, projectId);
+    await this.open(id, projectId);
     const key = this.terminalKey(id, projectId);
     const terminal = this.terminals.get(key);
     if (!terminal) {
@@ -491,7 +500,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     /**
      * Handle incoming messages
      */
-    ws.on("message", (data) => {
+    ws.on("message", async (data) => {
       try {
         const msg = JSON.parse(data.toString("utf8")) as ClientMessage;
 
@@ -508,7 +517,11 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
           try {
             if (type === "open") {
               // Validate session exists
-              terminalManager.open(id, projectId, "tmuxName" in msg ? msg.tmuxName : undefined);
+              await terminalManager.open(
+                id,
+                projectId,
+                "tmuxName" in msg ? msg.tmuxName : undefined,
+              );
 
               // Send opened confirmation (idempotent — safe to send on re-open)
               const openedMsg: ServerMessage = {
@@ -535,7 +548,7 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
                   };
                   ws.send(JSON.stringify(bufferMsg));
                 }
-                const unsub = terminalManager.subscribe(
+                const unsub = await terminalManager.subscribe(
                   id,
                   projectId,
                   (data) => {

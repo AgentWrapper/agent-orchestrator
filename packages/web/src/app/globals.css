@@ -7642,9 +7642,3 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .topbar-zone-pill--working { background: color-mix(in srgb, var(--color-accent-blue)      12%, transparent); color: var(--color-accent-blue); }
 .topbar-zone-pill--pending { background: color-mix(in srgb, var(--color-status-attention) 12%, transparent); color: var(--color-status-attention); }
 .topbar-zone-pill--done    { background: color-mix(in srgb, var(--color-text-tertiary)    14%, transparent); color: var(--color-text-tertiary); }
-
-@media (max-width: 640px) {
-  .kanban-board {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
