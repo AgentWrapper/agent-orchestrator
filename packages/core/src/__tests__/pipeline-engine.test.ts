@@ -288,4 +288,38 @@ describe("pipeline engine — end-to-end", () => {
     await engine.tick();
     expect(pollSpy).not.toHaveBeenCalled();
   });
+
+  it("subsequent runs against the same loop key still receive their projectId after the prior run terminated", async () => {
+    // Regression: the engine prunes its run-metadata side-table when a run
+    // reaches a terminal loop state. A naive implementation that pruned the
+    // map immediately on dispatch would also wipe the *next* run's entry
+    // before START_STAGE could read it. Verify that a second run started
+    // after the first completes still spawns with the correct projectId.
+    const registry = withRegistry([makeAgentPlugin("codex", ["review"])]);
+    const store = createPipelineStore(storeRoot);
+    const executor = makeMockExecutor();
+    const engine = createPipelineEngine({ store, registry, agentExecutor: executor });
+
+    // Run 1: start, complete, tick to terminal
+    await engine.startRun({
+      pipeline: makePipeline(),
+      projectId: "proj-a",
+      sessionId: "ses-1",
+      headSha: "sha-aaa",
+    });
+    executor.setNextOutcome({ status: "completed", artifacts: [] });
+    await engine.tick();
+
+    // Run 2: same loop key, fresh SHA
+    executor.setNextOutcome({ status: "running" });
+    await engine.startRun({
+      pipeline: makePipeline(),
+      projectId: "proj-b",
+      sessionId: "ses-1",
+      headSha: "sha-bbb",
+    });
+
+    expect(executor.startCalls).toHaveLength(2);
+    expect(executor.startCalls[1]?.projectId).toBe("proj-b");
+  });
 });

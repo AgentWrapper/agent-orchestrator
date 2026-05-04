@@ -226,7 +226,9 @@ function isFailedTerminalSession(session: {
   // `done` is a healthy terminal — but for stages we never expect a session to
   // reach `done` before findings are harvested, so treat it as a failure too.
   // (Sessions only transition to `done` after PR merge / explicit completion.)
-  if (session.status === "killed" || session.status === "errored") return true;
+  if (session.status === "killed" || session.status === "errored" || session.status === "done") {
+    return true;
+  }
   return false;
 }
 
@@ -249,6 +251,8 @@ function parseFindingsFile(path: string): ArtifactInput[] {
   return out;
 }
 
+const VALID_SEVERITIES = ["error", "warning", "info"] as const;
+
 function coerceArtifactInput(value: unknown, lineNo: number): ArtifactInput {
   if (!value || typeof value !== "object") {
     throw new Error(`line ${lineNo}: expected object`);
@@ -261,7 +265,7 @@ function coerceArtifactInput(value: unknown, lineNo: number): ArtifactInput {
     requireString(obj, "title", lineNo);
     requireString(obj, "description", lineNo);
     requireString(obj, "category", lineNo);
-    requireString(obj, "severity", lineNo);
+    requireEnum(obj, "severity", VALID_SEVERITIES, lineNo);
     requireNumber(obj, "confidence", lineNo);
     return obj as unknown as ArtifactInput;
   }
@@ -283,6 +287,22 @@ function requireString(obj: Record<string, unknown>, key: string, lineNo: number
 function requireNumber(obj: Record<string, unknown>, key: string, lineNo: number): void {
   if (typeof obj[key] !== "number") {
     throw new Error(`line ${lineNo}: missing numeric field "${key}"`);
+  }
+}
+
+function requireEnum<T extends string>(
+  obj: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+  lineNo: number,
+): void {
+  const value = obj[key];
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    throw new Error(
+      `line ${lineNo}: field "${key}" must be one of ${allowed
+        .map((v) => `"${v}"`)
+        .join(", ")}, got ${JSON.stringify(value)}`,
+    );
   }
 }
 

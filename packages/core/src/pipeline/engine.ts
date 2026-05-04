@@ -31,6 +31,7 @@ import {
   asRunId,
   asStageRunId,
   emptyEngineState,
+  isTerminalLoopState,
   isTerminalStageStatus,
   type EngineState,
   type Pipeline,
@@ -109,6 +110,22 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
     state = result.state;
     for (const effect of result.effects) {
       await executeEffect(effect);
+    }
+    pruneTerminatedRunMetadata();
+  }
+
+  /**
+   * Drop side-table entries for runs the reducer has already moved into a
+   * terminal loop state. Without this, `runMetadata` grows for the lifetime of
+   * the engine — one entry per pipeline run ever started — even though the
+   * data is only consumed by START_STAGE on a non-terminal run.
+   */
+  function pruneTerminatedRunMetadata(): void {
+    for (const runId of runMetadata.keys()) {
+      const run = state.runs[runId];
+      if (!run || isTerminalLoopState(run.loopState)) {
+        runMetadata.delete(runId);
+      }
     }
   }
 

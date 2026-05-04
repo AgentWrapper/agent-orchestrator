@@ -298,6 +298,46 @@ describe("agent executor — pollStage", () => {
     if (outcome.status !== "failed") throw new Error("unreachable");
     expect(outcome.errorMessage).toContain("terminated without findings");
   });
+
+  it("returns failed when session reaches `done` before findings are harvested", async () => {
+    // Regression: stages should never reach `done` ahead of findings — `done`
+    // is reserved for post-merge / explicit completion. Treating it as a still-
+    // running state would hang the stage forever.
+    const mock = makeMockSessionManager({ activity: "idle", status: "done" });
+    const exec = createAgentExecutor({ sessionManager: mock.sm });
+    const handle = await exec.startStage(makeStartInput());
+
+    const outcome = await exec.pollStage(handle);
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("unreachable");
+    expect(outcome.errorMessage).toContain("terminated without findings");
+  });
+
+  it("rejects findings whose severity is not in the enum", async () => {
+    const mock = makeMockSessionManager({ activity: "idle" });
+    const exec = createAgentExecutor({ sessionManager: mock.sm });
+    const handle = await exec.startStage(makeStartInput());
+
+    writeFindingsFile(workspaceRoot, [
+      JSON.stringify({
+        kind: "finding",
+        filePath: "src/foo.ts",
+        startLine: 1,
+        endLine: 1,
+        title: "x",
+        description: "y",
+        category: "general",
+        severity: "critical", // not in {"error","warning","info"}
+        confidence: 0.5,
+      }),
+    ]);
+
+    const outcome = await exec.pollStage(handle);
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("unreachable");
+    expect(outcome.errorMessage).toContain("severity");
+    expect(outcome.errorMessage).toContain("critical");
+  });
 });
 
 describe("agent executor — cancelStage", () => {
