@@ -623,7 +623,10 @@ describe("detect()", () => {
     expect(mockExecFileSync).toHaveBeenCalledWith(
       "agent",
       ["--help"],
-      expect.objectContaining({ encoding: "utf-8" }),
+      expect.objectContaining({
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
     );
   });
 
