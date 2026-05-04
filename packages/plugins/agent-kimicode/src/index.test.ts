@@ -35,13 +35,21 @@ vi.mock("node:os", async (importOriginal) => {
 
 // ---------------------------------------------------------------------------
 // Core activity-log mocks — only the shared helpers, not fs primitives.
+// isWindows is mocked so platform-aware tests can flip it without affecting
+// the host platform. Default false matches the POSIX assertions used
+// throughout this file.
 // ---------------------------------------------------------------------------
-const { mockReadLastActivityEntry, mockRecordTerminalActivity, mockSetupPathWrapperWorkspace } =
-  vi.hoisted(() => ({
-    mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
-    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
-    mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
-  }));
+const {
+  mockReadLastActivityEntry,
+  mockRecordTerminalActivity,
+  mockSetupPathWrapperWorkspace,
+  mockIsWindows,
+} = vi.hoisted(() => ({
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+  mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
+  mockIsWindows: vi.fn(() => false),
+}));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -50,6 +58,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
+    isWindows: mockIsWindows,
   };
 });
 
@@ -201,6 +210,7 @@ beforeEach(() => {
   mockReadLastActivityEntry.mockResolvedValue(null);
   mockRecordTerminalActivity.mockResolvedValue(undefined);
   mockSetupPathWrapperWorkspace.mockResolvedValue(undefined);
+  mockIsWindows.mockReturnValue(false);
   // realpath so that on macOS we get /private/var/... instead of /var/...
   // (/var is a symlink on macOS). Without this, the plugin hashes
   // realpath(workspacePath) while the test wrote under the unresolved path,
@@ -276,9 +286,25 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'kimi-k2'");
   });
 
-  it("passes --agent-file when systemPromptFile is set", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/tmp/sp.md" }));
-    expect(cmd).toContain("--agent-file '/tmp/sp.md'");
+  it("inlines systemPromptFile contents into --prompt (kimi's --agent-file requires YAML)", () => {
+    const sysFile = join(fakeHome, "system-prompt.md");
+    writeFileSync(sysFile, "# Orchestrator\n\nYou coordinate agents.", "utf-8");
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: sysFile }));
+    expect(cmd).not.toContain("--agent-file");
+    expect(cmd).toContain("--prompt");
+    expect(cmd).toContain("You coordinate agents.");
+  });
+
+  it("concatenates systemPromptFile + prompt with separator when both set", () => {
+    const sysFile = join(fakeHome, "system-prompt.md");
+    writeFileSync(sysFile, "SYSTEM_INSTRUCTIONS", "utf-8");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: sysFile, prompt: "USER_TASK" }),
+    );
+    expect(cmd).toContain("SYSTEM_INSTRUCTIONS");
+    expect(cmd).toContain("USER_TASK");
+    // System instructions appear before the user task
+    expect(cmd.indexOf("SYSTEM_INSTRUCTIONS")).toBeLessThan(cmd.indexOf("USER_TASK"));
   });
 
   it("passes --prompt inline (kimi's -p is a prompt string, not a mode switch)", () => {
@@ -288,7 +314,13 @@ describe("getLaunchCommand", () => {
 
   it("shell-escapes prompts with special characters", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's complicated" }));
-    expect(cmd).toContain("--prompt 'it'\\''s complicated'");
+    // shellEscape uses POSIX escape on Unix and PowerShell-style on Windows.
+    // The host platform decides which one we hit at test time.
+    if (process.platform === "win32") {
+      expect(cmd).toContain("--prompt 'it''s complicated'");
+    } else {
+      expect(cmd).toContain("--prompt 'it'\\''s complicated'");
+    }
   });
 
   it("passes --agent when config.subagent is set", () => {
@@ -296,19 +328,24 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--agent 'okabe'");
   });
 
-  it("combines model + yolo + agent + agent-file + prompt", () => {
+  it("combines model + yolo + agent + inlined system prompt + prompt", () => {
+    const sysFile = join(fakeHome, "system-prompt.md");
+    writeFileSync(sysFile, "SYS", "utf-8");
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         permissions: "permissionless",
         model: "kimi-k2",
         subagent: "default",
-        systemPromptFile: "/tmp/sp.md",
+        systemPromptFile: sysFile,
         prompt: "Go",
       }),
     );
-    expect(cmd).toBe(
-      "kimi --work-dir '/workspace/repo' --yolo --model 'kimi-k2' --agent 'default' --agent-file '/tmp/sp.md' --prompt 'Go'",
-    );
+    expect(cmd).toContain("--yolo");
+    expect(cmd).toContain("--model 'kimi-k2'");
+    expect(cmd).toContain("--agent 'default'");
+    expect(cmd).not.toContain("--agent-file");
+    expect(cmd).toContain("SYS");
+    expect(cmd).toContain("Go");
   });
 
   // Worktree-mode parity: when AO runs in worktree workspace mode,
@@ -349,14 +386,14 @@ describe("getEnvironment", () => {
     );
   });
 
-  it("prepends ~/.ao/bin to PATH", () => {
+  // PATH and GH_PATH are not set here — session-manager injects them for
+  // every agent (see session-manager.ts: buildAgentPath + PREFERRED_GH_PATH).
+  // Setting them locally would just be overwritten and cause the values to
+  // diverge from the centralized Windows-aware logic.
+  it("does not set PATH or GH_PATH (session-manager owns those)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/\.ao\/bin/);
-  });
-
-  it("sets GH_PATH to the preferred gh binary", () => {
-    const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
+    expect(env["PATH"]).toBeUndefined();
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 });
 
@@ -523,7 +560,16 @@ describe("isProcessRunning", () => {
 // =============================================================================
 describe("getActivityState", () => {
   const agent = create();
-  const workspace = "/workspace/test";
+  // workspace is a per-test path under fakeHome that is intentionally NOT
+  // created on disk. resolveWorkspacePath stat()s before realpath()ing —
+  // a path that doesn't exist on the host falls back to the raw string, so
+  // production's hash matches the test fixture's hash. fakeHome is unique
+  // per test (mkdtemp), so this stays stable across hosts that may have
+  // unrelated dirs at literal paths like "/workspace".
+  let workspace: string;
+  beforeEach(() => {
+    workspace = join(fakeHome, "wsdir");
+  });
 
   it("1. returns exited when process is not running", async () => {
     mockTmuxWithProcess("zsh", false);
@@ -1033,7 +1079,16 @@ describe("recordActivity", () => {
 // =============================================================================
 describe("getSessionInfo", () => {
   const agent = create();
-  const workspace = "/workspace/test";
+  // workspace is a per-test path under fakeHome that is intentionally NOT
+  // created on disk. resolveWorkspacePath stat()s before realpath()ing —
+  // a path that doesn't exist on the host falls back to the raw string, so
+  // production's hash matches the test fixture's hash. fakeHome is unique
+  // per test (mkdtemp), so this stays stable across hosts that may have
+  // unrelated dirs at literal paths like "/workspace".
+  let workspace: string;
+  beforeEach(() => {
+    workspace = join(fakeHome, "wsdir");
+  });
 
   it("returns null when workspacePath is missing", async () => {
     expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
@@ -1275,7 +1330,16 @@ describe("getSessionInfo", () => {
 // =============================================================================
 describe("getRestoreCommand", () => {
   const agent = create();
-  const workspace = "/workspace/test";
+  // workspace is a per-test path under fakeHome that is intentionally NOT
+  // created on disk. resolveWorkspacePath stat()s before realpath()ing —
+  // a path that doesn't exist on the host falls back to the raw string, so
+  // production's hash matches the test fixture's hash. fakeHome is unique
+  // per test (mkdtemp), so this stays stable across hosts that may have
+  // unrelated dirs at literal paths like "/workspace".
+  let workspace: string;
+  beforeEach(() => {
+    workspace = join(fakeHome, "wsdir");
+  });
 
   it("returns null when workspacePath is missing", async () => {
     const result = await agent.getRestoreCommand!(

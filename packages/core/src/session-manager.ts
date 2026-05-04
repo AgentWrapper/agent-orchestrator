@@ -438,10 +438,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function requiresNativeRestore(agentName: string): boolean {
+    // kimicode is intentionally excluded: kimi's session dir only exists if the
+    // previous launch ran far enough to write to ~/.kimi/sessions. A failed
+    // launch (e.g. the --agent-file YAML crash) leaves no session to resume,
+    // and falling back to a fresh getLaunchCommand is the only sensible choice.
     return (
       agentName === "claude-code" ||
       agentName === "codex" ||
-      agentName === "kimicode" ||
       agentName === "opencode"
     );
   }
