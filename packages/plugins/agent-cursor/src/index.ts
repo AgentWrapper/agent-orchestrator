@@ -416,8 +416,10 @@ export function detect(): boolean {
     // "cursor" marker, so we check --help output instead.
     const helpOutput = execFileSync("agent", ["--help"], {
       encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
       shell: isWindows(),
       windowsHide: true,
+      timeout: 5_000,
     });
     // Use multiple indicators for robustness - if Cursor changes one, others still work
     const hasCursorAgent = helpOutput.includes("Cursor Agent");
