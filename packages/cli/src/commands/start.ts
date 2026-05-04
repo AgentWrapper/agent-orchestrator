@@ -761,14 +761,6 @@ async function addProjectToConfig(
 }
 
 /**
- * Create config without starting dashboard/orchestrator.
- * Used by deprecated `ao init` wrapper.
- */
-export async function createConfigOnly(): Promise<void> {
-  await autoCreateConfig(cwd());
-}
-
-/**
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
  */

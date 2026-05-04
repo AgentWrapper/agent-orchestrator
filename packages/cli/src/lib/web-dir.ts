@@ -44,7 +44,7 @@ export const MAX_PORT_SCAN = 100;
 /**
  * Find the first available port starting from `start`, scanning upward.
  * Returns `null` if no free port is found within `maxScan` attempts.
- * Shared between `ao init` and `ao start <url>`.
+ * Shared between first-run setup and `ao start <url>`.
  */
 export async function findFreePort(start: number, maxScan = MAX_PORT_SCAN): Promise<number | null> {
   for (let port = start; port < start + maxScan; port++) {

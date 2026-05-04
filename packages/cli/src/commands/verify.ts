@@ -29,7 +29,7 @@ function resolveProject(
 
   const ids = Object.keys(config.projects);
   if (ids.length === 0) {
-    console.error(chalk.red("No projects configured. Run `ao init` first."));
+    console.error(chalk.red("No projects configured. Run `ao start` to create one."));
     process.exit(1);
   }
   if (ids.length > 1) {
@@ -91,7 +91,7 @@ export function registerVerify(program: Command): void {
         try {
           config = loadConfig();
         } catch {
-          console.error(chalk.red("No config found. Run `ao init` first."));
+          console.error(chalk.red("No config found. Run `ao start` to create one."));
           process.exit(1);
           return;
         }

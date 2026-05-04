@@ -984,7 +984,7 @@ describe("status command", () => {
     }
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(output).toContain("No config found");
+    expect(output).toContain("No config found. Run `ao start` to create one.");
     expect(output).toContain("Falling back to session discovery");
   });
 

@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { registerInit } from "./commands/init.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
 import { registerSession } from "./commands/session.js";
@@ -29,7 +28,6 @@ export function createProgram(): Command {
     .description("Agent Orchestrator — manage parallel AI coding agents")
     .version(getCliVersion());
 
-  registerInit(program);
   registerStart(program);
   registerStop(program);
   registerStatus(program);

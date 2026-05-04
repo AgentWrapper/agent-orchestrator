@@ -5,7 +5,7 @@ How to set up the Agent Orchestrator (AO) plugin for OpenClaw so the AI bot dele
 ## Prerequisites
 
 - [OpenClaw](https://openclaw.ai) installed and running
-- [Agent Orchestrator](https://github.com/ComposioHQ/agent-orchestrator) installed with `ao init` completed in your repo
+- [Agent Orchestrator](https://github.com/ComposioHQ/agent-orchestrator) installed with `ao start` already run in your repo
 - `ao`, `gh`, `tmux`, and `node` available in PATH
 - GitHub CLI (`gh`) authenticated
 

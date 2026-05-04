@@ -348,7 +348,7 @@ export function registerStatus(program: Command): void {
         try {
           config = loadConfig();
         } catch {
-          console.log(chalk.yellow("No config found. Run `ao init` first."));
+          console.log(chalk.yellow("No config found. Run `ao start` to create one."));
           console.log(chalk.dim("Falling back to session discovery...\n"));
           await showFallbackStatus();
           return;
