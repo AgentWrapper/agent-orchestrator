@@ -40,6 +40,11 @@ agent plugins (`gh`, `git`) ship as `.cjs` + `.cmd` shims on Windows;
 `script-runner` runs `.ps1` siblings of `.sh` scripts via PowerShell. New
 `ao-doctor.ps1` / `ao-update.ps1` shipped.
 
+`ao open` is now cross-platform: it sources sessions from `sm.list()`
+instead of `tmux list-sessions` (so `runtime-process` sessions on Windows
+appear), and the open action branches per OS — `open-iterm-tab` stays the
+macOS path, native handling on Windows and Linux.
+
 Behaviour on macOS and Linux is unchanged. Every Windows path is gated
 behind `isWindows()`; `runtime-tmux` and the bash hook flows are untouched.
 
