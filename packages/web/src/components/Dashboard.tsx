@@ -9,7 +9,10 @@ import {
   type AttentionLevel,
   type DashboardOrchestratorLink,
   type DashboardAttentionZoneMode,
+  type SwimlaneDef,
   getAttentionLevel,
+  getCustomAttentionLevel,
+  isDashboardSessionDone,
   isPRRateLimited,
   isDashboardSessionRestorable,
   isDashboardSessionTerminated,
@@ -38,6 +41,8 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
   /** Dashboard attention zone mode (defaults to "simple" — 4 zones). */
   attentionZones?: DashboardAttentionZoneMode;
+  /** Custom swimlane definitions. When set, overrides attentionZones for kanban grouping. */
+  swimlanes?: SwimlaneDef[];
   /** SSR/services failure — show an error banner instead of a misleading empty dashboard */
   dashboardLoadError?: string;
 }
@@ -149,12 +154,15 @@ function DashboardInner({
   projects = [],
   orchestrators,
   attentionZones = "simple",
+  swimlanes,
   dashboardLoadError,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const mux = useMuxOptional();
-  const kanbanLevels =
-    attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
+  const kanbanLevels = useMemo((): readonly string[] => {
+    if (swimlanes && swimlanes.length > 0) return swimlanes.map((lane) => lane.id);
+    return attentionZones === "detailed" ? DETAILED_KANBAN_LEVELS : SIMPLE_KANBAN_LEVELS;
+  }, [attentionZones, swimlanes]);
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
     for (const s of initialSessions) {
@@ -229,8 +237,10 @@ function DashboardInner({
       setSidebarCollapsed((v) => !v);
     }
   }, [isMobile, isInsideLayout, parentCtx]);
-  const [collapsedZones, setCollapsedZones] = useState<Set<AttentionLevel>>(
-    () => new Set<AttentionLevel>(["done", "working"]),
+  // String-keyed (not `AttentionLevel`) so custom swimlane ids — which
+  // are arbitrary user-supplied strings — can also be collapsed.
+  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(
+    () => new Set<string>(["done", "working"]),
   );
   const [previewSession, setPreviewSession] = useState<DashboardSession | null>(null);
   const [bottomSheetMode, setBottomSheetMode] = useState<"preview" | "confirm-kill">("preview");
@@ -283,7 +293,27 @@ function DashboardInner({
     document.title = needsAttention > 0 ? `${label} (${needsAttention} need attention)` : label;
   }, [attentionLevels, projectName]);
 
-  const grouped = useMemo(() => {
+  // Close the mobile sidebar when the URL/searchParams change (nav).
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [searchParams]);
+
+  const grouped = useMemo((): Record<string, DashboardSession[]> => {
+    if (swimlanes && swimlanes.length > 0) {
+      const result: Record<string, DashboardSession[]> = { done: [] };
+      for (const lane of swimlanes) {
+        result[lane.id] = [];
+      }
+      for (const session of displaySessions) {
+        if (isDashboardSessionDone(session)) {
+          result.done.push(session);
+        } else {
+          const laneId = getCustomAttentionLevel(session, swimlanes);
+          result[laneId].push(session);
+        }
+      }
+      return result;
+    }
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
       action: [],
@@ -297,7 +327,7 @@ function DashboardInner({
       zones[getAttentionLevel(session, attentionZones)].push(session);
     }
     return zones;
-  }, [displaySessions, attentionZones]);
+  }, [displaySessions, attentionZones, swimlanes]);
 
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
@@ -317,18 +347,30 @@ function DashboardInner({
 
     return projects.map((project) => {
       const projectSessions = sessionsByProject.get(project.id) ?? [];
-      const counts: Record<AttentionLevel, number> = {
-        merge: 0,
-        action: 0,
-        respond: 0,
-        review: 0,
-        pending: 0,
-        working: 0,
-        done: 0,
-      };
+      const counts: Record<string, number> = {};
 
-      for (const session of projectSessions) {
-        counts[getAttentionLevel(session, attentionZones)]++;
+      if (swimlanes && swimlanes.length > 0) {
+        for (const lane of swimlanes) {
+          counts[lane.id] = 0;
+        }
+        for (const session of projectSessions) {
+          if (!isDashboardSessionDone(session)) {
+            const laneId = getCustomAttentionLevel(session, swimlanes);
+            counts[laneId] = (counts[laneId] ?? 0) + 1;
+          }
+        }
+      } else {
+        counts.merge = 0;
+        counts.action = 0;
+        counts.respond = 0;
+        counts.review = 0;
+        counts.pending = 0;
+        counts.working = 0;
+        counts.done = 0;
+        for (const session of projectSessions) {
+          const level = getAttentionLevel(session, attentionZones);
+          counts[level]++;
+        }
       }
 
       return {
@@ -340,7 +382,7 @@ function DashboardInner({
         counts,
       };
     });
-  }, [activeOrchestrators, allProjectsView, attentionZones, projects, sessionsByProject]);
+  }, [activeOrchestrators, allProjectsView, attentionZones, swimlanes, projects, sessionsByProject]);
 
   const handleSend = useCallback(
     async (sessionId: string, message: string) => {
@@ -560,7 +602,7 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
-  const handleZoneToggle = (level: AttentionLevel) => {
+  const handleZoneToggle = (level: string) => {
     setCollapsedZones((prev) => {
       const next = new Set(prev);
       if (next.has(level)) {
@@ -768,6 +810,7 @@ function DashboardInner({
                 spawningProjectIds={spawningProjectIds}
                 spawnErrors={spawnErrors}
                 attentionZones={attentionZones}
+                swimlanes={swimlanes}
               />
             )}
 
@@ -782,22 +825,26 @@ function DashboardInner({
                     } as React.CSSProperties
                   }
                 >
-                  {kanbanLevels.map((level) => (
-                    <AttentionZone
-                      key={level}
-                      level={level}
-                      sessions={grouped[level]}
-                      onSend={handleSend}
-                      onKill={handleKill}
-                      onMerge={handleMerge}
-                      onRestore={handleRestore}
-                      onReview={handleRequestReview}
-                      compactMobile={isMobile}
-                      collapsed={isMobile && collapsedZones.has(level)}
-                      onToggle={isMobile ? handleZoneToggle : undefined}
-                      onPreview={isMobile ? handlePreview : undefined}
-                    />
-                  ))}
+                  {kanbanLevels.map((level) => {
+                    const customLabel = swimlanes?.find((lane) => lane.id === level)?.label;
+                    return (
+                      <AttentionZone
+                        key={level}
+                        level={level}
+                        label={customLabel}
+                        sessions={grouped[level] ?? []}
+                        onSend={handleSend}
+                        onKill={handleKill}
+                        onMerge={handleMerge}
+                        onRestore={handleRestore}
+                        onReview={handleRequestReview}
+                        compactMobile={isMobile}
+                        collapsed={isMobile && collapsedZones.has(level)}
+                        onToggle={isMobile ? handleZoneToggle : undefined}
+                        onPreview={isMobile ? handlePreview : undefined}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -932,18 +979,20 @@ function ProjectOverviewGrid({
   spawningProjectIds,
   spawnErrors,
   attentionZones,
+  swimlanes,
 }: {
   overviews: Array<{
     project: ProjectInfo;
     orchestrator: DashboardOrchestratorLink | null;
     sessionCount: number;
     openPRCount: number;
-    counts: Record<AttentionLevel, number>;
+    counts: Record<string, number>;
   }>;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
   spawningProjectIds: string[];
   spawnErrors: Record<string, string>;
   attentionZones: DashboardAttentionZoneMode;
+  swimlanes?: SwimlaneDef[];
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -984,17 +1033,30 @@ function ProjectOverviewGrid({
               </div>
 
               <div className="mb-4 flex flex-wrap gap-2">
-                <ProjectMetric label="Merge" value={counts.merge} tone="ready" />
-                {attentionZones === "detailed" ? (
-                  <>
-                    <ProjectMetric label="Respond" value={counts.respond} tone="error" />
-                    <ProjectMetric label="Review" value={counts.review} tone="orange" />
-                  </>
+                {swimlanes && swimlanes.length > 0 ? (
+                  swimlanes.map((lane) => (
+                    <ProjectMetric
+                      key={lane.id}
+                      label={lane.label}
+                      value={counts[lane.id] ?? 0}
+                      tone="working"
+                    />
+                  ))
                 ) : (
-                  <ProjectMetric label="Action" value={counts.action} tone="orange" />
+                  <>
+                    <ProjectMetric label="Merge" value={counts.merge ?? 0} tone="ready" />
+                    {attentionZones === "detailed" ? (
+                      <>
+                        <ProjectMetric label="Respond" value={counts.respond ?? 0} tone="error" />
+                        <ProjectMetric label="Review" value={counts.review ?? 0} tone="orange" />
+                      </>
+                    ) : (
+                      <ProjectMetric label="Action" value={counts.action ?? 0} tone="orange" />
+                    )}
+                    <ProjectMetric label="Pending" value={counts.pending ?? 0} tone="attention" />
+                    <ProjectMetric label="Working" value={counts.working ?? 0} tone="working" />
+                  </>
                 )}
-                <ProjectMetric label="Pending" value={counts.pending} tone="attention" />
-                <ProjectMetric label="Working" value={counts.working} tone="working" />
               </div>
 
               <div className="border-t border-[var(--color-border-subtle)] pt-3">

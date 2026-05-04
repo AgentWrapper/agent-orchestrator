@@ -1449,9 +1449,27 @@ export interface ExternalPluginEntryRef {
  */
 export type DashboardAttentionZoneMode = "simple" | "detailed";
 
+/** A single custom swimlane definition for the dashboard kanban board. */
+export interface SwimlaneDef {
+  /** Unique identifier for the lane (used as the column key). */
+  id: string;
+  /** Display label shown in the column header. */
+  label: string;
+  /** Session statuses that belong to this lane. */
+  statuses: string[];
+}
+
 export interface DashboardConfig {
   /** Attention zone layout (defaults to "simple") */
   attentionZones?: DashboardAttentionZoneMode;
+  /**
+   * Custom swimlane definitions. When set, overrides `attentionZones` and
+   * renders the kanban board with these columns instead. Sessions are
+   * placed into the first lane whose `statuses` array contains the session's
+   * status. Done/terminal sessions are always placed in the "Done" section
+   * regardless of swimlane config.
+   */
+  swimlanes?: SwimlaneDef[];
 }
 
 export interface DefaultPlugins {

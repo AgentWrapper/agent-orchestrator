@@ -5,6 +5,7 @@ import {
   type DashboardSession,
   type DashboardOrchestratorLink,
   type DashboardAttentionZoneMode,
+  type SwimlaneDef,
 } from "@/lib/types";
 import { getServices } from "@/lib/services";
 import {
@@ -48,6 +49,7 @@ interface DashboardPageData {
   projects: ProjectInfo[];
   selectedProjectId?: string;
   attentionZones: DashboardAttentionZoneMode;
+  swimlanes?: SwimlaneDef[];
   /** Present when services initialization or session listing failed during SSR (distinct from an empty session list). */
   dashboardLoadError?: string;
 }
@@ -96,6 +98,7 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     config = services.config;
     registry = services.registry;
     pageData.attentionZones = config.dashboard?.attentionZones ?? DEFAULT_ATTENTION_ZONE_MODE;
+    pageData.swimlanes = config.dashboard?.swimlanes;
     try {
       allSessions = await services.sessionManager.listCached();
     } catch (listErr) {

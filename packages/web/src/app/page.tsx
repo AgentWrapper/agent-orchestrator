@@ -30,6 +30,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
       projects={pageData.projects}
       orchestrators={pageData.orchestrators}
       attentionZones={pageData.attentionZones}
+      swimlanes={pageData.swimlanes}
       dashboardLoadError={pageData.dashboardLoadError}
     />
   );

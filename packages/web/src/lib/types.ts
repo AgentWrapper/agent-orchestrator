@@ -24,6 +24,7 @@ export type {
   CanonicalRuntimeState,
   CanonicalRuntimeReason,
   DashboardAttentionZoneMode,
+  SwimlaneDef,
 } from "@aoagents/ao-core/types";
 
 import {
@@ -48,6 +49,7 @@ import {
   type CanonicalRuntimeState,
   type CanonicalRuntimeReason,
   type DashboardAttentionZoneMode,
+  type SwimlaneDef,
 } from "@aoagents/ao-core/types";
 import type { AgentReportedState } from "@aoagents/ao-core";
 
@@ -475,6 +477,26 @@ export function getAttentionLevel(
     return "action";
   }
   return level;
+}
+
+/**
+ * Maps a session to a custom swimlane id based on user-defined swimlane config.
+ * Done/terminal sessions are not handled here — callers must check
+ * `isDashboardSessionDone` first and route those to the done section.
+ *
+ * Returns the id of the first lane whose `statuses` array contains the
+ * session's status. Falls back to the last lane's id if no match is found.
+ */
+export function getCustomAttentionLevel(
+  session: DashboardSession,
+  swimlanes: SwimlaneDef[],
+): string {
+  for (const lane of swimlanes) {
+    if (lane.statuses.includes(session.status)) {
+      return lane.id;
+    }
+  }
+  return swimlanes[swimlanes.length - 1]?.id ?? "working";
 }
 
 function getDetailedAttentionLevel(session: DashboardSession): AttentionLevel {
