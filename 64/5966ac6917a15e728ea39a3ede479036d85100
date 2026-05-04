@@ -1,0 +1,82 @@
+packages/plugins/notifier-desktop/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/runtime-process/package.json
+  d80f5b8bf970cf09 44-47
+packages/plugins/notifier-slack/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/agent-codex/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/terminal-web/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/agent-kimicode/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/tracker-linear/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/runtime-tmux/package.json
+  d80f5b8bf970cf09 44-47
+packages/plugins/agent-aider/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/terminal-iterm2/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/notifier-discord/package.json
+  d80f5b8bf970cf09 44-47
+packages/plugins/tracker-gitlab/package.json
+  d80f5b8bf970cf09 44-47
+.github/workflows/release.yml
+  d80f5b8bf970cf09 16,22,52
+packages/ao/package.json
+  d80f5b8bf970cf09 30-33
+packages/plugins/notifier-composio/package.json
+  d80f5b8bf970cf09 51-54
+packages/core/package.json
+  d80f5b8bf970cf09 106-109
+packages/plugins/notifier-webhook/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/notifier-openclaw/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/agent-cursor/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/tracker-github/package.json
+  d80f5b8bf970cf09 43-46
+.github/workflows/canary.yml
+  d80f5b8bf970cf09 16,22,87
+packages/plugins/scm-gitlab/package.json
+  d80f5b8bf970cf09 47-50
+packages/plugins/workspace-worktree/package.json
+  d80f5b8bf970cf09 44-47
+packages/cli/package.json
+  d80f5b8bf970cf09 15-17,74-77
+packages/plugins/agent-opencode/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/agent-claude-code/package.json
+  d80f5b8bf970cf09 43-46
+packages/plugins/scm-github/package.json
+  d80f5b8bf970cf09 44-47
+packages/plugins/workspace-clone/package.json
+  d80f5b8bf970cf09 44-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "645966ac6917a15e728ea39a3ede479036d85100",
+  "prompts": {
+    "d80f5b8bf970cf09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2d7861a-1059-479f-8d8a-1a95d4b4e4eb",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 113,
+      "total_deletions": 1,
+      "accepted_lines": 113,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e1aac9baf373c4": {
+      "author": "Ashish Huddar"
+    }
+  }
+}
