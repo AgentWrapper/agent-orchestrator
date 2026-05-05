@@ -5760,7 +5760,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
   /* -- Kanban board: stack columns vertically -- */
   .kanban-board {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     height: auto;
     min-height: auto;
     overflow-x: visible;
