@@ -1,0 +1,41 @@
+packages/web/src/components/CanvasDiff.tsx
+  716542aec5f41c44 8
+packages/web/src/components/__tests__/CanvasRail.test.tsx
+  716542aec5f41c44 1-76
+packages/core/src/__tests__/canvas-log.test.ts
+  716542aec5f41c44 166,188
+packages/web/src/components/SessionDetail.tsx
+  716542aec5f41c44 25
+packages/web/src/components/CanvasRail.tsx
+  716542aec5f41c44 6-9,33,99,101,103,105
+packages/core/src/canvas-log.ts
+  716542aec5f41c44 241-256,275-287
+packages/web/src/components/CanvasMarkdown.tsx
+  716542aec5f41c44 3,8,10-12,15-132
+packages/web/src/components/CanvasStats.tsx
+  716542aec5f41c44 14
+.gitignore
+  716542aec5f41c44 71
+packages/web/src/components/CanvasTable.tsx
+  716542aec5f41c44 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6c3e2daac8917a4abd0d055b29a14dcbb2a4fc4f",
+  "prompts": {
+    "716542aec5f41c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 547,
+      "total_deletions": 155,
+      "accepted_lines": 529,
+      "overriden_lines": 0
+    }
+  }
+}
