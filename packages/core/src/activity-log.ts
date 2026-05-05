@@ -12,7 +12,7 @@
  */
 import { appendFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import type { ActivityState, ActivityLogEntry, ActivityDetection } from "./types.js";
+import type { ActivityState, ActivityLogEntry, ActivityDetection, Session } from "./types.js";
 
 /**
  * Maximum age (ms) for `waiting_input`/`blocked` entries before they're
@@ -250,4 +250,21 @@ export async function recordTerminalActivity(
   }
 
   await appendActivityEntry(workspacePath, state, "terminal", trigger);
+}
+
+/**
+ * Build a standard `Agent.recordActivity` implementation from a classifier.
+ *
+ * Agents that classify terminal output and write to the AO activity JSONL
+ * all share the same wrapper: null-check `session.workspacePath`, then
+ * delegate to `recordTerminalActivity`. This factory produces that wrapper
+ * so plugins don't have to duplicate it.
+ */
+export function recordActivityViaTerminal(
+  classifier: (output: string) => ActivityState,
+): (session: Session, terminalOutput: string) => Promise<void> {
+  return async (session, terminalOutput) => {
+    if (!session.workspacePath) return;
+    await recordTerminalActivity(session.workspacePath, terminalOutput, classifier);
+  };
 }

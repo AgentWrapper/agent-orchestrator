@@ -5,7 +5,7 @@ import {
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
-  recordTerminalActivity,
+  recordActivityViaTerminal,
   asValidOpenCodeSessionId,
   getCachedOpenCodeSessionList,
   getOpenCodeChildEnv,
@@ -184,6 +184,25 @@ export const manifest = {
 // Agent Implementation
 // =============================================================================
 
+function detectOpenCodeActivity(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // OpenCode's input prompt — agent is idle
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+  // Check the last few lines for permission/confirmation prompts
+  const tail = lines.slice(-5).join("\n");
+  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+  if (/approval required/i.test(tail)) return "waiting_input";
+  if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
+  if (/Allow .+\?/i.test(tail)) return "waiting_input";
+
+  return "active";
+}
+
 function createOpenCodeAgent(): Agent {
   return {
     name: "opencode",
@@ -268,24 +287,9 @@ function createOpenCodeAgent(): Agent {
       return env;
     },
 
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
+    detectActivity: detectOpenCodeActivity,
 
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // OpenCode's input prompt — agent is idle
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-
-      // Check the last few lines for permission/confirmation prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
-      if (/Allow .+\?/i.test(tail)) return "waiting_input";
-
-      return "active";
-    },
+    recordActivity: recordActivityViaTerminal(detectOpenCodeActivity),
 
     async getActivityState(
       session: Session,
@@ -331,13 +335,6 @@ function createOpenCodeAgent(): Agent {
       if (fallback) return fallback;
 
       return null;
-    },
-
-    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
-      if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-        this.detectActivity(output),
-      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {

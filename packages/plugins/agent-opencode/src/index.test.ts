@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
 
-const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
+const { mockAppendActivityEntry, mockReadLastActivityEntry } =
   vi.hoisted(() => ({
     mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
     mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
-    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
   }));
 
 const mockExecFileAsync = vi.fn();
@@ -16,7 +15,6 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     ...actual,
     appendActivityEntry: mockAppendActivityEntry,
     readLastActivityEntry: mockReadLastActivityEntry,
-    recordTerminalActivity: mockRecordTerminalActivity,
   };
 });
 
@@ -935,31 +933,6 @@ describe("invalid session ID rejection", () => {
 
       expect(cmd).toContain(`--session '${validId}'`);
     }
-  });
-});
-
-// =========================================================================
-// recordActivity
-// =========================================================================
-describe("recordActivity", () => {
-  const agent = create();
-
-  it("is defined", () => {
-    expect(agent.recordActivity).toBeDefined();
-  });
-
-  it("does nothing when workspacePath is null", async () => {
-    await agent.recordActivity!(makeSession({ workspacePath: null }), "some output");
-    expect(mockRecordTerminalActivity).not.toHaveBeenCalled();
-  });
-
-  it("delegates to recordTerminalActivity", async () => {
-    await agent.recordActivity!(makeSession(), "opencode is working");
-    expect(mockRecordTerminalActivity).toHaveBeenCalledWith(
-      "/workspace/test",
-      "opencode is working",
-      expect.any(Function),
-    );
   });
 });
 

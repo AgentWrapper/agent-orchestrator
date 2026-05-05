@@ -385,6 +385,7 @@ import {
   checkActivityLogState,        // Extract waiting_input/blocked from AO JSONL (with staleness cap)
   getActivityFallbackState,     // Last-resort fallback: entry state + age-based decay
   recordTerminalActivity,       // Shared recordActivity impl (classify + dedup + append)
+  recordActivityViaTerminal,    // Factory returning a standard recordActivity from a classifier
   classifyTerminalActivity,     // Classify terminal output via detectActivity
   appendActivityEntry,          // Low-level JSONL append
   setupPathWrapperWorkspace,    // Install ~/.ao/bin wrappers + .ao/AGENTS.md
@@ -499,21 +500,24 @@ async getActivityState(session, readyThresholdMs?): Promise<ActivityDetection | 
 | Pattern | Used by | How it works |
 |---------|---------|-------------|
 | **Native JSONL** | Claude Code, Codex | Agent writes its own JSONL with rich state (`permission_request`, `tool_call`, `error`, etc.). `getActivityState` reads the last entry and maps it to activity states. |
-| **AO Activity JSONL** | Aider, OpenCode, new agents | Agent implements `recordActivity`. Lifecycle manager calls it each poll cycle with terminal output. It calls `classifyTerminalActivity()` → `appendActivityEntry()` to write to `{workspacePath}/.ao/activity.jsonl`. `getActivityState` reads from this file. |
+| **AO Activity JSONL** | Aider, OpenCode, new agents | Agent wires `recordActivity` to the `recordActivityViaTerminal(classifier)` factory from core. Lifecycle manager calls it each poll cycle with terminal output. It classifies via the provided function, dedupes, and appends to `{workspacePath}/.ao/activity.jsonl`. `getActivityState` reads from this file. |
 
 **For agents using AO Activity JSONL (the common case for new plugins):**
 
-1. Implement `recordActivity` — delegate to the shared `recordTerminalActivity()`:
+1. Wire `recordActivity` to the shared `recordActivityViaTerminal()` factory — no custom wrapper needed:
 ```typescript
-async recordActivity(session: Session, terminalOutput: string): Promise<void> {
-  if (!session.workspacePath) return;
-  await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-    this.detectActivity(output),
-  );
-}
+import { recordActivityViaTerminal } from "@aoagents/ao-core";
+
+function detectMyAgentActivity(output: string): ActivityState { ... }
+
+const agent: Agent = {
+  detectActivity: detectMyAgentActivity,
+  recordActivity: recordActivityViaTerminal(detectMyAgentActivity),
+  // ...
+};
 ```
 
-`recordTerminalActivity` handles classification, deduplication (20s window for non-actionable states), and appending. You don't need to implement dedup yourself.
+The factory handles the `workspacePath` null-check and delegates to `recordTerminalActivity`, which classifies, dedupes (20s window for non-actionable states), and appends. Only write a custom `recordActivity` if you need different classification or a different location.
 
 2. Implement `detectActivity` with patterns specific to the agent's terminal output:
 ```typescript

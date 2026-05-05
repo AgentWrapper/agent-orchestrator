@@ -8,10 +8,11 @@ import {
   readLastActivityEntry,
   appendActivityEntry,
   recordTerminalActivity,
+  recordActivityViaTerminal,
   getActivityLogPath,
   ACTIVITY_INPUT_STALENESS_MS,
 } from "../activity-log.js";
-import type { ActivityState } from "../types.js";
+import type { ActivityState, Session } from "../types.js";
 
 describe("classifyTerminalActivity", () => {
   it("returns active state with no trigger", () => {
@@ -194,5 +195,39 @@ describe("recordTerminalActivity", () => {
     const content = await rf(getActivityLogPath(tmpDir), "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
     expect(lines).toHaveLength(2);
+  });
+});
+
+describe("recordActivityViaTerminal", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "ao-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns a function", () => {
+    const fn = recordActivityViaTerminal(() => "active" as ActivityState);
+    expect(typeof fn).toBe("function");
+  });
+
+  it("does nothing when session.workspacePath is null", async () => {
+    const fn = recordActivityViaTerminal(() => "active" as ActivityState);
+    await fn({ workspacePath: null } as unknown as Session, "some output");
+    const result = await readLastActivityEntry(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it("delegates to recordTerminalActivity with provided classifier", async () => {
+    const classifier = () => "waiting_input" as ActivityState;
+    const fn = recordActivityViaTerminal(classifier);
+    await fn({ workspacePath: tmpDir } as unknown as Session, "prompt?");
+    const result = await readLastActivityEntry(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.entry.state).toBe("waiting_input");
+    expect(result!.entry.source).toBe("terminal");
   });
 });

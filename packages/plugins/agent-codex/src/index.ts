@@ -7,7 +7,7 @@ import {
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
-  recordTerminalActivity,
+  recordActivityViaTerminal,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -441,6 +441,25 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
   return result;
 }
 
+function detectCodexActivity(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // If Codex is showing its input prompt, it's idle
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+  // Check last few lines for approval prompts
+  const tail = lines.slice(-5).join("\n");
+  if (/approval required/i.test(tail)) return "waiting_input";
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+
+  // Default to active — specific patterns (esc to interrupt, spinner
+  // symbols) all map to "active" so no need to check them individually.
+  return "active";
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -491,24 +510,9 @@ function createCodexAgent(): Agent {
       return env;
     },
 
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
+    detectActivity: detectCodexActivity,
 
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // If Codex is showing its input prompt, it's idle
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-
-      // Check last few lines for approval prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
-
-      // Default to active — specific patterns (esc to interrupt, spinner
-      // symbols) all map to "active" so no need to check them individually.
-      return "active";
-    },
+    recordActivity: recordActivityViaTerminal(detectCodexActivity),
 
     async getActivityState(
       session: Session,
@@ -612,13 +616,6 @@ function createCodexAgent(): Agent {
       }
 
       return null;
-    },
-
-    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
-      if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-        this.detectActivity(output),
-      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
