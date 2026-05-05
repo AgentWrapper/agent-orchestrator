@@ -75,7 +75,9 @@ async function isRegisteredWorktree(repoPath: string, worktreePath: string): Pro
     const output = await git(repoPath, "worktree", "list", "--porcelain");
     return output
       .split("\n")
-      .some((line) => line.startsWith("worktree ") && line.slice("worktree ".length) === worktreePath);
+      .some(
+        (line) => line.startsWith("worktree ") && line.slice("worktree ".length) === worktreePath,
+      );
   } catch {
     return false;
   }
@@ -162,21 +164,32 @@ export function create(config?: Record<string, unknown>): Workspace {
             cause: err,
           });
         }
-        // Branch already exists — create worktree and check it out
-        await git(repoPath, "worktree", "add", worktreePath, baseRef);
+
+        // Branch already exists. It may be a stale session branch left behind
+        // from an earlier spawn, so compare it with the freshly-resolved base
+        // before reusing it.
+        const baseSha = await git(repoPath, "rev-parse", baseRef);
+        const branchRef = `refs/heads/${cfg.branch}`;
+        const existingBranchSha = (await refExists(repoPath, branchRef))
+          ? await git(repoPath, "rev-parse", branchRef)
+          : undefined;
+
         try {
-          await git(worktreePath, "checkout", cfg.branch);
-        } catch (checkoutErr: unknown) {
-          // Checkout failed — remove the orphaned worktree before rethrowing
+          if (existingBranchSha === baseSha) {
+            await git(repoPath, "worktree", "add", worktreePath, cfg.branch);
+          } else {
+            await git(repoPath, "worktree", "add", "-B", cfg.branch, worktreePath, baseRef);
+          }
+        } catch (retryErr: unknown) {
+          // Retry failed — remove any orphaned worktree before rethrowing
           try {
             await git(repoPath, "worktree", "remove", "--force", worktreePath);
           } catch {
             // Best-effort cleanup
           }
-          const checkoutMsg =
-            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
-          throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`, {
-            cause: checkoutErr,
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          throw new Error(`Failed to create worktree for branch "${cfg.branch}": ${retryMsg}`, {
+            cause: retryErr,
           });
         }
       }

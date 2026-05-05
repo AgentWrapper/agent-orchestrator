@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, realpath } from "node:fs/promises";
+import { mkdtemp, rm, realpath, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,32 @@ const execFileAsync = promisify(execFile);
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd });
   return stdout.trimEnd();
+}
+
+async function createCommit(cwd: string, fileName: string, content: string): Promise<string> {
+  await writeFile(join(cwd, fileName), content);
+  await git(cwd, "add", fileName);
+  await git(cwd, "commit", "-m", `update ${fileName}`);
+  return git(cwd, "rev-parse", "HEAD");
+}
+
+async function createRepoClone(): Promise<{
+  bareDir: string;
+  cloneParent: string;
+  repoDir: string;
+}> {
+  const rawBare = await mkdtemp(join(tmpdir(), "ao-inttest-wt-origin-"));
+  const bareDir = await realpath(rawBare);
+  await git(bareDir, "init", "--bare");
+
+  const rawParent = await mkdtemp(join(tmpdir(), "ao-inttest-wt-clone-parent-"));
+  const cloneParent = await realpath(rawParent);
+  const repoDir = join(cloneParent, "repo");
+  await execFileAsync("git", ["clone", bareDir, repoDir]);
+  await git(repoDir, "config", "user.email", "test@test.com");
+  await git(repoDir, "config", "user.name", "Test");
+
+  return { bareDir, cloneParent, repoDir };
 }
 
 describe("workspace-worktree (integration)", () => {
@@ -130,4 +156,108 @@ describe("workspace-worktree (integration)", () => {
     const found = list.find((w: { sessionId: string }) => w.sessionId === "session-1");
     expect(found).toBeUndefined();
   });
+
+  it("resets a stale session branch when defaultBranch changes", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-stale-default-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+
+    try {
+      await git(isolatedRepoDir, "switch", "-c", "develop");
+      const developSha = await createCommit(isolatedRepoDir, "base.txt", "develop\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "develop");
+
+      await git(isolatedRepoDir, "switch", "-c", "reset");
+      const resetSha = await createCommit(isolatedRepoDir, "reset.txt", "reset\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "reset");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const developProject: ProjectConfig = {
+        name: "stale-default",
+        repo: "test/stale-default",
+        path: isolatedRepoDir,
+        defaultBranch: "develop",
+        sessionPrefix: "meg",
+      };
+
+      const firstInfo = await isolatedWorkspace.create({
+        projectId: "stale-default",
+        sessionId: "meg-1",
+        project: developProject,
+        branch: "session/meg-1",
+      });
+      expect(await git(firstInfo.path, "rev-parse", "HEAD")).toBe(developSha);
+      await isolatedWorkspace.destroy(firstInfo.path);
+
+      const resetProject = { ...developProject, defaultBranch: "reset" };
+      const secondInfo = await isolatedWorkspace.create({
+        projectId: "stale-default",
+        sessionId: "meg-1",
+        project: resetProject,
+        branch: "session/meg-1",
+      });
+
+      expect(await git(secondInfo.path, "rev-parse", "HEAD")).toBe(resetSha);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/meg-1")).toBe(resetSha);
+    } finally {
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
+  it("resets a stale session branch when origin default branch advances", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-stale-origin-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+    const rawExternalParent = await mkdtemp(join(tmpdir(), "ao-inttest-wt-external-parent-"));
+    const externalParent = await realpath(rawExternalParent);
+    const externalRepoDir = join(externalParent, "repo");
+
+    try {
+      await git(isolatedRepoDir, "switch", "-c", "main");
+      const oldMainSha = await createCommit(isolatedRepoDir, "base.txt", "main one\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "main");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const mainProject: ProjectConfig = {
+        name: "stale-origin",
+        repo: "test/stale-origin",
+        path: isolatedRepoDir,
+        defaultBranch: "main",
+        sessionPrefix: "meg",
+      };
+
+      const firstInfo = await isolatedWorkspace.create({
+        projectId: "stale-origin",
+        sessionId: "meg-1",
+        project: mainProject,
+        branch: "session/meg-1",
+      });
+      expect(await git(firstInfo.path, "rev-parse", "HEAD")).toBe(oldMainSha);
+      await isolatedWorkspace.destroy(firstInfo.path);
+
+      await execFileAsync("git", ["clone", bareDir, externalRepoDir]);
+      await git(externalRepoDir, "config", "user.email", "test@test.com");
+      await git(externalRepoDir, "config", "user.name", "Test");
+      await git(externalRepoDir, "switch", "main");
+      const newMainSha = await createCommit(externalRepoDir, "base.txt", "main two\n");
+      await git(externalRepoDir, "push", "origin", "main");
+
+      const secondInfo = await isolatedWorkspace.create({
+        projectId: "stale-origin",
+        sessionId: "meg-1",
+        project: mainProject,
+        branch: "session/meg-1",
+      });
+
+      expect(await git(secondInfo.path, "rev-parse", "HEAD")).toBe(newMainSha);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/meg-1")).toBe(newMainSha);
+    } finally {
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(externalParent, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
 });
