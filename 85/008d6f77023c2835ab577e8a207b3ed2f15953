@@ -1,0 +1,23 @@
+docs/canvases-launch.md
+  716542aec5f41c44 1-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "85008d6f77023c2835ab577e8a207b3ed2f15953",
+  "prompts": {
+    "716542aec5f41c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1166,
+      "total_deletions": 0,
+      "accepted_lines": 1518,
+      "overriden_lines": 0
+    }
+  }
+}
