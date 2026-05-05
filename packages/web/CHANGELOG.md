@@ -1,5 +1,16 @@
 # @aoagents/ao-web
 
+## 0.4.1
+
+### Patch Changes
+
+- Fix blank-terminal regression in dashboard session detail views.
+
+  The mux WebSocket server was using non-exact tmux targets when calling
+  `set-option` and `attach-session`, so tmux's prefix matching could
+  attach a PTY to the wrong session (e.g. `ao-1` resolving against
+  `ao-15`). Pass `=${tmuxSessionId}` so tmux requires an exact match.
+
 ## 0.4.0
 
 ### Patch Changes
