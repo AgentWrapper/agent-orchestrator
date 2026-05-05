@@ -1,0 +1,53 @@
+packages/core/src/index.ts
+  716542aec5f41c44 11-21
+packages/core/src/canvas-log.ts
+  716542aec5f41c44 1-281
+packages/web/src/hooks/useSessionCanvases.ts
+  716542aec5f41c44 1-94
+packages/core/src/types.ts
+  716542aec5f41c44 1668-1740
+docs/canvases.md
+  716542aec5f41c44 1-120
+packages/web/src/components/canvas/CanvasRail.tsx
+  716542aec5f41c44 1-107
+packages/web/src/components/SessionDetail.tsx
+  716542aec5f41c44 25,198,224
+packages/web/src/components/canvas/renderers/StatsCanvas.tsx
+  716542aec5f41c44 1-40
+packages/web/src/app/api/sessions/[id]/canvases/route.ts
+  716542aec5f41c44 1-93
+packages/web/src/components/canvas/__tests__/CanvasRail.test.tsx
+  716542aec5f41c44 1-76
+packages/core/src/__tests__/canvas-log.test.ts
+  716542aec5f41c44 1-221
+packages/web/src/components/canvas/renderers/MarkdownCanvas.tsx
+  716542aec5f41c44 1-13
+packages/core/src/canvas-schema.ts
+  716542aec5f41c44 1-89
+packages/web/src/hooks/__tests__/useSessionCanvases.test.ts
+  716542aec5f41c44 1-107
+packages/web/src/components/canvas/renderers/TableCanvas.tsx
+  716542aec5f41c44 1-59
+packages/web/src/components/canvas/renderers/DiffCanvas.tsx
+  716542aec5f41c44 1-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ca0b7ec2cedf34032e95efa82dc3ef8427723457",
+  "prompts": {
+    "716542aec5f41c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1532,
+      "total_deletions": 75,
+      "accepted_lines": 1458,
+      "overriden_lines": 0
+    }
+  }
+}
