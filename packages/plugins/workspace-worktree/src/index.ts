@@ -81,14 +81,37 @@ async function isRegisteredWorktree(repoPath: string, worktreePath: string): Pro
   }
 }
 
+/**
+ * Find the worktree (if any) that currently owns `branch` according to git.
+ * Returns the worktree's filesystem path, or null when the branch is not
+ * checked out in any worktree.
+ */
+async function findWorktreeForBranch(
+  repoPath: string,
+  branch: string,
+): Promise<string | null> {
+  let output: string;
+  try {
+    output = await git(repoPath, "worktree", "list", "--porcelain");
+  } catch {
+    return null;
+  }
+  const wantRef = `refs/heads/${branch}`;
+  let currentPath: string | null = null;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ") && line.slice("branch ".length) === wantRef) {
+      return currentPath;
+    } else if (line === "") {
+      currentPath = null;
+    }
+  }
+  return null;
+}
+
 async function clearStaleWorktreePath(repoPath: string, worktreePath: string): Promise<void> {
   if (!existsSync(worktreePath)) return;
-
-  try {
-    await git(repoPath, "worktree", "prune");
-  } catch {
-    // Best-effort prune before checking whether the path is still registered.
-  }
 
   if (await isRegisteredWorktree(repoPath, worktreePath)) {
     throw new Error(
@@ -136,6 +159,35 @@ export function create(config?: Record<string, unknown>): Workspace {
       const worktreePath = join(projectWorktreeDir, cfg.sessionId);
 
       mkdirSync(projectWorktreeDir, { recursive: true });
+
+      // Clean up registry entries pointing to paths git no longer sees on
+      // disk. Without this, a worktree dir wiped by some prior cleanup keeps
+      // its git-side registration, and the branch it owned looks "in use".
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // best-effort
+      }
+
+      // If a live worktree already owns this branch, reuse it. Recovers from
+      // a previous spawn that was killed before it could clean up — without
+      // this, every subsequent ao start hits "branch already checked out".
+      const branchOwner = await findWorktreeForBranch(repoPath, cfg.branch);
+      if (branchOwner === worktreePath) {
+        return {
+          path: worktreePath,
+          branch: cfg.branch,
+          sessionId: cfg.sessionId,
+          projectId: cfg.projectId,
+        };
+      }
+      if (branchOwner) {
+        throw new Error(
+          `Branch "${cfg.branch}" is already checked out at "${branchOwner}". ` +
+            `Remove that worktree (\`git worktree remove ${branchOwner}\`) before retrying.`,
+        );
+      }
+
       await clearStaleWorktreePath(repoPath, worktreePath);
 
       const hasOrigin = await hasOriginRemote(repoPath);
