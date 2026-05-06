@@ -26,6 +26,12 @@
     "prepare": "husky",
     "postinstall": "node scripts/rebuild-node-pty.js"
   },
+  "pnpm": {
+    "overrides": {
+      "axios": ">=1.15.2",
+      "next": ">=15.5.15"
+    }
+  },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
     "@eslint/js": "^10.0.1",
