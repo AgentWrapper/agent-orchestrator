@@ -5,11 +5,11 @@ const { githubCreateMock, forgejoCreateMock } = vi.hoisted(() => ({
   forgejoCreateMock: vi.fn(() => ({ name: "forgejo" })),
 }));
 
-vi.mock("@composio/ao-plugin-scm-github", () => ({
+vi.mock("@aoagents/ao-plugin-scm-github", () => ({
   default: { create: githubCreateMock },
 }));
 
-vi.mock("@composio/ao-plugin-scm-forgejo", () => ({
+vi.mock("@aoagents/ao-plugin-scm-forgejo", () => ({
   default: { create: forgejoCreateMock },
 }));
 

@@ -197,8 +197,8 @@ describe("loadBuiltins", () => {
     const fakeScm = makePlugin("scm", "forgejo");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
-      if (pkg === "@composio/ao-plugin-tracker-forgejo") return fakeTracker;
-      if (pkg === "@composio/ao-plugin-scm-forgejo") return fakeScm;
+      if (pkg === "@aoagents/ao-plugin-tracker-forgejo") return fakeTracker;
+      if (pkg === "@aoagents/ao-plugin-scm-forgejo") return fakeScm;
       throw new Error(`Not found: ${pkg}`);
     });
 
