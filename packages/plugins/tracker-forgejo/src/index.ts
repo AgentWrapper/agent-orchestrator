@@ -215,6 +215,48 @@ function forgejoApiBaseUrl(hostname: string): string {
   return `https://${trimmed.replace(/\/+$/, "")}`;
 }
 
+/**
+ * Resolve label name → numeric ID by paginating Forgejo's /labels endpoint.
+ * Repos with more than `LABEL_PAGE_SIZE` labels otherwise miss anything past
+ * the first page. Stops early once every requested name is resolved.
+ */
+const LABEL_PAGE_SIZE = 50;
+const LABEL_PAGE_LIMIT = 50; // hard cap on pages walked to bound the call
+
+async function resolveLabelIdsByName(
+  hostname: string,
+  token: string,
+  owner: string,
+  repo: string,
+  neededNames: readonly string[],
+): Promise<Map<string, number>> {
+  const remaining = new Set(neededNames);
+  const result = new Map<string, number>();
+  if (remaining.size === 0) return result;
+
+  for (let page = 1; page <= LABEL_PAGE_LIMIT; page++) {
+    const repoLabels = (await forgejoApi(
+      hostname,
+      token,
+      "GET",
+      `/repos/${owner}/${repo}/labels`,
+      { limit: LABEL_PAGE_SIZE, page },
+    )) as Array<{ id?: number; name?: string }>;
+
+    for (const label of repoLabels) {
+      if (typeof label.name !== "string" || typeof label.id !== "number") continue;
+      if (remaining.delete(label.name)) {
+        result.set(label.name, label.id);
+      }
+    }
+
+    if (remaining.size === 0) break;
+    if (repoLabels.length < LABEL_PAGE_SIZE) break;
+  }
+
+  return result;
+}
+
 async function forgejoApi(
   hostname: string,
   token: string,
@@ -483,19 +525,13 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         }
 
         if (update.labels && update.labels.length > 0) {
-          const repoLabels = (await forgejoApi(
+          const labelIdByName = await resolveLabelIdsByName(
             hostname,
             token,
-            "GET",
-            `/repos/${owner}/${repo}/labels`,
-            { limit: 100 },
-          )) as Array<{ id?: number; name?: string }>;
-          const labelIdByName = new Map<string, number>();
-          for (const repoLabel of repoLabels) {
-            if (typeof repoLabel.name === "string" && typeof repoLabel.id === "number") {
-              labelIdByName.set(repoLabel.name, repoLabel.id);
-            }
-          }
+            owner,
+            repo,
+            update.labels,
+          );
 
           const labelIds = update.labels.map((labelName) => labelIdByName.get(labelName));
           const missingLabels = update.labels.filter((_, index) => labelIds[index] === undefined);

@@ -477,6 +477,42 @@ describe("tracker-forgejo plugin", () => {
         delete process.env["FORGEJO_TOKEN"];
       }
     });
+
+    it("paginates label lookup so labels past the first page resolve", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+
+      // First label page: 50 entries (full page → triggers a follow-up request).
+      const page1 = Array.from({ length: 50 }, (_, i) => ({
+        id: i + 1,
+        name: `label-${i + 1}`,
+      }));
+      // Second page contains the label we actually want.
+      const page2 = [{ id: 999, name: "needle" }];
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restTracker.updateIssue!("123", { labels: ["needle"] }, project);
+
+        // Two label-lookup calls, then the PATCH.
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/labels\?.*page=1/);
+        expect(String(fetchMock.mock.calls[1]?.[0])).toMatch(/\/labels\?.*page=2/);
+
+        const patchInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+        expect(patchInit?.method).toBe("PATCH");
+        expect(JSON.parse(String(patchInit?.body))).toEqual({ labels: [999] });
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
   });
 
   // ---- createIssue -------------------------------------------------------
