@@ -641,6 +641,28 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       const hostname = resolveHost(project);
       if (hostname && token) {
         const [owner, repo] = parseProjectRepo(projectRepo);
+
+        // Forgejo's POST /issues expects numeric label IDs; sending names
+        // either fails outright or silently drops them depending on version.
+        let labelIds: number[] | undefined;
+        if (input.labels && input.labels.length > 0) {
+          const labelIdByName = await resolveLabelIdsByName(
+            hostname,
+            token,
+            owner,
+            repo,
+            input.labels,
+          );
+          const resolved = input.labels.map((labelName) => labelIdByName.get(labelName));
+          const missingLabels = input.labels.filter((_, index) => resolved[index] === undefined);
+          if (missingLabels.length > 0) {
+            throw new Error(
+              `Unable to resolve Forgejo label IDs for: ${missingLabels.join(", ")}`,
+            );
+          }
+          labelIds = resolved as number[];
+        }
+
         const data = (await forgejoApi(
           hostname,
           token,
@@ -650,7 +672,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           {
             title: input.title,
             body: input.description ?? "",
-            ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
+            ...(labelIds ? { labels: labelIds } : {}),
             ...(input.assignee ? { assignees: [input.assignee] } : {}),
           },
         )) as ForgejoIssue;

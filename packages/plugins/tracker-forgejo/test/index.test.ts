@@ -570,6 +570,79 @@ describe("tracker-forgejo plugin", () => {
         tracker.createIssue!({ title: "Test", description: "" }, project),
       ).rejects.toThrow("Failed to parse issue URL");
     });
+
+    it("uses label IDs (not names) for REST issue creation", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+      const fetchMock = vi
+        .fn()
+        // Label lookup
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [
+            { id: 10, name: "bug" },
+            { id: 20, name: "urgent" },
+          ],
+        })
+        // POST /issues
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            number: 42,
+            title: "Bug",
+            body: "",
+            html_url: "u",
+            state: "open",
+            labels: [{ id: 10, name: "bug" }],
+            assignees: [],
+          }),
+        });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restTracker.createIssue!(
+          { title: "Bug", description: "", labels: ["bug", "urgent"] },
+          project,
+        );
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const labelLookupUrl = String(fetchMock.mock.calls[0]?.[0]);
+        expect(labelLookupUrl).toContain("/api/v1/repos/acme/repo/labels");
+
+        const createInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+        expect(createInit?.method).toBe("POST");
+        const body = JSON.parse(String(createInit?.body));
+        expect(body.labels).toEqual([10, 20]);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+
+    it("throws if a requested label cannot be resolved during REST creation", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 10, name: "bug" }],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await expect(
+          restTracker.createIssue!(
+            { title: "Bug", description: "", labels: ["bug", "ghost"] },
+            project,
+          ),
+        ).rejects.toThrow(/Unable to resolve Forgejo label IDs for: ghost/);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
   });
 
   // ---- forgejoApi REST timeout -------------------------------------------
