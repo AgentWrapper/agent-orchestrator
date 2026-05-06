@@ -156,6 +156,10 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Activity events — typed union + in-memory ring buffer
+export { ActivityLog, activityLog } from "./activity.js";
+export type { ActivityEvent } from "./activity.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
