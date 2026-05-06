@@ -69,6 +69,7 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
+        continue-on-error: true # Requires GitHub Dependency graph enabled in repo settings
         with:
           fail-on-severity: moderate
 
