@@ -104,7 +104,11 @@ export function useXtermTerminal(
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
-          scrollback: 10000,
+          // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
+          // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
+          // the available width, causing right-side clipping when the actual
+          // scrollbar is narrower or wider than assumed. Fixes #1677.
+          scrollback: 0,
           allowProposedApi: true,
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
