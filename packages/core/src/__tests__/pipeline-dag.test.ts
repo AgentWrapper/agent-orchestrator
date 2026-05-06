@@ -560,6 +560,131 @@ describe("pipeline DAG — RUN_RESUMED with cascade-skipped stages", () => {
     expect(starts[0].stage.name).toBe("a");
   });
 
+  it("revives `outdated` stages (running-at-terminate) so parallel branches recover", () => {
+    // a and b run concurrently; a fails and `terminateRunFromState` marks b
+    // `outdated` (because b was running). Without reviving outdated, b would
+    // never recover and any downstream stage on b (here d) would cascade-skip
+    // after resume.
+    const pipeline = makePipeline(
+      [
+        makeStage("a"),
+        makeStage("b"),
+        { ...makeStage("d"), dependsOn: ["b"] },
+      ],
+      2,
+    );
+    const triggered = fireTrigger(pipeline);
+    let s = startStage(triggered.state, asRunId("run-1"), "a", NOW + 1).state;
+    s = startStage(s, asRunId("run-1"), "b", NOW + 2).state;
+    const failed = reduce(s, {
+      type: "STAGE_FAILED",
+      now: NOW + 3,
+      runId: asRunId("run-1"),
+      stageName: "a",
+      errorMessage: "boom",
+    });
+    expect(failed.state.runs[asRunId("run-1")].stages.b.status).toBe("outdated");
+
+    // Resume: caller must allocate fresh stageRunIds for BOTH a (failed) and
+    // b (outdated). The reducer rejects resumes that miss either.
+    const resumed = reduce(failed.state, {
+      type: "RUN_RESUMED",
+      now: NOW + 4,
+      runId: asRunId("run-1"),
+      stageRunIds: {
+        a: asStageRunId("sr-a-2"),
+        b: asStageRunId("sr-b-2"),
+      },
+    });
+    const run = resumed.state.runs[asRunId("run-1")];
+    expect(run.stages.a.status).toBe("pending");
+    expect(run.stages.b.status).toBe("pending");
+    expect(run.stages.b.attempt).toBe(2);
+    expect(run.stages.b.stageRunId).toBe(asStageRunId("sr-b-2"));
+    expect(run.stages.d.status).toBe("pending");
+
+    const startNames = resumed.effects
+      .filter((e) => e.type === "START_STAGE")
+      .map((e) => (e.type === "START_STAGE" ? e.stage.name : ""))
+      .sort();
+    expect(startNames).toEqual(["a", "b"]);
+  });
+
+  it("rejects RUN_RESUMED that omits a stageRunId for an outdated stage", () => {
+    const pipeline = makePipeline([makeStage("a"), makeStage("b")], 2);
+    const triggered = fireTrigger(pipeline);
+    let s = startStage(triggered.state, asRunId("run-1"), "a", NOW + 1).state;
+    s = startStage(s, asRunId("run-1"), "b", NOW + 2).state;
+    const failed = reduce(s, {
+      type: "STAGE_FAILED",
+      now: NOW + 3,
+      runId: asRunId("run-1"),
+      stageName: "a",
+      errorMessage: "boom",
+    });
+    const resumed = reduce(failed.state, {
+      type: "RUN_RESUMED",
+      now: NOW + 4,
+      runId: asRunId("run-1"),
+      stageRunIds: { a: asStageRunId("sr-a-2") }, // missing b
+    });
+    const obs = resumed.effects.find(
+      (e) =>
+        e.type === "EMIT_OBSERVATION" && e.event.name === "pipeline.invalid_transition",
+    );
+    expect(obs).toBeDefined();
+    // State must not have advanced — the b stage is still outdated.
+    expect(resumed.state.runs[asRunId("run-1")].stages.b.status).toBe("outdated");
+  });
+
+  it("refuses to resume a run whose loop key is owned by a newer active run", () => {
+    // First run fails → stalled → loop key freed. A second TRIGGER_FIRED
+    // claims the key with run-2. Calling RUN_RESUMED for run-1 must NOT
+    // dispossess run-2 of the loop pointer.
+    const pipeline = makePipeline([makeStage("a")], 1);
+    const first = fireTrigger(pipeline, asRunId("run-1"));
+    const startedA = startStage(first.state, asRunId("run-1"), "a", NOW + 1);
+    const failedA = reduce(startedA.state, {
+      type: "STAGE_FAILED",
+      now: NOW + 2,
+      runId: asRunId("run-1"),
+      stageName: "a",
+      errorMessage: "boom",
+    });
+
+    // Trigger run-2 for the same loop (sessionId/pipelineName) — uses the
+    // freed loop key.
+    const stageRunIds2: Record<string, StageRunId> = { a: asStageRunId("sr-2-a") };
+    const second = reduce(failedA.state, {
+      type: "TRIGGER_FIRED",
+      now: NOW + 3,
+      trigger: "manual",
+      sessionId: "ses-1",
+      pipeline,
+      headSha: "sha-bbb",
+      runId: asRunId("run-2"),
+      stageRunIds: stageRunIds2,
+    });
+    expect(second.state.currentRunByLoop["ses-1:default"]).toBe(asRunId("run-2"));
+
+    // Now try resuming run-1: must be refused.
+    const resumed = reduce(second.state, {
+      type: "RUN_RESUMED",
+      now: NOW + 4,
+      runId: asRunId("run-1"),
+      stageRunIds: { a: asStageRunId("sr-a-resumed") },
+    });
+    // Loop ownership unchanged.
+    expect(resumed.state.currentRunByLoop["ses-1:default"]).toBe(asRunId("run-2"));
+    // run-1 still stalled (not revived).
+    expect(resumed.state.runs[asRunId("run-1")].loopState).toBe("stalled");
+    const obs = resumed.effects.find(
+      (e) =>
+        e.type === "EMIT_OBSERVATION" && e.event.name === "pipeline.invalid_transition",
+    );
+    expect(obs).toBeDefined();
+  });
+
   it("revived stages still get re-skipped when their routes predicate is unsatisfied", () => {
     // c had `routes: { anyFailed: [a] }` — it was skipped via routes (not
     // cascade) before the failure, then double-skipped by terminate. After

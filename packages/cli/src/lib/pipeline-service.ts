@@ -391,15 +391,20 @@ export function resumeRun(
     );
   }
 
-  const failedStageNames = Object.entries(run.stages)
-    .filter(([, s]) => s.status === "failed")
+  // Both `failed` and `outdated` stages need a fresh stageRunId on resume.
+  // `failed` is a real retry; `outdated` is the running-at-terminate state
+  // (e.g. parallel sibling cancelled by `terminateRunFromState`) whose work
+  // was thrown away. Without including outdated, parallel branches lost
+  // when a sibling fails would never be recoverable via resume.
+  const retriedStageNames = Object.entries(run.stages)
+    .filter(([, s]) => s.status === "failed" || s.status === "outdated")
     .map(([name]) => name);
-  if (failedStageNames.length === 0) {
+  if (retriedStageNames.length === 0) {
     return { run, resetStages: [] };
   }
 
   const stageRunIds: Record<string, StageRunId> = {};
-  for (const name of failedStageNames) {
+  for (const name of retriedStageNames) {
     stageRunIds[name] = asStageRunId(`sr-${randomUUID()}`);
   }
 
@@ -411,7 +416,7 @@ export function resumeRun(
   });
 
   const updated = store.loadRun(runId);
-  return { run: updated ?? run, resetStages: failedStageNames };
+  return { run: updated ?? run, resetStages: retriedStageNames };
 }
 
 /**

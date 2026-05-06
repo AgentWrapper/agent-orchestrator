@@ -353,10 +353,32 @@ function reduceRunResumed(state: EngineState, event: RunResumedEvent): ReducerRe
   const run = state.runs[runId];
   if (!run) return invalidTransition(state, `RUN_RESUMED for unknown runId=${runId}`);
 
+  // Refuse to resume when another run already owns the loop key. Without
+  // this guard, resuming an old stalled run after a fresh trigger has
+  // claimed the loop would silently dispossess the active run of its loop
+  // pointer — NEW_SHA_DETECTED, CONFIG_CHANGED, and the triggerRun guard
+  // would then track the wrong run.
+  const key = loopKey(run.sessionId, run.pipelineName);
+  const activeRunId = state.currentRunByLoop[key];
+  if (activeRunId !== undefined && activeRunId !== runId) {
+    return invalidTransition(
+      state,
+      `RUN_RESUMED for ${runId} but loop "${key}" is already owned by active run ${activeRunId}; cancel that run before resuming the older one`,
+    );
+  }
+
+  // `failed` stages need a fresh stageRunId + attempt bump (a real retry).
+  // `outdated` stages were running at terminate time (terminateRunFromState
+  // marked `running → outdated`); their work was cancelled, so they also
+  // need a fresh stageRunId and attempt bump to re-run cleanly. The CLI
+  // service is expected to allocate stageRunIds for both kinds.
   const failedStageNames = Object.entries(run.stages)
     .filter(([, s]) => s.status === "failed")
     .map(([name]) => name);
-  if (failedStageNames.length === 0) {
+  const outdatedStageNames = Object.entries(run.stages)
+    .filter(([, s]) => s.status === "outdated")
+    .map(([name]) => name);
+  if (failedStageNames.length === 0 && outdatedStageNames.length === 0) {
     // Nothing to resume. Keep the state unchanged so the caller can no-op too.
     return { state, effects: [] };
   }
@@ -370,10 +392,14 @@ function reduceRunResumed(state: EngineState, event: RunResumedEvent): ReducerRe
   }
 
   const stageDelta: Record<string, StageState> = {};
-  for (const name of failedStageNames) {
+  const retriedStageNames = [...failedStageNames, ...outdatedStageNames];
+  for (const name of retriedStageNames) {
     const fresh = stageRunIds[name];
     if (!fresh) {
-      return invalidTransition(state, `RUN_RESUMED missing stageRunId for failed stage "${name}"`);
+      return invalidTransition(
+        state,
+        `RUN_RESUMED missing stageRunId for ${run.stages[name].status} stage "${name}"`,
+      );
     }
 
     const prior = run.stages[name];
@@ -421,14 +447,13 @@ function reduceRunResumed(state: EngineState, event: RunResumedEvent): ReducerRe
   };
   delete (updatedRun as { terminationReason?: RunTerminationReason }).terminationReason;
 
-  // After re-arming failed stages, run the DAG scheduler so re-pending stages
-  // start in dependsOn order rather than declaration order. Resumes never
-  // terminate the run on their own (we just transitioned back to `running`),
-  // so we ignore `sched.allTerminal`.
+  // After re-arming failed/outdated stages, run the DAG scheduler so
+  // re-pending stages start in dependsOn order rather than declaration
+  // order. Resumes never terminate the run on their own (we just
+  // transitioned back to `running`), so we ignore `sched.allTerminal`.
   const sched = scheduleAfterChange(updatedRun, now);
   const finalRun = sched.run;
 
-  const key = loopKey(run.sessionId, run.pipelineName);
   const nextState: EngineState = {
     ...state,
     runs: { ...state.runs, [runId]: finalRun },
@@ -451,7 +476,7 @@ function reduceRunResumed(state: EngineState, event: RunResumedEvent): ReducerRe
         data: {
           runId,
           pipelineName: run.pipelineName,
-          stageNames: failedStageNames,
+          stageNames: retriedStageNames,
         },
       },
     },

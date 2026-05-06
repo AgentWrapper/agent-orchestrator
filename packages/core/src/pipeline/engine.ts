@@ -135,6 +135,14 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
   }
 
   async function dispatch(event: PipelineEvent): Promise<void> {
+    // Defense-in-depth: any TRIGGER_FIRED that enters the engine — whether
+    // via `startRun`, a test, or a future config-watcher injection — gets
+    // the same validation `startRun` applies. Validates synchronously
+    // before taking the lock so the error surfaces before any state moves.
+    if (event.type === "TRIGGER_FIRED") {
+      validatePipelineAgentModes(event.pipeline, registry);
+      validatePipelineDag(event.pipeline);
+    }
     return withLock(() => dispatchInline(event));
   }
 
@@ -283,6 +291,10 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
   }
 
   async function startRun(input: StartRunInput): Promise<RunId> {
+    // Pipeline validation lives in `dispatch` so any TRIGGER_FIRED entering
+    // the engine is checked the same way; we run validation here too only
+    // to surface errors before the runId/stageRunId allocations below
+    // (which would otherwise leak into runMetadata if dispatch threw).
     validatePipelineAgentModes(input.pipeline, registry);
     validatePipelineDag(input.pipeline);
 
