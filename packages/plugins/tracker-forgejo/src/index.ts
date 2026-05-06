@@ -445,15 +445,19 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         const hasLabelFilter = Boolean(filters.labels && filters.labels.length > 0);
 
         // Forgejo's repo-scoped /repos/{owner}/{repo}/issues endpoint silently
-        // drops the labels query parameter — confirmed against
-        // git.giga-games.com (Forgejo 15.0.0+gitea-1.22.0): the swagger
-        // documents `labels` as a comma-separated name list (matching our
-        // payload), but in practice it returns 0 results for any name and
-        // ignores any ID.
+        // drops the `labels` query parameter on Forgejo 15.x — verified on
+        // 15.0.0+gitea-1.22.0: the swagger documents `labels` as a
+        // comma-separated name list (matching our payload), but in practice
+        // it returns 0 results for any name and ignores any ID.
+        //
+        // Already fixed on Forgejo `next` (verified 16.0.0-dev-239+gitea-1.22.0
+        // against v16.next.forgejo.org) — this workaround can be retired once
+        // 15.x is no longer supported.
         //
         // The cross-repo /repos/issues/search endpoint honors the same
-        // documented contract correctly, so we route through it when a label
-        // filter is requested and scope the query with owner+repo.
+        // documented contract correctly on both versions, so we route through
+        // it when a label filter is requested and scope the query via
+        // owner+repo+type=issues.
         const apiPath = hasLabelFilter
           ? "/repos/issues/search"
           : `/repos/${owner}/${repo}/issues`;
