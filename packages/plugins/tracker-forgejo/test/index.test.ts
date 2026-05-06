@@ -385,6 +385,71 @@ describe("tracker-forgejo plugin", () => {
       expect(issues).toHaveLength(1);
       expect(ghMock).toHaveBeenCalledTimes(2);
     });
+
+    it("REST: routes label-filtered queries through /repos/issues/search", async () => {
+      // Forgejo's repo-scoped /repos/{owner}/{repo}/issues silently drops the
+      // labels query parameter (verified against Forgejo 15.0.0+gitea-1.22.0).
+      // The plugin must use the cross-repo search endpoint for label-filtered
+      // queries; without this, orchestrator backlog claim never finds issues.
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            number: 5,
+            title: "labeled issue",
+            body: "",
+            html_url: "u",
+            state: "open",
+            labels: [{ id: 48, name: "agent:backlog" }],
+            assignees: [],
+          },
+        ],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const issues = await restTracker.listIssues!(
+          { state: "open", labels: ["agent:backlog"], limit: 20 },
+          project,
+        );
+        expect(issues).toHaveLength(1);
+        expect(issues[0]?.id).toBe("5");
+
+        const url = String(fetchMock.mock.calls[0]?.[0]);
+        expect(url).toContain("/api/v1/repos/issues/search");
+        expect(url).toContain("type=issues");
+        expect(url).toContain("owner=acme");
+        expect(url).toContain("repo=repo");
+        expect(url).toMatch(/labels=agent%3Abacklog|labels=agent:backlog/);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+
+    it("REST: keeps the repo-scoped endpoint when no label filter is set", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restTracker.listIssues!({ state: "open", limit: 20 }, project);
+        const url = String(fetchMock.mock.calls[0]?.[0]);
+        expect(url).toContain("/api/v1/repos/acme/repo/issues");
+        expect(url).not.toContain("/repos/issues/search");
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
   });
 
   // ---- updateIssue -------------------------------------------------------

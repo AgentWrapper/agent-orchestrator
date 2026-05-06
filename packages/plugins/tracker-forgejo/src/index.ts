@@ -442,18 +442,34 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         const [owner, repo] = parseProjectRepo(projectRepo);
         const state =
           filters.state === "all" ? "all" : filters.state === "closed" ? "closed" : "open";
-        const data = (await forgejoApi(
-          hostname,
-          token,
-          "GET",
-          `/repos/${owner}/${repo}/issues`,
-          {
-            state,
-            limit: filters.limit ?? 30,
-            labels: filters.labels && filters.labels.length > 0 ? filters.labels.join(",") : undefined,
-            assignee: filters.assignee,
-          },
-        )) as ForgejoIssue[];
+        const hasLabelFilter = Boolean(filters.labels && filters.labels.length > 0);
+
+        // Forgejo's repo-scoped /repos/{owner}/{repo}/issues endpoint silently
+        // drops the labels query parameter — confirmed against
+        // git.giga-games.com (Forgejo 15.0.0+gitea-1.22.0): the swagger
+        // documents `labels` as a comma-separated name list (matching our
+        // payload), but in practice it returns 0 results for any name and
+        // ignores any ID.
+        //
+        // The cross-repo /repos/issues/search endpoint honors the same
+        // documented contract correctly, so we route through it when a label
+        // filter is requested and scope the query with owner+repo.
+        const apiPath = hasLabelFilter
+          ? "/repos/issues/search"
+          : `/repos/${owner}/${repo}/issues`;
+        const query: Record<string, string | number | boolean | undefined> = {
+          state,
+          limit: filters.limit ?? 30,
+          assignee: filters.assignee,
+        };
+        if (hasLabelFilter) {
+          query["type"] = "issues";
+          query["owner"] = owner;
+          query["repo"] = repo;
+          query["labels"] = filters.labels!.join(",");
+        }
+
+        const data = (await forgejoApi(hostname, token, "GET", apiPath, query)) as ForgejoIssue[];
 
         return data.map(issueFromForgejoApi);
       }
