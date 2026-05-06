@@ -1130,4 +1130,26 @@ describe("scm-forgejo plugin", () => {
       expect(result.mergeable).toBe(false);
     });
   });
+
+  // ---- forgejoApi REST timeout -------------------------------------------
+
+  describe("forgejoApi timeout", () => {
+    it("passes an abort signal to fetch and surfaces an aborted call as a timeout error", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restScm = create({ host: "forgejo.example.com" });
+      const abortError = Object.assign(new Error("aborted"), { name: "AbortError" });
+      const fetchMock = vi.fn().mockRejectedValue(abortError);
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await expect(restScm.resolvePR("42", project)).rejects.toThrow(/timed out after 30000ms/);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+  });
 });

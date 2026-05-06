@@ -198,6 +198,9 @@ function issueFromForgejoApi(data: ForgejoIssue): Issue {
   };
 }
 
+/** Match the `gh` CLI timeout in execCli — keeps degraded networks from hanging callers. */
+const FORGEJO_API_TIMEOUT_MS = 30_000;
+
 async function forgejoApi(
   hostname: string,
   token: string,
@@ -212,15 +215,32 @@ async function forgejoApi(
     params.set(key, String(value));
   }
   const url = `https://${hostname}/api/v1${path}${params.size > 0 ? `?${params.toString()}` : ""}`;
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FORGEJO_API_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      signal: controller.signal,
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: "application/json",
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new Error(
+        `Forgejo API ${method} ${path} timed out after ${FORGEJO_API_TIMEOUT_MS}ms`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
