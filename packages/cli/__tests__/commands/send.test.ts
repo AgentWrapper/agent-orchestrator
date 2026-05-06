@@ -3,10 +3,9 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { mockTmux, mockExec, mockDetectActivity } = vi.hoisted(() => ({
+const { mockTmux, mockExec } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockExec: vi.fn(),
-  mockDetectActivity: vi.fn(),
 }));
 
 const { mockConfigRef, mockSessionManager } = vi.hoisted(() => ({
@@ -25,24 +24,6 @@ vi.mock("../../src/lib/shell.js", () => ({
   gh: vi.fn(),
 }));
 
-vi.mock("../../src/lib/plugins.js", () => ({
-  getAgent: () => ({
-    name: "claude-code",
-    processName: "claude",
-    detectActivity: mockDetectActivity,
-  }),
-  getAgentByName: () => ({
-    name: "claude-code",
-    processName: "claude",
-    detectActivity: mockDetectActivity,
-  }),
-  getAgentByNameFromRegistry: () => ({
-    name: "claude-code",
-    processName: "claude",
-    detectActivity: mockDetectActivity,
-  }),
-}));
-
 vi.mock("../../src/lib/session-utils.js", () => ({
   findProjectForSession: () => null,
 }));
@@ -58,7 +39,15 @@ vi.mock("@aoagents/ao-core", () => ({
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async () => mockSessionManager,
-  getPluginRegistry: async () => ({ get: vi.fn(), list: vi.fn(), register: vi.fn() }),
+  getPluginRegistry: async () => ({
+    // Return a minimal Agent stub for any lookup so registry-based agent
+    // resolution succeeds in tests without pulling in real plugin packages.
+    get: vi.fn(() => ({
+      getActivityState: async () => null,
+    })),
+    list: vi.fn(),
+    register: vi.fn(),
+  }),
 }));
 
 import { Command } from "commander";
@@ -81,7 +70,6 @@ beforeEach(() => {
   });
   mockTmux.mockReset();
   mockExec.mockReset();
-  mockDetectActivity.mockReset();
   mockSessionManager.get.mockReset();
   mockSessionManager.send.mockReset();
   mockConfigRef.current = null;
@@ -108,28 +96,25 @@ describe("send command", () => {
     });
   });
 
-  describe("busy detection", () => {
-    it("detects idle session via agent plugin", async () => {
-      // has-session succeeds
+  describe("tmux fallback delivery", () => {
+    it("confirms delivery when terminal output changes after send", async () => {
+      let afterSend = false;
       mockTmux.mockImplementation(async (...args: string[]) => {
         if (args[0] === "has-session") return "";
         if (args[0] === "capture-pane") {
-          const sIdx = args.indexOf("-S");
-          if (sIdx >= 0 && args[sIdx + 1] === "-5") return "some output\n❯ ";
-          if (sIdx >= 0 && args[sIdx + 1] === "-10") return "esc to interrupt\nThinking";
-          return "";
+          return afterSend ? "processing message..." : "❯ ";
         }
         return "";
       });
-
-      // Agent detects idle for wait-for-idle, then active for verification
-      mockDetectActivity
-        .mockReturnValueOnce("idle") // wait-for-idle check
-        .mockReturnValueOnce("active"); // verification check
+      mockExec.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args[0] === "send-keys" && args.includes("Enter")) {
+          afterSend = true;
+        }
+        return { stdout: "", stderr: "" };
+      });
 
       await program.parseAsync(["node", "test", "send", "my-session", "hello", "world"]);
 
-      // Should have sent keys with -l (literal) flag
       expect(mockExec).toHaveBeenCalledWith("tmux", [
         "send-keys",
         "-t",
@@ -137,75 +122,27 @@ describe("send command", () => {
         "-l",
         "hello world",
       ]);
-      // Should have sent Enter
       expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "my-session", "Enter"]);
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Message sent and processing"),
       );
     });
 
-    it("detects busy session and waits via agent plugin", async () => {
-      mockTmux.mockImplementation(async (...args: string[]) => {
-        if (args[0] === "has-session") return "";
-        if (args[0] === "capture-pane") return "some output";
-        return "";
-      });
-
-      // First call: active (busy), second call: idle, third call: active (verification)
-      mockDetectActivity
-        .mockReturnValueOnce("active") // busy
-        .mockReturnValueOnce("idle") // now idle
-        .mockReturnValueOnce("active"); // verification: processing
-
-      await program.parseAsync(["node", "test", "send", "my-session", "fix", "the", "bug"]);
-
-      // Should have eventually sent the message
-      expect(mockExec).toHaveBeenCalledWith("tmux", [
-        "send-keys",
-        "-t",
-        "my-session",
-        "-l",
-        "fix the bug",
-      ]);
-    }, 15000);
-
-    it("skips busy detection with --no-wait", async () => {
-      mockTmux.mockImplementation(async (...args: string[]) => {
-        if (args[0] === "has-session") return "";
-        if (args[0] === "capture-pane") return "Thinking\nesc to interrupt";
-        return "";
-      });
-
-      // Agent detects active for verification
-      mockDetectActivity.mockReturnValue("active");
-
-      await program.parseAsync(["node", "test", "send", "--no-wait", "my-session", "urgent"]);
-
-      // Should have sent the message without waiting
-      expect(mockExec).toHaveBeenCalledWith("tmux", [
-        "send-keys",
-        "-t",
-        "my-session",
-        "-l",
-        "urgent",
-      ]);
-    });
-
     it("detects queued message state", async () => {
+      let afterSend = false;
       mockTmux.mockImplementation(async (...args: string[]) => {
         if (args[0] === "has-session") return "";
         if (args[0] === "capture-pane") {
-          const sIdx = args.indexOf("-S");
-          if (sIdx >= 0 && args[sIdx + 1] === "-5") return "Output\n❯ ";
-          if (sIdx >= 0 && args[sIdx + 1] === "-10")
-            return "Output\nPress up to edit queued messages";
-          return "";
+          return afterSend ? "Output\nPress up to edit queued messages" : "❯ ";
         }
         return "";
       });
-
-      // Agent detects idle for wait-for-idle, then idle for verification (not processing)
-      mockDetectActivity.mockReturnValue("idle");
+      mockExec.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args[0] === "send-keys" && args.includes("Enter")) {
+          afterSend = true;
+        }
+        return { stdout: "", stderr: "" };
+      });
 
       await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
 
@@ -221,14 +158,9 @@ describe("send command", () => {
         return "";
       });
 
-      mockDetectActivity
-        .mockReturnValueOnce("idle") // wait-for-idle
-        .mockReturnValueOnce("active"); // verification
-
       const longMsg = "x".repeat(250);
       await program.parseAsync(["node", "test", "send", "my-session", longMsg]);
 
-      // Should have used load-buffer for long message
       expect(mockExec).toHaveBeenCalledWith("tmux", expect.arrayContaining(["load-buffer"]));
       expect(mockExec).toHaveBeenCalledWith("tmux", expect.arrayContaining(["paste-buffer"]));
     });
@@ -239,10 +171,6 @@ describe("send command", () => {
         if (args[0] === "capture-pane") return "❯ ";
         return "";
       });
-
-      mockDetectActivity
-        .mockReturnValueOnce("idle") // wait-for-idle
-        .mockReturnValueOnce("active"); // verification
 
       await program.parseAsync(["node", "test", "send", "my-session", "short", "msg"]);
 
@@ -262,13 +190,8 @@ describe("send command", () => {
         return "";
       });
 
-      mockDetectActivity
-        .mockReturnValueOnce("idle") // wait-for-idle
-        .mockReturnValueOnce("active"); // verification
-
       await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
 
-      // C-u should be called to clear input
       expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "my-session", "C-u"]);
     });
   });
@@ -318,11 +241,6 @@ describe("send command", () => {
         metadata: { agent: "opencode" },
       });
       mockSessionManager.send.mockResolvedValue(undefined);
-      mockTmux.mockImplementation(async (...args: string[]) => {
-        if (args[0] === "capture-pane") return "❯ ";
-        return "";
-      });
-      mockDetectActivity.mockReturnValue("idle");
 
       await program.parseAsync(["node", "test", "send", "app-1", "hello", "opencode"]);
 
@@ -333,46 +251,6 @@ describe("send command", () => {
       );
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Message sent and processing"),
-      );
-    });
-
-    it("skips tmux busy detection when lifecycle send handles delivery", async () => {
-      mockConfigRef.current = makeConfig();
-      mockSessionManager.get.mockResolvedValue({
-        id: "app-1",
-        projectId: "my-app",
-        status: "working",
-        activity: "active",
-        branch: null,
-        issueId: null,
-        pr: null,
-        workspacePath: null,
-        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
-        agentInfo: null,
-        createdAt: new Date(),
-        lastActivityAt: new Date(),
-        metadata: { agent: "opencode" },
-      });
-      mockSessionManager.send.mockResolvedValue(undefined);
-      mockTmux.mockImplementation(async (...args: string[]) => {
-        if (args[0] === "capture-pane") return "some output";
-        return "";
-      });
-      mockDetectActivity.mockReturnValueOnce("active").mockReturnValueOnce("idle");
-
-      await program.parseAsync(["node", "test", "send", "app-1", "fix", "mapping"]);
-
-      expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "fix mapping");
-      expect(consoleSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining("Waiting for app-1 to become idle"),
-      );
-      expect(mockTmux).not.toHaveBeenCalledWith(
-        "capture-pane",
-        "-t",
-        "tmux-target-1",
-        "-p",
-        "-S",
-        expect.any(String),
       );
     });
 
@@ -452,11 +330,6 @@ describe("send command", () => {
         metadata: { agent: "opencode" },
       });
       mockSessionManager.send.mockResolvedValue(undefined);
-      mockTmux.mockImplementation(async (...args: string[]) => {
-        if (args[0] === "capture-pane") return "❯ ";
-        return "";
-      });
-      mockDetectActivity.mockReturnValue("idle");
 
       const filePath = join(tmpdir(), `ao-send-message-${Date.now()}.txt`);
       writeFileSync(filePath, "from file");

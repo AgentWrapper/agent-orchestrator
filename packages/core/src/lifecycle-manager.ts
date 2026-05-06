@@ -986,36 +986,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         } else if (session.runtimeHandle && canProbeRuntimeIdentity) {
           activitySignal = createActivitySignal("null", { source: "native" });
           activityEvidence = formatActivitySignalEvidence(activitySignal);
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
-          const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
-          if (terminalOutput) {
-            const activity = agent.detectActivity(terminalOutput);
-            activitySignal = classifyActivitySignal({ state: activity }, "terminal");
-            activityEvidence = formatActivitySignalEvidence(activitySignal);
-            if (activity === "waiting_input") {
-              return commit({
-                status: SESSION_STATUS.NEEDS_INPUT,
-                evidence: activityEvidence,
-                detecting: { attempts: 0 },
-                sessionState: "needs_input",
-                sessionReason: "awaiting_user_input",
-              });
-            }
 
-            try {
-              const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-              processProbe = { state: processAlive ? "alive" : "dead", failed: false };
-              if (!processAlive) {
-                lifecycle.runtime.state = "exited";
-                lifecycle.runtime.reason = "process_missing";
-                lifecycle.runtime.lastObservedAt = nowIso;
-              }
-            } catch {
-              processProbe = { state: "unknown", failed: true };
+          try {
+            const processAlive = await agent.isProcessRunning(session.runtimeHandle);
+            processProbe = { state: processAlive ? "alive" : "dead", failed: false };
+            if (!processAlive) {
+              lifecycle.runtime.state = "exited";
+              lifecycle.runtime.reason = "process_missing";
+              lifecycle.runtime.lastObservedAt = nowIso;
             }
+          } catch {
+            processProbe = { state: "unknown", failed: true };
           }
         } else {
           activitySignal = createActivitySignal("null", { source: "native" });

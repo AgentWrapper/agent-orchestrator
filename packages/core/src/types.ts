@@ -480,14 +480,8 @@ export interface Agent {
   getEnvironment(config: AgentLaunchConfig): Record<string, string>;
 
   /**
-   * Detect what the agent is currently doing from terminal output.
-   * @deprecated Use getActivityState() instead - this uses hacky terminal parsing.
-   */
-  detectActivity(terminalOutput: string): ActivityState;
-
-  /**
    * Get current activity state using agent-native mechanism (JSONL, SQLite, etc.).
-   * This is the preferred method for activity detection.
+   * This is the canonical source of truth for activity detection.
    * @param readyThresholdMs - ms before "ready" becomes "idle" (default: DEFAULT_READY_THRESHOLD_MS)
    */
   getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
@@ -539,9 +533,10 @@ export interface Agent {
    * Optional: Record an activity observation to the session's JSONL activity log.
    * Called by the lifecycle manager during each poll cycle with captured terminal output.
    *
-   * Plugins classify the terminal output (via detectActivity) and append a JSONL entry
-   * to `{session.workspacePath}/.ao/activity.jsonl`. The next `getActivityState()` call
-   * reads from this file to detect states like `waiting_input` and `blocked`.
+   * Plugins classify the terminal output using their own internal classifier and append
+   * a JSONL entry to `{session.workspacePath}/.ao/activity.jsonl`. The next
+   * `getActivityState()` call reads from this file to detect states like `waiting_input`
+   * and `blocked`.
    *
    * Agents with native JSONL (Claude Code, Codex) should NOT implement this — their
    * `getActivityState` already reads richer data from the agent's own session files.

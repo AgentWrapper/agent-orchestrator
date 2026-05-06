@@ -45,7 +45,6 @@ beforeEach(() => {
     processName: "opencode",
     getLaunchCommand: vi.fn().mockReturnValue("opencode start"),
     getEnvironment: vi.fn().mockReturnValue({}),
-    detectActivity: vi.fn().mockReturnValue("active"),
     getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     getSessionInfo: vi.fn().mockResolvedValue(null),

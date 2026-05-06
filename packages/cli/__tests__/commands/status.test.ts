@@ -88,21 +88,18 @@ vi.mock("../../src/lib/plugins.js", () => ({
   getAgent: () => ({
     name: "claude-code",
     processName: "claude",
-    detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
   }),
   getAgentByName: () => ({
     name: "claude-code",
     processName: "claude",
-    detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
   }),
   getAgentByNameFromRegistry: () => ({
     name: "claude-code",
     processName: "claude",
-    detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
   }),

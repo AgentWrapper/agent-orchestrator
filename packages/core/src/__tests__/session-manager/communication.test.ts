@@ -107,7 +107,6 @@ describe("send", () => {
       );
       vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
       vi.mocked(mockRuntime.getOutput).mockResolvedValue("");
-      vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
 
       const sm = createSessionManager({ config, registry: mockRegistry });
       const sendPromise = sm.send("app-1", "hello");
@@ -164,7 +163,6 @@ describe("send", () => {
       runtimeHandle: makeHandle("rt-1"),
     });
     vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     // Should resolve without throwing — the message was already sent via
@@ -200,7 +198,6 @@ describe("send", () => {
     vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
     // Steady output — confirmation heuristics will never flip
     vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.send("app-1", "retry after restore")).resolves.toBeUndefined();
@@ -339,7 +336,6 @@ describe("send", () => {
     });
 
     vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const startedAt = Date.now();
@@ -385,7 +381,6 @@ describe("send", () => {
     });
 
     vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const startedAt = Date.now();

@@ -591,7 +591,6 @@ describe("enrichSessionAgentSummary", () => {
       processName: "mock",
       getLaunchCommand: vi.fn().mockReturnValue("mock"),
       getEnvironment: vi.fn().mockReturnValue({}),
-      detectActivity: vi.fn().mockReturnValue("active"),
       getActivityState: vi.fn().mockResolvedValue({ activity: "active" }),
       getSessionInfo: vi.fn().mockResolvedValue(
         info
@@ -917,7 +916,6 @@ describe("enrichSessionsMetadata", () => {
       processName: "mock",
       getLaunchCommand: vi.fn().mockReturnValue("mock"),
       getEnvironment: vi.fn().mockReturnValue({}),
-      detectActivity: vi.fn().mockReturnValue("active"),
       getActivityState: vi.fn().mockResolvedValue({ activity: "active" }),
       getSessionInfo: vi.fn().mockResolvedValue({
         summary,

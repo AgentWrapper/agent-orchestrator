@@ -441,6 +441,26 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
   return result;
 }
 
+/**
+ * Classify Codex's activity from raw terminal output. Used internally by
+ * `recordActivity` to write AO activity JSONL entries as a safety net when
+ * the native JSONL is missing or unparseable.
+ */
+export function classifyCodexTerminalOutput(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+  const tail = lines.slice(-5).join("\n");
+  if (/approval required/i.test(tail)) return "waiting_input";
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+
+  return "active";
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -489,25 +509,6 @@ function createCodexAgent(): Agent {
       env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
       return env;
-    },
-
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // If Codex is showing its input prompt, it's idle
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-
-      // Check last few lines for approval prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
-
-      // Default to active — specific patterns (esc to interrupt, spinner
-      // symbols) all map to "active" so no need to check them individually.
-      return "active";
     },
 
     async getActivityState(
@@ -616,8 +617,10 @@ function createCodexAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-        this.detectActivity(output),
+      await recordTerminalActivity(
+        session.workspacePath,
+        terminalOutput,
+        classifyCodexTerminalOutput,
       );
     },
 

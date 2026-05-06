@@ -34,7 +34,13 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { create, manifest, default as defaultExport, resetOpenCodeSessionListCache } from "./index.js";
+import {
+  create,
+  manifest,
+  classifyOpenCodeTerminalOutput,
+  default as defaultExport,
+  resetOpenCodeSessionListCache,
+} from "./index.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -517,40 +523,40 @@ describe("isProcessRunning", () => {
   });
 });
 
-describe("detectActivity — terminal output classification", () => {
-  const agent = create();
-
+describe("classifyOpenCodeTerminalOutput — terminal output classification", () => {
   it("returns idle for empty terminal output", () => {
-    expect(agent.detectActivity("")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("")).toBe("idle");
   });
 
   it("returns idle for whitespace-only terminal output", () => {
-    expect(agent.detectActivity("   \n  ")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("   \n  ")).toBe("idle");
   });
 
   it("returns idle when prompt char visible", () => {
-    expect(agent.detectActivity("some output\n> ")).toBe("idle");
-    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("some output\n> ")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("some output\n$ ")).toBe("idle");
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Apply changes?\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(classifyOpenCodeTerminalOutput("Apply changes?\n(Y)es/(N)o")).toBe("waiting_input");
   });
 
   it("returns waiting_input for approval required", () => {
-    expect(agent.detectActivity("output\napproval required for this action")).toBe("waiting_input");
+    expect(classifyOpenCodeTerminalOutput("output\napproval required for this action")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for proceed prompt", () => {
-    expect(agent.detectActivity("Do you want to proceed?")).toBe("waiting_input");
+    expect(classifyOpenCodeTerminalOutput("Do you want to proceed?")).toBe("waiting_input");
   });
 
   it("returns waiting_input for allow prompt", () => {
-    expect(agent.detectActivity("Allow file creation?")).toBe("waiting_input");
+    expect(classifyOpenCodeTerminalOutput("Allow file creation?")).toBe("waiting_input");
   });
 
   it("returns active for non-empty terminal output", () => {
-    expect(agent.detectActivity("opencode is working\n")).toBe("active");
+    expect(classifyOpenCodeTerminalOutput("opencode is working\n")).toBe("active");
   });
 });
 

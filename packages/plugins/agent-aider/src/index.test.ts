@@ -42,7 +42,12 @@ vi.mock("node:child_process", () => {
   return { execFile: fn };
 });
 
-import { create, manifest, default as defaultExport } from "./index.js";
+import {
+  create,
+  manifest,
+  classifyAiderTerminalOutput,
+  default as defaultExport,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -285,42 +290,44 @@ describe("isProcessRunning", () => {
 });
 
 // =========================================================================
-// detectActivity — terminal output classification
+// classifyAiderTerminalOutput — terminal output classification
 // =========================================================================
-describe("detectActivity", () => {
-  const agent = create();
-
+describe("classifyAiderTerminalOutput", () => {
   it("returns idle for empty terminal output", () => {
-    expect(agent.detectActivity("")).toBe("idle");
+    expect(classifyAiderTerminalOutput("")).toBe("idle");
   });
 
   it("returns idle for whitespace-only terminal output", () => {
-    expect(agent.detectActivity("   \n  ")).toBe("idle");
+    expect(classifyAiderTerminalOutput("   \n  ")).toBe("idle");
   });
 
   it("returns idle when prompt char visible", () => {
-    expect(agent.detectActivity("some output\n> ")).toBe("idle");
-    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+    expect(classifyAiderTerminalOutput("some output\n> ")).toBe("idle");
+    expect(classifyAiderTerminalOutput("some output\n$ ")).toBe("idle");
   });
 
   it("returns idle for aider-specific prompt", () => {
-    expect(agent.detectActivity("Tokens: 1.2k\naider> ")).toBe("idle");
+    expect(classifyAiderTerminalOutput("Tokens: 1.2k\naider> ")).toBe("idle");
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(classifyAiderTerminalOutput("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for add-to-chat prompt", () => {
-    expect(agent.detectActivity("Add src/utils.ts to the chat? (Y)es/(N)o")).toBe("waiting_input");
+    expect(classifyAiderTerminalOutput("Add src/utils.ts to the chat? (Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for proceed prompt", () => {
-    expect(agent.detectActivity("This will modify 5 files. proceed?")).toBe("waiting_input");
+    expect(classifyAiderTerminalOutput("This will modify 5 files. proceed?")).toBe("waiting_input");
   });
 
   it("returns active for non-empty terminal output", () => {
-    expect(agent.detectActivity("aider is processing files\n")).toBe("active");
+    expect(classifyAiderTerminalOutput("aider is processing files\n")).toBe("active");
   });
 });
 

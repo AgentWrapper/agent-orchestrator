@@ -14,7 +14,7 @@ import { getAgentByName, getAgentByNameFromRegistry } from "../lib/plugins.js";
 import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
 
 /**
- * Resolve session context: tmux target name and Agent plugin.
+ * Resolve session context: tmux target name, session data, and Agent plugin.
  * Loads config and looks up the session once, avoiding duplicate work.
  */
 async function resolveSessionContext(sessionName: string): Promise<{
@@ -55,8 +55,19 @@ async function resolveSessionContext(sessionName: string): Promise<{
   };
 }
 
-function isActive(agent: Agent, terminalOutput: string): boolean {
-  return agent.detectActivity(terminalOutput) === "active";
+/**
+ * Probe whether the agent is currently active. Uses the canonical
+ * `getActivityState()` method when a Session exists; returns false for the
+ * orphan-tmux fallback path (no Session means no plugin-side state to probe).
+ */
+async function isAgentActive(agent: Agent, session: Session | null): Promise<boolean> {
+  if (!session) return false;
+  try {
+    const result = await agent.getActivityState(session);
+    return result?.state === "active";
+  } catch {
+    return false;
+  }
 }
 
 function hasQueuedMessage(terminalOutput: string): boolean {
@@ -158,10 +169,14 @@ export function registerSend(program: Command): void {
         }
 
         const delegatesToSessionManager = Boolean(existingSession && sessionManager);
+
+        // Wait for the agent to become idle before sending — uses the canonical
+        // getActivityState() (active === busy). Skipped for the orphan-tmux path
+        // (no Session) since there's no plugin-side state to probe.
         if (opts.wait !== false && canUseTmux && !delegatesToSessionManager) {
           const start = Date.now();
           let warned = false;
-          while (isActive(agent, await captureOutput(5))) {
+          while (await isAgentActive(agent, existingSession)) {
             if (!warned) {
               console.log(chalk.dim(`Waiting for ${session} to become idle...`));
               warned = true;
@@ -194,18 +209,25 @@ export function registerSend(program: Command): void {
           return;
         }
 
+        const baselineOutput = await captureOutput(10);
         await sendViaTmux(tmuxTarget, message);
 
-        // Verify delivery with retries
+        // Verify delivery with retries — prefer the activity-state transition
+        // (strong signal: agent went from non-active → active), then queued
+        // marker, then fall back to a raw output diff.
         for (let attempt = 1; attempt <= 3; attempt++) {
           await sleep(2000);
           const output = await captureOutput(10);
-          if (isActive(agent, output)) {
+          if (await isAgentActive(agent, existingSession)) {
             console.log(chalk.green("Message sent and processing"));
             return;
           }
           if (hasQueuedMessage(output)) {
             console.log(chalk.green("Message queued (session finishing previous task)"));
+            return;
+          }
+          if (output.length > 0 && output !== baselineOutput) {
+            console.log(chalk.green("Message sent and processing"));
             return;
           }
           if (attempt < 3) {

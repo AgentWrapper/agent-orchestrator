@@ -4,8 +4,7 @@
  * Agents like Aider and OpenCode use this to write activity observations
  * (derived from terminal output) to `{workspacePath}/.ao/activity.jsonl`.
  * Their `getActivityState()` then reads from this file, enabling detection
- * of states like `waiting_input` and `blocked` that terminal-only parsing
- * couldn't surface through the deprecated `detectActivity()` path.
+ * of states like `waiting_input` and `blocked`.
  *
  * Agents with native JSONL (Claude Code, Codex) don't use this — they read
  * richer data directly from their own session files.

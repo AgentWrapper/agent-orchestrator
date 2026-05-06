@@ -62,7 +62,13 @@ vi.mock("node:child_process", () => {
   };
 });
 
-import { create, manifest, default as defaultExport, detect } from "./index.js";
+import {
+  create,
+  manifest,
+  classifyCursorTerminalOutput,
+  default as defaultExport,
+  detect,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -379,43 +385,43 @@ describe("isProcessRunning", () => {
 });
 
 // =========================================================================
-// detectActivity — terminal output classification
+// classifyCursorTerminalOutput — terminal output classification
 // =========================================================================
-describe("detectActivity", () => {
-  const agent = create();
-
+describe("classifyCursorTerminalOutput", () => {
   it("returns idle for empty terminal output", () => {
-    expect(agent.detectActivity("")).toBe("idle");
+    expect(classifyCursorTerminalOutput("")).toBe("idle");
   });
 
   it("returns idle for whitespace-only terminal output", () => {
-    expect(agent.detectActivity("   \n  ")).toBe("idle");
+    expect(classifyCursorTerminalOutput("   \n  ")).toBe("idle");
   });
 
   it("returns idle when prompt char visible", () => {
-    expect(agent.detectActivity("some output\n> ")).toBe("idle");
-    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+    expect(classifyCursorTerminalOutput("some output\n> ")).toBe("idle");
+    expect(classifyCursorTerminalOutput("some output\n$ ")).toBe("idle");
   });
 
   it("returns idle for agent-specific prompts", () => {
-    expect(agent.detectActivity("Processing...\nagent> ")).toBe("idle");
-    expect(agent.detectActivity("Ready.\n[agent] ")).toBe("idle");
+    expect(classifyCursorTerminalOutput("Processing...\nagent> ")).toBe("idle");
+    expect(classifyCursorTerminalOutput("Ready.\n[agent] ")).toBe("idle");
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Approve these changes?\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(classifyCursorTerminalOutput("Approve these changes?\n(Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for continue prompt", () => {
-    expect(agent.detectActivity("Ready to proceed. Continue?")).toBe("waiting_input");
+    expect(classifyCursorTerminalOutput("Ready to proceed. Continue?")).toBe("waiting_input");
   });
 
   it("returns waiting_input for press enter prompt", () => {
-    expect(agent.detectActivity("Press Enter to continue")).toBe("waiting_input");
+    expect(classifyCursorTerminalOutput("Press Enter to continue")).toBe("waiting_input");
   });
 
   it("returns active for non-empty terminal output", () => {
-    expect(agent.detectActivity("agent is processing files\n")).toBe("active");
+    expect(classifyCursorTerminalOutput("agent is processing files\n")).toBe("active");
   });
 });
 

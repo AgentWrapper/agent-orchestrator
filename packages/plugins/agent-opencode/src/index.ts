@@ -180,6 +180,27 @@ export const manifest = {
   displayName: "OpenCode",
 };
 
+/**
+ * Classify OpenCode's activity from raw terminal output. Used internally by
+ * `recordActivity` to write AO activity JSONL entries.
+ */
+export function classifyOpenCodeTerminalOutput(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+  const tail = lines.slice(-5).join("\n");
+  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+  if (/approval required/i.test(tail)) return "waiting_input";
+  if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
+  if (/Allow .+\?/i.test(tail)) return "waiting_input";
+
+  return "active";
+}
+
 // =============================================================================
 // Agent Implementation
 // =============================================================================
@@ -268,25 +289,6 @@ function createOpenCodeAgent(): Agent {
       return env;
     },
 
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // OpenCode's input prompt — agent is idle
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-
-      // Check the last few lines for permission/confirmation prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
-      if (/Allow .+\?/i.test(tail)) return "waiting_input";
-
-      return "active";
-    },
-
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
@@ -335,8 +337,10 @@ function createOpenCodeAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-        this.detectActivity(output),
+      await recordTerminalActivity(
+        session.workspacePath,
+        terminalOutput,
+        classifyOpenCodeTerminalOutput,
       );
     },
 

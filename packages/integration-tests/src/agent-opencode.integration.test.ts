@@ -18,7 +18,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ActivityDetection, AgentSessionInfo } from "@aoagents/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
+import opencodePlugin, {
+  classifyOpenCodeTerminalOutput,
+} from "@aoagents/ao-plugin-agent-opencode";
 import {
   isTmuxAvailable,
   killSessionsByPrefix,
@@ -391,29 +393,27 @@ describe("getEnvironment (integration)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// detectActivity tests
+// classifyOpenCodeTerminalOutput tests
 // ---------------------------------------------------------------------------
 
-describe("detectActivity (integration)", () => {
-  const agent = opencodePlugin.create();
-
+describe("classifyOpenCodeTerminalOutput (integration)", () => {
   it("returns idle for empty terminal output", () => {
-    expect(agent.detectActivity("")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("")).toBe("idle");
   });
 
   it("returns idle for whitespace-only terminal output", () => {
-    expect(agent.detectActivity("   \n  ")).toBe("idle");
+    expect(classifyOpenCodeTerminalOutput("   \n  ")).toBe("idle");
   });
 
   it("returns active for non-empty terminal output", () => {
-    expect(agent.detectActivity("opencode is working\n")).toBe("active");
+    expect(classifyOpenCodeTerminalOutput("opencode is working\n")).toBe("active");
   });
 
   it("returns active for output with ANSI codes", () => {
-    expect(agent.detectActivity("\u001b[32mSuccess\u001b[0m\n")).toBe("active");
+    expect(classifyOpenCodeTerminalOutput("\u001b[32mSuccess\u001b[0m\n")).toBe("active");
   });
 
   it("returns active for multiline output", () => {
-    expect(agent.detectActivity("line1\nline2\nline3\n")).toBe("active");
+    expect(classifyOpenCodeTerminalOutput("line1\nline2\nline3\n")).toBe("active");
   });
 });

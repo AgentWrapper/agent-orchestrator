@@ -48,6 +48,7 @@ import {
   type RuntimeHandle,
   type Issue,
   type CanonicalSessionLifecycle,
+  type ActivityState,
   PR_STATE,
 } from "./types.js";
 import {
@@ -2364,15 +2365,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const detectActivityFromOutput = (output: string) => {
-      if (!output) return null;
-      try {
-        return agentPlugin.detectActivity(output);
-      } catch {
-        return null;
-      }
-    };
-
     const hasQueuedMessage = (output: string): boolean => {
       return output.includes("Press up to edit queued messages");
     };
@@ -2545,8 +2537,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         throw new Error(`Session ${sessionId} has no runtime handle`);
       }
 
+      const probeActivity = async (): Promise<ActivityState | null> => {
+        try {
+          const detected = await agentPlugin.getActivityState(session);
+          return detected?.state ?? null;
+        } catch {
+          return null;
+        }
+      };
+
       const baselineOutput = await captureOutput(handle);
-      const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
+      const baselineActivity = (await probeActivity()) ?? session.activity;
       const baselineUpdatedAt = await getOpenCodeSessionUpdatedAt();
 
       await runtimePlugin.sendMessage(handle, message);
@@ -2557,7 +2558,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await sleep(SEND_CONFIRMATION_POLL_MS);
 
         const output = await captureOutput(handle);
-        const activity = detectActivityFromOutput(output) ?? session.activity;
+        const activity = (await probeActivity()) ?? session.activity;
         const updatedAt = await getOpenCodeSessionUpdatedAt();
         const delivered =
           (baselineUpdatedAt !== undefined &&

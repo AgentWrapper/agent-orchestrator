@@ -157,7 +157,6 @@ export function createMockPlugins(): MockPlugins {
     processName: "mock",
     getLaunchCommand: vi.fn().mockReturnValue("mock-agent --start"),
     getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
-    detectActivity: vi.fn().mockReturnValue("active" as ActivityState),
     getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     getSessionInfo: vi.fn().mockResolvedValue(null),

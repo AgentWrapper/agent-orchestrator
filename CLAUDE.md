@@ -385,7 +385,7 @@ import {
   checkActivityLogState,        // Extract waiting_input/blocked from AO JSONL (with staleness cap)
   getActivityFallbackState,     // Last-resort fallback: entry state + age-based decay
   recordTerminalActivity,       // Shared recordActivity impl (classify + dedup + append)
-  classifyTerminalActivity,     // Classify terminal output via detectActivity
+  classifyTerminalActivity,     // Classify terminal output via a classifier function
   appendActivityEntry,          // Low-level JSONL append
   setupPathWrapperWorkspace,    // Install ~/.ao/bin wrappers + .ao/AGENTS.md
   buildAgentPath,               // Prepend ~/.ao/bin to PATH
@@ -423,7 +423,6 @@ All agent plugins (claude-code, codex, aider, opencode, etc.) must implement the
 |--------|---------|-------------------|
 | `getLaunchCommand` | Shell command to start the agent | No |
 | `getEnvironment` | Env vars for agent process (must include `~/.ao/bin` in PATH) | No |
-| `detectActivity` | Terminal output classification (deprecated, but required) | No |
 | `getActivityState` | JSONL/API-based activity detection (min 3 states: active/ready/idle) | Yes (if no data) |
 | `isProcessRunning` | Check process alive via tmux TTY or PID | No |
 | `getSessionInfo` | Extract summary, cost, session ID from agent's data | Yes (if agent has no introspection) |
@@ -435,7 +434,7 @@ All agent plugins (claude-code, codex, aider, opencode, etc.) must implement the
 | `getRestoreCommand` | Resume a previous session | Agent has no resume capability (return `null`) |
 | `setupWorkspaceHooks` | Install metadata-update hooks (PATH wrappers or agent-native) | Never — required for dashboard PR tracking |
 | `postLaunchSetup` | Post-launch config (re-ensure hooks, resolve binary) | Only if no post-launch work needed |
-| `recordActivity` | Write terminal-derived activity to JSONL for `getActivityState` | Agent has native JSONL with full state coverage (Claude Code). Codex implements it as a safety net for when its native JSONL is missing/unparseable. |
+| `recordActivity` | Write terminal-derived activity to JSONL for `getActivityState`. Plugins typically implement a module-level `classifyFooTerminalOutput(output: string): ActivityState` helper and pass it to `recordTerminalActivity()`. | Agent has native JSONL with full state coverage (Claude Code). Codex implements it as a safety net for when its native JSONL is missing/unparseable. |
 
 **Metadata hooks are critical.** Without `setupWorkspaceHooks`, PRs created by agents won't appear in the dashboard. Two patterns exist:
 - **Agent-native hooks** (Claude Code): PostToolUse hooks in `.claude/settings.json`
@@ -503,26 +502,28 @@ async getActivityState(session, readyThresholdMs?): Promise<ActivityDetection | 
 
 **For agents using AO Activity JSONL (the common case for new plugins):**
 
-1. Implement `recordActivity` — delegate to the shared `recordTerminalActivity()`:
+1. Write a module-level classifier function with patterns specific to the agent's terminal output:
 ```typescript
-async recordActivity(session: Session, terminalOutput: string): Promise<void> {
-  if (!session.workspacePath) return;
-  await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-    this.detectActivity(output),
-  );
-}
-```
-
-`recordTerminalActivity` handles classification, deduplication (20s window for non-actionable states), and appending. You don't need to implement dedup yourself.
-
-2. Implement `detectActivity` with patterns specific to the agent's terminal output:
-```typescript
-detectActivity(terminalOutput: string): ActivityState {
+export function classifyFooTerminalOutput(terminalOutput: string): ActivityState {
   // Match the ACTUAL prompts/patterns the agent emits.
   // Test with real terminal output — don't guess patterns.
   // Return: "idle" | "active" | "waiting_input" | "blocked"
 }
 ```
+
+2. Implement `recordActivity` — delegate to the shared `recordTerminalActivity()` passing the classifier:
+```typescript
+async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+  if (!session.workspacePath) return;
+  await recordTerminalActivity(
+    session.workspacePath,
+    terminalOutput,
+    classifyFooTerminalOutput,
+  );
+}
+```
+
+`recordTerminalActivity` handles classification, deduplication (20s window for non-actionable states), and appending. You don't need to implement dedup yourself.
 
 3. In `getActivityState`, use `checkActivityLogState()` for waiting_input/blocked, then fall back to `getActivityFallbackState()`:
 ```typescript

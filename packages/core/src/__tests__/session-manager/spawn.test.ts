@@ -634,7 +634,6 @@ describe("spawn", () => {
         processName: "codex",
         getLaunchCommand: vi.fn().mockReturnValue("codex --start"),
         getEnvironment: vi.fn().mockReturnValue({ CODEX_VAR: "1" }),
-        detectActivity: vi.fn().mockReturnValue("active"),
         getActivityState: vi.fn().mockResolvedValue(null),
         isProcessRunning: vi.fn().mockResolvedValue(true),
         getSessionInfo: vi.fn().mockResolvedValue(null),

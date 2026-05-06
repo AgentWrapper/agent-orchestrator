@@ -130,6 +130,33 @@ export const manifest = {
   displayName: "Cursor",
 };
 
+/**
+ * Classify Cursor's activity from raw terminal output. Used internally by
+ * `recordActivity` to write AO activity JSONL entries.
+ */
+export function classifyCursorTerminalOutput(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // Permission/confirmation prompts take priority over idle prompt detection,
+  // to avoid false negatives when a prompt is followed by an input cursor.
+  const tail = lines.slice(-5).join("\n");
+  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+  if (/Approve.*changes\?/i.test(tail)) return "waiting_input";
+  if (/Continue\?/i.test(tail)) return "waiting_input";
+  if (/\[Yes\].*\[No\]/i.test(tail)) return "waiting_input";
+  if (/proceed\?/i.test(tail)) return "waiting_input";
+  if (/Press Enter to continue/i.test(tail)) return "waiting_input";
+
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+  if (/^agent>\s*$/.test(lastLine)) return "idle";
+  if (/^\[agent\]\s*$/.test(lastLine)) return "idle";
+
+  return "active";
+}
+
 // =============================================================================
 // Agent Implementation
 // =============================================================================
@@ -216,39 +243,6 @@ function createCursorAgent(): Agent {
       return env;
     },
 
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // Check for permission/confirmation prompts FIRST (actionable states take priority)
-      // This must come before idle prompt detection to avoid false negatives when
-      // a permission prompt is followed by an input cursor on the next line
-      const tail = lines.slice(-5).join("\n");
-      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-      if (/Approve.*changes\?/i.test(tail)) return "waiting_input";
-      if (/Continue\?/i.test(tail)) return "waiting_input";
-      if (/\[Yes\].*\[No\]/i.test(tail)) return "waiting_input";
-      if (/proceed\?/i.test(tail)) return "waiting_input";
-      if (/Press Enter to continue/i.test(tail)) return "waiting_input";
-
-      // Cursor agent's input prompt — agent is idle, waiting for user command
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-      // Cursor agent-specific prompt patterns
-      if (/^agent>\s*$/.test(lastLine)) return "idle";
-      if (/^\[agent\]\s*$/.test(lastLine)) return "idle";
-
-      // Note: "blocked" detection removed — compiler errors, test failures, and linter
-      // messages are extremely common in normal tool output. Unlike Claude Code (which
-      // has native JSONL with rich "error" types), terminal-based detection can't
-      // distinguish between actionable agent errors and normal tool output.
-      // If Cursor CLI provides native JSONL in the future, blocked detection can be
-      // added to getActivityState() based on JSONL entry types.
-
-      return "active";
-    },
-
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
@@ -296,8 +290,10 @@ function createCursorAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output: string) =>
-        this.detectActivity(output),
+      await recordTerminalActivity(
+        session.workspacePath,
+        terminalOutput,
+        classifyCursorTerminalOutput,
       );
     },
 

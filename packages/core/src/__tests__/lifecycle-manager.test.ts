@@ -599,9 +599,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
-  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+  it("detects killed via isProcessRunning probe when getActivityState returns null", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
-    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
 
@@ -684,9 +683,8 @@ describe("check (single session)", () => {
     expect(meta?.["detectingEscalatedAt"]).toBeDefined();
   });
 
-  it("stays working when agent is idle but process is still running (fallback path)", async () => {
+  it("stays working when getActivityState returns null but process is still running", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
-    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
 
     const lm = setupCheck("app-1", {
@@ -695,27 +693,6 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("working");
-  });
-
-  it("does not mark a session stuck from terminal-only idle evidence without a timestamp", async () => {
-    config.reactions = {
-      "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
-    };
-
-    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
-    vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
-    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
-
-    const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working" }),
-    });
-
-    await lm.check("app-1");
-
-    expect(lm.getStates().get("app-1")).toBe("working");
-    const meta = readMetadataRaw(env.sessionsDir, "app-1");
-    expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=stale");
-    expect(meta?.["lifecycleEvidence"]).toContain("activity=idle");
   });
 
   it("does not treat stale activity as recent liveness evidence during runtime-loss detection", async () => {

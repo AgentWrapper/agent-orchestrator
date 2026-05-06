@@ -44,6 +44,29 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
   }
 }
 
+/**
+ * Classify Aider's activity from raw terminal output. Used internally by
+ * `recordActivity` to write AO activity JSONL entries.
+ */
+export function classifyAiderTerminalOutput(terminalOutput: string): ActivityState {
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+  if (/^aider>\s*$/.test(lastLine)) return "idle";
+
+  const tail = lines.slice(-5).join("\n");
+  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+  if (/Allow creation of/i.test(tail)) return "waiting_input";
+  if (/Add .+ to the chat\?/i.test(tail)) return "waiting_input";
+  if (/\[Yes\].*\[No\]/i.test(tail)) return "waiting_input";
+  if (/proceed\?/i.test(tail)) return "waiting_input";
+
+  return "active";
+}
+
 // =============================================================================
 // Session Info Helpers
 // =============================================================================
@@ -132,28 +155,6 @@ function createAiderAgent(): Agent {
       return env;
     },
 
-    detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // Aider's input prompt — agent is idle, waiting for user command
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-      // Aider-specific prompt patterns
-      if (/^aider>\s*$/.test(lastLine)) return "idle";
-
-      // Check the last few lines for permission/confirmation prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-      if (/Allow creation of/i.test(tail)) return "waiting_input";
-      if (/Add .+ to the chat\?/i.test(tail)) return "waiting_input";
-      if (/\[Yes\].*\[No\]/i.test(tail)) return "waiting_input";
-      if (/proceed\?/i.test(tail)) return "waiting_input";
-
-      return "active";
-    },
-
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
@@ -199,8 +200,10 @@ function createAiderAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
-        this.detectActivity(output),
+      await recordTerminalActivity(
+        session.workspacePath,
+        terminalOutput,
+        classifyAiderTerminalOutput,
       );
     },
 

@@ -81,6 +81,7 @@ import { Readable } from "node:stream";
 import {
   create,
   manifest,
+  classifyCodexTerminalOutput,
   default as defaultExport,
   resolveCodexBinary,
   _resetSessionFileCache,
@@ -530,82 +531,80 @@ describe("isProcessRunning", () => {
 });
 
 // =========================================================================
-// detectActivity — terminal output classification
+// classifyCodexTerminalOutput — terminal output classification
 // =========================================================================
-describe("detectActivity", () => {
-  const agent = create();
-
+describe("classifyCodexTerminalOutput", () => {
   // -- Idle states --
   it("returns idle for empty terminal output", () => {
-    expect(agent.detectActivity("")).toBe("idle");
+    expect(classifyCodexTerminalOutput("")).toBe("idle");
   });
 
   it("returns idle for whitespace-only terminal output", () => {
-    expect(agent.detectActivity("   \n  ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("   \n  ")).toBe("idle");
   });
 
   it("returns idle when last line is a bare > prompt", () => {
-    expect(agent.detectActivity("some output\n> ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("some output\n> ")).toBe("idle");
   });
 
   it("returns idle when last line is a bare $ prompt", () => {
-    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("some output\n$ ")).toBe("idle");
   });
 
   it("returns idle when last line is a bare # prompt", () => {
-    expect(agent.detectActivity("some output\n# ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("some output\n# ")).toBe("idle");
   });
 
   it("returns idle when prompt follows historical activity indicators", () => {
     // Key regression test: historical active output in the buffer
     // should NOT override an idle prompt on the last line.
-    expect(agent.detectActivity("✶ Reading files\nDone.\n> ")).toBe("idle");
-    expect(agent.detectActivity("Working on task (esc to interrupt)\nFinished.\n$ ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("✶ Reading files\nDone.\n> ")).toBe("idle");
+    expect(classifyCodexTerminalOutput("Working on task (esc to interrupt)\nFinished.\n$ ")).toBe("idle");
   });
 
   // -- Waiting input states --
   it("returns waiting_input for approval required text", () => {
-    expect(agent.detectActivity("some output\napproval required\n")).toBe("waiting_input");
+    expect(classifyCodexTerminalOutput("some output\napproval required\n")).toBe("waiting_input");
   });
 
   it("returns waiting_input for (y)es / (n)o prompt", () => {
-    expect(agent.detectActivity("Do you want to continue?\n(y)es / (n)o\n")).toBe("waiting_input");
+    expect(classifyCodexTerminalOutput("Do you want to continue?\n(y)es / (n)o\n")).toBe("waiting_input");
   });
 
   it("returns waiting_input when permission prompt follows historical activity", () => {
     // Permission prompt at the bottom should NOT be overridden by historical
     // spinner/esc output higher in the buffer.
-    expect(agent.detectActivity("✶ Writing files\nDone.\napproval required\n")).toBe(
+    expect(classifyCodexTerminalOutput("✶ Writing files\nDone.\napproval required\n")).toBe(
       "waiting_input",
     );
-    expect(agent.detectActivity("Working (esc to interrupt)\nFinished\n(y)es / (n)o\n")).toBe(
+    expect(classifyCodexTerminalOutput("Working (esc to interrupt)\nFinished\n(y)es / (n)o\n")).toBe(
       "waiting_input",
     );
   });
 
   // -- Active states --
   it("returns active for non-empty terminal output with no special patterns", () => {
-    expect(agent.detectActivity("codex is running some task\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("codex is running some task\n")).toBe("active");
   });
 
   it("returns active when (esc to interrupt) is present", () => {
-    expect(agent.detectActivity("Working on task (esc to interrupt)\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("Working on task (esc to interrupt)\n")).toBe("active");
   });
 
   it("returns active for spinner symbols with -ing words", () => {
-    expect(agent.detectActivity("✶ Reading files\n")).toBe("active");
-    expect(agent.detectActivity("⏺ Writing to disk\n")).toBe("active");
-    expect(agent.detectActivity("✽ Searching codebase\n")).toBe("active");
-    expect(agent.detectActivity("⏳ Installing packages\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("✶ Reading files\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("⏺ Writing to disk\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("✽ Searching codebase\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("⏳ Installing packages\n")).toBe("active");
   });
 
   it("returns active (not idle) for spinner symbol without -ing word", () => {
     // Spinner symbols alone without -ing words should still fall through to active
-    expect(agent.detectActivity("✶ done\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("✶ done\n")).toBe("active");
   });
 
   it("returns active for multi-line output with activity in the middle", () => {
-    expect(agent.detectActivity("Starting\n(esc to interrupt)\nstill going\n")).toBe("active");
+    expect(classifyCodexTerminalOutput("Starting\n(esc to interrupt)\nstill going\n")).toBe("active");
   });
 });
 
