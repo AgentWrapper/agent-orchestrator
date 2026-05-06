@@ -1078,7 +1078,10 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       const d = (data.reviewDecision ?? "").toUpperCase();
       if (d === "APPROVED") return "approved";
       if (d === "CHANGES_REQUESTED") return "changes_requested";
-      if (d === "REVIEW_REQUIRED") return "pending";
+      // PENDING and REVIEW_REQUIRED both mean "review still needed" — collapsing
+      // PENDING into "none" let lifecycle treat reviewable PRs as no-review-required
+      // and skip the review_pending status.
+      if (d === "REVIEW_REQUIRED" || d === "PENDING") return "pending";
       return "none";
     },
 

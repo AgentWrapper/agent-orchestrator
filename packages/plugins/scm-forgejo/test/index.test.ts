@@ -817,6 +817,7 @@ describe("scm-forgejo plugin", () => {
       ["APPROVED", "approved"],
       ["CHANGES_REQUESTED", "changes_requested"],
       ["REVIEW_REQUIRED", "pending"],
+      ["PENDING", "pending"],
     ] as const)('maps %s to "%s"', async (input, expected) => {
       mockGh({ reviewDecision: input });
       expect(await scm.getReviewDecision(pr)).toBe(expected);
