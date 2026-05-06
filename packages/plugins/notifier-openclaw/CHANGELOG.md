@@ -1,5 +1,12 @@
 # @aoagents/ao-plugin-notifier-openclaw
 
+## 0.2.8
+
+### Patch Changes
+
+- Updated dependencies
+  - @aoagents/ao-core@0.5.0
+
 ## 0.2.7
 
 ### Patch Changes
