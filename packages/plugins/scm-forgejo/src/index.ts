@@ -317,9 +317,13 @@ function getForgejoWebhookConfig(project: ProjectConfig) {
     enabled: webhook?.enabled !== false,
     path: webhook?.path ?? "/api/webhooks/forgejo",
     secretEnvVar: webhook?.secretEnvVar,
-    signatureHeader: webhook?.signatureHeader ?? "x-hub-signature-256",
-    eventHeader: webhook?.eventHeader ?? "x-github-event",
-    deliveryHeader: webhook?.deliveryHeader ?? "x-github-delivery",
+    // Forgejo sends X-Forgejo-Signature with a *raw* hex digest by default, and
+    // X-Hub-Signature-256 with a `sha256=`-prefixed digest for GitHub-compat.
+    // Default to the native header; deployments wiring GitHub-compat receivers
+    // can override via project.scm.webhook.signatureHeader.
+    signatureHeader: webhook?.signatureHeader ?? "x-forgejo-signature",
+    eventHeader: webhook?.eventHeader ?? "x-forgejo-event",
+    deliveryHeader: webhook?.deliveryHeader ?? "x-forgejo-delivery",
     maxBodyBytes: webhook?.maxBodyBytes,
   };
 }
@@ -329,9 +333,13 @@ function verifyForgejoSignature(
   secret: string,
   signatureHeader: string,
 ): boolean {
-  if (!signatureHeader.startsWith("sha256=")) return false;
+  // Accept both Forgejo-native (raw hex) and GitHub-compat (`sha256=hex`) digests.
+  const provided = signatureHeader.startsWith("sha256=")
+    ? signatureHeader.slice("sha256=".length)
+    : signatureHeader;
+  if (!provided || !/^[0-9a-f]+$/i.test(provided)) return false;
+
   const expected = createHmac("sha256", secret).update(body).digest("hex");
-  const provided = signatureHeader.slice("sha256=".length);
   const expectedBuffer = Buffer.from(expected, "hex");
   const providedBuffer = Buffer.from(provided, "hex");
   if (expectedBuffer.length !== providedBuffer.length) return false;

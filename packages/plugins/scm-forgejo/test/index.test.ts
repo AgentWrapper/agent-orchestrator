@@ -71,8 +71,8 @@ function makeWebhookRequest(overrides: Partial<SCMWebhookRequest> = {}): SCMWebh
   return {
     method: "POST",
     headers: {
-      "x-github-event": "pull_request",
-      "x-github-delivery": "delivery-1",
+      "x-forgejo-event": "pull_request",
+      "x-forgejo-delivery": "delivery-1",
     },
     body: JSON.stringify({
       action: "opened",
@@ -144,7 +144,31 @@ describe("scm-forgejo plugin", () => {
       });
     });
 
-    it("verifies a valid HMAC signature", async () => {
+    it("verifies a valid Forgejo-native signature (raw hex)", async () => {
+      process.env["FORGEJO_WEBHOOK_SECRET"] = "topsecret";
+      const body = makeWebhookRequest().body;
+      const signature = await import("node:crypto").then(({ createHmac }) =>
+        createHmac("sha256", "topsecret").update(body).digest("hex"),
+      );
+
+      const result = await scm.verifyWebhook?.(
+        makeWebhookRequest({
+          headers: {
+            "x-forgejo-event": "pull_request",
+            "x-forgejo-delivery": "delivery-1",
+            "x-forgejo-signature": signature,
+          },
+        }),
+        {
+          ...project,
+          scm: { plugin: "forgejo", webhook: { secretEnvVar: "FORGEJO_WEBHOOK_SECRET" } },
+        },
+      );
+
+      expect(result?.ok).toBe(true);
+    });
+
+    it("verifies a GitHub-compat signature (sha256= prefix) when configured", async () => {
       process.env["GITHUB_WEBHOOK_SECRET"] = "topsecret";
       const body = makeWebhookRequest().body;
       const signature = await import("node:crypto").then(
@@ -162,27 +186,35 @@ describe("scm-forgejo plugin", () => {
         }),
         {
           ...project,
-          scm: { plugin: "github", webhook: { secretEnvVar: "GITHUB_WEBHOOK_SECRET" } },
+          scm: {
+            plugin: "forgejo",
+            webhook: {
+              secretEnvVar: "GITHUB_WEBHOOK_SECRET",
+              signatureHeader: "x-hub-signature-256",
+              eventHeader: "x-github-event",
+              deliveryHeader: "x-github-delivery",
+            },
+          },
         },
       );
 
       expect(result?.ok).toBe(true);
     });
 
-    it("rejects an invalid HMAC signature", async () => {
-      process.env["GITHUB_WEBHOOK_SECRET"] = "topsecret";
+    it("rejects an invalid Forgejo-native signature", async () => {
+      process.env["FORGEJO_WEBHOOK_SECRET"] = "topsecret";
 
       const result = await scm.verifyWebhook?.(
         makeWebhookRequest({
           headers: {
-            "x-github-event": "pull_request",
-            "x-github-delivery": "delivery-1",
-            "x-hub-signature-256": "sha256=deadbeef",
+            "x-forgejo-event": "pull_request",
+            "x-forgejo-delivery": "delivery-1",
+            "x-forgejo-signature": "deadbeef",
           },
         }),
         {
           ...project,
-          scm: { plugin: "github", webhook: { secretEnvVar: "GITHUB_WEBHOOK_SECRET" } },
+          scm: { plugin: "forgejo", webhook: { secretEnvVar: "FORGEJO_WEBHOOK_SECRET" } },
         },
       );
 
@@ -231,7 +263,7 @@ describe("scm-forgejo plugin", () => {
     it("parses issue_comment events on pull requests as comment events", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "issue_comment" },
+          headers: { "x-forgejo-event": "issue_comment" },
           body: JSON.stringify({
             action: "created",
             repository: { owner: { login: "acme" }, name: "repo" },
@@ -250,7 +282,7 @@ describe("scm-forgejo plugin", () => {
     it("falls back to comment.created_at for issue_comment timestamps", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "issue_comment" },
+          headers: { "x-forgejo-event": "issue_comment" },
           body: JSON.stringify({
             action: "created",
             repository: { owner: { login: "acme" }, name: "repo" },
@@ -270,7 +302,7 @@ describe("scm-forgejo plugin", () => {
     it("parses pull_request_review_comment timestamp from comment payload", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "pull_request_review_comment" },
+          headers: { "x-forgejo-event": "pull_request_review_comment" },
           body: JSON.stringify({
             action: "created",
             repository: { owner: { login: "acme" }, name: "repo" },
@@ -298,7 +330,7 @@ describe("scm-forgejo plugin", () => {
     it("parses status events with branch info", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "status" },
+          headers: { "x-forgejo-event": "status" },
           body: JSON.stringify({
             state: "failure",
             repository: { owner: { login: "acme" }, name: "repo" },
@@ -324,7 +356,7 @@ describe("scm-forgejo plugin", () => {
     it("parses check_run events using check_suite.head_branch", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "check_run" },
+          headers: { "x-forgejo-event": "check_run" },
           body: JSON.stringify({
             action: "completed",
             repository: { owner: { login: "acme" }, name: "repo" },
@@ -353,7 +385,7 @@ describe("scm-forgejo plugin", () => {
     it("parses push events with branch and sha", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "push" },
+          headers: { "x-forgejo-event": "push" },
           body: JSON.stringify({
             ref: "refs/heads/feat/my-feature",
             after: "abcde12345",
@@ -378,7 +410,7 @@ describe("scm-forgejo plugin", () => {
     it("does not set branch for tag push refs", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({
-          headers: { "x-github-event": "push" },
+          headers: { "x-forgejo-event": "push" },
           body: JSON.stringify({
             ref: "refs/tags/v1.0.0",
             after: "abcde12345",
