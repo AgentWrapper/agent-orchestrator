@@ -1,5 +1,12 @@
 # @aoagents/ao-plugin-agent-kimicode
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [dd07b6b]
+  - @aoagents/ao-core@0.5.0
+
 ## 0.1.1
 
 ### Patch Changes

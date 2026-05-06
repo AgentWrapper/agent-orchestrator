@@ -1,5 +1,24 @@
 # @aoagents/ao-web
 
+## 0.5.0
+
+### Patch Changes
+
+- dd07b6b: Fix direct terminal attach and keep mux routing project-scoped. Switches `resolveExactTmuxName` from `execFileSync` to a promisified `execFile` so slow tmux calls no longer stall the WebSocket message handler, and propagates async through `TerminalManager.open` / `subscribe` and the pty `onExit` reattach path. Also drops a duplicate `.kanban-board` grid rule in `globals.css`.
+- dd07b6b: Render an empty-state in the project sidebar when no projects are configured. Fresh-install users previously saw a blank sidebar with no way to open the Add Project modal; the sidebar now shows a small empty-state with the `+` button wired up.
+- Updated dependencies [dd07b6b]
+  - @aoagents/ao-core@0.5.0
+  - @aoagents/ao-plugin-agent-claude-code@0.5.0
+  - @aoagents/ao-plugin-agent-codex@0.5.0
+  - @aoagents/ao-plugin-agent-cursor@0.1.3
+  - @aoagents/ao-plugin-agent-kimicode@0.1.2
+  - @aoagents/ao-plugin-agent-opencode@0.5.0
+  - @aoagents/ao-plugin-runtime-tmux@0.5.0
+  - @aoagents/ao-plugin-scm-github@0.5.0
+  - @aoagents/ao-plugin-tracker-github@0.5.0
+  - @aoagents/ao-plugin-tracker-linear@0.5.0
+  - @aoagents/ao-plugin-workspace-worktree@0.5.0
+
 ## 0.4.0
 
 ### Patch Changes

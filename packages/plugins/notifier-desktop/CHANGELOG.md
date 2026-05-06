@@ -1,5 +1,12 @@
 # @aoagents/ao-plugin-notifier-desktop
 
+## 0.5.0
+
+### Patch Changes
+
+- Updated dependencies [dd07b6b]
+  - @aoagents/ao-core@0.5.0
+
 ## 0.4.0
 
 ### Patch Changes

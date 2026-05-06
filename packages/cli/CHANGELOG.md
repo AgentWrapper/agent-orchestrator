@@ -1,5 +1,40 @@
 # @aoagents/ao-cli
 
+## 0.5.0
+
+### Minor Changes
+
+- 3a69722: Remove the deprecated `ao init` command. Use `ao start` instead — it auto-creates the config on first run in an unconfigured repo.
+
+### Patch Changes
+
+- Updated dependencies [dd07b6b]
+- Updated dependencies [dd07b6b]
+- Updated dependencies [dd07b6b]
+  - @aoagents/ao-core@0.5.0
+  - @aoagents/ao-web@0.5.0
+  - @aoagents/ao-plugin-agent-aider@0.5.0
+  - @aoagents/ao-plugin-agent-claude-code@0.5.0
+  - @aoagents/ao-plugin-agent-codex@0.5.0
+  - @aoagents/ao-plugin-agent-cursor@0.1.3
+  - @aoagents/ao-plugin-agent-kimicode@0.1.2
+  - @aoagents/ao-plugin-agent-opencode@0.5.0
+  - @aoagents/ao-plugin-notifier-composio@0.5.0
+  - @aoagents/ao-plugin-notifier-desktop@0.5.0
+  - @aoagents/ao-plugin-notifier-discord@0.2.8
+  - @aoagents/ao-plugin-notifier-openclaw@0.2.8
+  - @aoagents/ao-plugin-notifier-slack@0.5.0
+  - @aoagents/ao-plugin-notifier-webhook@0.5.0
+  - @aoagents/ao-plugin-runtime-process@0.5.0
+  - @aoagents/ao-plugin-runtime-tmux@0.5.0
+  - @aoagents/ao-plugin-scm-github@0.5.0
+  - @aoagents/ao-plugin-terminal-iterm2@0.5.0
+  - @aoagents/ao-plugin-terminal-web@0.5.0
+  - @aoagents/ao-plugin-tracker-github@0.5.0
+  - @aoagents/ao-plugin-tracker-linear@0.5.0
+  - @aoagents/ao-plugin-workspace-clone@0.5.0
+  - @aoagents/ao-plugin-workspace-worktree@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
