@@ -450,9 +450,12 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         // comma-separated name list (matching our payload), but in practice
         // it returns 0 results for any name and ignores any ID.
         //
-        // Already fixed on Forgejo `next` (verified 16.0.0-dev-239+gitea-1.22.0
-        // against v16.next.forgejo.org) — this workaround can be retired once
-        // 15.x is no longer supported. Upstream tracker:
+        // Already fixed in Forgejo 15.0.1+ (verified against v15.next.forgejo.org
+        // running 15.0.1-2-b2c9c14dea+gitea-1.22.0) and on `next`
+        // (16.0.0-dev-239+gitea-1.22.0 against v16.next.forgejo.org). The fix
+        // shipped silently in the 15.0.0 → 15.0.1 backport set; affected users
+        // are those pinned to 15.0.0. This workaround can be retired once
+        // 15.0.0 is no longer in deployment. Upstream tracker:
         // https://codeberg.org/forgejo/forgejo/issues/12438.
         //
         // The cross-repo /repos/issues/search endpoint honors the same
