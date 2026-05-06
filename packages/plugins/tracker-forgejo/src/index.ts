@@ -387,7 +387,10 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
       const host = resolveHost(project) ?? "forgejo.example";
-      return `https://${host}/${stripHost(requireRepo(project))}/issues/${num}`;
+      // Reuse forgejoApiBaseUrl so an explicit `http://`/`https://` prefix on
+      // the configured host is respected — otherwise a host of
+      // "https://forgejo.local" would render as "https://https://forgejo.local/...".
+      return `${forgejoApiBaseUrl(host)}/${stripHost(requireRepo(project))}/issues/${num}`;
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -524,15 +527,17 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           });
         }
 
-        if (update.labels && update.labels.length > 0) {
-          const labelIdByName = await resolveLabelIdsByName(
-            hostname,
-            token,
-            owner,
-            repo,
-            update.labels,
-          );
+        // Combine label names that need ID resolution into a single paginated lookup.
+        const namesToResolve = [
+          ...(update.labels ?? []),
+          ...(update.removeLabels ?? []),
+        ];
+        const labelIdByName =
+          namesToResolve.length > 0
+            ? await resolveLabelIdsByName(hostname, token, owner, repo, namesToResolve)
+            : new Map<string, number>();
 
+        if (update.labels && update.labels.length > 0) {
           const labelIds = update.labels.map((labelName) => labelIdByName.get(labelName));
           const missingLabels = update.labels.filter((_, index) => labelIds[index] === undefined);
           if (missingLabels.length > 0) {
@@ -541,9 +546,33 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
             );
           }
 
-          await forgejoApi(hostname, token, "PATCH", `/repos/${owner}/${repo}/issues/${issueNumber}`, undefined, {
-            labels: labelIds,
-          });
+          // POST /issues/{n}/labels is the documented additive endpoint.
+          // The previous PATCH /issues/{n} with `labels: [...]` was silently
+          // ignored — Forgejo's `EditIssueOption` schema has no `labels`
+          // property (see codeberg.org/swagger.v1.json). Either way, REST
+          // mode previously diverged from the gh path's --add-label semantics.
+          await forgejoApi(
+            hostname,
+            token,
+            "POST",
+            `/repos/${owner}/${repo}/issues/${issueNumber}/labels`,
+            undefined,
+            { labels: labelIds },
+          );
+        }
+
+        if (update.removeLabels && update.removeLabels.length > 0) {
+          // Forgejo only exposes single-label deletion; loop per requested name.
+          for (const labelName of update.removeLabels) {
+            const labelId = labelIdByName.get(labelName);
+            if (labelId === undefined) continue; // already absent — nothing to remove
+            await forgejoApi(
+              hostname,
+              token,
+              "DELETE",
+              `/repos/${owner}/${repo}/issues/${issueNumber}/labels/${labelId}`,
+            );
+          }
         }
 
         if (update.assignee) {

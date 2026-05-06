@@ -229,6 +229,15 @@ describe("tracker-forgejo plugin", () => {
         "https://forgejo.acme.internal/acme/repo/issues/42",
       );
     });
+
+    it.each([
+      ["http://forgejo.local", "http://forgejo.local/acme/repo/issues/42"],
+      ["https://forgejo.example.com", "https://forgejo.example.com/acme/repo/issues/42"],
+      ["https://forgejo.example.com/", "https://forgejo.example.com/acme/repo/issues/42"],
+    ])("respects explicit scheme on host: %s", (host, expected) => {
+      const hosted = create({ host });
+      expect(hosted.issueUrl("42", project)).toBe(expected);
+    });
   });
 
   // ---- branchName --------------------------------------------------------
@@ -442,7 +451,7 @@ describe("tracker-forgejo plugin", () => {
       expect(ghMock).toHaveBeenCalledTimes(3);
     });
 
-    it("uses label IDs (not names) for REST label updates", async () => {
+    it("uses label IDs (not names) for REST label updates and adds (not replaces) them", async () => {
       process.env["FORGEJO_TOKEN"] = "test-token";
       const restTracker = create({ host: "forgejo.example.com" });
       const fetchMock = vi
@@ -469,8 +478,12 @@ describe("tracker-forgejo plugin", () => {
         const firstUrl = String(fetchMock.mock.calls[0]?.[0]);
         expect(firstUrl).toContain("/api/v1/repos/acme/repo/labels");
 
+        const secondUrl = String(fetchMock.mock.calls[1]?.[0]);
         const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
-        expect(secondRequestInit?.method).toBe("PATCH");
+        // Additive POST /issues/{n}/labels — NOT PATCH /issues/{n}, whose
+        // EditIssueOption schema has no `labels` property and silently drops it.
+        expect(secondUrl).toContain("/issues/123/labels");
+        expect(secondRequestInit?.method).toBe("POST");
         expect(JSON.parse(String(secondRequestInit?.body))).toEqual({ labels: [10, 20] });
       } finally {
         vi.unstubAllGlobals();
@@ -500,14 +513,93 @@ describe("tracker-forgejo plugin", () => {
       try {
         await restTracker.updateIssue!("123", { labels: ["needle"] }, project);
 
-        // Two label-lookup calls, then the PATCH.
+        // Two label-lookup calls, then the additive POST.
         expect(fetchMock).toHaveBeenCalledTimes(3);
         expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/labels\?.*page=1/);
         expect(String(fetchMock.mock.calls[1]?.[0])).toMatch(/\/labels\?.*page=2/);
 
-        const patchInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
-        expect(patchInit?.method).toBe("PATCH");
-        expect(JSON.parse(String(patchInit?.body))).toEqual({ labels: [999] });
+        const labelsAddInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
+        expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/issues/123/labels");
+        expect(labelsAddInit?.method).toBe("POST");
+        expect(JSON.parse(String(labelsAddInit?.body))).toEqual({ labels: [999] });
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+
+    it("DELETEs each removeLabels entry by ID in REST mode", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+
+      const fetchMock = vi
+        .fn()
+        // Label lookup (covers both update.labels and update.removeLabels names)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [
+            { id: 10, name: "bug" },
+            { id: 20, name: "stale" },
+            { id: 30, name: "wontfix" },
+          ],
+        })
+        // POST /labels for the additive `labels` field
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+        // DELETE per removeLabels entry
+        .mockResolvedValueOnce({ ok: true, status: 204, json: async () => null })
+        .mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restTracker.updateIssue!(
+          "123",
+          { labels: ["bug"], removeLabels: ["stale", "wontfix"] },
+          project,
+        );
+
+        expect(fetchMock).toHaveBeenCalledTimes(4);
+
+        const addInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+        expect(addInit?.method).toBe("POST");
+        expect(JSON.parse(String(addInit?.body))).toEqual({ labels: [10] });
+
+        const delUrl1 = String(fetchMock.mock.calls[2]?.[0]);
+        const delInit1 = fetchMock.mock.calls[2]?.[1] as RequestInit;
+        expect(delUrl1).toContain("/issues/123/labels/20");
+        expect(delInit1?.method).toBe("DELETE");
+
+        const delUrl2 = String(fetchMock.mock.calls[3]?.[0]);
+        const delInit2 = fetchMock.mock.calls[3]?.[1] as RequestInit;
+        expect(delUrl2).toContain("/issues/123/labels/30");
+        expect(delInit2?.method).toBe("DELETE");
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+
+    it("silently skips removeLabels entries that are not present on the repo", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+
+      const fetchMock = vi
+        .fn()
+        // Repo only has "bug"; "ghost" doesn't exist anywhere.
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 10, name: "bug" }],
+        });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await expect(
+          restTracker.updateIssue!("123", { removeLabels: ["ghost"] }, project),
+        ).resolves.toBeUndefined();
+
+        // Only the lookup happens — no DELETE for an unknown label name.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
       } finally {
         vi.unstubAllGlobals();
         delete process.env["FORGEJO_TOKEN"];
