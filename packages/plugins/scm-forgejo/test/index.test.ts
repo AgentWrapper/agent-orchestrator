@@ -1133,6 +1133,25 @@ describe("scm-forgejo plugin", () => {
       expect(result.mergeable).toBe(false);
     });
 
+    it("blocks merge when Forgejo returns an unrecognized mergeable value", async () => {
+      mockGh({ state: "OPEN" }); // getPRState
+      mockGh({
+        // Some Forgejo clients surface null as the literal "NULL"; either way
+        // anything other than MERGEABLE/CONFLICTING/UNKNOWN must not flip
+        // mergeable=true.
+        mergeable: "NULL",
+        reviewDecision: "APPROVED",
+        mergeStateStatus: "CLEAN",
+        isDraft: false,
+      });
+      mockGh([{ name: "build", state: "SUCCESS" }]);
+
+      const result = await scm.getMergeability(pr);
+      expect(result.noConflicts).toBe(false);
+      expect(result.mergeable).toBe(false);
+      expect(result.blockers.some((b) => b.startsWith("Merge status unrecognized"))).toBe(true);
+    });
+
     it("reports draft status as blocker", async () => {
       mockGh({ state: "OPEN" }); // getPRState
       mockGh({

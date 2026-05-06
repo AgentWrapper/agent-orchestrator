@@ -1263,6 +1263,12 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         blockers.push("Merge conflicts");
       } else if (mergeable === "UNKNOWN" || mergeable === "") {
         blockers.push("Merge status unknown (Forgejo is computing)");
+      } else if (mergeable !== "MERGEABLE") {
+        // Catch-all for values Forgejo may emit that we don't recognize yet
+        // (e.g. "NULL" surfaced by some clients, or future API additions).
+        // Without this branch, an unknown state would leave blockers empty
+        // and silently mark the PR as mergeable.
+        blockers.push(`Merge status unrecognized: ${mergeable}`);
       }
       if (mergeState === "BEHIND") {
         blockers.push("Branch is behind base branch");
