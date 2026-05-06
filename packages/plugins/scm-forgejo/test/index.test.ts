@@ -1152,4 +1152,32 @@ describe("scm-forgejo plugin", () => {
       }
     });
   });
+
+  // ---- forgejoApi REST host scheme ---------------------------------------
+
+  describe("forgejoApi host scheme", () => {
+    it.each([
+      ["forgejo.example.com", "https://forgejo.example.com/api/v1/"],
+      ["http://forgejo.local", "http://forgejo.local/api/v1/"],
+      ["https://forgejo.example.com/", "https://forgejo.example.com/api/v1/"],
+    ])("uses %s -> %s", async (host, expectedPrefix) => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restScm = create({ host });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ number: 42, html_url: "u", title: "t", head: {}, base: {}, draft: false }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restScm.resolvePR("42", project);
+        const calledUrl = fetchMock.mock.calls[0]?.[0] as string;
+        expect(calledUrl.startsWith(expectedPrefix)).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+  });
 });

@@ -201,6 +201,20 @@ function issueFromForgejoApi(data: ForgejoIssue): Issue {
 /** Match the `gh` CLI timeout in execCli — keeps degraded networks from hanging callers. */
 const FORGEJO_API_TIMEOUT_MS = 30_000;
 
+/**
+ * Build a Forgejo API base URL that respects an explicit `http://` or
+ * `https://` scheme on the configured host. HTTPS remains the default when
+ * no scheme is given, but explicit `http://` is honored so on-prem deployments
+ * without TLS can still be reached.
+ */
+function forgejoApiBaseUrl(hostname: string): string {
+  const trimmed = hostname.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/\/+$/, "");
+  }
+  return `https://${trimmed.replace(/\/+$/, "")}`;
+}
+
 async function forgejoApi(
   hostname: string,
   token: string,
@@ -214,7 +228,7 @@ async function forgejoApi(
     if (value === undefined) continue;
     params.set(key, String(value));
   }
-  const url = `https://${hostname}/api/v1${path}${params.size > 0 ? `?${params.toString()}` : ""}`;
+  const url = `${forgejoApiBaseUrl(hostname)}/api/v1${path}${params.size > 0 ? `?${params.toString()}` : ""}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FORGEJO_API_TIMEOUT_MS);
 
