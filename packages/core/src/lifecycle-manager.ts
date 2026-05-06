@@ -459,6 +459,16 @@ export interface LifecycleManagerDeps {
   sessionManager: OpenCodeSessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  /**
+   * Optional hook driving Pipeline.triggers auto-firing. Invoked once per
+   * `pollAll` cycle (after session checks). Failures are observed and
+   * swallowed — auto-triggers never block session polling.
+   *
+   * The hook is intentionally opaque to the lifecycle manager: it owns its
+   * own SCM access, store, and persisted last-checked timestamp. See
+   * `runAutoTriggerPass` in `pipeline/auto-trigger.ts` for the building blocks.
+   */
+  pipelineAutoTrigger?: () => Promise<void>;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -472,7 +482,13 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
+  const {
+    config,
+    registry,
+    sessionManager,
+    projectId: scopedProjectId,
+    pipelineAutoTrigger,
+  } = deps;
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
@@ -2452,6 +2468,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Persist batch enrichment data to session metadata files so the
       // web dashboard can read it without calling GitHub API.
       persistPREnrichmentToMetadata(sessionsToCheck);
+
+      // Pipeline auto-trigger pass — fires Pipeline.triggers based on
+      // SCM events since last checked. Isolated try/catch so a misconfigured
+      // SCM plugin or a transient outage never breaks session polling.
+      if (pipelineAutoTrigger) {
+        try {
+          await pipelineAutoTrigger();
+        } catch (err) {
+          observer.recordOperation({
+            metric: "pipeline_auto_trigger",
+            operation: "pipeline.auto_trigger",
+            outcome: "failure",
+            correlationId,
+            projectId: scopedProjectId,
+            durationMs: Date.now() - startedAt,
+            reason: err instanceof Error ? err.message : String(err),
+            level: "warn",
+          });
+        }
+      }
 
       // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
       // for sessions that no longer appear in the session list (e.g., after kill/cleanup)

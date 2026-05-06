@@ -815,6 +815,19 @@ export interface SCM {
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
 
   /**
+   * Return PR-related events that occurred since `since`.
+   *
+   * Used by the lifecycle manager to drive auto-firing pipeline triggers
+   * (`pr_opened` / `pr_push` / `pr_review_requested`). The implementation
+   * is expected to filter to repos owned by the project on the caller's
+   * behalf — callers will not pass repo context here in v1.1b.
+   *
+   * Optional. SCM plugins that don't implement this method short-circuit
+   * the trigger evaluation pass to a no-op (auto-triggers won't fire).
+   */
+  getRecentPREvents?(since: Date): Promise<PREvent[]>;
+
+  /**
    * Batch fetch PR data for multiple PRs in a single GraphQL query.
    * Used by the orchestrator to poll all active sessions efficiently.
    *
@@ -947,6 +960,31 @@ export interface SCMWebhookEvent {
   sha?: string;
   timestamp?: Date;
   data: Record<string, unknown>;
+}
+
+// --- PR Event Polling (for pipeline auto-triggers) ---
+
+/**
+ * Minimal PR event shape consumed by `Pipeline.triggers` evaluation.
+ *
+ * Distinct from `SCMWebhookEvent`, which is push-based and covers a wider
+ * surface (issue comments, generic webhook actions). `PREvent` is the
+ * pull-based, narrowly-typed view that the lifecycle manager polls when
+ * webhooks aren't configured. Plugins that already process webhooks may
+ * synthesize `PREvent`s from a buffered ingest queue instead of re-querying.
+ */
+export type PREventType = "pr_opened" | "pr_push" | "pr_review_requested";
+
+export interface PREvent {
+  type: PREventType;
+  prNumber: number;
+  baseBranch: string;
+  headBranch: string;
+  labels: string[];
+  /** Paths the diff touches at the SHA the event refers to. Empty if unknown. */
+  changedFiles: string[];
+  isDraft: boolean;
+  occurredAt: Date;
 }
 
 // --- CI Types ---

@@ -410,6 +410,19 @@ export {
   ConfiguredPipelineSchema,
   PipelinesConfigSchema,
   configuredPipelineToRuntime,
+  // v1.1b: trigger evaluation + auto-trigger pass
+  evaluateTrigger,
+  decideConcurrencyAction,
+  matchesAnyGlob,
+  anyValueMatchesAnyGlob,
+  triggerEventForPREvent,
+  runAutoTriggerPass,
+  readAutoTriggerState,
+  writeAutoTriggerState,
+  autoTriggerStatePath,
+  makeInitialAutoTriggerState,
+  EMPTY_AUTO_TRIGGER_STATE,
+  DEFAULT_QUEUE_MAX_AGE_MS,
 } from "./pipeline/index.js";
 
 export type {
@@ -470,6 +483,19 @@ export type {
   StartRunInput,
   ConfiguredPipeline,
   PipelinesConfig,
+  // v1.1b: trigger types
+  PipelineTrigger,
+  PipelineTriggerEvent,
+  ConcurrencyPolicy,
+  ConcurrencyAction,
+  ConcurrencyDecisionContext,
+  TriggerEvaluationContext,
+  AutoTriggerState,
+  AutoTriggerPassDeps,
+  AutoTriggerPassResult,
+  AutoTriggerActionLog,
+  DispatchInput as AutoTriggerDispatchInput,
+  QueuedTrigger,
 } from "./pipeline/index.js";
 
 // Activity event logging — structured diagnostic event trail

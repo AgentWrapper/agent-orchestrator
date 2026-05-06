@@ -17,6 +17,7 @@ import {
   type LifecycleManager,
 } from "@aoagents/ao-core";
 import { importPluginModuleFromSource } from "./plugin-store.js";
+import { createPipelineAutoTrigger } from "./pipeline-auto-trigger.js";
 
 const registryPromises = new Map<string, Promise<PluginRegistry>>();
 
@@ -71,5 +72,12 @@ export async function getLifecycleManager(
 ): Promise<LifecycleManager> {
   const registry = await getPluginRegistry(config);
   const sessionManager = createSessionManager({ config, registry });
-  return createLifecycleManager({ config, registry, sessionManager, projectId });
+  const pipelineAutoTrigger = createPipelineAutoTrigger({ config, registry, projectId });
+  return createLifecycleManager({
+    config,
+    registry,
+    sessionManager,
+    projectId,
+    pipelineAutoTrigger,
+  });
 }
