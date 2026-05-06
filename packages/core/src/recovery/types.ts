@@ -46,6 +46,18 @@ export interface RecoveryAssessment {
   /** Human-readable reason for classification */
   reason: string;
 
+  /** Whether the runtime probe itself succeeded */
+  runtimeProbeSucceeded: boolean;
+
+  /** Whether the process probe itself succeeded */
+  processProbeSucceeded: boolean;
+
+  /** Whether the signals disagree strongly enough to block cleanup */
+  signalDisagreement: boolean;
+
+  /** Whether recovery can proceed automatically, needs a human, or should be skipped */
+  recoveryRule: "auto" | "human" | "skip";
+
   // --- Runtime state ---
 
   /** Whether the runtime (tmux/docker) is alive */
@@ -213,4 +225,13 @@ export interface RecoveryContext {
 
   /** Whether this is a dry run (no actual changes) */
   dryRun: boolean;
+
+  /**
+   * Invoked after every metadata mutation performed by recovery actions
+   * (recover/cleanup/escalate). Callers that rely on SessionManager's
+   * listCached() cache should pass `sessionManager.invalidateCache` here
+   * so the dashboard sees recovery results immediately instead of waiting
+   * for the 35s TTL. Optional — omitted callers get a no-op.
+   */
+  invalidateCache?: () => void;
 }

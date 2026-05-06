@@ -1,6 +1,6 @@
 {
-  "name": "@composio/ao-core",
-  "version": "0.2.0",
+  "name": "@aoagents/ao-core",
+  "version": "0.4.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,38 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./activity-log": {
+      "types": "./dist/activity-log.d.ts",
+      "import": "./dist/activity-log.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./lifecycle-manager": {
+      "types": "./dist/lifecycle-manager.d.ts",
+      "import": "./dist/lifecycle-manager.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata.d.ts",
+      "import": "./dist/metadata.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
+    },
+    "./orchestrator-prompt": {
+      "types": "./dist/orchestrator-prompt.d.ts",
+      "import": "./dist/orchestrator-prompt.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js"
+    },
+    "./plugin-registry": {
+      "types": "./dist/plugin-registry.d.ts",
+      "import": "./dist/plugin-registry.js"
     },
     "./types": {
       "types": "./dist/types.d.ts",
@@ -22,6 +54,14 @@
     "./scm-webhook-utils": {
       "types": "./dist/scm-webhook-utils.d.ts",
       "import": "./dist/scm-webhook-utils.js"
+    },
+    "./session-manager": {
+      "types": "./dist/session-manager.d.ts",
+      "import": "./dist/session-manager.js"
+    },
+    "./migration": {
+      "types": "./dist/migration/storage-v2.d.ts",
+      "import": "./dist/migration/storage-v2.js"
     }
   },
   "files": [
@@ -40,20 +80,27 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsx ./node_modules/rollup/dist/bin/rollup -c rollup.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.18",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^25.2.3",
+    "@vitest/coverage-v8": "^4.0.18",
+    "rollup": "^4.60.1",
+    "tsx": "^4.21.0",
+    "tslib": "^2.8.1",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   }

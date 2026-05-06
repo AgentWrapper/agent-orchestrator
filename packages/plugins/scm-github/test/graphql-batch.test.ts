@@ -26,6 +26,7 @@ import {
   getPRMetadataCache,
   clearPRMetadataCache,
   shouldRefreshPREnrichment,
+  checkReviewCommentsETag,
   setExecFileAsync,
 } from "../src/graphql-batch.js";
 
@@ -161,7 +162,6 @@ describe("GraphQL Batch Query Generation", () => {
     expect(query).toContain("mergeable");
     expect(query).toContain("mergeStateStatus");
     expect(query).toContain("reviewDecision");
-    expect(query).toContain("reviews");
     expect(query).toContain("commits");
     expect(query).toContain("statusCheckRollup");
   });
@@ -823,7 +823,7 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       const result = await shouldRefreshPREnrichment([]);
 
       expect(result.shouldRefresh).toBe(false);
-      expect(result.details).toContain("No PRs to check");
+      expect(result.details).toContain("No repos to check");
       // Should not make any API calls
       expect(mockExecFileImpl).not.toHaveBeenCalled();
     });
@@ -899,14 +899,69 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       ];
 
       // Mock gh CLI error
-      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
       mockExecFileImpl.mockRejectedValueOnce(new Error("gh CLI failed"));
+
+      const result = await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(result.shouldRefresh).toBe(true); // Fail-safe: assume changed on error
+      expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 1]"));
+    });
+
+    it("should treat error message with HTTP 304 status line as cache hit", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Error where stdout/stderr extraction fails but message contains HTTP 304 status
+      const err = new Error("HTTP/1.1 304 Not Modified");
+      mockExecFileImpl.mockRejectedValueOnce(err);
 
       const result = await shouldRefreshPREnrichment(prs);
 
-      expect(result.shouldRefresh).toBe(true); // Fail-safe: assume changed on error
-      expect(consoleWarnSpy).toHaveBeenCalled();
-      consoleWarnSpy.mockRestore();
+      expect(result.shouldRefresh).toBe(false); // Treated as cache hit
+    });
+
+    it("should NOT treat error message with '304' in a URL path as cache hit", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 304,
+          url: "https://github.com/owner/repo/pull/304",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      // Error message contains "304" in URL path but not as HTTP status
+      const err = new Error("failed to fetch pulls/304/comments");
+      mockExecFileImpl.mockRejectedValueOnce(err);
+
+      const result = await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(result.shouldRefresh).toBe(true); // Not a cache hit — real error
+      expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 1]"));
     });
   });
 
@@ -1044,6 +1099,65 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       // Guard 1 called for PR list, Guard 2 skipped (no head SHA to check)
       expect(mockExecFileImpl).toHaveBeenCalledTimes(1);
     });
+
+    it("should refresh on Guard 2 error and log warning", async () => {
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "pending" });
+
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+
+      // Guard 1: 304 (no change), Guard 2: error
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
+        .mockRejectedValueOnce(new Error("gh CLI failed on commit status"));
+
+      const result = await shouldRefreshPREnrichment(prs, [], mockObserver);
+
+      expect(result.shouldRefresh).toBe(true);
+      expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 2]"));
+    });
+
+    it("should treat Guard 2 error with HTTP 304 status line as cache hit", async () => {
+      setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "pending" });
+
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // Guard 1: 304, Guard 2: error with HTTP 304 in message
+      mockExecFileImpl
+        .mockResolvedValueOnce({ stdout: "HTTP/2 304", stderr: "" })
+        .mockRejectedValueOnce(new Error("HTTP/1.1 304 Not Modified"));
+
+      const result = await shouldRefreshPREnrichment(prs);
+
+      expect(result.shouldRefresh).toBe(false);
+    });
   });
 
   describe("Multiple Repositories", () => {
@@ -1170,5 +1284,635 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       );
       expect(callsWithHeader).toHaveLength(2); // Both Guard 1 and Guard 2
     });
+  });
+
+  describe("Guard 3: Review Comments ETag", () => {
+    it("should return true (changed) on 200 response", async () => {
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: 'HTTP/2 200\netag: "review-etag"',
+        stderr: "",
+      });
+
+      const result = await checkReviewCommentsETag("owner", "repo", 42);
+      expect(result).toBe(true);
+    });
+
+    it("should return false (unchanged) on 304 response", async () => {
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: "HTTP/2 304",
+        stderr: "",
+      });
+
+      const result = await checkReviewCommentsETag("owner", "repo", 42);
+      expect(result).toBe(false);
+    });
+
+    it("should return true on error and log warning via observer", async () => {
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      mockExecFileImpl.mockRejectedValueOnce(new Error("gh CLI failed"));
+
+      const result = await checkReviewCommentsETag("owner", "repo", 42, mockObserver);
+
+      expect(result).toBe(true); // Fail-safe: assume changed
+      expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 3]"));
+    });
+
+    it("should treat error with HTTP 304 status line as cache hit", async () => {
+      mockExecFileImpl.mockRejectedValueOnce(new Error("HTTP/1.1 304 Not Modified"));
+
+      const result = await checkReviewCommentsETag("owner", "repo", 42);
+      expect(result).toBe(false);
+    });
+
+    it("should NOT treat error with '304' in URL path as cache hit", async () => {
+      const mockObserver = {
+        recordSuccess: vi.fn(),
+        recordFailure: vi.fn(),
+        log: vi.fn(),
+      };
+      mockExecFileImpl.mockRejectedValueOnce(new Error("failed to fetch pulls/304/comments"));
+
+      const result = await checkReviewCommentsETag("owner", "repo", 304, mockObserver);
+
+      expect(result).toBe(true); // Not a cache hit
+      expect(mockObserver.log).toHaveBeenCalledWith("warn", expect.stringContaining("[ETag Guard 3]"));
+    });
+  });
+});
+
+describe("extractPREnrichment ciChecks", () => {
+  it("parses CheckRun contexts into ciChecks", () => {
+    const pullRequest = {
+      title: "Fix CI",
+      state: "OPEN",
+      additions: 10,
+      deletions: 5,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "lint",
+                      status: "COMPLETED",
+                      conclusion: "FAILURE",
+                      detailsUrl: "https://github.com/org/repo/actions/runs/123",
+                    },
+                    {
+                      name: "test",
+                      status: "COMPLETED",
+                      conclusion: "SUCCESS",
+                      detailsUrl: "https://github.com/org/repo/actions/runs/124",
+                    },
+                    {
+                      name: "typecheck",
+                      status: "IN_PROGRESS",
+                      conclusion: null,
+                      detailsUrl: "https://github.com/org/repo/actions/runs/125",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const ciChecks = extracted?.data.ciChecks;
+
+    expect(ciChecks).toBeDefined();
+    expect(ciChecks).toHaveLength(3);
+
+    const lint = ciChecks?.find((c) => c.name === "lint");
+    expect(lint?.status).toBe("failed");
+    expect(lint?.conclusion).toBe("FAILURE");
+    expect(lint?.url).toBe("https://github.com/org/repo/actions/runs/123");
+
+    const test = ciChecks?.find((c) => c.name === "test");
+    expect(test?.status).toBe("passed");
+    expect(test?.conclusion).toBe("SUCCESS");
+
+    const typecheck = ciChecks?.find((c) => c.name === "typecheck");
+    expect(typecheck?.status).toBe("running");
+  });
+
+  it("maps QUEUED and WAITING to pending, not running (matches REST mapRawCheckStateToStatus)", () => {
+    const pullRequest = {
+      title: "Queued checks",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "PENDING",
+                contexts: {
+                  nodes: [
+                    { name: "queued-check", status: "QUEUED", conclusion: null, detailsUrl: null },
+                    { name: "waiting-check", status: "WAITING", conclusion: null, detailsUrl: null },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const ciChecks = extracted?.data.ciChecks;
+    expect(ciChecks?.find((c) => c.name === "queued-check")?.status).toBe("pending");
+    expect(ciChecks?.find((c) => c.name === "waiting-check")?.status).toBe("pending");
+  });
+
+  it("parses StatusContext nodes into ciChecks", () => {
+    const pullRequest = {
+      title: "Legacy CI",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      context: "ci/build",
+                      state: "FAILURE",
+                      targetUrl: "https://ci.example.com/build/1",
+                    },
+                    {
+                      context: "ci/test",
+                      state: "SUCCESS",
+                      targetUrl: "https://ci.example.com/test/1",
+                    },
+                    {
+                      context: "ci/deploy",
+                      state: "PENDING",
+                      targetUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const ciChecks = extracted?.data.ciChecks;
+
+    expect(ciChecks).toBeDefined();
+    expect(ciChecks).toHaveLength(3);
+
+    const build = ciChecks?.find((c) => c.name === "ci/build");
+    expect(build?.status).toBe("failed");
+    expect(build?.conclusion).toBe("FAILURE"); // matches REST getCIChecksFromStatusRollup format
+    expect(build?.url).toBe("https://ci.example.com/build/1");
+
+    const test = ciChecks?.find((c) => c.name === "ci/test");
+    expect(test?.status).toBe("passed");
+    expect(test?.conclusion).toBe("SUCCESS");
+
+    const deploy = ciChecks?.find((c) => c.name === "ci/deploy");
+    expect(deploy?.status).toBe("pending");
+    expect(deploy?.conclusion).toBe("PENDING");
+    expect(deploy?.url).toBeUndefined();
+  });
+
+  it("returns empty array when contexts nodes is empty", () => {
+    const pullRequest = {
+      title: "Clean PR",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: { nodes: [] },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    expect(extracted?.data.ciChecks).toEqual([]);
+  });
+
+  it("returns undefined ciChecks when statusCheckRollup has no contexts field", () => {
+    const pullRequest = {
+      title: "No contexts",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                // No contexts field — older API response
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    expect(extracted?.data.ciChecks).toBeUndefined();
+  });
+
+  it("maps COMPLETED+SKIPPED conclusion to skipped status", () => {
+    const pullRequest = {
+      title: "Skipped check",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "optional-check",
+                      status: "COMPLETED",
+                      conclusion: "SKIPPED",
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("SKIPPED"); // uppercased to match REST format
+  });
+
+  it("maps COMPLETED+NEUTRAL conclusion to skipped (matches REST mapRawCheckStateToStatus)", () => {
+    const pullRequest = {
+      title: "Neutral check",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "optional-check",
+                      status: "COMPLETED",
+                      conclusion: "NEUTRAL",
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    // NEUTRAL maps to "skipped" in REST mapRawCheckStateToStatus — must match
+    expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("NEUTRAL");
+  });
+
+  it("uppercases CheckRun conclusion to match REST getCIChecks format", () => {
+    const pullRequest = {
+      title: "Mixed case conclusion",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "lint",
+                      status: "COMPLETED",
+                      conclusion: "failure", // lowercase from API
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    expect(check?.status).toBe("failed");
+    expect(check?.conclusion).toBe("FAILURE"); // must be uppercased
+  });
+
+  it("maps STALE/NOT_REQUIRED/NONE conclusions to skipped (matches REST mapRawCheckStateToStatus)", () => {
+    const makeContextsWithConclusion = (conclusion: string) => ({
+      title: "Check",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [{ name: "check", status: "COMPLETED", conclusion, detailsUrl: null }],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    for (const conclusion of ["STALE", "NOT_REQUIRED", "NONE"]) {
+      const extracted = extractPREnrichment(makeContextsWithConclusion(conclusion));
+      const check = extracted?.data.ciChecks?.[0];
+      expect(check?.status, `${conclusion} should map to skipped`).toBe("skipped");
+    }
+  });
+
+  it("returns undefined ciChecks when contexts list is truncated (hasNextPage=true)", () => {
+    const pullRequest = {
+      title: "Many CI checks",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    { name: "check-1", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: null },
+                    // ... 19 more checks truncated
+                  ],
+                  pageInfo: { hasNextPage: true }, // list was truncated!
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    // ciChecks should be undefined when truncated — forces getCIChecks() REST fallback
+    expect(extracted?.data.ciChecks).toBeUndefined();
+  });
+
+  it("returns ciChecks when contexts list is complete (hasNextPage=false)", () => {
+    const pullRequest = {
+      title: "Few CI checks",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    { name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci.example.com/lint" },
+                  ],
+                  pageInfo: { hasNextPage: false }, // complete list
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    expect(extracted?.data.ciChecks).toBeDefined();
+    expect(extracted?.data.ciChecks).toHaveLength(1);
+    expect(extracted?.data.ciChecks?.[0]?.name).toBe("lint");
+  });
+
+  it("maps COMPLETED with null conclusion to skipped (matches REST mapRawCheckStateToStatus empty-string branch)", () => {
+    // REST path: mapRawCheckStateToStatus(undefined) → state="" → "skipped"
+    // GraphQL path must match: COMPLETED + null conclusion → "skipped", not "passed"
+    const pullRequest = {
+      title: "Null conclusion check",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "some-check",
+                      status: "COMPLETED",
+                      conclusion: null, // null conclusion — shouldn't map to "passed"
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    expect(check?.status).toBe("skipped");
+  });
+
+  it("maps COMPLETED+STARTUP_FAILURE to skipped (matches REST mapRawCheckStateToStatus default fallback)", () => {
+    const pullRequest = {
+      title: "Startup failure check",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "infra-check",
+                      status: "COMPLETED",
+                      conclusion: "STARTUP_FAILURE",
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    // STARTUP_FAILURE is not in the explicit failure list → falls through to "skipped"
+    // matching mapRawCheckStateToStatus()'s default return "skipped"
+    expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("STARTUP_FAILURE");
+  });
+
+  it("handles null pageInfo safely without TypeError (typeof null === 'object' quirk)", () => {
+    const pullRequest = {
+      title: "Null pageInfo",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    { name: "lint", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: null },
+                  ],
+                  pageInfo: null, // null pageInfo — older API responses may omit this
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    // Must not throw TypeError: Cannot read properties of null
+    expect(() => extractPREnrichment(pullRequest)).not.toThrow();
+    const extracted = extractPREnrichment(pullRequest);
+    // null pageInfo is treated as "not truncated" → ciChecks should be defined
+    expect(extracted?.data.ciChecks).toBeDefined();
+    expect(extracted?.data.ciChecks).toHaveLength(1);
   });
 });

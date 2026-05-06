@@ -47,7 +47,7 @@ vi.mock("../../src/lib/session-utils.js", () => ({
   findProjectForSession: () => null,
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => {
     if (!mockConfigRef.current) {
       throw new Error("no config");
@@ -167,7 +167,7 @@ describe("send command", () => {
         "-l",
         "fix the bug",
       ]);
-    });
+    }, 15000);
 
     it("skips busy detection with --no-wait", async () => {
       mockTmux.mockImplementation(async (...args: string[]) => {
@@ -399,6 +399,39 @@ describe("send command", () => {
 
       expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "hello");
       expect(mockTmux).not.toHaveBeenCalledWith("has-session", "-t", expect.any(String));
+    });
+
+    it("fails loudly when lifecycle delivery fails for an AO session", async () => {
+      mockConfigRef.current = makeConfig();
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockRejectedValue(
+        new Error("Cannot send to session app-1: session is not running (restore timed out)"),
+      );
+
+      await expect(
+        program.parseAsync(["node", "test", "send", "app-1", "hello"]),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Cannot send to session app-1: session is not running"),
+      );
+      expect(consoleSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Message sent and processing"),
+      );
     });
 
     it("passes file contents through SessionManager.send for AO sessions", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentLaunchConfig } from "@composio/ao-core";
-import codexPlugin from "@composio/ao-plugin-agent-codex";
+import type { AgentLaunchConfig } from "@aoagents/ao-core";
+import codexPlugin from "@aoagents/ao-plugin-agent-codex";
 
 function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaunchConfig {
   return {
@@ -43,8 +43,8 @@ describe("agent-codex launch/env wiring (integration)", () => {
     expect(env["CODEX_DISABLE_UPDATE_CHECK"]).toBe("1");
   });
 
-  it("sets GH_PATH to preferred system gh wrapper location", () => {
+  it("does not set GH_PATH (injected by session-manager for all agents)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 });

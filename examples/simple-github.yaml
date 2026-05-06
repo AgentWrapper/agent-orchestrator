@@ -1,8 +1,6 @@
 # Minimal setup for a single GitHub repo with GitHub Issues
 # Perfect for getting started quickly
-
-dataDir: ~/.agent-orchestrator
-worktreeDir: ~/.worktrees
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 
 projects:
   my-app:

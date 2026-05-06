@@ -27,6 +27,22 @@ function mockMobileViewport() {
   });
 }
 
+function mockDesktopViewport() {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 describe("PullRequestsPage", () => {
   beforeEach(() => {
     mockMobileViewport();
@@ -63,10 +79,10 @@ describe("PullRequestsPage", () => {
 
     expect(screen.getByRole("link", { name: /#634 mobile dashboard density pass/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=my-app");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-app");
     expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
   });
 
@@ -91,5 +107,45 @@ describe("PullRequestsPage", () => {
 
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=all");
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
+  });
+
+  it("renders merged and closed desktop sections when the default all filter is active", () => {
+    mockDesktopViewport();
+
+    render(
+      <PullRequestsPage
+        initialSessions={[
+          makeSession({
+            id: "merged-1",
+            projectId: "my-app",
+            status: "merged",
+            pr: makePR({ number: 101, title: "Merged PR", state: "merged" }),
+          }),
+          makeSession({
+            id: "closed-1",
+            projectId: "my-app",
+            status: "killed",
+            pr: makePR({ number: 102, title: "Closed PR", state: "closed" }),
+          }),
+        ]}
+        projectId="my-app"
+        projectName="My App"
+      />,
+    );
+
+    expect(screen.getAllByText("Merged")).toHaveLength(2);
+    expect(screen.getAllByText("Closed")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "#101" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "#102" })).toBeInTheDocument();
+    expect(screen.getByText("Merged PR")).toBeInTheDocument();
+    expect(screen.getByText("Closed PR")).toBeInTheDocument();
+  });
+
+  it("shows the empty desktop state when there are no pull requests", () => {
+    mockDesktopViewport();
+
+    render(<PullRequestsPage initialSessions={[]} projectId="my-app" projectName="My App" />);
+
+    expect(screen.getByText("No pull requests yet.")).toBeInTheDocument();
   });
 });

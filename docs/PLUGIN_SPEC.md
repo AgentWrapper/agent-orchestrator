@@ -47,14 +47,14 @@ Published plugins should:
 
 - ship built JavaScript, not raw TypeScript-only entrypoints
 - export an ESM entrypoint through `exports` or `main`
-- declare a semver dependency on `@composio/ao-core`
+- declare a semver dependency on `@aoagents/ao-core`
 - keep side effects out of module top-level code where possible
 
 Recommended package shape:
 
 ```json
 {
-  "name": "@composio/ao-plugin-example",
+  "name": "@aoagents/ao-plugin-example",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -76,7 +76,7 @@ Project config enables plugins through `plugins:` entries:
 plugins:
   - name: openclaw
     source: registry
-    package: "@composio/ao-plugin-notifier-openclaw"
+    package: "@aoagents/ao-plugin-notifier-openclaw"
     version: "0.1.1"
 ```
 

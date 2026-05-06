@@ -61,7 +61,6 @@ describe("claimPR", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
       ...overrides,
     };
@@ -88,7 +87,7 @@ describe("claimPR", () => {
       branch: "feat/old-branch",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -118,7 +117,7 @@ describe("claimPR", () => {
       status: "review_pending",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     writeMetadata(sessionsDir, "app-2", {
@@ -126,7 +125,7 @@ describe("claimPR", () => {
       branch: "feat/other-work",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -136,7 +135,7 @@ describe("claimPR", () => {
 
     const previous = readMetadataRaw(sessionsDir, "app-1");
     expect(previous!["pr"]).toBeUndefined();
-    expect(previous!["prAutoDetect"]).toBe("off");
+    expect(previous!["prAutoDetect"]).toBe("false");
     expect(previous!["status"]).toBe("working");
   });
 
@@ -149,7 +148,7 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+      runtimeHandle: makeHandle("rt-orch"),
     });
 
     writeMetadata(sessionsDir, "app-2", {
@@ -157,7 +156,7 @@ describe("claimPR", () => {
       branch: "feat/other-work",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -176,7 +175,7 @@ describe("claimPR", () => {
       status: "merged",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+      runtimeHandle: makeHandle("rt-orch"),
     });
 
     writeMetadata(sessionsDir, "app-1", {
@@ -185,7 +184,7 @@ describe("claimPR", () => {
       status: "review_pending",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     writeMetadata(sessionsDir, "app-2", {
@@ -194,13 +193,13 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const staleTime = new Date("2026-01-01T00:00:00.000Z");
     const freshTime = new Date("2026-01-02T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-1"), staleTime, staleTime);
-    utimesSync(join(sessionsDir, "app-2"), freshTime, freshTime);
+    utimesSync(join(sessionsDir, "app-1.json"), staleTime, staleTime);
+    utimesSync(join(sessionsDir, "app-2.json"), freshTime, freshTime);
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const sessions = await sm.list();
@@ -210,12 +209,12 @@ describe("claimPR", () => {
     const orchestrator = readMetadataRaw(sessionsDir, "app-orchestrator");
     expect(orchestrator!["role"]).toBe("orchestrator");
     expect(orchestrator!["pr"]).toBeUndefined();
-    expect(orchestrator!["prAutoDetect"]).toBe("off");
+    expect(orchestrator!["prAutoDetect"]).toBe("false");
     expect(orchestrator!["status"]).toBe("working");
 
     const staleWorker = readMetadataRaw(sessionsDir, "app-1");
     expect(staleWorker!["pr"]).toBeUndefined();
-    expect(staleWorker!["prAutoDetect"]).toBe("off");
+    expect(staleWorker!["prAutoDetect"]).toBe("false");
     expect(staleWorker!["status"]).toBe("working");
 
     const activeWorker = readMetadataRaw(sessionsDir, "app-2");
@@ -232,7 +231,7 @@ describe("claimPR", () => {
       status: "review_pending",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
     writeMetadata(sessionsDir, "app-2", {
       worktree: "/tmp/ws-app-2",
@@ -240,20 +239,20 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
     writeMetadata(sessionsDir, "app-3", {
       worktree: "/tmp/ws-app-3",
       branch: "feat/other-work",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-3")),
+      runtimeHandle: makeHandle("rt-3"),
     });
 
     const staleTime = new Date("2026-01-01T00:00:00.000Z");
     const freshTime = new Date("2026-01-02T00:00:00.000Z");
-    utimesSync(join(sessionsDir, "app-1"), staleTime, staleTime);
-    utimesSync(join(sessionsDir, "app-2"), freshTime, freshTime);
+    utimesSync(join(sessionsDir, "app-1.json"), staleTime, staleTime);
+    utimesSync(join(sessionsDir, "app-2.json"), freshTime, freshTime);
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
     const result = await sm.claimPR("app-3", "42");
@@ -262,11 +261,11 @@ describe("claimPR", () => {
 
     const staleWorker = readMetadataRaw(sessionsDir, "app-1");
     expect(staleWorker!["pr"]).toBeUndefined();
-    expect(staleWorker!["prAutoDetect"]).toBe("off");
+    expect(staleWorker!["prAutoDetect"]).toBe("false");
 
     const activeWorker = readMetadataRaw(sessionsDir, "app-2");
     expect(activeWorker!["pr"]).toBeUndefined();
-    expect(activeWorker!["prAutoDetect"]).toBe("off");
+    expect(activeWorker!["prAutoDetect"]).toBe("false");
 
     const claimant = readMetadataRaw(sessionsDir, "app-3");
     expect(claimant!["pr"]).toBe("https://github.com/org/my-app/pull/42");
@@ -281,7 +280,7 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     writeMetadata(sessionsDir, "app-2", {
@@ -289,7 +288,7 @@ describe("claimPR", () => {
       branch: "feat/other-work",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -317,7 +316,7 @@ describe("claimPR", () => {
       branch: "feat/old-branch",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -364,7 +363,7 @@ describe("claimPR", () => {
       branch: "feat/initial",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -397,7 +396,7 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -422,7 +421,7 @@ describe("claimPR", () => {
       status: "spawning", // Stuck in spawning
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-stale")),
+      runtimeHandle: makeHandle("rt-stale"),
     });
 
     writeMetadata(sessionsDir, "app-2", {
@@ -430,7 +429,7 @@ describe("claimPR", () => {
       branch: "feat/other",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
@@ -457,7 +456,7 @@ describe("claimPR", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/my-app/pull/42",
-      runtimeHandle: JSON.stringify(makeHandle("rt-owner")),
+      runtimeHandle: makeHandle("rt-owner"),
     });
 
     // Second session wants to claim the same PR
@@ -466,7 +465,7 @@ describe("claimPR", () => {
       branch: "feat/other",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-new")),
+      runtimeHandle: makeHandle("rt-new"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });

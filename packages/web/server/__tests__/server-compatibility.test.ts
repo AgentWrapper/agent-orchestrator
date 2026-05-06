@@ -25,8 +25,8 @@ describe("direct-terminal-ws.ts", () => {
     expect(source).toMatch(/from\s+["']\.\/tmux-utils/);
   });
 
-  it("does not import loadConfig from @composio/ao-core", () => {
-    expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@composio\/ao-core["']/);
+  it("does not import loadConfig from @aoagents/ao-core", () => {
+    expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@aoagents\/ao-core["']/);
   });
 
   it("does not reference config.dataDir", () => {
@@ -49,25 +49,6 @@ describe("direct-terminal-ws.ts", () => {
   });
 });
 
-describe("terminal-websocket.ts", () => {
-  const source = readServerFile("terminal-websocket.ts");
-
-  it("imports from shared tmux-utils", () => {
-    expect(source).toMatch(/from\s+["']\.\/tmux-utils/);
-  });
-
-  it("does not import loadConfig from @composio/ao-core", () => {
-    expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@composio\/ao-core["']/);
-  });
-
-  it("does not reference config.dataDir", () => {
-    expect(source).not.toMatch(/config\.dataDir/);
-  });
-
-  it("does not check file existence for session validation", () => {
-    expect(source).not.toMatch(/existsSync.*session/i);
-  });
-});
 
 describe("OrchestratorConfig compatibility", () => {
   it("OrchestratorConfig does not have dataDir property", () => {

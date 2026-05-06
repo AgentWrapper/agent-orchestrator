@@ -1,0 +1,31 @@
+---
+title: Changelog
+description: Release notes for AO, including new features, improvements, and fixes by version.
+---
+
+Release notes for AO, including new features, improvements, and fixes by version.
+
+This page is maintained from weekly release notes. Run `ao --version` to check your installed version.
+
+## 0.3.0 "The Rebuild"
+
+April 25, 2026
+
+- Shipped a dashboard rebuild from the ground up with the Warm Terminal design system, a 10x JavaScript bundle reduction, loading and not-found pages, a terminal layout overhaul, mobile UX, sidebar navigation, and instant session switching.
+- Added the multi-project dashboard: one unified view across all configured projects, with portfolio registration, migration flows, project settings, and CLI alignment with the multi-project registry.
+- Launched the website and docs at [ao-agents.com](https://ao-agents.com), with setup guides, API reference material, and plugin documentation in one place.
+- Added Cursor as a first-class agent alongside Claude Code, Codex, Aider, OpenCode, and Hermes, using the same worktrees and PR workflow.
+- Redesigned session lifecycle reporting and UI flow. Session titles are stable through pinned summary metadata, display names are derived from task context, and sessions auto-terminate after PR merge.
+- Promoted Windows to first-class support with cross-platform shell resolution, PID checks, process management, and symlink handling.
+- Hardened the CLI with install-aware `ao update`, startup update notifications, doctor version checks, JSON output for `ao session ls`, config error handling, version mismatch fixes, and default filtering for terminated sessions.
+- Moved terminals and sessions onto a single multiplexed WebSocket connection, reducing connection churn and resource leaks.
+- Added prompt-driven spawn: `ao spawn` can now create sessions from freeform tasks without requiring a tracker issue.
+- Added macOS idle sleep prevention while agents are running, reducing silent CI drops during long sessions.
+- Resolved a critical SSRF vulnerability by overriding Axios to `>=1.15.0` and matched the Gitleaks binary for arm64 runners.
+- Renamed all packages from `@composio` to `@aoagents` for a cleaner ecosystem identity.
+
+## Sources
+
+- [Package changelogs on GitHub](https://github.com/ComposioHQ/agent-orchestrator/tree/main/packages)
+- [GitHub Releases](https://github.com/ComposioHQ/agent-orchestrator/releases)
+- [`main` commit history](https://github.com/ComposioHQ/agent-orchestrator/commits/main)

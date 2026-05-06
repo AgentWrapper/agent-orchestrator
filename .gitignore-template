@@ -1,5 +1,0 @@
-# Agent configuration and tracking (personal, not for repo)
-# Add these to .gitignore for ALL projects with agent configs
-
-.claude/
-.opencode/

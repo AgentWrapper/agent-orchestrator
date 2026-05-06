@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, findConfigFile } from "../src/config.js";
+import { loadConfig, findConfigFile, validateConfig } from "../src/config.js";
 import { ConfigNotFoundError } from "../src/types.js";
 
 describe("Config Loading", () => {
@@ -21,6 +21,9 @@ describe("Config Loading", () => {
 
     // Clear AO_CONFIG_PATH to ensure test isolation
     delete process.env.AO_CONFIG_PATH;
+    delete process.env.AO_GLOBAL_CONFIG;
+    process.env.HOME = testDir;
+    process.env.XDG_CONFIG_HOME = join(testDir, ".config");
 
     // Change to test directory
     process.chdir(testDir);
@@ -74,6 +77,26 @@ describe("Config Loading", () => {
   });
 
   describe("loadConfig", () => {
+    it("should accept and preserve a top-level $schema property", () => {
+      const configPath = join(testDir, "schema-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config["$schema"]).toBe(
+        "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+      );
+    });
+
     it("should load config from AO_CONFIG_PATH env var", () => {
       const configPath = join(testDir, "test-config.yaml");
       writeFileSync(
@@ -116,6 +139,96 @@ projects:
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow(ConfigNotFoundError);
     });
+
+    it("partitions degraded projects when loading the canonical global config", () => {
+      const globalConfigPath = join(testDir, ".config", "agent-orchestrator", "config.yaml");
+      const cleanPath = join(testDir, "clean-project");
+      const brokenPath = join(testDir, "broken-project");
+      mkdirSync(join(testDir, ".config", "agent-orchestrator"), { recursive: true });
+      mkdirSync(cleanPath, { recursive: true });
+      mkdirSync(brokenPath, { recursive: true });
+      writeFileSync(
+        join(cleanPath, "agent-orchestrator.yaml"),
+        "agent: codex\nruntime: tmux\nworkspace: worktree\n",
+      );
+      writeFileSync(join(brokenPath, "agent-orchestrator.yaml"), "tracker: [\n");
+
+      writeFileSync(
+        globalConfigPath,
+        [
+          "port: 4000",
+          "defaults:",
+          "  runtime: tmux",
+          "  agent: claude-code",
+          "  workspace: worktree",
+          "  notifiers: []",
+          "projects:",
+          "  clean-project:",
+          "    projectId: clean-project",
+          `    path: ${cleanPath}`,
+          "    storageKey: abcabcabcabc",
+          "    displayName: Clean Project",
+          "    defaultBranch: main",
+          "    sessionPrefix: clean",
+          "  broken-project:",
+          "    projectId: broken-project",
+          `    path: ${brokenPath}`,
+          "    storageKey: defdefdefdef",
+          "    displayName: Broken Project",
+          "    defaultBranch: main",
+          "    sessionPrefix: broken",
+          "notifiers: {}",
+          "notificationRouting: {}",
+          "reactions: {}",
+          "",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(globalConfigPath);
+      expect(Object.keys(config.projects)).toEqual(["clean-project"]);
+      expect(config.projects["clean-project"]).toBeDefined();
+      expect(config.degradedProjects["broken-project"]).toMatchObject({
+        projectId: "broken-project",
+        path: brokenPath,
+        resolveError: expect.any(String),
+      });
+    });
+
+    it("keeps config.projects safe to iterate when degraded projects exist", () => {
+      const globalConfigPath = join(testDir, ".config", "agent-orchestrator", "config.yaml");
+      const brokenPath = join(testDir, "broken-project");
+      mkdirSync(join(testDir, ".config", "agent-orchestrator"), { recursive: true });
+      mkdirSync(brokenPath, { recursive: true });
+      writeFileSync(join(brokenPath, "agent-orchestrator.yaml"), "tracker: [\n");
+
+      writeFileSync(
+        globalConfigPath,
+        [
+          "port: 3000",
+          "defaults:",
+          "  runtime: tmux",
+          "  agent: claude-code",
+          "  workspace: worktree",
+          "  notifiers: []",
+          "projects:",
+          "  broken-project:",
+          "    projectId: broken-project",
+          `    path: ${brokenPath}`,
+          "    storageKey: deadbeefcafe",
+          "    displayName: Broken Project",
+          "    defaultBranch: main",
+          "    sessionPrefix: broken",
+          "notifiers: {}",
+          "notificationRouting: {}",
+          "reactions: {}",
+          "",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(globalConfigPath);
+      expect(Object.values(config.projects)).toEqual([]);
+      expect(Object.values(config.degradedProjects)).toHaveLength(1);
+    });
   });
 
   describe("Config Discovery Priority", () => {
@@ -144,5 +257,52 @@ projects:
       const config = loadConfig();
       expect(config.port).toBe(3001); // Should use env, not local
     });
+  });
+
+  describe("validateProjectUniqueness", () => {
+    it("allows same path basename when projectIds differ", () => {
+      expect(() =>
+        validateConfig({
+          projects: {
+            alpha: {
+              path: "/a/foo",
+              defaultBranch: "main",
+              sessionPrefix: "alpha",
+              storageKey: "storage-alpha",
+            },
+            beta: {
+              path: "/b/foo",
+              defaultBranch: "main",
+              sessionPrefix: "beta",
+              storageKey: "storage-beta",
+            },
+          },
+        }),
+      ).not.toThrow();
+    });
+
+    it("fails when the config repeats the same projectId", () => {
+      const configPath = join(testDir, "duplicate-project-id.yaml");
+      writeFileSync(
+        configPath,
+        [
+          "projects:",
+          "  foo:",
+          "    path: /a/foo",
+          "    defaultBranch: main",
+          "    sessionPrefix: alpha",
+          "    storageKey: storage-alpha",
+          "  foo:",
+          "    path: /b/foo",
+          "    defaultBranch: main",
+          "    sessionPrefix: beta",
+          "    storageKey: storage-beta",
+          "",
+        ].join("\n"),
+      );
+
+      expect(() => loadConfig(configPath)).toThrow(/Map keys must be unique|Duplicate project ID/);
+    });
+
   });
 });

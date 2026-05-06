@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-plugin-scm-forgejo",
+  "name": "@aoagents/ao-plugin-scm-forgejo",
   "version": "0.2.0",
   "description": "SCM plugin: Forgejo (PRs, CI, reviews)",
   "license": "MIT",
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

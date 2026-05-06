@@ -1,0 +1,55 @@
+---
+title: worktree
+description: Default workspace. Each session is a git worktree pointing at a fresh branch.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="github" size={28} />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>workspace</code> · Name: <code>worktree</code></span>
+</div>
+
+The default workspace plugin. Each session gets a [git worktree](https://git-scm.com/docs/git-worktree) with its own branch. All worktrees share the underlying `.git` object database, so disk usage stays low even with dozens of parallel agents.
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+## Use
+
+```yaml title="agent-orchestrator.yaml"
+workspace: worktree
+workspaceConfig:
+  worktreeDir: ~/.worktrees     # default
+```
+
+| Config key | Default | What it does |
+|---|---|---|
+| `worktreeDir` | `~/.worktrees` | Base directory for all worktrees |
+
+## How it works
+
+- On spawn, AO runs `git worktree add <worktreeDir>/{sessionId} -b <branch>` against the project's upstream.
+- The agent works inside that worktree. Commits land on its dedicated branch.
+- On cleanup, AO runs `git worktree remove` and prunes the branch if it was never pushed.
+
+## Per-project knobs
+
+```yaml
+projects:
+  api:
+    repo: myorg/api
+    workspace: worktree
+    symlinks:
+      - .env.local
+      - node_modules
+    postCreate:
+      - pnpm install
+```
+
+| Knob | Purpose |
+|---|---|
+| `symlinks` | Files/dirs to symlink from the source repo into each worktree (e.g. `.env.local`, a shared cache) |
+| `postCreate` | Shell commands to run in each new worktree after creation (e.g. `pnpm install`) |
+
+## Troubleshooting
+
+- **"fatal: working tree already exists".** A previous session didn't clean up. `ao session cleanup` or manually `git worktree remove --force <path>`.
+- **Branch protection rejects the agent's push.** Expected — the agent pushes its own branch, not to your protected `main`.

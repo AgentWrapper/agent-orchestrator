@@ -105,9 +105,6 @@ export interface PREnrichmentData {
   }>;
 }
 
-/** Global PR enrichment cache (60s TTL) */
-export const prCache = new TTLCache<PREnrichmentData>();
-
 /** Generate cache key for a PR: `owner/repo#123` */
 export function prCacheKey(owner: string, repo: string, number: number): string {
   return `${owner}/${repo}#${number}`;

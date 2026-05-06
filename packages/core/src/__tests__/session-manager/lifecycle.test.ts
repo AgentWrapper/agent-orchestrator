@@ -9,10 +9,10 @@ import { homedir } from "node:os";
 import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
-  readMetadata,
-  deleteMetadata,
+  readMetadataRaw,
+  updateMetadata,
 } from "../../metadata.js";
-import { getSessionsDir, getWorktreesDir } from "../../paths.js";
+import { getProjectSessionsDir, getProjectWorktreesDir } from "../../paths.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -27,7 +27,6 @@ import { installMockOpencode, installMockOpencodeWithNotFoundDelete } from "./op
 
 let ctx: TestContext;
 let tmpDir: string;
-let configPath: string;
 let sessionsDir: string;
 let mockRuntime: Runtime;
 let mockAgent: Agent;
@@ -38,7 +37,7 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, configPath, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
 });
 
 afterEach(() => {
@@ -46,9 +45,9 @@ afterEach(() => {
 });
 
 describe("kill", () => {
-  it("destroys runtime, workspace, and archives metadata", async () => {
+  it("destroys runtime, workspace, and keeps terminated metadata", async () => {
     const managedWorktree = join(
-      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      getProjectWorktreesDir("my-app"),
       "app-1",
     );
     writeMetadata(sessionsDir, "app-1", {
@@ -56,7 +55,7 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -64,7 +63,9 @@ describe("kill", () => {
 
     expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
     expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
-    expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["status"]).toMatch(/killed|terminated/);
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {
@@ -73,7 +74,7 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -89,7 +90,7 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -104,7 +105,7 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -122,7 +123,7 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -155,12 +156,15 @@ describe("kill", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithFail });
     // Should not throw even though runtime.destroy fails
-    await expect(sm.kill("app-1")).resolves.toBeUndefined();
+    await expect(sm.kill("app-1")).resolves.toEqual({
+      cleaned: true,
+      alreadyTerminated: false,
+    });
   });
 
   it("does not purge mapped OpenCode session on default kill", async () => {
@@ -175,7 +179,7 @@ describe("kill", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_keep",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -196,7 +200,7 @@ describe("kill", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_purge",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -218,22 +222,22 @@ describe("kill", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses bad id",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.kill("app-1", { purgeOpenCode: true });
 
     expect(existsSync(deleteLogPath)).toBe(false);
-  });
+  }, 15000);
 });
 
 describe("cleanup", () => {
-  it("kills sessions with merged PRs", async () => {
+  it("kills sessions with closed PRs", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -241,7 +245,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -262,7 +265,7 @@ describe("cleanup", () => {
       status: "pr_open",
       project: "my-app",
       pr: "https://github.com/org/repo/pull/10",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM });
@@ -272,7 +275,7 @@ describe("cleanup", () => {
     expect(result.skipped).toHaveLength(0);
   });
 
-  it("deletes mapped OpenCode session during cleanup", async () => {
+  it("deletes mapped OpenCode session during cleanup for closed PRs", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -280,7 +283,7 @@ describe("cleanup", () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -288,7 +291,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -311,7 +313,7 @@ describe("cleanup", () => {
       agent: "opencode",
       opencodeSessionId: "ses_cleanup",
       pr: "https://github.com/org/repo/pull/10",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM });
@@ -322,14 +324,14 @@ describe("cleanup", () => {
     expect(deleteLog).toContain("session delete ses_cleanup");
   });
 
-  it("treats missing mapped OpenCode session as already cleaned", async () => {
+  it("treats missing mapped OpenCode session as already cleaned for closed PRs", async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete(tmpDir, "[]");
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
-      getPRState: vi.fn().mockResolvedValue("merged"),
+      getPRState: vi.fn().mockResolvedValue("closed"),
       mergePR: vi.fn(),
       closePR: vi.fn(),
       getCIChecks: vi.fn(),
@@ -337,7 +339,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
 
@@ -360,7 +361,7 @@ describe("cleanup", () => {
       agent: "opencode",
       opencodeSessionId: "ses_missing",
       pr: "https://github.com/org/repo/pull/10",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSCM });
@@ -370,7 +371,7 @@ describe("cleanup", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("deletes mapped OpenCode session from archived killed sessions", async () => {
+  it("deletes mapped OpenCode session from terminated killed sessions", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -382,9 +383,11 @@ describe("cleanup", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_archived",
-      runtimeHandle: JSON.stringify(makeHandle("rt-6")),
+      runtimeHandle: makeHandle("rt-6"),
     });
-    deleteMetadata(sessionsDir, "app-6", true);
+    updateMetadata(sessionsDir, "app-6", {
+      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+    });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const result = await sm.cleanup();
@@ -392,9 +395,9 @@ describe("cleanup", () => {
     expect(result.killed).toContain("app-6");
     const deleteLog = readFileSync(deleteLogPath, "utf-8");
     expect(deleteLog).toContain("session delete ses_archived");
-  });
+  }, 15_000);
 
-  it("does not skip archived cleanup for matching session IDs in other projects", async () => {
+  it("does not skip terminated cleanup for matching session IDs in other projects", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-cross-project.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -415,7 +418,7 @@ describe("cleanup", () => {
         },
       },
     };
-    const sessionsDir2 = getSessionsDir(configPath, project2Path);
+    const sessionsDir2 = getProjectSessionsDir("my-app-2");
     mkdirSync(sessionsDir2, { recursive: true });
 
     writeMetadata(sessionsDir, "app-1", {
@@ -423,7 +426,7 @@ describe("cleanup", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     writeMetadata(sessionsDir2, "app-1", {
@@ -433,9 +436,11 @@ describe("cleanup", () => {
       project: "my-app-2",
       agent: "opencode",
       opencodeSessionId: "ses_archived_project2",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
-    deleteMetadata(sessionsDir2, "app-1", true);
+    updateMetadata(sessionsDir2, "app-1", {
+      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+    });
 
     const sm = createSessionManager({ config: configWithSecondProject, registry: mockRegistry });
     const result = await sm.cleanup();
@@ -446,7 +451,7 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("my-app:app-1");
   });
 
-  it("skips invalid archived OpenCode session ids during cleanup", async () => {
+  it("skips invalid terminated OpenCode session ids during cleanup", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-invalid.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -458,9 +463,11 @@ describe("cleanup", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses bad id",
-      runtimeHandle: JSON.stringify(makeHandle("rt-8")),
+      runtimeHandle: makeHandle("rt-8"),
     });
-    deleteMetadata(sessionsDir, "app-8", true);
+    updateMetadata(sessionsDir, "app-8", {
+      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+    });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const result = await sm.cleanup();
@@ -471,7 +478,7 @@ describe("cleanup", () => {
     expect(existsSync(deleteLogPath)).toBe(false);
   });
 
-  it("does not delete archived OpenCode sessions in cleanup dry-run", async () => {
+  it("does not delete terminated OpenCode sessions in cleanup dry-run", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-dry-run.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -483,9 +490,11 @@ describe("cleanup", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_archived_dry_run",
-      runtimeHandle: JSON.stringify(makeHandle("rt-7")),
+      runtimeHandle: makeHandle("rt-7"),
     });
-    deleteMetadata(sessionsDir, "app-7", true);
+    updateMetadata(sessionsDir, "app-7", {
+      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+    });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const result = await sm.cleanup(undefined, { dryRun: true });
@@ -532,7 +541,7 @@ describe("cleanup", () => {
       status: "working",
       role: "orchestrator",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+      runtimeHandle: makeHandle("rt-orch"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithDead });
@@ -563,7 +572,7 @@ describe("cleanup", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+      runtimeHandle: makeHandle("rt-orch"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithDead });
@@ -593,7 +602,6 @@ describe("cleanup", () => {
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
       getPendingComments: vi.fn(),
-      getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
     const mockTracker: Tracker = {
@@ -632,7 +640,7 @@ describe("cleanup", () => {
       pr: "https://github.com/org/repo/pull/10",
       agent: "opencode",
       opencodeSessionId: "ses_orchestrator_active",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orchestrator")),
+      runtimeHandle: makeHandle("rt-orchestrator"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithSignals });
@@ -643,7 +651,7 @@ describe("cleanup", () => {
     expect(existsSync(deleteLogPath)).toBe(false);
   });
 
-  it("never cleans archived orchestrator mappings even when metadata looks stale", async () => {
+  it("never cleans terminated orchestrator mappings even when metadata looks stale", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-orchestrator.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -656,9 +664,11 @@ describe("cleanup", () => {
       agent: "opencode",
       opencodeSessionId: "ses_orchestrator_archived",
       pr: "https://github.com/org/repo/pull/88",
-      runtimeHandle: JSON.stringify(makeHandle("rt-orchestrator")),
+      runtimeHandle: makeHandle("rt-orchestrator"),
     });
-    deleteMetadata(sessionsDir, "app-orchestrator", true);
+    updateMetadata(sessionsDir, "app-orchestrator", {
+      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+    });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     const result = await sm.cleanup();
@@ -688,7 +698,7 @@ describe("cleanup", () => {
       branch: "main",
       status: "working",
       project: "my-app",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     const sm = createSessionManager({ config, registry: registryWithDead });

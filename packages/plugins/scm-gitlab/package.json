@@ -1,6 +1,6 @@
 {
-  "name": "@composio/ao-plugin-scm-gitlab",
-  "version": "0.1.1",
+  "name": "@aoagents/ao-plugin-scm-gitlab",
+  "version": "0.2.7",
   "description": "SCM plugin: GitLab (MRs, CI, reviews)",
   "license": "MIT",
   "type": "module",
@@ -38,7 +38,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

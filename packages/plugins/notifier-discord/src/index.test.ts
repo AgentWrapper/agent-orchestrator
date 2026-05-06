@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NotifyAction, OrchestratorEvent } from "@composio/ao-core";
+import type { NotifyAction, OrchestratorEvent } from "@aoagents/ao-core";
 import { create, manifest } from "./index.js";
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {

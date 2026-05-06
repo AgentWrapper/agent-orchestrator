@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata } from "../metadata.js";
+import { recordActivityEvent } from "../activity-events.js";
 import type { OrchestratorConfig, PluginRegistry, Agent } from "../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
+
+vi.mock("../activity-events.js", () => ({
+  recordActivityEvent: vi.fn(),
+}));
 
 // Mock child_process module with custom promisify
 vi.mock("node:child_process", () => {
@@ -32,6 +37,7 @@ let config: OrchestratorConfig;
 beforeEach(() => {
   ctx = setupTestContext();
   ({ sessionsDir, mockRegistry, config } = ctx);
+  vi.mocked(recordActivityEvent).mockClear();
 
   // Create an opencode agent mock
   const opencodeAgent: Agent = {
@@ -64,6 +70,88 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("activity event logging", () => {
+  it("records session.spawned after a successful spawn", async () => {
+    const { execFile } = await import("node:child_process");
+    vi.mocked(execFile).mockImplementation(((_file: string, _args: string[], options: any, callback?: any) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (cb) cb(null, "", "");
+      return null as any;
+    }) as any);
+
+    vi.useFakeTimers();
+    config.projects["my-app"]!.agent = "mock-agent";
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const spawnPromise = sm.spawn({ projectId: "my-app" });
+    await vi.runAllTimersAsync();
+    const session = await spawnPromise;
+
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "my-app",
+      source: "session-manager",
+      kind: "session.spawn_started",
+      summary: "spawn started",
+      data: { agent: undefined },
+    });
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "my-app",
+      sessionId: session.id,
+      source: "session-manager",
+      kind: "session.spawned",
+      summary: `spawned: ${session.id}`,
+      data: { agent: "mock-agent", branch: session.branch },
+    });
+  });
+
+  it("records session.spawn_failed when spawn fails", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await expect(sm.spawn({ projectId: "missing-project", prompt: "nope" })).rejects.toThrow(
+      "Unknown project: missing-project",
+    );
+
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "missing-project",
+      source: "session-manager",
+      kind: "session.spawn_started",
+      summary: "spawn started",
+      data: { agent: undefined },
+    });
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "missing-project",
+      source: "session-manager",
+      kind: "session.spawn_failed",
+      level: "error",
+      summary: "spawn failed",
+      data: { reason: "Unknown project: missing-project" },
+    });
+  });
+
+  it("records session.killed after successful kill cleanup", async () => {
+    writeMetadata(sessionsDir, "app-kill", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: makeHandle("rt-kill"),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-kill");
+
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "my-app",
+      sessionId: "app-kill",
+      source: "session-manager",
+      kind: "session.killed",
+      summary: "killed: app-kill",
+      data: { reason: "manually_killed" },
+    });
+  });
+});
+
 describe("deleteSession retry loop", () => {
   it("verifies retry count - calls execFileAsync 3 times when all attempts fail", async () => {
     const { execFile } = await import("node:child_process");
@@ -76,7 +164,7 @@ describe("deleteSession retry loop", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_test_123",
-      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      runtimeHandle: makeHandle("rt-1"),
     });
 
     let deleteCallCount = 0;
@@ -116,7 +204,7 @@ describe("deleteSession retry loop", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_test_456",
-      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+      runtimeHandle: makeHandle("rt-2"),
     });
 
     const callTimes: number[] = [];
@@ -166,7 +254,7 @@ describe("deleteSession retry loop", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_test_789",
-      runtimeHandle: JSON.stringify(makeHandle("rt-3")),
+      runtimeHandle: makeHandle("rt-3"),
     });
 
     const lastError = new Error("Final error after retries");
@@ -207,7 +295,7 @@ describe("deleteSession retry loop", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_test_abc",
-      runtimeHandle: JSON.stringify(makeHandle("rt-4")),
+      runtimeHandle: makeHandle("rt-4"),
     });
 
     let deleteCallCount = 0;
@@ -249,7 +337,7 @@ describe("deleteSession retry loop", () => {
       project: "my-app",
       agent: "opencode",
       opencodeSessionId: "ses_test_def",
-      runtimeHandle: JSON.stringify(makeHandle("rt-5")),
+      runtimeHandle: makeHandle("rt-5"),
     });
 
     const notFoundError = new Error("Session not found: ses_test_def") as Error & {
@@ -279,5 +367,33 @@ describe("deleteSession retry loop", () => {
 
     // Verify delete was called only once - no retries for "not found" errors
     expect(deleteCallCount).toBe(1);
+  });
+});
+
+describe("spawning session liveness (#1035)", () => {
+  it("does not call runtime.isAlive for spawning sessions, preventing false 'killed' status", async () => {
+    // Write a session in "spawning" status with a persisted runtime handle
+    writeMetadata(sessionsDir, "app-spawn", {
+      worktree: "/tmp/ws",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+      agent: "opencode",
+      runtimeHandle: makeHandle("rt-spawn"),
+    });
+
+    // Make isAlive return false — if it were called, the session would become "killed"
+    vi.mocked(ctx.mockRuntime.isAlive).mockResolvedValue(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+    const spawning = sessions.find((s) => s.id === "app-spawn");
+
+    // isAlive must NOT have been called for the spawning session
+    expect(ctx.mockRuntime.isAlive).not.toHaveBeenCalled();
+
+    // Status must remain "spawning", not "killed"
+    expect(spawning).toBeDefined();
+    expect(spawning!.status).toBe("spawning");
   });
 });

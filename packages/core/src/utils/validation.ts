@@ -8,6 +8,7 @@ import type { SessionStatus } from "../types.js";
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
   "working",
+  "detecting",
   "pr_open",
   "ci_failed",
   "review_pending",
@@ -20,6 +21,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "stuck",
   "errored",
   "killed",
+  "idle",
   "done",
   "terminated",
 ]);

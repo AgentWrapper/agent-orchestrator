@@ -20,7 +20,7 @@ import {
   getAgentByNameFromRegistry,
   getSCMFromRegistry,
 } from "../../src/lib/plugins.js";
-import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@aoagents/ao-core";
 
 function makeConfig(
   defaultAgent: string,
@@ -110,6 +110,10 @@ describe("getAgentByName", () => {
 
   it("returns agent for opencode", () => {
     expect(getAgentByName("opencode").name).toBe("opencode");
+  });
+
+  it("returns agent for kimicode", () => {
+    expect(getAgentByName("kimicode").name).toBe("kimicode");
   });
 
   it("throws on unknown name", () => {

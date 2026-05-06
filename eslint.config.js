@@ -10,7 +10,19 @@ export default tseslint.config(
       "**/dist-server/**",
       "**/node_modules/**",
       "**/.next/**",
+      "**/out/**",
+      "**/.source/**",
+      "**/next-env.d.ts",
+      "**/.next-dev/**",
       "**/coverage/**",
+      ".ao/**",
+      ".claude/**",
+      ".context/**",
+      ".cursor/**",
+      ".expect/**",
+      ".gstack/**",
+      ".worktrees/**",
+      "artifacts/**",
       "packages/web/next-env.d.ts",
       "packages/web/next.config.js",
       "packages/web/postcss.config.mjs",
@@ -79,17 +91,17 @@ export default tseslint.config(
     },
   },
 
-  // Relaxed rules for Next.js pages/components
+  // Web package uses console for server-side logging
   {
-    files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
+    files: ["packages/web/**/*.ts", "packages/web/**/*.tsx"],
     rules: {
-      "no-console": "off", // Next.js uses console for server logs
+      "no-console": "off",
     },
   },
 
   // Scripts directory - Node.js environment
   {
-    files: ["scripts/**/*.js", "scripts/**/*.mjs"],
+    files: ["scripts/**/*.js", "scripts/**/*.mjs", "packages/*/scripts/**/*.js"],
     languageOptions: {
       globals: {
         console: "readonly",

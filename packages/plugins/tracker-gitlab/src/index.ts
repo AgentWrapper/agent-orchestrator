@@ -12,9 +12,9 @@ import type {
   IssueUpdate,
   CreateIssueInput,
   ProjectConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
-import { glab, parseJSON, extractHost, stripHost } from "@composio/ao-plugin-scm-gitlab/glab-utils";
+import { glab, parseJSON, extractHost, stripHost } from "@aoagents/ao-plugin-scm-gitlab/glab-utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,6 +42,13 @@ function toIssue(data: GitLabIssueData): Issue {
   };
 }
 
+function requireRepo(project: ProjectConfig): string {
+  if (!project.repo) {
+    throw new Error("GitLab tracker requires a 'repo' field in project config");
+  }
+  return project.repo;
+}
+
 // ---------------------------------------------------------------------------
 // Tracker implementation
 // ---------------------------------------------------------------------------
@@ -55,7 +62,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
       const raw = await glab(
-        ["issue", "view", identifier, "--repo", project.repo, "-F", "json"],
+        ["issue", "view", identifier, "--repo", requireRepo(project), "-F", "json"],
         hostname,
       );
       return toIssue(parseJSON<GitLabIssueData>(raw, `getIssue for issue ${identifier}`));
@@ -63,7 +70,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
       const raw = await glab(
-        ["issue", "view", identifier, "--repo", project.repo, "-F", "json"],
+        ["issue", "view", identifier, "--repo", requireRepo(project), "-F", "json"],
         hostname,
       );
       const data = parseJSON<{ state: string }>(raw, `isCompleted for issue ${identifier}`);
@@ -72,8 +79,9 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
 
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
-      const host = extractHost(project.repo) ?? defaultHost;
-      return `https://${host}/${stripHost(project.repo)}/-/issues/${num}`;
+      const repo = requireRepo(project);
+      const host = extractHost(repo) ?? defaultHost;
+      return `https://${host}/${stripHost(repo)}/-/issues/${num}`;
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -117,7 +125,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
         "issue",
         "list",
         "--repo",
-        project.repo,
+        requireRepo(project),
         "-O",
         "json",
         "-P",
@@ -150,22 +158,23 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
+      const repo = requireRepo(project);
       if (update.state === "closed") {
-        await glab(["issue", "close", identifier, "--repo", project.repo], hostname);
+        await glab(["issue", "close", identifier, "--repo", repo], hostname);
       } else if (update.state === "open") {
-        await glab(["issue", "reopen", identifier, "--repo", project.repo], hostname);
+        await glab(["issue", "reopen", identifier, "--repo", repo], hostname);
       }
 
       if (update.labels && update.labels.length > 0) {
         await glab(
-          ["issue", "update", identifier, "--repo", project.repo, "--label", update.labels.join(",")],
+          ["issue", "update", identifier, "--repo", repo, "--label", update.labels.join(",")],
           hostname,
         );
       }
 
       if (update.comment) {
         await glab(
-          ["issue", "note", identifier, "--repo", project.repo, "-m", update.comment],
+          ["issue", "note", identifier, "--repo", repo, "-m", update.comment],
           hostname,
         );
       }
@@ -176,7 +185,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
         "issue",
         "create",
         "--repo",
-        project.repo,
+        requireRepo(project),
         "--title",
         input.title,
         "--description",

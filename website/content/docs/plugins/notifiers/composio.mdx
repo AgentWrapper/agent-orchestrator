@@ -1,0 +1,55 @@
+---
+title: Composio notifier
+description: Route notifications through the Composio toolkit — Slack, Discord, or Gmail.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="composio" size={28} />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>composio</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+Uses the [Composio toolkit](https://composio.dev) to deliver notifications. Handy when you already have Composio set up for other agent tooling — a single credential covers Slack, Discord, and Gmail.
+
+## Setup
+
+Install the Composio core package alongside AO:
+
+```bash
+npm install -g composio-core
+```
+
+Export your Composio API key:
+
+```bash
+export COMPOSIO_API_KEY=cp_...
+```
+
+## Use
+
+```yaml title="agent-orchestrator.yaml"
+notifier:
+  - type: composio
+    defaultApp: slack             # slack | discord | gmail
+    channelName: "#agents"        # Slack / Discord
+    channelId: "..."              # optional, used if channelName is ambiguous
+    emailTo: alerts@example.com   # required when defaultApp=gmail
+    composioApiKey: ${CUSTOM}     # optional override; otherwise uses env
+```
+
+## Config
+
+| Key | Required | Default | What it does |
+|---|---|---|---|
+| `defaultApp` | ✓ | `slack` | Which Composio app to target: `slack`, `discord`, or `gmail` |
+| `channelName` | for Slack/Discord | — | Channel name (Composio resolves it) |
+| `channelId` | optional | — | Explicit channel id when the name is ambiguous |
+| `emailTo` | ✓ when `gmail` | — | Recipient address |
+| `composioApiKey` | optional | env `COMPOSIO_API_KEY` | Override the API key from config |
+
+## When to use
+
+- Your org already has Composio set up.
+- You want to route notifications to Gmail as a fallback for people who don't live in Slack/Discord.
+- You'd rather manage one Composio credential than three webhook URLs.

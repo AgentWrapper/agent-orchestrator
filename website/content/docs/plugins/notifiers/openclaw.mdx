@@ -1,0 +1,70 @@
+---
+title: OpenClaw notifier
+description: Deliver notifications through a local OpenClaw gateway — personal, low-latency, private.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="openclaw" size={28} />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>openclaw</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+[OpenClaw](https://github.com/composio-dev/openclaw) is a local gateway that routes AO events into whatever personal alert channel you've wired up — phone push, email, a local sound, etc. If it's running on your machine, this notifier uses it.
+
+## Setup
+
+Run AO's interactive helper:
+
+```bash
+ao setup openclaw
+```
+
+It will:
+
+1. Auto-detect OpenClaw on `localhost` (or prompt for the URL).
+2. Exchange / generate an auth token.
+3. Write `agent-orchestrator.yaml`, `~/.openclaw/openclaw.json`, and a shell-profile export for `OPENCLAW_HOOKS_TOKEN`.
+
+Non-interactive variant:
+
+```bash
+ao setup openclaw --non-interactive --url http://127.0.0.1:18789/hooks/agent --token <token>
+```
+
+## Use
+
+After setup, your config looks like:
+
+```yaml title="agent-orchestrator.yaml"
+notifier:
+  - type: openclaw
+    url: http://127.0.0.1:18789/hooks/agent
+    token: ${OPENCLAW_HOOKS_TOKEN}
+    wakeMode: next-heartbeat       # or `now`
+```
+
+## Config
+
+| Key | Default | What it does |
+|---|---|---|
+| `url` | `http://127.0.0.1:18789/hooks/agent` | OpenClaw hook endpoint |
+| `token` | — | Auth token. Use `${ENV_VAR}` — never commit the raw value |
+| `name` | — | Identifier shown in OpenClaw |
+| `sessionKeyPrefix` | — | Prefix for OpenClaw session keys |
+| `wakeMode` | `next-heartbeat` | `now` = deliver immediately, `next-heartbeat` = batch on next OpenClaw tick |
+| `deliver` | `true` | Disable to record-only without waking the user |
+| `retries` | `3` | Retry count on transient failures |
+| `retryDelayMs` | `1000` | Base retry delay |
+| `healthSummaryPath` | — | Optional local path where OpenClaw writes a summary AO can pick up |
+| `configPath` | `~/.openclaw/openclaw.json` | Override OpenClaw config location |
+
+## Token precedence
+
+Token is read in this order:
+
+1. `token` in `agent-orchestrator.yaml` (usually `${OPENCLAW_HOOKS_TOKEN}`)
+2. Env var `OPENCLAW_HOOKS_TOKEN`
+3. `~/.openclaw/openclaw.json`
+
+`ao doctor --test-notify` is the only notifier test that can probe OpenClaw without side effects — other notifiers send a real test message.

@@ -10,6 +10,28 @@ import { join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { generateSessionPrefix } from "./paths.js";
 
+// Main is the canonical config-schema contract; schema evolution must remain
+// forward-compatible and additive for older CLIs that stamp this URL.
+export const CONFIG_SCHEMA_URL =
+  "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json";
+
+export function withConfigSchema<T extends Record<string, unknown>>(
+  config: T,
+): T & { $schema: string } {
+  const { $schema: providedSchema, ...rest } = config as {
+    $schema?: unknown;
+  };
+  const schema =
+    typeof providedSchema === "string" && providedSchema.trim().length > 0
+      ? providedSchema
+      : CONFIG_SCHEMA_URL;
+
+  return {
+    $schema: schema,
+    ...rest,
+  } as T & { $schema: string };
+}
+
 // =============================================================================
 // URL PARSING
 // =============================================================================
@@ -163,6 +185,27 @@ export function detectProjectInfo(repoDir: string): DetectedProjectInfo {
   return { language: null, packageManager: null };
 }
 
+export function readOriginRemoteUrl(projectPath: string): string | null {
+  const gitConfigPath = join(resolve(projectPath), ".git", "config");
+  if (!existsSync(gitConfigPath)) return null;
+
+  const lines = readFileSync(gitConfigPath, "utf-8").split(/\r?\n/);
+  let inOrigin = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      inOrigin = trimmed === '[remote "origin"]';
+      continue;
+    }
+    if (!inOrigin) continue;
+
+    const match = line.match(/^\s*url\s*=\s*(.+)\s*$/);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return null;
+}
+
 // =============================================================================
 // CONFIG GENERATION
 // =============================================================================
@@ -245,25 +288,25 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
     projectConfig.postCreate = [installCmd];
   }
 
-  return {
+  return withConfigSchema({
     port,
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     },
     projects: {
       [projectId]: projectConfig,
     },
-  };
+  });
 }
 
 /**
  * Serialize a config object to YAML string.
  */
 export function configToYaml(config: Record<string, unknown>): string {
-  return yamlStringify(config, { indent: 2 });
+  return yamlStringify(withConfigSchema(config), { indent: 2 });
 }
 
 /**
@@ -289,7 +332,10 @@ export function isRepoAlreadyCloned(dir: string, expectedCloneUrl: string): bool
     if (sshMatch) {
       normalized = `https://${sshMatch[1]}/${sshMatch[2]}`;
     }
-    return normalized.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
+    return normalized
+      .replace(/\.git$/, "")
+      .replace(/\/$/, "")
+      .toLowerCase();
   };
 
   const expectedNorm = normalize(expectedCloneUrl);

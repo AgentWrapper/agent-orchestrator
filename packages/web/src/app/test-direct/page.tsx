@@ -1,8 +1,16 @@
 "use client";
 
-import { DirectTerminal } from "@/components/DirectTerminal";
+import nextDynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+
+const DirectTerminal = nextDynamic(
+  () =>
+    import("@/components/DirectTerminal").then((m) => ({
+      default: m.DirectTerminal,
+    })),
+  { ssr: false },
+);
 
 // Force dynamic rendering (required for useSearchParams)
 export const dynamic = "force-dynamic";
@@ -35,7 +43,7 @@ function TestDirectPageContent() {
             <br />
             tmux should recognize it as XTerm and enable clipboard support (OSC 52).
           </p>
-          <div className="mt-4 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
+          <div className="mt-4 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
             <h2 className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
               Testing: <span className="text-[var(--color-accent-green)]">{sessionId}</span>
             </h2>
@@ -56,7 +64,7 @@ function TestDirectPageContent() {
               </li>
             </ol>
           </div>
-          <div className="mt-4 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
+          <div className="mt-4 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
             <h2 className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
               Technical Details:
             </h2>
@@ -73,6 +81,7 @@ function TestDirectPageContent() {
         <DirectTerminal
           key={`${sessionId}-${startFullscreen ? "fullscreen" : "normal"}`}
           sessionId={sessionId}
+          tmuxName={sessionId}
           startFullscreen={startFullscreen}
         />
       </div>

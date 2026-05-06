@@ -1,8 +1,6 @@
 # Using Codex instead of Claude Code
 # Demonstrates using a different AI agent
-
-dataDir: ~/.agent-orchestrator
-worktreeDir: ~/.worktrees
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 
 defaults:
   agent: codex # Use Codex instead of Claude Code

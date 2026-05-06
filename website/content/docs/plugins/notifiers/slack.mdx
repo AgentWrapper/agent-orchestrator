@@ -1,0 +1,71 @@
+---
+title: Slack notifier
+description: Slack incoming webhook. Minimal config, no bot token required.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="slack" size={28} color />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>slack</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+## Setup
+
+1. In Slack, **Apps → Incoming Webhooks → Add to Slack** on the target workspace.
+2. Pick the channel, copy the webhook URL.
+3. Add it to AO:
+
+```yaml title="agent-orchestrator.yaml"
+notifier:
+  - type: slack
+    webhookUrl: ${SLACK_WEBHOOK_URL}
+    channel: "#agents"             # optional — override default channel
+    username: "AO"                 # optional
+```
+
+## Config
+
+| Key | Required | Default | What it does |
+|---|---|---|---|
+| `webhookUrl` | ✓ | — | Slack incoming webhook URL |
+| `channel` | optional | webhook default | Channel name (must be accessible to the webhook) |
+| `username` | optional | `Agent Orchestrator` | Bot display name |
+
+## Notes
+
+- No bot token / OAuth to manage. Incoming webhooks are the simplest integration Slack offers.
+- This notifier does **not** handle `Retry-After` headers — if you're sending at high volume, use the [webhook notifier](/docs/plugins/notifiers/webhook) with retries configured.
+- Messages use Slack Block Kit (header + section + context blocks). Action URLs render as inline links in the context block.
+
+<Accordions>
+  <Accordion title="Outgoing payload shape">
+    ```json
+    {
+      "blocks": [
+        {
+          "type": "header",
+          "text": { "type": "plain_text", "text": "🔔 pr.created — sess_01HXY...", "emoji": true }
+        },
+        {
+          "type": "section",
+          "text": { "type": "mrkdwn", "text": "PR opened: fix(auth): handle token expiry" }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "*Project:* myproject | *Priority:* info | *Time:* <!date^1713387600^{date_short_pretty} {time}|2026-04-17T...>"
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": { "type": "mrkdwn", "text": ":github: <https://github.com/owner/repo/pull/123|View Pull Request>" }
+        }
+      ]
+    }
+    ```
+  </Accordion>
+</Accordions>

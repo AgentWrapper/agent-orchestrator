@@ -2,11 +2,13 @@ node_modules/
 dist/
 .pnpm-store/
 .next/
+.next-dev/
 *.tsbuildinfo
 coverage/
 *.patch
 *-context.md
 packages/web/screenshots/
+.playwright-cli/
 
 # Environment files (secrets)
 .env
@@ -53,17 +55,15 @@ id_ed25519
 
 # Development symlinks (created per-worktree, not committed)
 .claude
-.sisyphus
 packages/web/agent-orchestrator.yaml
 
 # Local agent orchestrator config (may contain secrets)
 agent-orchestrator.yaml
 
-# Agent configuration and tracking (personal, not for repo)
-CLAUDE.md
-AGENTS.md
+# Agent configuration and activity logs
 .claude/
 .opencode/
+.ao/
 
 # OS-specific files
 .DS_Store

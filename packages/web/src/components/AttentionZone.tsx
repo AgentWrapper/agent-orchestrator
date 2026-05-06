@@ -8,6 +8,7 @@ import {
 } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
+import { projectSessionPath } from "@/lib/routes";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
@@ -32,39 +33,36 @@ const zoneConfig: Record<
   AttentionLevel,
   {
     label: string;
-    color: string;
-    caption: string;
+    emptyMessage: string;
   }
 > = {
   merge: {
     label: "Ready",
-    color: "var(--color-status-ready)",
-    caption: "Cleared to land",
+    emptyMessage: "Nothing cleared to land yet.",
+  },
+  action: {
+    label: "Action",
+    emptyMessage: "No agents need your input.",
   },
   respond: {
     label: "Respond",
-    color: "var(--color-status-error)",
-    caption: "Human judgment needed",
+    emptyMessage: "No agents need your input.",
   },
   review: {
     label: "Review",
-    color: "var(--color-accent-orange)",
-    caption: "Code waiting on eyes",
+    emptyMessage: "No code waiting for review.",
   },
   pending: {
     label: "Pending",
-    color: "var(--color-status-attention)",
-    caption: "Blocked on system state",
+    emptyMessage: "Nothing blocked.",
   },
   working: {
     label: "Working",
-    color: "var(--color-status-working)",
-    caption: "Agents are actively moving",
+    emptyMessage: "No agents running.",
   },
   done: {
     label: "Done",
-    color: "var(--color-text-tertiary)",
-    caption: "Completed or exited",
+    emptyMessage: "No completed sessions.",
   },
 };
 
@@ -118,14 +116,15 @@ function AttentionZoneView({
           className="accordion-header"
           onClick={() => onToggle(level)}
           aria-expanded={!collapsed}
+          aria-controls={`accordion-body-${level}`}
         >
-          <span className="accordion-header__dot" style={{ background: config.color }} />
+          <span className="accordion-header__dot" data-level={level} />
           <span className="accordion-header__label">{config.label}</span>
           <span className="accordion-header__count">{sessions.length}</span>
           <span className="accordion-header__chevron" aria-hidden="true">▶</span>
         </button>
 
-        <div className="accordion-body">
+        <div id={`accordion-body-${level}`} className="accordion-body">
           {sessions.length > 0 ? (
             <div className={compactMobile ? "mobile-session-list" : "flex flex-col gap-2 p-3"}>
               {visibleSessions.map((session) =>
@@ -159,7 +158,7 @@ function AttentionZoneView({
             </div>
           ) : compactMobile ? (
             <div className="mobile-session-list">
-              <div className="mobile-session-list__empty">No sessions</div>
+              <div className="mobile-session-list__empty">{config.emptyMessage}</div>
             </div>
           ) : null}
         </div>
@@ -171,16 +170,15 @@ function AttentionZoneView({
     <div className="kanban-column" data-level={level}>
       <div className="kanban-column__header">
         <div className="kanban-column__title-row">
-          <div className="kanban-column__dot" style={{ background: config.color }} />
+          <div className="kanban-column__dot" data-level={level} />
           <span className="kanban-column__title">{config.label}</span>
           <span className="kanban-column__count">{sessions.length}</span>
         </div>
-        <p className="kanban-column__caption">{config.caption}</p>
       </div>
 
       <div className="kanban-column-body">
         {sessions.length > 0 ? (
-          <div className="flex flex-col gap-2">
+          <div className="kanban-column__stack">
             {sessions.map((session) => (
               <SessionCard
                 key={session.id}
@@ -192,11 +190,7 @@ function AttentionZoneView({
               />
             ))}
           </div>
-        ) : (
-          <div className="kanban-column__empty">
-            <span className="kanban-column__empty-label">No sessions</span>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -247,7 +241,7 @@ function MobileSessionRow({
         <div className="mobile-session-row__line">
           <span
             className="mobile-session-row__dot"
-            style={{ background: zoneConfig[level].color }}
+            data-level={level}
             aria-hidden="true"
           />
           <span className="mobile-session-row__title">{getSessionTitle(session)}</span>
@@ -259,7 +253,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-          href={`/sessions/${encodeURIComponent(session.id)}`}
+            href={projectSessionPath(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >
@@ -280,6 +274,39 @@ function MobileSessionRow({
   );
 }
 
+/**
+ * Pure label picker for the mobile action chip.
+ *
+ * Exported for unit tests. Returns the most specific human-readable reason
+ * to intervene on a session that has collapsed into the simple-mode `action`
+ * bucket. Precedence mirrors `getDetailedAttentionLevel` in `lib/types.ts`:
+ * respond-class signals (status errored/needs_input/stuck, then activity
+ * waiting_input/exited/blocked) outrank review-class signals (ci_failed /
+ * changes_requested / PR conflicts). Otherwise a crashed agent whose PR
+ * also has `changes_requested` would be mislabeled "changes" and hide the
+ * crash, steering the operator toward PR review instead of restart.
+ */
+export function getActionChipLabel(session: DashboardSession): string {
+  // Respond-class: status (authoritative, can't be masked by stale activity)
+  if (session.status === "needs_input") return "needs input";
+  if (session.status === "stuck") return "stuck";
+  if (session.status === "errored") return "errored";
+  // Respond-class: activity — check before review-class status so a crashed
+  // agent with a non-terminal status (e.g. changes_requested) still reads
+  // as "crashed" and not "changes".
+  if (session.activity === "waiting_input") return "waiting";
+  if (session.activity === "exited") return "crashed";
+  if (session.activity === "blocked") return "blocked";
+  // Review-class: status
+  if (session.status === "ci_failed") return "ci failed";
+  if (session.status === "changes_requested") return "changes";
+  // Review-class: PR signals
+  if (session.pr?.ciStatus === "failing") return "ci failed";
+  if (session.pr?.reviewDecision === "changes_requested") return "changes";
+  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  return "action";
+}
+
 function SessionStateChip({
   session,
   level,
@@ -291,6 +318,8 @@ function SessionStateChip({
 
   if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
     label = "ready";
+  } else if (level === "action") {
+    label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {

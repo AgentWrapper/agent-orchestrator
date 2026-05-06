@@ -7,7 +7,7 @@
  */
 
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { mkdirSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -21,9 +21,11 @@ import {
   deleteMetadata,
   listMetadata,
   validateAndStoreOrigin,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 describe("config → metadata service integration (real filesystem)", () => {
+  const storageKeyA = "111111111111";
+  const storageKeyB = "222222222222";
   let tmpDir: string;
   let configPath: string;
   let repoPath: string;
@@ -64,7 +66,7 @@ describe("config → metadata service integration (real filesystem)", () => {
   afterAll(async () => {
     // Clean up hash-based directories in ~/.agent-orchestrator
     try {
-      const projectBaseDir = getProjectBaseDir(configPath, repoPath);
+      const projectBaseDir = getProjectBaseDir(storageKeyA);
       if (existsSync(projectBaseDir)) {
         await rm(projectBaseDir, { recursive: true, force: true });
       }
@@ -85,30 +87,27 @@ describe("config → metadata service integration (real filesystem)", () => {
   });
 
   it("getSessionsDir returns hash-based path including project name", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKeyA);
 
     expect(sessionsDir).toContain(".agent-orchestrator");
-    expect(sessionsDir).toContain("my-repo");
+    expect(sessionsDir).toContain(storageKeyA);
     expect(sessionsDir).toContain("sessions");
-
-    const hash = generateConfigHash(configPath);
-    expect(sessionsDir).toContain(hash);
   });
 
   it("different repos get different session directories", () => {
     const repo2Path = join(tmpDir, "other-repo");
     mkdirSync(repo2Path, { recursive: true });
 
-    const dir1 = getSessionsDir(configPath, repoPath);
-    const dir2 = getSessionsDir(configPath, repo2Path);
+    const dir1 = getSessionsDir(storageKeyA);
+    const dir2 = getSessionsDir(storageKeyB);
 
     expect(dir1).not.toBe(dir2);
-    expect(dir1).toContain("my-repo");
-    expect(dir2).toContain("other-repo");
+    expect(dir1).toContain(storageKeyA);
+    expect(dir2).toContain(storageKeyB);
   });
 
   it("full metadata lifecycle through hash-based directory", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getSessionsDir(storageKeyA);
     mkdirSync(sessionsDir, { recursive: true });
 
     // 1. Write metadata
@@ -153,35 +152,29 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(ids).toContain("lifecycle-2");
 
     // 5. Delete with archive
-    deleteMetadata(sessionsDir, "lifecycle-1", true);
+    deleteMetadata(sessionsDir, "lifecycle-1");
     expect(readMetadata(sessionsDir, "lifecycle-1")).toBeNull();
 
-    // Verify archive exists
-    const archiveDir = join(sessionsDir, "archive");
-    expect(existsSync(archiveDir)).toBe(true);
-    const archived = readdirSync(archiveDir);
-    expect(archived.some((f) => f.startsWith("lifecycle-1_"))).toBe(true);
-
-    // 6. Delete without archive
-    deleteMetadata(sessionsDir, "lifecycle-2", false);
+    // 6. Delete second session
+    deleteMetadata(sessionsDir, "lifecycle-2");
     expect(readMetadata(sessionsDir, "lifecycle-2")).toBeNull();
   });
 
   it("origin validation stores and detects repo identity", () => {
     // validateAndStoreOrigin should not throw for a valid repo path
     // (even without a real git remote, it stores path-based identity)
-    expect(() => validateAndStoreOrigin(configPath, repoPath)).not.toThrow();
+    expect(() => validateAndStoreOrigin(configPath, storageKeyA)).not.toThrow();
 
     // Calling again with the same path should succeed (same origin)
-    expect(() => validateAndStoreOrigin(configPath, repoPath)).not.toThrow();
+    expect(() => validateAndStoreOrigin(configPath, storageKeyA)).not.toThrow();
   });
 
   it("multi-project isolation with shared config", () => {
     const repo2Path = join(tmpDir, "project-b-repo");
     mkdirSync(repo2Path, { recursive: true });
 
-    const dirA = getSessionsDir(configPath, repoPath);
-    const dirB = getSessionsDir(configPath, repo2Path);
+    const dirA = getSessionsDir(storageKeyA);
+    const dirB = getSessionsDir(storageKeyB);
     mkdirSync(dirA, { recursive: true });
     mkdirSync(dirB, { recursive: true });
 
@@ -208,7 +201,7 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(listMetadata(dirB)).not.toContain("projA-session-1");
 
     // Cleanup
-    deleteMetadata(dirA, "projA-session-1", false);
-    deleteMetadata(dirB, "projB-session-1", false);
+    deleteMetadata(dirA, "projA-session-1");
+    deleteMetadata(dirB, "projB-session-1");
   });
 });

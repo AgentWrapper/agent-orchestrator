@@ -669,7 +669,7 @@ agent-orchestrator/
 ├── agent-orchestrator.yaml.example
 │
 ├── packages/
-│   ├── core/                          # @composio/ao-core
+│   ├── core/                          # @aoagents/ao-core
 │   │   └── src/
 │   │       ├── types.ts               # All interfaces + types
 │   │       ├── config.ts              # YAML config loader + Zod validation
@@ -680,7 +680,7 @@ agent-orchestrator/
 │   │       ├── metadata.ts            # Flat-file read/write
 │   │       └── index.ts
 │   │
-│   ├── cli/                           # @composio/ao-cli → `ao` binary
+│   ├── cli/                           # @aoagents/ao-cli → `ao` binary
 │   │   └── src/
 │   │       ├── index.ts               # Commander.js setup
 │   │       └── commands/
@@ -694,7 +694,7 @@ agent-orchestrator/
 │   │           ├── dashboard.ts       # ao dashboard (starts web)
 │   │           └── open.ts            # ao open [session|all]
 │   │
-│   ├── web/                           # @composio/ao-web
+│   ├── web/                           # @aoagents/ao-web
 │   │   ├── next.config.ts
 │   │   └── src/
 │   │       ├── app/

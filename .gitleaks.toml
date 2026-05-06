@@ -27,4 +27,5 @@ regexes = [
   "your-api-key-here",
   "your-token-here",
   "example\\.com",
+
 ]

@@ -1,8 +1,6 @@
 # Linear integration with custom team
 # Requires LINEAR_API_KEY environment variable
-
-dataDir: ~/.agent-orchestrator
-worktreeDir: ~/.worktrees
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 
 projects:
   my-app:

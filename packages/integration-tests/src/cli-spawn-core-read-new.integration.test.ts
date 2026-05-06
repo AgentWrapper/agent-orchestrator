@@ -1,10 +1,10 @@
 /**
- * Integration test for CLI spawn → Core session-manager with hash-based architecture.
+ * Integration test for CLI spawn → Core session-manager with projectId-based architecture.
  *
- * This test verifies that sessions work correctly with the new hash-based
+ * This test verifies that sessions work correctly with the projectId-based
  * project isolation architecture:
- * - Sessions stored in project-specific directories
- * - Hash-based namespacing prevents collisions
+ * - Sessions stored in project-specific directories (~/.agent-orchestrator/projects/{projectId}/)
+ * - projectId-based namespacing prevents collisions
  * - tmuxName field correctly maps user-facing → tmux names
  * - Core session-manager finds sessions in new structure
  *
@@ -14,7 +14,7 @@
  */
 
 import { mkdtemp, rm, realpath, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -22,18 +22,19 @@ import {
   createSessionManager,
   createPluginRegistry,
   type OrchestratorConfig,
-  generateConfigHash,
-  getSessionsDir,
-  generateTmuxName,
-} from "@composio/ao-core";
+  getProjectSessionsDir,
+  generateSessionName,
+} from "@aoagents/ao-core";
 import { isTmuxAvailable, killSessionsByPrefix, killSession } from "./helpers/tmux.js";
 
 const tmuxOk = await isTmuxAvailable();
 
-describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () => {
+describe.skipIf(!tmuxOk)("CLI-Core integration (projectId-based architecture)", () => {
+  const projectId = "test-project";
   let tmpDir: string;
   let configPath: string;
   let repoPath: string;
+  let originalHome: string | undefined;
   const sessionPrefix = "ao-inttest-new";
   const sessionName = `${sessionPrefix}-1`;
 
@@ -41,6 +42,10 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     await killSessionsByPrefix(sessionPrefix);
     const raw = await mkdtemp(join(tmpdir(), "ao-inttest-new-"));
     tmpDir = await realpath(raw);
+
+    // HOME isolation so getProjectSessionsDir resolves under tmpDir
+    originalHome = process.env["HOME"];
+    process.env["HOME"] = tmpDir;
 
     repoPath = join(tmpDir, "test-repo");
 
@@ -67,7 +72,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
         notifiers: [],
       },
       projects: {
-        "test-project": {
+        [projectId]: {
           name: "Test Project",
           repo: "test/test-repo",
           path: repoPath,
@@ -90,6 +95,8 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   }, 30_000);
 
   afterAll(async () => {
+    if (originalHome !== undefined) process.env["HOME"] = originalHome;
+    else delete process.env["HOME"];
     // Cleanup tmux sessions
     for (let i = 1; i <= 3; i++) {
       await killSession(`${sessionPrefix}-${i}`).catch(() => {});
@@ -99,64 +106,64 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     }
   }, 30_000);
 
-  it("sessions are stored in hash-based project-specific directory", () => {
-    // Calculate expected directory
-    const hash = generateConfigHash(configPath);
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+  it("sessions are stored in projectId-based project-specific directory", () => {
+    const sessionsDir = getProjectSessionsDir(projectId);
 
-    expect(sessionsDir).toMatch(new RegExp(`\\.agent-orchestrator/${hash}-test-repo/sessions$`));
+    expect(sessionsDir).toMatch(/\.agent-orchestrator\/projects\/test-project\/sessions$/);
   });
 
   it("session metadata includes tmuxName field", () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+    const sessionsDir = getProjectSessionsDir(projectId);
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata as CLI would do
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
-    const metadataPath = join(sessionsDir, sessionName);
-    const metadata = [
-      `worktree=${tmpDir}`,
-      `branch=feat/test`,
-      `status=spawning`,
-      `project=test-project`,
-      `issue=TEST-123`,
-      `tmuxName=${tmuxName}`,
-      `createdAt=${new Date().toISOString()}`,
-    ].join("\n");
-    writeFileSync(metadataPath, metadata + "\n");
+    const tmuxName = generateSessionName(sessionPrefix, 1);
+    const metadataPath = join(sessionsDir, `${sessionName}.json`);
+    const metadata = {
+      worktree: tmpDir,
+      branch: "feat/test",
+      status: "spawning",
+      project: "test-project",
+      issue: "TEST-123",
+      tmuxName,
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
 
     // Verify file exists in correct location
     expect(existsSync(metadataPath)).toBe(true);
 
     // Verify tmuxName field is present
     const content = readFileSync(metadataPath, "utf-8");
-    expect(content).toContain(`tmuxName=${tmuxName}`);
-    expect(content).toContain("project=test-project");
+    const parsed = JSON.parse(content);
+    expect(parsed.tmuxName).toBe(tmuxName);
+    expect(parsed.project).toBe("test-project");
   });
 
-  it("core session-manager finds session in hash-based directory", async () => {
-    const sessionsDir = getSessionsDir(configPath, repoPath);
+  it("core session-manager finds session in projectId-based directory", async () => {
+    const sessionsDir = getProjectSessionsDir(projectId);
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
-    const metadataPath = join(sessionsDir, sessionName);
-    const metadata = [
-      `worktree=${tmpDir}`,
-      `branch=feat/test`,
-      `status=working`,
-      `project=test-project`,
-      `issue=TEST-123`,
-      `tmuxName=${tmuxName}`,
-      `createdAt=${new Date().toISOString()}`,
-    ].join("\n");
-    writeFileSync(metadataPath, metadata + "\n");
+    const tmuxName = generateSessionName(sessionPrefix, 1);
+    const metadataPath = join(sessionsDir, `${sessionName}.json`);
+    const metadata = {
+      worktree: tmpDir,
+      branch: "feat/test",
+      status: "working",
+      project: "test-project",
+      issue: "TEST-123",
+      tmuxName,
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
 
     // Create session-manager with configPath
     const config: OrchestratorConfig = {
-      configPath, // This enables hash-based architecture
+      configPath,
       port: 3000,
       readyThresholdMs: 300_000,
+      power: { preventIdleSleep: false },
       defaults: {
         runtime: "tmux",
         agent: "claude-code",
@@ -164,7 +171,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
         notifiers: [],
       },
       projects: {
-        "test-project": {
+        [projectId]: {
           name: "Test Project",
           repo: "test/test-repo",
           path: repoPath,
@@ -198,15 +205,16 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     expect(session?.status).toBe("working");
   });
 
-  it("tmux name includes hash for global uniqueness", () => {
-    const hash = generateConfigHash(configPath);
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+  it("session name matches user-facing name (no hash prefix)", () => {
+    const tmuxName = generateSessionName(sessionPrefix, 1);
 
-    expect(tmuxName).toMatch(new RegExp(`^${hash}-${sessionPrefix}-1$`));
-    expect(tmuxName).not.toBe(sessionName); // User-facing name is different
+    expect(tmuxName).toBe(`${sessionPrefix}-1`);
+    expect(tmuxName).toBe(sessionName); // Session name equals user-facing name
   });
 
-  it("cross-project isolation with hash-based directories", async () => {
+  it("cross-project isolation with projectId-based directories", async () => {
+    const projectIdA = "project-a";
+    const projectIdB = "project-b";
     // Create second project path
     const repo2Path = join(tmpDir, "project-b");
     const repoAPath = join(tmpDir, "project-a"); // Use separate path for project A
@@ -217,6 +225,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
       configPath,
       port: 3000,
       readyThresholdMs: 300_000,
+      power: { preventIdleSleep: false },
       defaults: {
         runtime: "tmux",
         agent: "claude-code",
@@ -224,14 +233,14 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
         notifiers: [],
       },
       projects: {
-        "project-a": {
+        [projectIdA]: {
           name: "Project A",
           repo: "test/project-a",
           path: repoAPath, // Different path from test-repo
           defaultBranch: "main",
           sessionPrefix: `${sessionPrefix}-a`,
         },
-        "project-b": {
+        [projectIdB]: {
           name: "Project B",
           repo: "test/project-b",
           path: repo2Path,
@@ -250,21 +259,35 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     };
 
     // Write metadata for project A
-    const sessionsDirA = getSessionsDir(configPath, repoAPath);
+    const sessionsDirA = getProjectSessionsDir(projectIdA);
+    rmSync(sessionsDirA, { recursive: true, force: true });
     mkdirSync(sessionsDirA, { recursive: true });
     const sessionAName = `${sessionPrefix}-a-1`;
     writeFileSync(
-      join(sessionsDirA, sessionAName),
-      `worktree=${tmpDir}/a\nbranch=feat/A-100\nstatus=working\nproject=project-a\nissue=A-100\n`,
+      join(sessionsDirA, `${sessionAName}.json`),
+      JSON.stringify({
+        worktree: `${tmpDir}/a`,
+        branch: "feat/A-100",
+        status: "working",
+        project: "project-a",
+        issue: "A-100",
+      }, null, 2) + "\n",
     );
 
     // Write metadata for project B
-    const sessionsDirB = getSessionsDir(configPath, repo2Path);
+    const sessionsDirB = getProjectSessionsDir(projectIdB);
+    rmSync(sessionsDirB, { recursive: true, force: true });
     mkdirSync(sessionsDirB, { recursive: true });
     const sessionBName = `${sessionPrefix}-b-1`;
     writeFileSync(
-      join(sessionsDirB, sessionBName),
-      `worktree=${tmpDir}/b\nbranch=feat/B-100\nstatus=working\nproject=project-b\nissue=B-100\n`,
+      join(sessionsDirB, `${sessionBName}.json`),
+      JSON.stringify({
+        worktree: `${tmpDir}/b`,
+        branch: "feat/B-100",
+        status: "working",
+        project: "project-b",
+        issue: "B-100",
+      }, null, 2) + "\n",
     );
 
     const registry = createPluginRegistry();

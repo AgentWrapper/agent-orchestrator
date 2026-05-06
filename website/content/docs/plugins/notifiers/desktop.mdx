@@ -1,0 +1,35 @@
+---
+title: Desktop notifier
+description: Native macOS / Linux notifications. Silent no-op on Windows.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="apple" size={28} color />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>desktop</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="none" note="On Windows this notifier logs a warning and does nothing — use Discord, Slack, or webhook instead." />
+
+## Use
+
+```yaml title="agent-orchestrator.yaml"
+notifier:
+  - type: desktop
+    sound: true            # default
+```
+
+| Config key | Default | What it does |
+|---|---|---|
+| `sound` | `true` | Play the system notification sound |
+
+## How it works
+
+- **macOS:** `osascript` runs a `display notification` AppleScript — shows in the Notification Center.
+- **Linux:** `notify-send` from `libnotify-bin`. Most desktop environments ship this out of the box.
+- **Windows:** logs a warning line and returns. No toast support (yet).
+
+## Troubleshooting
+
+- **macOS 14+ silence.** System Settings → Notifications → Terminal (or your terminal app) → Allow notifications.
+- **Linux notify-send not found.** `sudo apt install libnotify-bin` (Debian/Ubuntu) or equivalent.
+- **Windows shows no toast.** Expected — this notifier is a no-op on Windows. Add a Discord/Slack/webhook notifier in the same list.

@@ -36,11 +36,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Build all non-web packages
-      - run: pnpm -r --filter '!@composio/ao-web' build
+      - run: pnpm -r --filter '!@aoagents/ao-web' build
       # Typecheck all non-web packages
-      - run: pnpm -r --filter '!@composio/ao-web' typecheck
+      - run: pnpm -r --filter '!@aoagents/ao-web' typecheck
       # Build web (Next.js build includes its own typecheck)
-      - run: pnpm --filter @composio/ao-web build
+      - run: pnpm --filter @aoagents/ao-web build
 
   test:
     name: Test
@@ -53,7 +53,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@composio/ao-web' build
+      - run: pnpm -r --filter '!@aoagents/ao-web' build
       - run: pnpm test
 
   test-web:
@@ -71,6 +71,6 @@ jobs:
       - name: Start tmux server
         run: tmux start-server
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@composio/ao-web' build
+      - run: pnpm -r --filter '!@aoagents/ao-web' build
       - name: Run web server tests (unit + integration)
-        run: pnpm --filter @composio/ao-web exec vitest run server/__tests__/
+        run: pnpm --filter @aoagents/ao-web exec vitest run server/__tests__/

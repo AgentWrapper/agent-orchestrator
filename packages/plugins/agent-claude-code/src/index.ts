@@ -1,7 +1,9 @@
 import {
   shellEscape,
   readLastJsonlEntry,
+  normalizeAgentPermissionMode,
   DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -13,7 +15,7 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -22,15 +24,6 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -88,37 +81,59 @@ fi
 
 # Construct metadata file path
 # AO_DATA_DIR is already set to the project-specific sessions directory
-metadata_file="$AO_DATA_DIR/$AO_SESSION"
+# V2 storage uses .json extension
+metadata_file="$AO_DATA_DIR/\${AO_SESSION}.json"
+
+# Fallback to bare filename for pre-migration layouts
+if [[ ! -f "$metadata_file" ]]; then
+  metadata_file="$AO_DATA_DIR/$AO_SESSION"
+fi
 
 # Ensure metadata file exists
 if [[ ! -f "$metadata_file" ]]; then
-  echo '{"systemMessage": "Metadata file not found: '"$metadata_file"'"}'
+  echo '{"systemMessage": "Metadata file not found: '"$AO_DATA_DIR/\${AO_SESSION}"'"}'
   exit 0
 fi
 
-# Update a single key in metadata
+# Detect if metadata file is JSON format
+is_json_metadata() {
+  local first_char
+  first_char=$(head -c1 "$metadata_file" 2>/dev/null)
+  [[ "$first_char" == "{" ]]
+}
+
+# Update a single key in metadata (handles both JSON and key=value formats)
 update_metadata_key() {
   local key="$1"
   local value="$2"
-
-  # Create temp file
   local temp_file="\${metadata_file}.tmp"
 
-  # Escape special sed characters in value (& | / \\)
-  local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')
-
-  # Check if key already exists
-  if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
-    # Update existing key
-    sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
+  if is_json_metadata; then
+    # JSON format
+    if command -v jq &>/dev/null; then
+      jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$metadata_file" > "$temp_file"
+      mv "$temp_file" "$metadata_file"
+    else
+      # jq unavailable — use node (hard dep) for safe nested JSON update
+      node -e "
+        const fs = require('fs');
+        const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+        d[process.argv[2]] = process.argv[3];
+        fs.writeFileSync(process.argv[4], JSON.stringify(d, null, 2));
+      " "$metadata_file" "$key" "$value" "$temp_file"
+      mv "$temp_file" "$metadata_file"
+    fi
   else
-    # Append new key
-    cp "$metadata_file" "$temp_file"
-    echo "$key=$value" >> "$temp_file"
+    # Key=value format (legacy)
+    local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')
+    if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
+      sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
+    else
+      cp "$metadata_file" "$temp_file"
+      echo "$key=$value" >> "$temp_file"
+    fi
+    mv "$temp_file" "$metadata_file"
   fi
-
-  # Atomic replace
-  mv "$temp_file" "$metadata_file"
 }
 
 # ============================================================================
@@ -142,8 +157,13 @@ done
 
 # Detect: gh pr create
 if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+  sanitized_output=$(printf '%s' "$output" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g')
   # Extract PR URL from output
-  pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  pr_url=""
+  # GitHub PR URLs are whitespace-delimited in gh output after ANSI stripping.
+  if [[ "$sanitized_output" =~ (https://github[.]com/[^[:space:]]+/[^[:space:]]+/pull/[0-9]+) ]]; then
+    pr_url="\${BASH_REMATCH[1]}"
+  fi
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
@@ -211,21 +231,21 @@ export const manifest = {
  * Convert a workspace path to Claude's project directory path.
  * Claude stores sessions at ~/.claude/projects/{encoded-path}/
  *
- * Verified against Claude Code's actual encoding (as of v1.x):
- * the path has its leading / stripped, then all / and . are replaced with -.
- * e.g. /Users/dev/.worktrees/ao → Users-dev--worktrees-ao
+ * Verified against Claude Code's actual on-disk slugs: every non-alphanumeric
+ * character (other than `-`) is replaced with `-`. That includes `/`, `.`,
+ * and crucially `_` — AO's per-project data dirs are named like
+ * `<sanitized>_<hash>`, and without underscore folding the slug AO computes
+ * misses the directory Claude actually wrote (issue #1611).
  *
- * If Claude Code changes its encoding scheme this will silently break
- * introspection. The path can be validated at runtime by checking whether
- * the resulting directory exists.
+ * Windows drive letters keep their special handling: `C:\Users\...` → strip
+ * the colon, then encode → `C-Users-...`.
  *
  * Exported for testing purposes.
  */
 export function toClaudeProjectPath(workspacePath: string): string {
   // Handle Windows drive letters (C:\Users\... → C-Users-...)
-  const normalized = workspacePath.replace(/\\/g, "/");
-  // Claude Code replaces / and . with - (keeping the leading slash as a leading -)
-  return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
+  const normalized = workspacePath.replace(/\\/g, "/").replace(/:/g, "");
+  return normalized.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
 /** Find the most recently modified .jsonl session file in a directory */
@@ -277,7 +297,7 @@ interface JsonlLine {
  * Read only the last chunk of a JSONL file to extract the last entry's type
  * and the file's modification time. This is optimized for polling — it avoids
  * reading the entire file (which `getSessionInfo()` does for full cost/summary).
- * Now uses the shared readLastJsonlEntry utility from @composio/ao-core.
+ * Now uses the shared readLastJsonlEntry utility from @aoagents/ao-core.
  */
 
 /**
@@ -314,8 +334,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -333,9 +352,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -365,6 +382,8 @@ function extractSummary(
 function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedReadTokens = 0;
+  let cacheCreationTokens = 0;
   let totalCost = 0;
 
   for (const line of lines) {
@@ -380,8 +399,8 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     // double-counting if a line contains both.
     if (line.usage) {
       inputTokens += line.usage.input_tokens ?? 0;
-      inputTokens += line.usage.cache_read_input_tokens ?? 0;
-      inputTokens += line.usage.cache_creation_input_tokens ?? 0;
+      cachedReadTokens += line.usage.cache_read_input_tokens ?? 0;
+      cacheCreationTokens += line.usage.cache_creation_input_tokens ?? 0;
       outputTokens += line.usage.output_tokens ?? 0;
     } else {
       if (typeof line.inputTokens === "number") {
@@ -393,19 +412,29 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     }
   }
 
-  if (inputTokens === 0 && outputTokens === 0 && totalCost === 0) {
+  if (
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    totalCost === 0 &&
+    cachedReadTokens === 0 &&
+    cacheCreationTokens === 0
+  ) {
     return undefined;
   }
 
-  // Rough estimate when no direct cost data — uses Sonnet 4.5 pricing as a
-  // baseline. Will be inaccurate for other models (Opus, Haiku) but provides
-  // a useful order-of-magnitude signal. TODO: make pricing configurable or
-  // infer from model field in JSONL.
-  if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
-    totalCost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
+  if (totalCost === 0) {
+    totalCost =
+      (inputTokens / 1_000_000) * 3.0 +
+      (outputTokens / 1_000_000) * 15.0 +
+      (cachedReadTokens / 1_000_000) * 0.3 +
+      (cacheCreationTokens / 1_000_000) * 3.75;
   }
 
-  return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
+  return {
+    inputTokens: inputTokens + cachedReadTokens + cacheCreationTokens,
+    outputTokens,
+    estimatedCostUsd: totalCost,
+  };
 }
 
 // =============================================================================
@@ -661,7 +690,7 @@ function createClaudeCodeAgent(): Agent {
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
@@ -740,8 +769,9 @@ function createClaudeCodeAgent(): Agent {
 
       const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) {
-        // No session file found — cannot determine activity
-        return null;
+        // No session file yet — process is running but no conversation started.
+        // Treat as idle (waiting for first task).
+        return { state: "idle", timestamp: session.createdAt };
       }
 
       const entry = await readLastJsonlEntry(sessionFile);
@@ -753,11 +783,13 @@ function createClaudeCodeAgent(): Agent {
       const ageMs = Date.now() - entry.modifiedAt.getTime();
       const timestamp = entry.modifiedAt;
 
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
       switch (entry.lastType) {
         case "user":
         case "tool_use":
         case "progress":
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
         case "assistant":
         case "system":
@@ -772,7 +804,8 @@ function createClaudeCodeAgent(): Agent {
           return { state: "blocked", timestamp };
 
         default:
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
       }
     },
 
@@ -799,29 +832,33 @@ function createClaudeCodeAgent(): Agent {
         summary: summaryResult?.summary ?? null,
         summaryIsFallback: summaryResult?.isFallback,
         agentSessionId,
+        metadata: { claudeSessionUuid: agentSessionId },
         cost: extractCost(lines),
       };
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
-      if (!session.workspacePath) return null;
+      let sessionUuid = session.metadata?.["claudeSessionUuid"]?.trim();
+      if (!sessionUuid) {
+        if (!session.workspacePath) return null;
 
-      // Find Claude's project directory for this workspace
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+        // Find Claude's project directory for this workspace
+        const projectPath = toClaudeProjectPath(session.workspacePath);
+        const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
-      // Find the latest session JSONL file
-      const sessionFile = await findLatestSessionFile(projectDir);
-      if (!sessionFile) return null;
+        // Find the latest session JSONL file
+        const sessionFile = await findLatestSessionFile(projectDir);
+        if (!sessionFile) return null;
 
-      // Extract session UUID from filename (e.g. "abc123-def456.jsonl" → "abc123-def456")
-      const sessionUuid = basename(sessionFile, ".jsonl");
+        // Extract session UUID from filename (e.g. "abc123-def456.jsonl" → "abc123-def456")
+        sessionUuid = basename(sessionFile, ".jsonl");
+      }
       if (!sessionUuid) return null;
 
       // Build resume command
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
+      const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }

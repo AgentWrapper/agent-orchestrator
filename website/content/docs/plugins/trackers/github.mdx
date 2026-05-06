@@ -1,0 +1,50 @@
+---
+title: GitHub tracker
+description: Issues via the gh CLI. Zero API tokens to manage — gh auth login handles it.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="github" size={28} />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>tracker</code> · Name: <code>github</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+The default tracker. Uses the [`gh` CLI](https://cli.github.com) for everything, so you never paste a PAT into AO.
+
+## Setup
+
+```bash
+gh auth login
+```
+
+Pick **GitHub.com → HTTPS → Login with a web browser**. Then:
+
+```yaml title="agent-orchestrator.yaml"
+tracker: github
+projects:
+  myproject:
+    repo: owner/repo
+```
+
+`repo` must be `owner/name` (not a URL) — it's what `gh` expects.
+
+## How it's used
+
+| Operation | `gh` command invoked |
+|---|---|
+| Fetch issue | `gh issue view <num> --json title,body,...` |
+| Create issue | `gh issue create` |
+| Comment on issue | `gh issue comment` |
+| Close issue | `gh issue close` |
+| List issues | `gh issue list` |
+
+## Config
+
+No plugin-level config keys. The `github` tracker doesn't need anything beyond your `gh` auth.
+
+## Troubleshooting
+
+- **`gh: authentication required`** — run `gh auth login`.
+- **`could not resolve to an Issue`** — the issue number is wrong, or `repo` doesn't match the project.
+- **Rate limits** — AO batches and paces issue lookups, but heavy bursts can still hit limits. `gh` reports them clearly in logs.

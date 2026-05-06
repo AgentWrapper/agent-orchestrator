@@ -3,10 +3,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  withConfigSchema,
+  CONFIG_SCHEMA_URL,
   isRepoUrl,
   parseRepoUrl,
   detectScmPlatform,
@@ -18,6 +20,25 @@ import {
   resolveCloneTarget,
   sanitizeProjectId,
 } from "../config-generator.js";
+
+describe("withConfigSchema", () => {
+  it("uses canonical schema URL for missing schema", () => {
+    const config = withConfigSchema({ port: 3000 });
+    expect(config.$schema).toBe(CONFIG_SCHEMA_URL);
+    expect(config.port).toBe(3000);
+  });
+
+  it("treats blank and whitespace schema values as missing", () => {
+    expect(withConfigSchema({ $schema: "" }).$schema).toBe(CONFIG_SCHEMA_URL);
+    expect(withConfigSchema({ $schema: "   " }).$schema).toBe(CONFIG_SCHEMA_URL);
+  });
+
+  it("preserves non-empty schema values", () => {
+    const custom = "https://example.com/schema.json";
+    const config = withConfigSchema({ $schema: custom });
+    expect(config.$schema).toBe(custom);
+  });
+});
 
 // =============================================================================
 // isRepoUrl
@@ -94,9 +115,7 @@ describe("parseRepoUrl", () => {
 
   it("throws on invalid URL", () => {
     expect(() => parseRepoUrl("not-a-url")).toThrow("Could not parse repo URL");
-    expect(() => parseRepoUrl("https://github.com/just-owner")).toThrow(
-      "Could not parse repo URL",
-    );
+    expect(() => parseRepoUrl("https://github.com/just-owner")).toThrow("Could not parse repo URL");
   });
 });
 
@@ -260,12 +279,15 @@ describe("generateConfigFromUrl", () => {
     const config = generateConfigFromUrl({ parsed, repoPath: tmpDir });
 
     // Check top-level structure
+    expect(config["$schema"]).toBe(
+      "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    );
     expect(config.port).toBe(3000);
     expect(config.defaults).toEqual({
       runtime: "tmux",
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: ["desktop"],
+      notifiers: [],
     });
 
     // Check project config
@@ -414,8 +436,34 @@ describe("configToYaml", () => {
   it("serializes config to valid YAML", () => {
     const config = { port: 3000, projects: { app: { name: "App" } } };
     const yaml = configToYaml(config);
+    expect(yaml).toContain(
+      "$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    );
     expect(yaml).toContain("port: 3000");
     expect(yaml).toContain("name: App");
+  });
+});
+
+describe("config schema", () => {
+  it("documents runtime-populated project identity fields", () => {
+    const schema = JSON.parse(
+      readFileSync(new URL("../../../../schema/config.schema.json", import.meta.url), "utf-8"),
+    ) as {
+      $defs: {
+        projectConfig: {
+          properties: Record<string, { type?: string; format?: string }>;
+        };
+      };
+    };
+
+    expect(schema.$defs.projectConfig.properties["storageKey"]).toMatchObject({ type: "string" });
+    expect(schema.$defs.projectConfig.properties["originUrl"]).toMatchObject({
+      type: "string",
+      format: "uri",
+    });
+    expect(schema.$defs.projectConfig.properties["resolveError"]).toMatchObject({
+      type: "string",
+    });
   });
 });
 

@@ -9,7 +9,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import {
   CI_STATUS,
+  execGhObserved,
+  memoizeAsync,
   type PluginModule,
+  type PreflightContext,
   type SCM,
   type SCMWebhookEvent,
   type SCMWebhookRequest,
@@ -24,20 +27,22 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
-  type AutomatedComment,
+  type ReviewSummary,
+  type ReviewThreadsResult,
   type MergeReadiness,
   type PREnrichmentData,
   type BatchObserver,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import {
   enrichSessionsPRBatch as enrichSessionsPRBatchImpl,
+  checkReviewCommentsETag,
 } from "./graphql-batch.js";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
   parseWebhookTimestamp,
-} from "@composio/ao-core/scm-webhook-utils";
+} from "@aoagents/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -77,11 +82,11 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
 }
 
 async function gh(args: string[]): Promise<string> {
-  return execCli("gh", args);
+  return execGhObserved(args, { component: "scm-github" }, 30_000);
 }
 
 async function ghInDir(args: string[], cwd: string): Promise<string> {
-  return execCli("gh", args, cwd);
+  return execGhObserved(args, { component: "scm-github", cwd }, 30_000);
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
@@ -450,7 +455,93 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
+// In-process PR cache. Per-method TTLs balance call reduction against
+// staleness. Tightest TTLs (5s) on the fastest-changing decision-critical
+// fields (state, CI, mergeability) — well under one poll cycle. Slightly
+// looser (10s) on review-state and review-comments which tolerate up to
+// 10-30s staleness per the agreed policy and benefit measurably from a
+// looser window in trace replay. detectPR uses 30s because once a PR is
+// discovered for a branch, that fact is stable for the session — and 5s was
+// far below the per-branch poll cadence (~30s), making the cache near-useless.
+// detectPR caches positive results only (never []) so a freshly created PR
+// is discovered on the very next poll.
+const PR_CACHE_TTL_MS = {
+  resolvePR: 60_000, // identity metadata (number, url, title, branch refs, isDraft)
+  getPRState: 5_000, // open / merged / closed
+  getPRSummary: 5_000, // state + title + additions/deletions
+  getReviews: 10_000, // review array (state, body, author)
+  getReviewDecision: 10_000, // approved / changes_requested / pending
+  getCIChecks: 5_000, // CI check list (name, state, link, timestamps)
+  getMergeability: 5_000, // composite merge readiness
+  getPendingComments: 10_000, // unresolved review threads (GraphQL)
+  detectPR: 30_000, // positive hits only — branch-PR mapping is stable once known
+} as const;
+
+const PR_CACHE_MAX_ENTRIES = 1000;
+
+type PRCacheMethod = keyof typeof PR_CACHE_TTL_MS;
+
 function createGitHubSCM(): SCM {
+  // Per-instance cache so each createGitHubSCM() returns an isolated cache —
+  // tests get clean state on each create() call.
+  const prCache = new Map<string, { value: unknown; expiresAt: number }>();
+  // ETag-controlled cache for review threads + reviews. Freshness is managed by
+  // Guard 3 (checkReviewCommentsETag) — not a TTL timer.
+  const reviewThreadsCache = new Map<string, ReviewThreadsResult>();
+  // Instance-level observer captured from enrichSessionsPRBatch calls.
+  // Used by getReviewThreads (which can't accept observer via the SCM interface)
+  // to log non-304 errors that would otherwise be swallowed by lifecycle's catch.
+  let instanceObserver: BatchObserver | undefined;
+
+  function prCacheKey(owner: string, repo: string, prKey: string, method: PRCacheMethod): string {
+    return `${owner}/${repo}#${prKey}:${method}`;
+  }
+
+  function readPRCache<T>(key: string): T | null {
+    const entry = prCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      prCache.delete(key);
+      return null;
+    }
+    return entry.value as T;
+  }
+
+  function writePRCache<T>(key: string, value: T, ttlMs: number): void {
+    if (prCache.size >= PR_CACHE_MAX_ENTRIES) {
+      const oldest = prCache.keys().next().value;
+      if (oldest !== undefined) prCache.delete(oldest);
+    }
+    prCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  }
+
+  // Wipe every method's cache entry for a specific PR. Called on writes
+  // (pr edit/merge/close) to avoid serving stale state after our own mutation.
+  // Also wipes the branch-keyed detectPR entry since mergePR deletes the branch.
+  function invalidatePRCache(pr: PRInfo): void {
+    const prefix = `${pr.owner}/${pr.repo}#${pr.number}:`;
+    for (const key of prCache.keys()) {
+      if (key.startsWith(prefix)) prCache.delete(key);
+    }
+    prCache.delete(prCacheKey(pr.owner, pr.repo, pr.branch, "detectPR"));
+    reviewThreadsCache.delete(`${pr.owner}/${pr.repo}#${pr.number}`);
+  }
+
+  async function withPRCache<T>(
+    owner: string,
+    repo: string,
+    prKey: string,
+    method: PRCacheMethod,
+    fetcher: () => Promise<T>,
+  ): Promise<T> {
+    const key = prCacheKey(owner, repo, prKey, method);
+    const cached = readPRCache<T>(key);
+    if (cached !== null) return cached;
+    const value = await fetcher();
+    writePRCache(key, value, PR_CACHE_TTL_MS[method]);
+    return value;
+  }
+
   return {
     name: "github",
 
@@ -515,8 +606,15 @@ function createGitHubSCM(): SCM {
     },
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch) return null;
+      if (!session.branch || !project.repo) return null;
       parseProjectRepo(project.repo);
+      const [owner, repoName] = project.repo.split("/");
+      // Positive-only cache: never cache [] (null). A just-created PR must
+      // surface on the next poll, so we pay the gh call for misses but save
+      // every call after the PR is discovered.
+      const cacheK = prCacheKey(owner ?? "", repoName ?? "", session.branch, "detectPR");
+      const cached = readPRCache<PRInfo>(cacheK);
+      if (cached !== null) return cached;
       try {
         const raw = await gh([
           "pr",
@@ -542,37 +640,50 @@ function createGitHubSCM(): SCM {
 
         if (prs.length === 0) return null;
 
-        return prInfoFromView(prs[0], project.repo);
+        const info = prInfoFromView(prs[0], project.repo);
+        writePRCache(cacheK, info, PR_CACHE_TTL_MS.detectPR);
+        return info;
       } catch {
         return null;
       }
     },
 
     async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
-      const raw = await gh([
-        "pr",
-        "view",
-        reference,
-        "--repo",
-        project.repo,
-        "--json",
-        "number,url,title,headRefName,baseRefName,isDraft",
-      ]);
+      if (!project.repo) {
+        throw new Error("Cannot resolve PR: project has no repo configured");
+      }
+      const repo = project.repo;
+      const [owner, repoName] = repo.split("/");
+      // Cache by reference (number, branch, or URL — caller-provided).
+      // Identity metadata (number, url, title, branch refs, isDraft) is stable
+      // for the life of a PR; 60s TTL is safely under any user-noticeable window.
+      return withPRCache(owner ?? "", repoName ?? "", `ref=${reference}`, "resolvePR", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          reference,
+          "--repo",
+          repo,
+          "--json",
+          "number,url,title,headRefName,baseRefName,isDraft",
+        ]);
 
-      const data: {
-        number: number;
-        url: string;
-        title: string;
-        headRefName: string;
-        baseRefName: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
+        const data: {
+          number: number;
+          url: string;
+          title: string;
+          headRefName: string;
+          baseRefName: string;
+          isDraft: boolean;
+        } = JSON.parse(raw);
 
-      return prInfoFromView(data, project.repo);
+        return prInfoFromView(data, repo);
+      });
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
       await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
+      invalidatePRCache(pr);
     },
 
     async checkoutPR(pr: PRInfo, workspacePath: string): Promise<boolean> {
@@ -591,96 +702,113 @@ function createGitHubSCM(): SCM {
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state",
-      ]);
-      const data: { state: string } = JSON.parse(raw);
-      const s = data.state.toUpperCase();
-      if (s === "MERGED") return "merged";
-      if (s === "CLOSED") return "closed";
-      return "open";
+      // 5s TTL — state is decision-influencing (lifecycle uses it for cleanup),
+      // but 5s is well under one poll cycle so the lifecycle worker still sees
+      // freshly observed transitions on its next pass.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPRState", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "state",
+        ]);
+        const data: { state: string } = JSON.parse(raw);
+        const s = data.state.toUpperCase();
+        if (s === "MERGED") return "merged";
+        if (s === "CLOSED") return "closed";
+        return "open";
+      });
     },
 
     async getPRSummary(pr: PRInfo) {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state,title,additions,deletions",
-      ]);
-      const data: {
-        state: string;
-        title: string;
-        additions: number;
-        deletions: number;
-      } = JSON.parse(raw);
-      const s = data.state.toUpperCase();
-      const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
-      return {
-        state,
-        title: data.title ?? "",
-        additions: data.additions ?? 0,
-        deletions: data.deletions ?? 0,
-      };
+      // 5s TTL — includes state, so same freshness contract as getPRState.
+      // Title and additions/deletions change rarely; they ride along.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPRSummary", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "state,title,additions,deletions",
+        ]);
+        const data: {
+          state: string;
+          title: string;
+          additions: number;
+          deletions: number;
+        } = JSON.parse(raw);
+        const s = data.state.toUpperCase();
+        const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
+        return {
+          state,
+          title: data.title ?? "",
+          additions: data.additions ?? 0,
+          deletions: data.deletions ?? 0,
+        };
+      });
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
 
       await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      invalidatePRCache(pr);
     },
 
     async closePR(pr: PRInfo): Promise<void> {
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
+      invalidatePRCache(pr);
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
-      try {
-        const raw = await gh([
-          "pr",
-          "checks",
-          String(pr.number),
-          "--repo",
-          repoFlag(pr),
-          "--json",
-          "name,state,link,startedAt,completedAt",
-        ]);
+      // 5s TTL — CI state can flip quickly; within one poll cycle is acceptable
+      // per the agreed fast-changing-fields policy. Fallback to statusCheckRollup
+      // for older gh CLI versions happens inside the fetcher and rides on the
+      // same cache entry.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getCIChecks", async () => {
+        try {
+          const raw = await gh([
+            "pr",
+            "checks",
+            String(pr.number),
+            "--repo",
+            repoFlag(pr),
+            "--json",
+            "name,state,link,startedAt,completedAt",
+          ]);
 
-        const checks: Array<{
-          name: string;
-          state: string;
-          link: string;
-          startedAt: string;
-          completedAt: string;
-        }> = JSON.parse(raw);
+          const checks: Array<{
+            name: string;
+            state: string;
+            link: string;
+            startedAt: string;
+            completedAt: string;
+          }> = JSON.parse(raw);
 
-        return checks.map((c) => {
-          const state = c.state?.toUpperCase();
+          return checks.map((c) => {
+            const state = c.state?.toUpperCase();
 
-          return {
-            name: c.name,
-            status: mapRawCheckStateToStatus(state),
-            url: c.link || undefined,
-            conclusion: state || undefined,
-            startedAt: c.startedAt ? new Date(c.startedAt) : undefined,
-            completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
-          };
-        });
-      } catch (err) {
-        if (isUnsupportedPrChecksJsonError(err)) {
-          return getCIChecksFromStatusRollup(pr);
+            return {
+              name: c.name,
+              status: mapRawCheckStateToStatus(state),
+              url: c.link || undefined,
+              conclusion: state || undefined,
+              startedAt: c.startedAt ? new Date(c.startedAt) : undefined,
+              completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
+            };
+          });
+        } catch (err) {
+          if (isUnsupportedPrChecksJsonError(err)) {
+            return getCIChecksFromStatusRollup(pr);
+          }
+          throw new Error("Failed to fetch CI checks", { cause: err });
         }
-        throw new Error("Failed to fetch CI checks", { cause: err });
-      }
+      });
     },
 
     async getCISummary(pr: PRInfo): Promise<CIStatus> {
@@ -718,65 +846,78 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviews(pr: PRInfo): Promise<Review[]> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviews",
-      ]);
-      const data: {
-        reviews: Array<{
-          author: { login: string };
-          state: string;
-          body: string;
-          submittedAt: string;
-        }>;
-      } = JSON.parse(raw);
+      // 5s TTL — review array. Reviewers are async, so the lifecycle worker
+      // sees a new review on its next poll cycle within 5s of the cache expiring.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getReviews", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "reviews",
+        ]);
+        const data: {
+          reviews: Array<{
+            author: { login: string };
+            state: string;
+            body: string;
+            submittedAt: string;
+          }>;
+        } = JSON.parse(raw);
 
-      return data.reviews.map((r) => {
-        let state: Review["state"];
-        const s = r.state?.toUpperCase();
-        if (s === "APPROVED") state = "approved";
-        else if (s === "CHANGES_REQUESTED") state = "changes_requested";
-        else if (s === "DISMISSED") state = "dismissed";
-        else if (s === "PENDING") state = "pending";
-        else state = "commented";
+        return data.reviews.map((r) => {
+          let state: Review["state"];
+          const s = r.state?.toUpperCase();
+          if (s === "APPROVED") state = "approved";
+          else if (s === "CHANGES_REQUESTED") state = "changes_requested";
+          else if (s === "DISMISSED") state = "dismissed";
+          else if (s === "PENDING") state = "pending";
+          else state = "commented";
 
-        return {
-          author: r.author?.login ?? "unknown",
-          state,
-          body: r.body || undefined,
-          submittedAt: parseDate(r.submittedAt),
-        };
+          return {
+            author: r.author?.login ?? "unknown",
+            state,
+            body: r.body || undefined,
+            submittedAt: parseDate(r.submittedAt),
+          };
+        });
       });
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviewDecision",
-      ]);
-      const data: { reviewDecision: string } = JSON.parse(raw);
+      // 5s TTL — review decision is decision-influencing (gates merge), kept
+      // tight so a fresh "approved" surfaces within one poll cycle.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getReviewDecision", async () => {
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "reviewDecision",
+        ]);
+        const data: { reviewDecision: string } = JSON.parse(raw);
 
-      const d = (data.reviewDecision ?? "").toUpperCase();
-      if (d === "APPROVED") return "approved";
-      if (d === "CHANGES_REQUESTED") return "changes_requested";
-      if (d === "REVIEW_REQUIRED") return "pending";
-      return "none";
+        const d = (data.reviewDecision ?? "").toUpperCase();
+        if (d === "APPROVED") return "approved";
+        if (d === "CHANGES_REQUESTED") return "changes_requested";
+        if (d === "REVIEW_REQUIRED") return "pending";
+        return "none";
+      });
     },
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
-      try {
-        // Use GraphQL with variables to get review threads with actual isResolved status
-        const raw = await gh([
+      // 5s TTL — review threads are decision-influencing (gates whether AO
+      // reacts to new comments). Within one poll cycle is acceptable. Note:
+      // ETag does not work on /graphql per Experiment 2 (G2), so TTL is the
+      // only practical lever here.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getPendingComments", async () => {
+        try {
+          // Use GraphQL with variables to get review threads with actual isResolved status
+          const raw = await gh([
           "api",
           "graphql",
           "-f",
@@ -791,6 +932,7 @@ function createGitHubSCM(): SCM {
               pullRequest(number: $number) {
                 reviewThreads(first: 100) {
                   nodes {
+                    id
                     isResolved
                     comments(first: 1) {
                       nodes {
@@ -816,6 +958,7 @@ function createGitHubSCM(): SCM {
               pullRequest: {
                 reviewThreads: {
                   nodes: Array<{
+                    id: string;
                     isResolved: boolean;
                     comments: {
                       nodes: Array<{
@@ -849,6 +992,7 @@ function createGitHubSCM(): SCM {
             const c = t.comments.nodes[0];
             return {
               id: c.id,
+              threadId: t.id,
               author: c.author?.login ?? "unknown",
               body: c.body,
               path: c.path || undefined,
@@ -858,171 +1002,236 @@ function createGitHubSCM(): SCM {
               url: c.url,
             };
           });
-      } catch (err) {
-        throw new Error("Failed to fetch pending comments", { cause: err });
-      }
+        } catch (err) {
+          throw new Error("Failed to fetch pending comments", { cause: err });
+        }
+      });
     },
 
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
+    async getReviewThreads(pr: PRInfo): Promise<ReviewThreadsResult> {
+      const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+
+      // Guard 3: check if review comments changed via REST ETag
+      const reviewsChanged = await checkReviewCommentsETag(pr.owner, pr.repo, pr.number, instanceObserver);
+      if (!reviewsChanged) {
+        const cached = reviewThreadsCache.get(cacheKey);
+        if (cached) return cached;
+      }
+
       try {
-        const perPage = 100;
-        const comments: Array<{
-          id: number;
-          user: { login: string };
-          body: string;
-          path: string;
-          line: number | null;
-          original_line: number | null;
-          created_at: string;
-          html_url: string;
-        }> = [];
-
-        for (let page = 1; ; page++) {
-          const raw = await gh([
-            "api",
-            "--method",
-            "GET",
-            `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`,
-          ]);
-          const pageComments: Array<{
-            id: number;
-            user: { login: string };
-            body: string;
-            path: string;
-            line: number | null;
-            original_line: number | null;
-            created_at: string;
-            html_url: string;
-          }> = JSON.parse(raw);
-
-          if (pageComments.length === 0) {
-            break;
-          }
-
-          comments.push(...pageComments);
-          if (pageComments.length < perPage) {
-            break;
-          }
-        }
-
-        return comments
-          .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
-          .map((c) => {
-            // Determine severity from body content
-            let severity: AutomatedComment["severity"] = "info";
-            const bodyLower = c.body.toLowerCase();
-            if (
-              bodyLower.includes("error") ||
-              bodyLower.includes("bug") ||
-              bodyLower.includes("critical") ||
-              bodyLower.includes("potential issue")
-            ) {
-              severity = "error";
-            } else if (
-              bodyLower.includes("warning") ||
-              bodyLower.includes("suggest") ||
-              bodyLower.includes("consider")
-            ) {
-              severity = "warning";
+        const rawWithHeaders = await gh([
+          "api",
+          "graphql",
+          "-i",
+          "-f",
+          `owner=${pr.owner}`,
+          "-f",
+          `name=${pr.repo}`,
+          "-F",
+          `number=${pr.number}`,
+          "-f",
+          `query=query($owner: String!, $name: String!, $number: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $number) {
+                reviewThreads(last: 100) {
+                  nodes {
+                    id
+                    isResolved
+                    comments(first: 1) {
+                      nodes {
+                        id
+                        author { login }
+                        body
+                        path
+                        line
+                        url
+                        createdAt
+                      }
+                    }
+                  }
+                }
+                reviews(last: 5) {
+                  nodes {
+                    author { login }
+                    state
+                    body
+                    submittedAt
+                  }
+                }
+              }
             }
+            rateLimit { cost remaining resetAt }
+          }`,
+        ]);
+        // Strip HTTP headers from -i response to get JSON body
+        const raw = rawWithHeaders.replace(/^[\s\S]*?\r?\n\r?\n/, "");
 
+        const data: {
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: Array<{
+                    id: string;
+                    isResolved: boolean;
+                    comments: {
+                      nodes: Array<{
+                        id: string;
+                        author: { login: string } | null;
+                        body: string;
+                        path: string | null;
+                        line: number | null;
+                        url: string;
+                        createdAt: string;
+                      }>;
+                    };
+                  }>;
+                };
+                reviews: {
+                  nodes: Array<{
+                    author: { login: string } | null;
+                    state: string;
+                    body: string;
+                    submittedAt: string;
+                  }>;
+                };
+              };
+            };
+          };
+        } = JSON.parse(raw);
+
+        const threadNodes = data.data.repository.pullRequest.reviewThreads.nodes;
+        const reviewNodes = data.data.repository.pullRequest.reviews.nodes;
+
+        const threads: ReviewComment[] = threadNodes
+          .filter((t) => {
+            if (t.isResolved) return false;
+            const c = t.comments.nodes[0];
+            return !!c;
+          })
+          .map((t) => {
+            const c = t.comments.nodes[0];
+            const author = c.author?.login ?? "unknown";
             return {
-              id: String(c.id),
-              botName: c.user?.login ?? "unknown",
+              id: c.id,
+              threadId: t.id,
+              author,
               body: c.body,
               path: c.path || undefined,
-              line: c.line ?? c.original_line ?? undefined,
-              severity,
-              createdAt: parseDate(c.created_at),
-              url: c.html_url,
+              line: c.line ?? undefined,
+              isResolved: t.isResolved,
+              createdAt: parseDate(c.createdAt),
+              url: c.url,
+              isBot: BOT_AUTHORS.has(author),
             };
           });
+
+        const reviews: ReviewSummary[] = reviewNodes
+          .filter((r) => r.body && r.body.trim().length > 0)
+          .map((r) => ({
+            author: r.author?.login ?? "unknown",
+            state: r.state,
+            body: r.body,
+            submittedAt: parseDate(r.submittedAt),
+          }));
+
+        const result: ReviewThreadsResult = { threads, reviews };
+        reviewThreadsCache.set(cacheKey, result);
+        return result;
       } catch (err) {
-        throw new Error("Failed to fetch automated comments", { cause: err });
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        instanceObserver?.log("warn", `[getReviewThreads] Failed for ${cacheKey}: ${errorMsg}`);
+        throw new Error("Failed to fetch review threads", { cause: err });
       }
     },
 
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {
-      const blockers: string[] = [];
+      // 5s TTL — composite merge readiness. Internal getPRState/getCISummary
+      // calls are also cached (5s each) so even on cache miss this is cheap.
+      // Cached entry covers the full computed result so duplicate poll-cycle
+      // calls don't re-derive blockers.
+      return withPRCache(pr.owner, pr.repo, String(pr.number), "getMergeability", async () => {
+        const blockers: string[] = [];
 
-      // First, check if the PR is merged
-      // GitHub returns mergeable=null for merged PRs, which is not useful
-      // Note: We only skip checks for merged PRs. Closed PRs still need accurate status.
-      const state = await this.getPRState(pr);
-      if (state === "merged") {
-        // For merged PRs, return a clean result without querying mergeable status
+        // First, check if the PR is merged
+        // GitHub returns mergeable=null for merged PRs, which is not useful
+        // Note: We only skip checks for merged PRs. Closed PRs still need accurate status.
+        const state = await this.getPRState(pr);
+        if (state === "merged") {
+          // For merged PRs, return a clean result without querying mergeable status
+          return {
+            mergeable: true,
+            ciPassing: true,
+            approved: true,
+            noConflicts: true,
+            blockers: [],
+          };
+        }
+
+        // Fetch PR details with merge state
+        const raw = await gh([
+          "pr",
+          "view",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          "--json",
+          "mergeable,reviewDecision,mergeStateStatus,isDraft",
+        ]);
+
+        const data: {
+          mergeable: string;
+          reviewDecision: string;
+          mergeStateStatus: string;
+          isDraft: boolean;
+        } = JSON.parse(raw);
+
+        // CI
+        const ciStatus = await this.getCISummary(pr);
+        const ciPassing = ciStatus === CI_STATUS.PASSING || ciStatus === CI_STATUS.NONE;
+        if (!ciPassing) {
+          blockers.push(`CI is ${ciStatus}`);
+        }
+
+        // Reviews
+        const reviewDecision = (data.reviewDecision ?? "").toUpperCase();
+        const approved = reviewDecision === "APPROVED";
+        if (reviewDecision === "CHANGES_REQUESTED") {
+          blockers.push("Changes requested in review");
+        } else if (reviewDecision === "REVIEW_REQUIRED") {
+          blockers.push("Review required");
+        }
+
+        // Conflicts / merge state
+        const mergeable = (data.mergeable ?? "").toUpperCase();
+        const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
+        const noConflicts = mergeable === "MERGEABLE";
+        if (mergeable === "CONFLICTING") {
+          blockers.push("Merge conflicts");
+        } else if (mergeable === "UNKNOWN" || mergeable === "") {
+          blockers.push("Merge status unknown (GitHub is computing)");
+        }
+        if (mergeState === "BEHIND") {
+          blockers.push("Branch is behind base branch");
+        } else if (mergeState === "BLOCKED") {
+          blockers.push("Merge is blocked by branch protection");
+        } else if (mergeState === "UNSTABLE") {
+          blockers.push("Required checks are failing");
+        }
+
+        // Draft
+        if (data.isDraft) {
+          blockers.push("PR is still a draft");
+        }
+
         return {
-          mergeable: true,
-          ciPassing: true,
-          approved: true,
-          noConflicts: true,
-          blockers: [],
+          mergeable: blockers.length === 0,
+          ciPassing,
+          approved,
+          noConflicts,
+          blockers,
         };
-      }
-
-      // Fetch PR details with merge state
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "mergeable,reviewDecision,mergeStateStatus,isDraft",
-      ]);
-
-      const data: {
-        mergeable: string;
-        reviewDecision: string;
-        mergeStateStatus: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
-
-      // CI
-      const ciStatus = await this.getCISummary(pr);
-      const ciPassing = ciStatus === CI_STATUS.PASSING || ciStatus === CI_STATUS.NONE;
-      if (!ciPassing) {
-        blockers.push(`CI is ${ciStatus}`);
-      }
-
-      // Reviews
-      const reviewDecision = (data.reviewDecision ?? "").toUpperCase();
-      const approved = reviewDecision === "APPROVED";
-      if (reviewDecision === "CHANGES_REQUESTED") {
-        blockers.push("Changes requested in review");
-      } else if (reviewDecision === "REVIEW_REQUIRED") {
-        blockers.push("Review required");
-      }
-
-      // Conflicts / merge state
-      const mergeable = (data.mergeable ?? "").toUpperCase();
-      const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
-      const noConflicts = mergeable === "MERGEABLE";
-      if (mergeable === "CONFLICTING") {
-        blockers.push("Merge conflicts");
-      } else if (mergeable === "UNKNOWN" || mergeable === "") {
-        blockers.push("Merge status unknown (GitHub is computing)");
-      }
-      if (mergeState === "BEHIND") {
-        blockers.push("Branch is behind base branch");
-      } else if (mergeState === "BLOCKED") {
-        blockers.push("Merge is blocked by branch protection");
-      } else if (mergeState === "UNSTABLE") {
-        blockers.push("Required checks are failing");
-      }
-
-      // Draft
-      if (data.isDraft) {
-        blockers.push("PR is still a draft");
-      }
-
-      return {
-        mergeable: blockers.length === 0,
-        ciPassing,
-        approved,
-        noConflicts,
-        blockers,
-      };
+      });
     },
 
     /**
@@ -1038,8 +1247,33 @@ function createGitHubSCM(): SCM {
     async enrichSessionsPRBatch(
       prs: PRInfo[],
       observer?: BatchObserver,
+      repos?: string[],
     ): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatchImpl(prs, observer);
+      if (observer) instanceObserver = observer;
+      const batchResult = await enrichSessionsPRBatchImpl(prs, observer, repos);
+      return batchResult.enrichment;
+    },
+
+    async preflight(context: PreflightContext): Promise<void> {
+      // SCM is only exercised at spawn time when --claim-pr is set. Skip the
+      // gh-auth check otherwise so spawns that don't touch PRs don't require
+      // gh credentials. Lifecycle polling has its own auth handling.
+      if (!context.intent.willClaimExistingPR) return;
+      // Memoize across plugins: shares the "gh-cli-auth" cache key with
+      // tracker-github so spawns that touch both only run gh --version + gh
+      // auth status once total, not twice.
+      await memoizeAsync("gh-cli-auth", async () => {
+        try {
+          await execFileAsync("gh", ["--version"]);
+        } catch {
+          throw new Error("GitHub CLI (gh) is not installed. Install it: https://cli.github.com/");
+        }
+        try {
+          await execFileAsync("gh", ["auth", "status"]);
+        } catch {
+          throw new Error("GitHub CLI is not authenticated. Run: gh auth login");
+        }
+      });
     },
   };
 }

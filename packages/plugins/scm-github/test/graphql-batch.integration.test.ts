@@ -221,7 +221,6 @@ describe("GraphQL Query Generation", () => {
       "mergeable",
       "mergeStateStatus",
       "reviewDecision",
-      "reviews",
       "commits",
       "statusCheckRollup",
     ];

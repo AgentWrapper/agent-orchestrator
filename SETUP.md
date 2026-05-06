@@ -60,7 +60,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 ### Install via npm (recommended)
 
 ```bash
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 
 # Verify
 ao --version
@@ -72,17 +72,17 @@ This installs the `ao` CLI globally along with all default plugins and the web d
 
 ```bash
 # Option 1: Use sudo
-sudo npm install -g @composio/ao
+sudo npm install -g @aoagents/ao
 
 # Option 2: Use npx (no global install needed)
-npx @composio/ao start
+npx @aoagents/ao start
 
 # Option 3: Fix npm permissions permanently (recommended)
 mkdir -p ~/.npm-global
 npm config set prefix '~/.npm-global'
 echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
 source ~/.zshrc
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 ```
 
 ### Build from Source (for contributors)
@@ -344,6 +344,8 @@ gh auth status
          teamId: "your-team-id"
    ```
 
+**Branch names:** On `ao spawn <issue>` with the Linear tracker, AO **prefers** Linear’s branch name (same as **Copy git branch name**, API field `branchName`). If that value is missing, it **falls back** to the previous convention: `feat/<ISSUE-ID>` (e.g. `feat/INT-123`). To change how Linear generates `branchName`, use **Linear → Settings → Integrations → GitHub → Branch format**.
+
 **Verification:**
 
 ```bash
@@ -385,7 +387,7 @@ curl -X POST -H 'Content-type: application/json' \
 To add a custom tracker (Jira, Asana, etc.), create a plugin:
 
 1. See plugin examples in `packages/plugins/tracker-*/`
-2. Implement the `Tracker` interface from `@composio/ao-core`
+2. Implement the `Tracker` interface from `@aoagents/ao-core`
 3. Register your plugin in the config
 
 See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
@@ -810,8 +812,10 @@ ao session ls
 ao session kill <session-name>
 
 # Cleanup script (example)
-ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -I{} ao session kill {}
+ao session ls --json --include-terminated | jq -r '.data[] | select(.status == "merged") | .id' | xargs -I{} ao session kill {}
 ```
+
+> **Note:** `ao session ls --json` and `ao status --json` emit `{ data: [...], meta: { hiddenTerminatedCount } }`. By default terminated sessions (`killed`, `terminated`, `done`, `merged`, `errored`, `cleanup`) are hidden — pass `--include-terminated` to include them in `data`.
 
 ### Can I run multiple orchestrators?
 

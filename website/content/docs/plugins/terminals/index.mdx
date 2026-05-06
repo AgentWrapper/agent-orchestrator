@@ -1,0 +1,19 @@
+---
+title: Terminals overview
+description: How you attach to a running agent. iTerm2 on macOS, or the dashboard's built-in xterm.js.
+---
+
+The **terminal** plugin is what `ao open` and `ao session attach` use. If you only ever look at the dashboard, you don't need to think about it.
+
+<PluginGrid>
+  <PluginCard name="iTerm2" logo="iterm2" href="/docs/plugins/terminals/iterm2" description="Open attached tabs in iTerm2 via AppleScript (macOS only)." />
+  <PluginCard name="Web" logo="web" href="/docs/plugins/terminals/web" description="Dashboard xterm.js session URL. Cross-platform." />
+</PluginGrid>
+
+## Default
+
+AO picks `iterm2` on macOS when iTerm2 is installed; falls back to `web` otherwise. You can pin the choice:
+
+```yaml
+terminal: web
+```

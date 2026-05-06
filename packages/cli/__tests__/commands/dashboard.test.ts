@@ -89,45 +89,146 @@ describe("findRunningDashboardPid", () => {
   });
 });
 
-describe("findProcessWebDir", () => {
-  it("extracts cwd from lsof output", async () => {
-    const webDir = join(tmpDir, "web");
-    mkdirSync(webDir, { recursive: true });
-    writeFileSync(join(webDir, "package.json"), "{}");
+describe("isInstalledUnderNodeModules", () => {
+  it("returns true for a Unix node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    // Simulate lsof -p <pid> -Fn output
-    mockExecSilent.mockResolvedValue(
-      `p12345\nfcwd\nn${webDir}\nftxt\nn/usr/bin/node`,
-    );
-
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const result = await findProcessWebDir("12345");
-    expect(result).toBe(webDir);
+    expect(isInstalledUnderNodeModules("/usr/local/lib/node_modules/@aoagents/ao-web")).toBe(true);
   });
 
-  it("returns null when cwd has no package.json", async () => {
-    const webDir = join(tmpDir, "web");
-    mkdirSync(webDir, { recursive: true });
-    // No package.json
+  it("returns true for a Windows node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    mockExecSilent.mockResolvedValue(
-      `p12345\nfcwd\nn${webDir}\nftxt\nn/usr/bin/node`,
+    expect(isInstalledUnderNodeModules("C:\\Users\\me\\node_modules\\@composio\\ao-web")).toBe(
+      true,
     );
-
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const result = await findProcessWebDir("12345");
-    expect(result).toBeNull();
   });
 
-  it("returns null when lsof fails", async () => {
-    mockExecSilent.mockResolvedValue(null);
+  it("returns false for source paths containing node_modules as plain text", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    const { findProcessWebDir } = await import("../../src/lib/dashboard-rebuild.js");
+    expect(
+      isInstalledUnderNodeModules("/home/user/node_modules_backup/agent-orchestrator/packages/web"),
+    ).toBe(false);
+  });
+});
 
-    const result = await findProcessWebDir("12345");
-    expect(result).toBeNull();
+describe("assertDashboardRebuildSupported", () => {
+  it("passes for a source checkout", async () => {
+    const { assertDashboardRebuildSupported } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(() =>
+      assertDashboardRebuildSupported("/home/user/agent-orchestrator/packages/web"),
+    ).not.toThrow();
+  });
+
+  it("throws for an npm-installed package path", async () => {
+    const { assertDashboardRebuildSupported } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(() =>
+      assertDashboardRebuildSupported("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).toThrow("Dashboard rebuild is only available from a source checkout");
+  });
+});
+
+describe("rebuildDashboardProductionArtifacts", () => {
+  it("cleans .next and runs pnpm build on success", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+    mkdirSync(join(webDir, ".next"), { recursive: true });
+
+    mockExec.mockResolvedValue({ stdout: "", stderr: "" });
+
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await rebuildDashboardProductionArtifacts(webDir);
+
+    // .next should be cleaned
+    expect(existsSync(join(webDir, ".next"))).toBe(false);
+    // pnpm build should be called from workspace root (../../ relative to webDir)
+    expect(mockExec).toHaveBeenCalledWith("pnpm", ["build"], { cwd: tmpDir });
+  });
+
+  it("throws when pnpm build fails", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExec.mockRejectedValue(new Error("build failed"));
+
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(rebuildDashboardProductionArtifacts(webDir)).rejects.toThrow(
+      "Failed to rebuild dashboard production artifacts",
+    );
+  });
+
+  it("throws when called from an npm-installed path", async () => {
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(
+      rebuildDashboardProductionArtifacts("/usr/local/lib/node_modules/@aoagents/ao-web"),
+    ).rejects.toThrow("Dashboard rebuild is only available from a source checkout");
+  });
+});
+
+describe("clearStaleCacheIfNeeded", () => {
+  it("clears .next/cache and writes stamp when version differs", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(join(webDir, ".next", "AO_VERSION"), "utf8")).toBe("0.2.0");
+  });
+
+  it("clears cache when stamp is missing (upgrade from old version)", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+  });
+
+  it("is a no-op when version matches", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.2.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    // cache should still exist
+    expect(existsSync(join(webDir, ".next", "cache", "webpack"))).toBe(true);
+  });
+
+  it("leaves .next/server and .next/static intact", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "server"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "static"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "server"))).toBe(true);
+    expect(existsSync(join(webDir, ".next", "static"))).toBe(true);
   });
 });
 
@@ -148,8 +249,7 @@ describe("looksLikeStaleBuild pattern matching", () => {
 
   it("detects vendor-chunks module not found (the actual bug)", () => {
     // This is the exact error from the bug report
-    const stderr =
-      "Error: Cannot find module '/path/to/.next/server/vendor-chunks/xterm@5.3.0.js'";
+    const stderr = "Error: Cannot find module '/path/to/.next/server/vendor-chunks/xterm@5.3.0.js'";
     expect(looksLikeStaleBuild(stderr)).toBe(true);
   });
 
@@ -181,5 +281,40 @@ describe("looksLikeStaleBuild pattern matching", () => {
   it("does not flag normal startup output", () => {
     const stderr = "ready - started server on 0.0.0.0:3000";
     expect(looksLikeStaleBuild(stderr)).toBe(false);
+  });
+});
+
+describe("findRunningDashboardPidsForWebDir", () => {
+  it("returns only listeners whose cwd matches the web directory", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExecSilent
+      .mockResolvedValueOnce("111\n222\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+      .mockResolvedValueOnce("p222\nn/tmp/other\n");
+
+    const { findRunningDashboardPidsForWebDir } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(findRunningDashboardPidsForWebDir(webDir, [3000])).resolves.toEqual(["111"]);
+    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
+    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-a", "-p", "111", "-d", "cwd", "-Fn"]);
+  });
+
+  it("deduplicates dashboard pids found on multiple ports", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExecSilent
+      .mockResolvedValueOnce("111\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+      .mockResolvedValueOnce("111\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`);
+
+    const { findRunningDashboardPidsForWebDir } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(findRunningDashboardPidsForWebDir(webDir, [3000, 3001])).resolves.toEqual(["111"]);
   });
 });

@@ -1,0 +1,84 @@
+---
+title: Parallel issues
+description: Spawn agents on several issues at once without them stepping on each other.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+The whole point of AO is running agents in parallel. Each session gets its own git worktree, so agents can't stomp each other's branches.
+
+## Batch spawn
+
+`ao batch-spawn` takes one or more issue identifiers:
+
+```bash
+ao batch-spawn 42 43 44
+```
+
+AO:
+
+- Skips any issue that already has an active session
+- De-duplicates within the batch
+- Creates a worktree per agent
+- Reports a summary when all are spawned
+
+For a quick interactive version, just run `ao spawn` a few times — `batch-spawn` adds the duplicate detection.
+
+## One agent, many issues? No.
+
+Each spawn is one agent working on exactly one issue. If you want the same issue worked on by two different agents (e.g. Claude Code and Codex) in parallel, pass `--agent`:
+
+```bash
+ao spawn 42 --agent claude-code
+ao spawn 42 --agent codex
+```
+
+AO creates two distinct sessions. Compare the PRs side by side.
+
+## Isolation guarantees
+
+| What's isolated | How |
+|---|---|
+| File edits | Each session has its own worktree under `~/.worktrees/{projectId}/{sessionId}/`. Session metadata lives under `~/.agent-orchestrator/{hash}-{projectId}/sessions/{sessionId}` — the worktree itself is in `~/.worktrees/`. |
+| Branch name | AO names the branch after the session ID, avoiding collisions |
+| Agent state | Each agent's native session files (Claude JSONL, Codex session, etc.) are session-scoped |
+| Terminal | Each session owns its own tmux window (or child process) |
+
+## What isn't isolated
+
+- **Your project's node_modules.** Workspaces clone/share the repo; if your agent runs `npm install` it updates the worktree's `node_modules`, which is fine. If your agent runs `pnpm install` with a shared store, the store is shared.
+- **External side effects.** If an agent opens a PR, triggers CI, or posts to a notifier, those effects are visible to you and everyone else immediately.
+
+## Watching them move
+
+On the dashboard, each card shows:
+
+- Issue title + number
+- Current lifecycle state (spawning → working → pr_open → ci_failed / review_pending / mergeable / merged)
+- Activity (active, ready, idle, waiting_input, blocked)
+- Cost (agent-reported when available)
+
+The Kanban columns update as state changes — you don't need to reload.
+
+## From the CLI
+
+```bash
+# List everything at a glance
+ao status
+
+# Keep it on-screen
+ao status --watch
+
+# Filter to one project
+ao status -p my-repo --json
+```
+
+## When you want fewer
+
+- `ao session kill <sessionId>` — kill one
+- `ao session cleanup` — kill everything whose PR merged or issue closed (safe; archives metadata)
+- `ao session cleanup --dry-run` — preview first
+
+<Callout type="info">
+  Need them all gone? `ao stop --all` halts every running AO instance on this machine.
+</Callout>

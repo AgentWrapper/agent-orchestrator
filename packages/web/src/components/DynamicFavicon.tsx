@@ -1,23 +1,30 @@
 "use client";
 
 import { useEffect } from "react";
-import { type DashboardSession, type AttentionLevel, getAttentionLevel } from "@/lib/types";
+import type { AttentionMap } from "@/hooks/useSessionEvents";
 
 /**
- * Determine overall health from sessions.
+ * Determine overall health from attention levels.
  * - "green"  — all sessions working/done/pending, nothing needs attention
  * - "yellow" — some sessions need review or response
  * - "red"    — critical: sessions stuck, errored, or needing immediate action
  */
-function computeHealth(sessions: DashboardSession[]): "green" | "yellow" | "red" {
-  if (sessions.length === 0) return "green";
+function computeHealthFromLevels(levels: AttentionMap): "green" | "yellow" | "red" {
+  const entries = Object.values(levels);
+  if (entries.length === 0) return "green";
 
   let hasYellow = false;
 
-  for (const session of sessions) {
-    const level: AttentionLevel = getAttentionLevel(session);
+  for (const level of entries) {
+    // Only "respond" (detailed mode) escalates the favicon to red. "action"
+    // (simple mode) collapses respond + review into one bucket, so it
+    // necessarily includes routine review work (ci_failed, changes_requested)
+    // that used to be yellow. Treating it as red would make every typical
+    // review PR scream critical. Keep it at yellow severity.
     if (level === "respond") return "red";
-    if (level === "review" || level === "merge") hasYellow = true;
+    if (level === "review" || level === "action" || level === "merge") {
+      hasYellow = true;
+    }
   }
 
   return hasYellow ? "yellow" : "green";
@@ -38,20 +45,40 @@ function generateFaviconSvg(initial: string, color: string): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
+/** Count sessions that need human attention (respond, review, action, merge). */
+export function countNeedingAttention(levels: AttentionMap): number {
+  let count = 0;
+  for (const level of Object.values(levels)) {
+    if (
+      level === "respond" ||
+      level === "review" ||
+      level === "action" ||
+      level === "merge"
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
 interface DynamicFaviconProps {
-  sessions: DashboardSession[];
+  /** Server-computed attention levels from session snapshots. */
+  attentionLevels: AttentionMap;
   projectName?: string;
 }
 
 /**
  * Client component that dynamically updates the browser favicon
  * based on system health (session attention levels).
+ *
+ * Uses server-computed attention levels for real-time updates,
+ * rather than recomputing from the full sessions array.
  */
-export function DynamicFavicon({ sessions, projectName = "A" }: DynamicFaviconProps) {
+export function DynamicFavicon({ attentionLevels, projectName = "A" }: DynamicFaviconProps) {
   const initial = projectName.charAt(0).toUpperCase();
 
   useEffect(() => {
-    const health = computeHealth(sessions);
+    const health = computeHealthFromLevels(attentionLevels);
     const color = HEALTH_COLORS[health];
     const href = generateFaviconSvg(initial, color);
 
@@ -64,7 +91,7 @@ export function DynamicFavicon({ sessions, projectName = "A" }: DynamicFaviconPr
     }
     link.type = "image/svg+xml";
     link.href = href;
-  }, [sessions, initial]);
+  }, [attentionLevels, initial]);
 
   return null;
 }

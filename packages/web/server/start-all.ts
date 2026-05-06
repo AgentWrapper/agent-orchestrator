@@ -97,9 +97,6 @@ function resolveNextBin(): string {
 const port = process.env["PORT"] || "3000";
 spawnProcess("next", resolveNextBin(), ["start", "-p", port]);
 
-// Start terminal WebSocket server (auto-restart on crash)
-spawnProcess("terminal", "node", [resolve(__dirname, "terminal-websocket.js")], { restart: true });
-
 // Start direct terminal WebSocket server (auto-restart on crash)
 spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], { restart: true });
 

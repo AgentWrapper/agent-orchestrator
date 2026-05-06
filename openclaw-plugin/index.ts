@@ -943,15 +943,11 @@ export default function (api: PluginApi) {
           type: "string",
           description: "Immediately claim an existing PR number for the session",
         },
-        decompose: {
-          type: "boolean",
-          description: "Decompose issue into subtasks before spawning",
-        },
       },
     },
     async execute(
       _toolCallId: string,
-      params: { issue?: string; agent?: string; claimPr?: string; decompose?: boolean },
+      params: { issue?: string; agent?: string; claimPr?: string },
     ) {
       const args = ["spawn"];
       if (params.issue) {
@@ -963,7 +959,6 @@ export default function (api: PluginApi) {
       }
       if (params.agent) args.push("--agent", sanitizeCliArg(params.agent));
       if (params.claimPr) args.push("--claim-pr", sanitizeCliArg(params.claimPr));
-      if (params.decompose) args.push("--decompose");
       const result = await spawnWithRetry(config, args);
       if (!result.ok) {
         return {

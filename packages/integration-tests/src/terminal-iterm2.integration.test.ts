@@ -19,7 +19,7 @@ import { platform } from "node:os";
 const mockExecFile = execFile as unknown as Mock;
 const mockPlatform = platform as unknown as Mock;
 
-import iterm2Plugin from "@composio/ao-plugin-terminal-iterm2";
+import iterm2Plugin from "@aoagents/ao-plugin-terminal-iterm2";
 import { makeSession } from "./helpers/event-factory.js";
 
 function simulateOsascript(stdout: string) {

@@ -5,7 +5,7 @@
  * Tests verify state tracking, URL construction, and log output.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import webPlugin from "@composio/ao-plugin-terminal-web";
+import webPlugin from "@aoagents/ao-plugin-terminal-web";
 import { makeSession } from "./helpers/event-factory.js";
 
 describe("terminal-web integration", () => {

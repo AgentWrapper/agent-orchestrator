@@ -1,8 +1,6 @@
 # Managing multiple projects with different trackers
 # Shows how to configure multiple repos with different settings
-
-dataDir: ~/.agent-orchestrator
-worktreeDir: ~/.worktrees
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 
 defaults:
   runtime: tmux

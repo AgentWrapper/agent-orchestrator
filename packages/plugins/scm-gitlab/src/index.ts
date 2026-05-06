@@ -22,15 +22,16 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
-  type AutomatedComment,
+  type ReviewSummary,
+  type ReviewThreadsResult,
   type MergeReadiness,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
   parseWebhookTimestamp,
-} from "@composio/ao-core/scm-webhook-utils";
+} from "@aoagents/ao-core/scm-webhook-utils";
 
 import { glab, parseJSON, stripHost } from "./glab-utils.js";
 
@@ -105,21 +106,6 @@ function mapPRState(state: string): PRState {
   return "open";
 }
 
-function inferSeverity(body: string): AutomatedComment["severity"] {
-  const lower = body.toLowerCase();
-  if (
-    lower.includes("error") ||
-    lower.includes("bug") ||
-    lower.includes("critical") ||
-    lower.includes("potential issue")
-  ) {
-    return "error";
-  }
-  if (lower.includes("warning") || lower.includes("suggest") || lower.includes("consider")) {
-    return "warning";
-  }
-  return "info";
-}
 
 function getGitLabWebhookConfig(project: ProjectConfig) {
   const webhook = project.scm?.webhook;
@@ -447,7 +433,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
     },
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch) return null;
+      if (!session.branch || !project.repo) return null;
 
       const parts = project.repo.split("/");
       if (parts.length < 2 || !parts[0] || !parts[1]) {
@@ -701,32 +687,57 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
       return comments;
     },
 
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
+    async getReviewThreads(pr: PRInfo): Promise<ReviewThreadsResult> {
+      const hostname = resolveHostname(pr);
       const discussions = await fetchDiscussions(
         pr,
-        resolveHostname(pr),
-        `getAutomatedComments for MR !${pr.number}`,
+        hostname,
+        `getReviewThreads for MR !${pr.number}`,
       );
 
-      const comments: AutomatedComment[] = [];
+      // Unresolved threads — includes both human and bot comments (with isBot flag)
+      const threads: ReviewComment[] = [];
       for (const d of discussions) {
         const note = d.notes[0];
         if (!note) continue;
-        const author = note.author?.username ?? "";
-        if (!isBot(author)) continue;
+        if (!note.resolvable || note.resolved) continue;
 
-        comments.push({
+        const author = note.author?.username ?? "unknown";
+        threads.push({
           id: String(note.id),
-          botName: author,
+          threadId: d.id,
+          author,
           body: note.body,
           path: note.position?.new_path || undefined,
           line: note.position?.new_line ?? undefined,
-          severity: inferSeverity(note.body),
+          isResolved: false,
           createdAt: parseDate(note.created_at),
           url: "",
+          isBot: isBot(author),
         });
       }
-      return comments;
+
+      // Review summaries from approvals
+      const reviews: ReviewSummary[] = [];
+      try {
+        const approvalsRaw = await glab(["api", `${mrApiPath(pr)}/approvals`], hostname);
+        const approvals = parseJSON<{
+          approved_by: Array<{ user: { username: string } }>;
+        }>(approvalsRaw, `getReviewThreads approvals for MR !${pr.number}`);
+
+        for (const a of approvals.approved_by ?? []) {
+          reviews.push({
+            author: a.user?.username ?? "unknown",
+            state: "APPROVED",
+            body: "",
+            submittedAt: new Date(0),
+          });
+        }
+      } catch {
+        // Best-effort — threads are the critical data
+      }
+
+      return { threads, reviews };
     },
 
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {

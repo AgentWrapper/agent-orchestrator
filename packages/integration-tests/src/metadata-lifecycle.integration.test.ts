@@ -1,13 +1,13 @@
 /**
  * Integration test for metadata lifecycle — real filesystem operations.
  *
- * Tests the full metadata CRUD cycle (write, read, update, list, delete/archive)
- * and concurrent access patterns using @composio/ao-core metadata functions
+ * Tests the full metadata CRUD cycle (write, read, update, list, delete)
+ * and concurrent access patterns using @aoagents/ao-core metadata functions
  * with real filesystem I/O.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
-import { existsSync, readdirSync, readFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ import {
   deleteMetadata,
   listMetadata,
   type SessionMetadata,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 describe("metadata lifecycle (real filesystem)", () => {
   let tmpDir: string;
@@ -48,7 +48,7 @@ describe("metadata lifecycle (real filesystem)", () => {
       summary: "Implementing feature INT-100",
       project: "my-project",
       createdAt: "2026-01-01T00:00:00.000Z",
-      dashboardPort: 4000,
+      dashboard: { port: 4000 },
     };
 
     writeMetadata(sessionsDir, "session-1", metadata);
@@ -64,7 +64,7 @@ describe("metadata lifecycle (real filesystem)", () => {
     expect(result!.summary).toBe(metadata.summary);
     expect(result!.project).toBe(metadata.project);
     expect(result!.createdAt).toBe(metadata.createdAt);
-    expect(result!.dashboardPort).toBe(4000);
+    expect(result!.dashboard?.port).toBe(4000);
   });
 
   it("readMetadataRaw returns all key-value pairs", () => {
@@ -169,50 +169,14 @@ describe("metadata lifecycle (real filesystem)", () => {
     expect(ids).not.toContain("archive");
   });
 
-  it("deleteMetadata with archive=true moves file to archive/", () => {
+  it("deleteMetadata permanently removes file", () => {
     const sessionsDir = join(tmpDir, "test-archive");
     mkdirSync(sessionsDir, { recursive: true });
 
-    writeMetadata(sessionsDir, "session-del", {
-      worktree: "/w",
-      branch: "main",
-      status: "working",
-    });
-
-    expect(existsSync(join(sessionsDir, "session-del"))).toBe(true);
-
-    deleteMetadata(sessionsDir, "session-del", true);
-
-    // Original file removed
-    expect(existsSync(join(sessionsDir, "session-del"))).toBe(false);
-
-    // Archive created
-    const archiveDir = join(sessionsDir, "archive");
-    expect(existsSync(archiveDir)).toBe(true);
-    const archived = readdirSync(archiveDir);
-    expect(archived.length).toBe(1);
-    expect(archived[0]).toMatch(/^session-del_/);
-
-    // Archive content matches original
-    const content = readFileSync(join(archiveDir, archived[0]), "utf-8");
-    expect(content).toContain("worktree=/w");
-    expect(content).toContain("branch=main");
-  });
-
-  it("deleteMetadata with archive=false permanently removes file", () => {
-    const sessionsDir = join(tmpDir, "test-permanent-delete");
-    mkdirSync(sessionsDir, { recursive: true });
-
-    writeMetadata(sessionsDir, "session-gone", {
-      worktree: "/w",
-      branch: "main",
-      status: "done",
-    });
-
-    deleteMetadata(sessionsDir, "session-gone", false);
-
-    expect(existsSync(join(sessionsDir, "session-gone"))).toBe(false);
-    expect(existsSync(join(sessionsDir, "archive"))).toBe(false);
+    writeMetadata(sessionsDir, "session-del", { status: "working", worktree: "/tmp/w", branch: "main" });
+    expect(readMetadataRaw(sessionsDir, "session-del")).not.toBeNull();
+    deleteMetadata(sessionsDir, "session-del");
+    expect(readMetadataRaw(sessionsDir, "session-del")).toBeNull();
   });
 
   it("deleteMetadata is a no-op for non-existent session", () => {
@@ -220,8 +184,7 @@ describe("metadata lifecycle (real filesystem)", () => {
     mkdirSync(sessionsDir, { recursive: true });
 
     // Should not throw
-    deleteMetadata(sessionsDir, "no-such-session", true);
-    deleteMetadata(sessionsDir, "no-such-session", false);
+    deleteMetadata(sessionsDir, "no-such-session");
   });
 
   it("validates session ID rejects path traversal attempts", () => {
@@ -300,8 +263,8 @@ describe("metadata lifecycle (real filesystem)", () => {
     });
   });
 
-  describe("dashboardPort serialization", () => {
-    it("preserves dashboardPort through write/read cycle", () => {
+  describe("dashboard port serialization", () => {
+    it("preserves dashboard ports through write/read cycle", () => {
       const sessionsDir = join(tmpDir, "test-dashboard-port");
       mkdirSync(sessionsDir, { recursive: true });
 
@@ -309,14 +272,14 @@ describe("metadata lifecycle (real filesystem)", () => {
         worktree: "/w",
         branch: "main",
         status: "working",
-        dashboardPort: 4567,
+        dashboard: { port: 4567 },
       });
 
       const result = readMetadata(sessionsDir, "port-session");
-      expect(result!.dashboardPort).toBe(4567);
+      expect(result!.dashboard?.port).toBe(4567);
     });
 
-    it("omits dashboardPort when undefined", () => {
+    it("omits dashboard when undefined", () => {
       const sessionsDir = join(tmpDir, "test-no-dashboard-port");
       mkdirSync(sessionsDir, { recursive: true });
 
@@ -327,10 +290,10 @@ describe("metadata lifecycle (real filesystem)", () => {
       });
 
       const raw = readMetadataRaw(sessionsDir, "no-port-session");
-      expect(raw!["dashboardPort"]).toBeUndefined();
+      expect(raw!["dashboard"]).toBeUndefined();
 
       const result = readMetadata(sessionsDir, "no-port-session");
-      expect(result!.dashboardPort).toBeUndefined();
+      expect(result!.dashboard).toBeUndefined();
     });
   });
 });

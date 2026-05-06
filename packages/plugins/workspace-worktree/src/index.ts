@@ -9,7 +9,7 @@ import type {
   WorkspaceCreateConfig,
   WorkspaceInfo,
   ProjectConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core/types";
 
 /** Timeout for git commands (30 seconds) */
 const GIT_TIMEOUT = 30_000;
@@ -25,7 +25,7 @@ export const manifest = {
 
 /** Run a git command in a given directory */
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd });
+  const { stdout } = await execFileAsync("git", args, { cwd, timeout: GIT_TIMEOUT });
   return stdout.trimEnd();
 }
 
@@ -70,6 +70,61 @@ async function resolveBaseRef(
   throw new Error(`Unable to resolve base ref for default branch "${defaultBranch}"`);
 }
 
+async function isRegisteredWorktree(repoPath: string, worktreePath: string): Promise<boolean> {
+  try {
+    const output = await git(repoPath, "worktree", "list", "--porcelain");
+    return output
+      .split("\n")
+      .some((line) => line.startsWith("worktree ") && line.slice("worktree ".length) === worktreePath);
+  } catch {
+    return false;
+  }
+}
+
+async function clearStaleWorktreePath(repoPath: string, worktreePath: string): Promise<void> {
+  if (!existsSync(worktreePath)) return;
+
+  try {
+    await git(repoPath, "worktree", "prune");
+  } catch {
+    // Best-effort prune before checking whether the path is still registered.
+  }
+
+  if (await isRegisteredWorktree(repoPath, worktreePath)) {
+    throw new Error(
+      `Worktree path "${worktreePath}" already exists and is still registered with git`,
+    );
+  }
+
+  rmSync(worktreePath, { recursive: true, force: true });
+}
+
+interface WorktreeEntry {
+  path: string;
+  branch: string | null;
+}
+
+function parseWorktreeList(output: string): WorktreeEntry[] {
+  const normalized = output.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+
+  return normalized
+    .split("\n\n")
+    .map((block) => {
+      let path = "";
+      let branch: string | null = null;
+      for (const line of block.split("\n")) {
+        if (line.startsWith("worktree ")) {
+          path = resolve(line.slice("worktree ".length));
+        } else if (line.startsWith("branch ")) {
+          branch = line.slice("branch ".length).replace("refs/heads/", "");
+        }
+      }
+      return { path, branch };
+    })
+    .filter((entry) => entry.path.length > 0);
+}
+
 /** Only allow safe characters in path segments to prevent directory traversal */
 const SAFE_PATH_SEGMENT = /^[a-zA-Z0-9_-]+$/;
 
@@ -100,10 +155,14 @@ export function create(config?: Record<string, unknown>): Workspace {
       assertSafePathSegment(cfg.sessionId, "sessionId");
 
       const repoPath = expandPath(cfg.project.path);
-      const projectWorktreeDir = join(worktreeBaseDir, cfg.projectId);
+      const effectiveBaseDir = cfg.worktreeDir ?? worktreeBaseDir;
+      const projectWorktreeDir = cfg.worktreeDir
+        ? effectiveBaseDir
+        : join(effectiveBaseDir, cfg.projectId);
       const worktreePath = join(projectWorktreeDir, cfg.sessionId);
 
       mkdirSync(projectWorktreeDir, { recursive: true });
+      await clearStaleWorktreePath(repoPath, worktreePath);
 
       const hasOrigin = await hasOriginRemote(repoPath);
 
@@ -150,6 +209,46 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       return {
         path: worktreePath,
+        branch: cfg.branch,
+        sessionId: cfg.sessionId,
+        projectId: cfg.projectId,
+      };
+    },
+
+    async findManagedWorkspace(cfg: WorkspaceCreateConfig): Promise<WorkspaceInfo | null> {
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
+
+      const repoPath = expandPath(cfg.project.path);
+      const effectiveBaseDir = cfg.worktreeDir ?? worktreeBaseDir;
+      const projectWorktreeDir = cfg.worktreeDir
+        ? effectiveBaseDir
+        : join(effectiveBaseDir, cfg.projectId);
+      const currentManagedPath = resolve(join(projectWorktreeDir, cfg.sessionId));
+      const legacyManagedPath = resolve(join(worktreeBaseDir, cfg.projectId, cfg.sessionId));
+      const allowedPaths = new Set([currentManagedPath, legacyManagedPath]);
+
+      const worktrees = parseWorktreeList(await git(repoPath, "worktree", "list", "--porcelain"));
+      const matches = worktrees.filter(
+        (entry) => entry.branch === cfg.branch && existsSync(entry.path),
+      );
+
+      if (matches.length === 0) return null;
+      if (matches.length > 1) {
+        throw new Error(
+          `Found multiple worktrees for orchestrator branch "${cfg.branch}". Reuse one workspace or remove the extras before starting the orchestrator.`,
+        );
+      }
+
+      const match = matches[0]!;
+      if (!allowedPaths.has(match.path)) {
+        throw new Error(
+          `Found existing worktree for orchestrator branch "${cfg.branch}" at "${match.path}", but it is outside AO-managed worktree directories. Reuse it manually or remove it and try again.`,
+        );
+      }
+
+      return {
+        path: match.path,
         branch: cfg.branch,
         sessionId: cfg.sessionId,
         projectId: cfg.projectId,

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, AgentSpecificConfig } from "@composio/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+  type AgentSpecificConfig,
+} from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -16,6 +22,7 @@ const {
   mockOpen,
   mockCreateReadStream,
   mockHomedir,
+  mockReadLastJsonlEntry,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +35,7 @@ const {
   mockOpen: vi.fn(),
   mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
+  mockReadLastJsonlEntry: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
@@ -61,8 +69,22 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readLastJsonlEntry: mockReadLastJsonlEntry,
+  };
+});
+
 import { Readable } from "node:stream";
-import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache } from "./index.js";
+import {
+  create,
+  manifest,
+  default as defaultExport,
+  resolveCodexBinary,
+  _resetSessionFileCache,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -73,6 +95,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -125,17 +152,27 @@ function mockTmuxWithProcess(processName: string, found = true) {
 }
 
 /**
- * Create a mock file handle for `open()` that returns `content` from `read()`.
- * Used by sessionFileMatchesCwd which reads only the first 4 KB.
+ * Create a mock file handle for `open()` that streams `content` across
+ * successive `read()` calls. Tracks an internal cursor so sequential reads
+ * advance through the buffer and eventually return `bytesRead: 0` at EOF.
+ * Without position tracking, readJsonlPrefixLines would loop forever on
+ * lines larger than its chunk size.
  */
 function makeFakeFileHandle(content: string) {
   const buf = Buffer.from(content, "utf-8");
+  let cursor = 0;
   return {
-    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
-      const bytesToCopy = Math.min(length, buf.length);
-      buf.copy(buffer, offset, 0, bytesToCopy);
-      return Promise.resolve({ bytesRead: bytesToCopy, buffer });
-    }),
+    read: vi
+      .fn()
+      .mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
+        if (cursor >= buf.length) {
+          return Promise.resolve({ bytesRead: 0, buffer });
+        }
+        const bytesToCopy = Math.min(length, buf.length - cursor);
+        buf.copy(buffer, offset, cursor, cursor + bytesToCopy);
+        cursor += bytesToCopy;
+        return Promise.resolve({ bytesRead: bytesToCopy, buffer });
+      }),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -158,7 +195,7 @@ function makeContentStream(content: string): Readable {
 
 /**
  * Set up mockCreateReadStream to return a readable stream with the given content.
- * Used by getSessionInfo/getRestoreCommand which now stream files line-by-line.
+ * Used by getSessionInfo/getRestoreCommand which stream files line-by-line.
  */
 function setupMockStream(content: string) {
   mockCreateReadStream.mockReturnValue(makeContentStream(content));
@@ -211,7 +248,9 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
+      "'codex' -c check_for_update_on_startup=false",
+    );
   });
 
   it("includes bypass flag when permissions=permissionless", () => {
@@ -259,7 +298,9 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
+    expect(cmd).toBe(
+      "'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'",
+    );
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -268,9 +309,7 @@ describe("getLaunchCommand", () => {
   });
 
   it("escapes dangerous characters in prompt", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }),
-    );
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }));
     // Single-quoted strings prevent shell expansion
     expect(cmd).toContain("-- '$(rm -rf /); `evil`; $HOME'");
   });
@@ -373,59 +412,19 @@ describe("getEnvironment", () => {
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
 
-  it("prepends ~/.ao/bin to PATH for shell wrappers", () => {
+  it("does not set PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]).toMatch(/^.*\/\.ao\/bin:/);
+    expect(env["PATH"]).toBeUndefined();
   });
 
-  it("PATH starts with the ao bin dir specifically", () => {
-    const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["PATH"]?.startsWith("/mock/home/.ao/bin:")).toBe(true);
-  });
-
-  it("puts /usr/local/bin before linuxbrew paths", () => {
-    const originalPath = process.env["PATH"];
-    process.env["PATH"] = "/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin";
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe(
-        "/mock/home/.ao/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin",
-      );
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
-  });
- 
   it("sets CODEX_DISABLE_UPDATE_CHECK=1 to suppress interactive update prompts", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["CODEX_DISABLE_UPDATE_CHECK"]).toBe("1");
   });
 
-  it("sets GH_PATH to preferred wrapper target", () => {
+  it("does not set GH_PATH (injected by session-manager)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
-  });
-
-  it("deduplicates ao and /usr/local/bin entries", () => {
-    const originalPath = process.env["PATH"];
-    process.env["PATH"] = "/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/usr/local/bin";
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin");
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
-  });
-
-  it("falls back to /usr/bin:/bin when process.env.PATH is undefined", () => {
-    const originalPath = process.env["PATH"];
-    delete process.env["PATH"];
-    try {
-      const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/bin");
-    } finally {
-      process.env["PATH"] = originalPath;
-    }
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 });
 
@@ -576,12 +575,12 @@ describe("detectActivity", () => {
   it("returns waiting_input when permission prompt follows historical activity", () => {
     // Permission prompt at the bottom should NOT be overridden by historical
     // spinner/esc output higher in the buffer.
-    expect(
-      agent.detectActivity("✶ Writing files\nDone.\napproval required\n"),
-    ).toBe("waiting_input");
-    expect(
-      agent.detectActivity("Working (esc to interrupt)\nFinished\n(y)es / (n)o\n"),
-    ).toBe("waiting_input");
+    expect(agent.detectActivity("✶ Writing files\nDone.\napproval required\n")).toBe(
+      "waiting_input",
+    );
+    expect(agent.detectActivity("Working (esc to interrupt)\nFinished\n(y)es / (n)o\n")).toBe(
+      "waiting_input",
+    );
   });
 
   // -- Active states --
@@ -640,7 +639,10 @@ describe("getActivityState", () => {
   it("returns null when process is running but no session file found", async () => {
     mockTmuxWithProcess("codex");
     mockReaddir.mockRejectedValue(new Error("ENOENT"));
-    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
     expect(await agent.getActivityState(session)).toBeNull();
   });
 
@@ -649,10 +651,17 @@ describe("getActivityState", () => {
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = now (just modified)
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    // Mock readLastJsonlEntry to return a recent entry
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "tool_call",
+      modifiedAt: new Date(),
+    });
 
-    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
     const result = await agent.getActivityState(session);
     expect(result?.state).toBe("active");
     expect(result?.timestamp).toBeInstanceOf(Date);
@@ -663,14 +672,240 @@ describe("getActivityState", () => {
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = 10 minutes ago (past the 5-minute threshold)
     const staleTime = Date.now() - 600_000;
     mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+    // Mock readLastJsonlEntry to return a stale entry
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(staleTime),
+    });
 
-    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
     const result = await agent.getActivityState(session);
     expect(result?.state).toBe("idle");
     expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns waiting_input for approval_request entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked for error entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "error",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("returns ready for assistant_message entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("returns waiting_input when payload.type is approval_request on event_msg", async () => {
+    // Real Codex writes {"type":"event_msg","payload":{"type":"approval_request",...}}
+    // Without payloadType handling, this decays to ready/idle via the event_msg case.
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for exec_approval_request payload type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "exec_approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked when payload.type is error on event_msg", async () => {
+    // Real Codex writes {"type":"event_msg","payload":{"type":"error",...}}
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "error",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("returns active when payload.type is task_started on a recent event_msg", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "task_started",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+  });
+
+  it("returns ready when payload.type is task_complete on a recent event_msg", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      payloadType: "task_complete",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("detects activity from payload-wrapped Codex session_meta files", async () => {
+    mockTmuxWithProcess("codex");
+    const content = `${JSON.stringify({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-123",
+        base_instructions: "x".repeat(8_000),
+      },
+    })}\n`;
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
+  });
+
+  it("handles multi-byte UTF-8 characters straddling an 8KB chunk boundary", async () => {
+    mockTmuxWithProcess("codex");
+    // Each 日 is 3 bytes. Padding with enough CJK chars to push the json
+    // payload past the 8192-byte chunk size, guaranteeing a multi-byte
+    // character will straddle a read boundary. Without StringDecoder,
+    // the split character decodes to U+FFFD and JSON.parse fails.
+    const padding = "日".repeat(3_000); // 9000 bytes of padding
+    const content = `${JSON.stringify({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-utf8",
+        base_instructions: padding,
+      },
+    })}\n`;
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "event_msg",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({
+      runtimeHandle: makeTmuxHandle(),
+      workspacePath: "/workspace/test",
+    });
+    const result = await agent.getActivityState(session);
+    // If UTF-8 boundary handling is broken, JSON.parse fails, cwd never
+    // matches, no session file is selected, and state falls through to null.
+    expect(result?.state).toBe("ready");
   });
 
   it("returns exited when process handle has dead PID", async () => {
@@ -719,14 +954,34 @@ describe("getSessionInfo", () => {
     const content = jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" });
     setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
+    expect(
+      await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
+    ).toBeNull();
   });
 
   it("returns session info with cost and model when matching session found", async () => {
     const sessionContent = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
-      { type: "event_msg", msg: { type: "token_count", input_tokens: 1000, output_tokens: 500, cached_tokens: 200, reasoning_tokens: 100 } },
-      { type: "event_msg", msg: { type: "token_count", input_tokens: 2000, output_tokens: 300, cached_tokens: 0, reasoning_tokens: 0 } },
+      {
+        type: "event_msg",
+        msg: {
+          type: "token_count",
+          input_tokens: 1000,
+          output_tokens: 500,
+          cached_tokens: 200,
+          reasoning_tokens: 100,
+        },
+      },
+      {
+        type: "event_msg",
+        msg: {
+          type: "token_count",
+          input_tokens: 2000,
+          output_tokens: 300,
+          cached_tokens: 0,
+          reasoning_tokens: 0,
+        },
+      },
     );
 
     mockReaddir.mockResolvedValue(["session-123.jsonl"]);
@@ -742,21 +997,86 @@ describe("getSessionInfo", () => {
     expect(result!.summary).toBe("Codex session (o3-mini)");
     expect(result!.summaryIsFallback).toBe(true);
     expect(result!.cost).toBeDefined();
-    // cached_tokens/reasoning_tokens are subsets, not additive
-    // input: 1000 + 2000 = 3000
+    // cached tokens count toward effective input spend
+    // input: 1000 + 2000 + 200 = 3200
     // output: 500 + 300 = 800
-    expect(result!.cost!.inputTokens).toBe(3000);
+    expect(result!.cost!.inputTokens).toBe(3200);
     expect(result!.cost!.outputTokens).toBe(800);
     expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
   });
 
+  it("parses payload-wrapped Codex session files", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-payload-123",
+          model_provider: "openai",
+        },
+      },
+      {
+        type: "turn_context",
+        payload: {
+          model: "gpt-5.3-codex",
+          cwd: "/workspace/test",
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 3000,
+              output_tokens: 800,
+              cached_input_tokens: 200,
+              reasoning_output_tokens: 100,
+            },
+          },
+        },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.summary).toBe("Codex session (gpt-5.3-codex)");
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(3000);
+    expect(result!.cost!.outputTokens).toBe(800);
+  });
+
+  it("does not treat model_provider as the session model", async () => {
+    const sessionContent = jsonl({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-payload-123",
+        model_provider: "openai",
+      },
+    });
+
+    mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
+  });
+
   it("picks the most recently modified matching session file", async () => {
-    const oldContent = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-    );
-    const newContent = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "o3" },
-    );
+    const oldContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
+    const newContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3" });
 
     mockReaddir.mockResolvedValue(["old-session.jsonl", "new-session.jsonl"]);
     mockOpen.mockImplementation(async (path: string) => {
@@ -788,7 +1108,8 @@ describe("getSessionInfo", () => {
   });
 
   it("handles corrupt/malformed JSONL lines gracefully", async () => {
-    const content = '{"type":"session_meta","cwd":"/workspace/test","model":"gpt-4o"}\n' +
+    const content =
+      '{"type":"session_meta","cwd":"/workspace/test","model":"gpt-4o"}\n' +
       "not valid json\n" +
       '{"type":"event_msg","msg":{"type":"token_count","input_tokens":500,"output_tokens":200}}\n';
 
@@ -851,15 +1172,17 @@ describe("getSessionInfo", () => {
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
     mockReadFile.mockRejectedValue(new Error("EACCES"));
-    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
+    mockCreateReadStream.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
 
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
+    expect(
+      await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
+    ).toBeNull();
   });
 
   it("skips session files when stat throws", async () => {
-    const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-    );
+    const content = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
@@ -900,9 +1223,7 @@ describe("getSessionInfo", () => {
     mockLstat.mockResolvedValue({ isDirectory: () => true });
     // stat is used by findCodexSessionFile to get mtimeMs of matching JSONL files
     mockStat.mockResolvedValue({ mtimeMs: 2000 });
-    const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
-    );
+    const content = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3-mini" });
     setupMockOpen(content);
     setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
@@ -915,9 +1236,7 @@ describe("getSessionInfo", () => {
 
   it("ignores non-JSONL files in sessions directory", async () => {
     mockReaddir.mockResolvedValue(["notes.txt", "config.json", "sess.jsonl"]);
-    const content = jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-    );
+    const content = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
     setupMockOpen(content);
     setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
@@ -1009,6 +1328,71 @@ describe("getRestoreCommand", () => {
     expect(cmd).toContain("thread-abc-123");
   });
 
+  it("uses persisted Codex thread ID without scanning session files", async () => {
+    const session = makeSession({
+      workspacePath: "/workspace/test",
+      metadata: { codexThreadId: "persisted-thread", codexModel: "gpt-5.3-codex" },
+    });
+
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).toContain("'codex' resume");
+    expect(cmd).toContain("--model 'gpt-5.3-codex'");
+    expect(cmd).toContain("persisted-thread");
+    expect(mockReaddir).not.toHaveBeenCalled();
+  });
+
+  it("builds native resume command from payload-wrapped Codex session id", async () => {
+    const content = jsonl(
+      {
+        type: "session_meta",
+        payload: {
+          cwd: "/workspace/test",
+          id: "thread-payload-999",
+          model_provider: "openai",
+        },
+      },
+      {
+        type: "turn_context",
+        payload: {
+          model: "gpt-5.3-codex",
+        },
+      },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).toContain("'codex' resume");
+    expect(cmd).toContain("thread-payload-999");
+  });
+
+  it("does not append --model from model_provider-only payload data", async () => {
+    const content = jsonl({
+      type: "session_meta",
+      payload: {
+        cwd: "/workspace/test",
+        id: "thread-payload-999",
+        model_provider: "openai",
+      },
+    });
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).not.toContain("--model 'openai'");
+  });
+
   it("includes bypass flag when project config permissions=permissionless", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
@@ -1020,10 +1404,16 @@ describe("getRestoreCommand", () => {
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
-    const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { permissions: "permissionless" },
-    }));
+    const session = makeSession({
+      workspacePath: "/workspace/test",
+      metadata: { role: "orchestrator" },
+    });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "permissionless" },
+      }),
+    );
 
     expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(cmd).not.toContain("--ask-for-approval");
@@ -1040,15 +1430,44 @@ describe("getRestoreCommand", () => {
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
-    const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { permissions: "skip" as unknown as AgentSpecificConfig["permissions"] },
-    }));
+    const session = makeSession({
+      workspacePath: "/workspace/test",
+      metadata: { role: "orchestrator" },
+    });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "skip" as unknown as AgentSpecificConfig["permissions"] },
+      }),
+    );
 
     expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
-  it("includes --ask-for-approval never from project config", async () => {
+  it("uses dangerous bypass for worker restore permissionless mode", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test", metadata: { role: "worker" } });
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "permissionless" },
+      }),
+    );
+
+    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval");
+  });
+
+  it("keeps auto-edit restore policy at ask-for-approval never", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
@@ -1060,9 +1479,12 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { permissions: "auto-edit" },
-    }));
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "auto-edit" },
+      }),
+    );
 
     expect(cmd).toContain("--ask-for-approval never");
     expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
@@ -1080,9 +1502,12 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { permissions: "suggest" },
-    }));
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "suggest" },
+      }),
+    );
 
     expect(cmd).toContain("--ask-for-approval untrusted");
   });
@@ -1099,9 +1524,12 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { permissions: "auto-edit", model: "o3-mini" },
-    }));
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { permissions: "auto-edit", model: "o3-mini" },
+      }),
+    );
 
     expect(cmd).not.toBeNull();
     // threadId should come after all flags
@@ -1124,9 +1552,12 @@ describe("getRestoreCommand", () => {
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
-      agentConfig: { model: "o3-mini" },
-    }));
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeProjectConfig({
+        agentConfig: { model: "o3-mini" },
+      }),
+    );
 
     expect(cmd).toContain("--model 'o3-mini'");
     expect(cmd).toContain("-c model_reasoning_effort=high");
@@ -1156,7 +1587,9 @@ describe("getRestoreCommand", () => {
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
     // readFile (full parse) fails
     mockReadFile.mockRejectedValue(new Error("EACCES"));
-    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
+    mockCreateReadStream.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -1259,8 +1692,10 @@ describe("postLaunchSetup", () => {
     mockExecFileAsync.mockRejectedValue(new Error("not found"));
     mockStat.mockRejectedValue(new Error("ENOENT"));
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
-    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
-    expect(mockMkdir).toHaveBeenCalled();
+    // Should not throw — binary resolution runs even if it falls back to "codex"
+    await expect(
+      agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" })),
+    ).resolves.toBeUndefined();
   });
 
   it("returns early when session has no workspacePath", async () => {
@@ -1277,13 +1712,17 @@ describe("postLaunchSetup", () => {
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
 
     // Before postLaunchSetup, binary is "codex"
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
+      "'codex' -c check_for_update_on_startup=false",
+    );
 
     // After postLaunchSetup resolves the binary
     await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
 
     // Now getLaunchCommand should use the resolved binary
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'/opt/bin/codex' -c check_for_update_on_startup=false");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
+      "'/opt/bin/codex' -c check_for_update_on_startup=false",
+    );
   });
 });
 
@@ -1297,246 +1736,17 @@ describe("setupWorkspaceHooks", () => {
     expect(typeof agent.setupWorkspaceHooks).toBe("function");
   });
 
-  it("creates ~/.ao/bin directory", async () => {
-    // Version marker doesn't exist — triggers full install
+  it("is a no-op (PATH wrappers are installed by session-manager)", async () => {
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
     await agent.setupWorkspaceHooks!("/workspace/test", {
       dataDir: "/data",
       sessionId: "sess-1",
     });
-
-    expect(mockMkdir).toHaveBeenCalledWith("/mock/home/.ao/bin", { recursive: true });
-  });
-
-  it("writes ao-metadata-helper.sh with executable permissions via atomic write", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Atomic write: writes to .tmp file first, then renames
-    const helperWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("ao-metadata-helper.sh.tmp."),
-    );
-    expect(helperWriteCall).toBeDefined();
-    expect(helperWriteCall![1]).toContain("update_ao_metadata()");
-    expect(helperWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-
-    // Then renamed to final path
-    const helperRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("ao-metadata-helper.sh"),
-    );
-    expect(helperRenameCall).toBeDefined();
-  });
-
-  it("writes gh and git wrappers atomically when version marker is missing", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // gh wrapper: written to temp, then renamed
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall).toBeDefined();
-    expect(ghWriteCall![1]).toContain("ao gh wrapper");
-
-    const ghRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("/gh"),
-    );
-    expect(ghRenameCall).toBeDefined();
-
-    // git wrapper: written to temp, then renamed
-    const gitWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/git.tmp."),
-    );
-    expect(gitWriteCall).toBeDefined();
-    expect(gitWriteCall![1]).toContain("ao git wrapper");
-
-    const gitRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith("/git"),
-    );
-    expect(gitRenameCall).toBeDefined();
-  });
-
-  it("sets executable permissions on gh and git wrappers via writeFile mode", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-
-    const gitWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/git.tmp."),
-    );
-    expect(gitWriteCall![2]).toEqual({ encoding: "utf-8", mode: 0o755 });
-  });
-
-  it("skips wrapper writes when version marker matches", async () => {
-    // First call for version marker — matches current version
-    // Second call for AGENTS.md — file doesn't exist
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      // AGENTS.md read attempt
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Should still write the metadata helper (always written)
-    const helperWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("ao-metadata-helper.sh.tmp."),
-    );
-    expect(helperWriteCall).toBeDefined();
-
-    // But should NOT write gh/git wrappers (version matches)
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall).toBeUndefined();
-  });
-
-  it("writes version marker after installing wrappers", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Version marker is also atomically written
-    const versionWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes(".ao-version.tmp."),
-    );
-    expect(versionWriteCall).toBeDefined();
-    expect(versionWriteCall![1]).toBe("0.1.1");
-
-    const versionRenameCall = mockRename.mock.calls.find(
-      (call: string[]) => typeof call[1] === "string" && call[1].endsWith(".ao-version"),
-    );
-    expect(versionRenameCall).toBeDefined();
-  });
-
-  it("appends ao section to AGENTS.md when not present", async () => {
-    // Version marker matches (skip wrapper install)
-    // AGENTS.md exists without ao section
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      if (typeof path === "string" && path.endsWith("AGENTS.md")) {
-        return Promise.resolve("# Existing Content\n\nSome stuff here.\n");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
-    );
-    expect(agentsMdCall).toBeDefined();
-    expect(agentsMdCall![1]).toContain("Agent Orchestrator (ao) Session");
-    expect(agentsMdCall![1]).toContain("# Existing Content");
-  });
-
-  it("creates AGENTS.md if it does not exist", async () => {
-    // Version marker matches, AGENTS.md doesn't exist
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
-    );
-    expect(agentsMdCall).toBeDefined();
-    expect(agentsMdCall![1]).toContain("Agent Orchestrator (ao) Session");
-  });
-
-  it("uses atomic write (temp + rename) to prevent partial reads from concurrent sessions", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    // Every wrapper file should be written to a .tmp file first, then renamed
-    // This ensures concurrent readers never see a partially written file
-    const tmpWrites = mockWriteFile.mock.calls.filter(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes(".tmp."),
-    );
-    const renames = mockRename.mock.calls;
-
-    // We expect atomic writes for: helper, gh, git, version marker = 4
-    expect(tmpWrites.length).toBe(4);
-    expect(renames.length).toBe(4);
-
-    // Each rename should move a .tmp file to the final path
-    for (const [src, dst] of renames) {
-      expect(src).toContain(".tmp.");
-      expect(dst).not.toContain(".tmp.");
-    }
-  });
-
-  it("does not duplicate ao section in AGENTS.md if already present", async () => {
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      if (typeof path === "string" && path.endsWith("AGENTS.md")) {
-        return Promise.resolve("# Existing\n\n## Agent Orchestrator (ao) Session\n\nAlready here.\n");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
-    );
-    // Should NOT write AGENTS.md since the section already exists
-    expect(agentsMdCall).toBeUndefined();
+    // Plugin no longer writes wrappers — session-manager handles it.
+    // mkdir/writeFile/rename should not be called by the plugin.
+    expect(mockMkdir).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockRename).not.toHaveBeenCalled();
   });
 });
 
@@ -1544,25 +1754,22 @@ describe("setupWorkspaceHooks", () => {
 // Shell wrapper content verification
 // =========================================================================
 describe("shell wrapper content", () => {
-  const agent = create();
-
   beforeEach(() => {
     // Force wrapper installation by making version marker miss
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
   });
 
   async function getWrapperContent(name: string): Promise<string> {
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
+    // Wrappers are now installed by session-manager via setupPathWrapperWorkspace.
+    // Import and call it directly to test wrapper content.
+    const { setupPathWrapperWorkspace } = await import("@aoagents/ao-core");
+    await setupPathWrapperWorkspace("/workspace/test");
 
     // With atomic writes, content is written to a .tmp. file
     const call = mockWriteFile.mock.calls.find(
-      (c: [string, string, object]) =>
-        typeof c[0] === "string" && c[0].includes(`/${name}.tmp.`),
+      (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes(`/${name}.tmp.`),
     );
-    return call ? call[1] as string : "";
+    return call ? (call[1] as string) : "";
   }
 
   describe("metadata helper", () => {
@@ -1620,14 +1827,15 @@ describe("shell wrapper content", () => {
       expect(content).not.toMatch(/grep -v "\^\$ao_bin_dir\$"/);
     });
 
-    it("only captures output for pr/create and pr/merge", async () => {
+    it("only captures output for pr/create", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain("pr/create|pr/merge");
+      expect(content).toContain('case "$1/$2" in');
+      expect(content).toContain("pr/create)");
     });
 
-    it("uses exec for non-PR commands (transparent passthrough)", async () => {
+    it("passes through non-PR commands to real gh", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain('exec "$real_gh"');
+      expect(content).toContain('"$real_gh" "$@"');
     });
 
     it("prefers GH_PATH when provided and executable", async () => {
@@ -1644,13 +1852,17 @@ describe("shell wrapper content", () => {
 
     it("extracts PR URL from gh pr create output", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain("https://github");
+      expect(content).toContain(
+        "grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'",
+      );
       expect(content).toContain("update_ao_metadata pr");
     });
 
-    it("updates status to merged on gh pr merge", async () => {
+    it("records agent-reported PR metadata on gh pr create", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain("update_ao_metadata status merged");
+      expect(content).toContain("update_ao_metadata agentReportedState");
+      expect(content).toContain("update_ao_metadata agentReportedPrUrl");
+      expect(content).toContain("update_ao_metadata agentReportedPrIsDraft");
     });
 
     it("cleans up temp file on exit", async () => {

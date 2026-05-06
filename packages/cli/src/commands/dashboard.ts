@@ -1,11 +1,16 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig } from "@aoagents/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
-import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
+import {
+  clearStaleCacheIfNeeded,
+  isInstalledUnderNodeModules,
+  rebuildDashboardProductionArtifacts,
+} from "../lib/dashboard-rebuild.js";
+import { preflight } from "../lib/preflight.js";
+import { DEFAULT_PORT } from "../lib/constants.js";
 
 export function registerDashboard(program: Command): void {
   program
@@ -14,9 +19,10 @@ export function registerDashboard(program: Command): void {
     .option("-p, --port <port>", "Port to listen on")
     .option("--no-open", "Don't open browser automatically")
     .option("--rebuild", "Clean stale build artifacts and rebuild before starting")
+    /* c8 ignore start -- process-spawning startup code, tested via integration/onboarding */
     .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean }) => {
       const config = loadConfig();
-      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 3000);
+      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? DEFAULT_PORT);
 
       if (isNaN(port) || port < 1 || port > 65535) {
         console.error(chalk.red("Invalid port number. Must be 1-65535."));
@@ -26,27 +32,11 @@ export function registerDashboard(program: Command): void {
       const localWebDir = findWebDir(); // throws with install-specific guidance if not found
 
       if (opts.rebuild) {
-        // Check if a dashboard is already running on this port.
-        const runningPid = await findRunningDashboardPid(port);
-        const runningWebDir = runningPid ? await findProcessWebDir(runningPid) : null;
-        const targetWebDir = runningWebDir ?? localWebDir;
-
-        if (runningPid) {
-          // Kill the running server, clean .next, then start fresh below.
-          console.log(
-            chalk.dim(`Stopping dashboard (PID ${runningPid}) on port ${port}...`),
-          );
-          try {
-            process.kill(parseInt(runningPid, 10), "SIGTERM");
-          } catch {
-            // Process already exited (ESRCH) — that's fine
-          }
-          // Wait for port to be released
-          await waitForPortFree(port, 5000);
-        }
-
-        await cleanNextCache(targetWebDir);
+        await rebuildDashboardProductionArtifacts(localWebDir, [port]);
         // Fall through to start the dashboard on this port.
+      } else {
+        await preflight.checkBuilt(localWebDir);
+        await clearStaleCacheIfNeeded(localWebDir);
       }
 
       const webDir = localWebDir;
@@ -60,21 +50,12 @@ export function registerDashboard(program: Command): void {
         config.directTerminalPort,
       );
 
-      // In dev mode (monorepo), use `pnpm run dev` which starts Next.js AND
-      // the terminal WebSocket servers via concurrently. Without the WS servers,
-      // the live terminal in the dashboard won't work.
-      const isDevMode = existsSync(resolve(webDir, "server"));
-      const child = isDevMode
-        ? spawn("pnpm", ["run", "dev"], {
-            cwd: webDir,
-            stdio: ["inherit", "inherit", "pipe"],
-            env,
-          })
-        : spawn("npx", ["next", "dev", "-p", String(port)], {
-            cwd: webDir,
-            stdio: ["inherit", "inherit", "pipe"],
-            env,
-          });
+      const startScript = resolve(webDir, "dist-server", "start-all.js");
+      const child = spawn("node", [startScript], {
+        cwd: webDir,
+        stdio: ["inherit", "inherit", "pipe"],
+        env,
+      });
 
       const stderrChunks: string[] = [];
 
@@ -108,10 +89,13 @@ export function registerDashboard(program: Command): void {
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
           if (looksLikeStaleBuild(stderr)) {
+            const recoveryCommand = isInstalledUnderNodeModules(webDir)
+              ? "npm install -g @aoagents/ao@latest"
+              : "ao dashboard --rebuild";
             console.error(
               chalk.yellow(
                 "\nThis looks like a stale build cache issue. Try:\n\n" +
-                  `  ${chalk.cyan("ao dashboard --rebuild")}\n`,
+                  `  ${chalk.cyan(recoveryCommand)}\n`,
               ),
             );
           }
@@ -119,6 +103,7 @@ export function registerDashboard(program: Command): void {
 
         process.exit(code ?? 0);
       });
+      /* c8 ignore stop */
     });
 }
 

@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
+import { validateIdentifier, validateString, validateConfiguredProject } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
@@ -25,6 +25,14 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Prompt validated here; sanitized (newline stripping) below after project validation
+  if (body.prompt !== undefined && body.prompt !== null) {
+    const promptErr = validateString(body.prompt, "prompt", 4096);
+    if (promptErr) {
+      return jsonWithCorrelation({ error: promptErr }, { status: 400 }, correlationId);
+    }
+  }
+
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;
@@ -45,9 +53,14 @@ export async function POST(request: NextRequest) {
       return jsonWithCorrelation({ error: projectErr }, { status: 404 }, correlationId);
     }
 
+    // Strip newlines from prompt to prevent metadata injection (key=value format uses \n as delimiter)
+    const rawPrompt = (body.prompt as string) ?? undefined;
+    const prompt = rawPrompt ? rawPrompt.replace(/[\r\n]/g, " ").trim() : undefined;
+
     const session = await sessionManager.spawn({
       projectId,
       issueId: (body.issueId as string) ?? undefined,
+      prompt: prompt || undefined,
     });
 
     recordApiObservation({

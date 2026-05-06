@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import type { CIStatus, ReviewDecision, ActivityState } from "@composio/ao-core";
+import type { CIStatus, ReviewDecision, ActivityState } from "@aoagents/ao-core";
 
 export function header(title: string): string {
   const line = "─".repeat(76);

@@ -20,7 +20,7 @@ vi.mock("../../src/lib/shell.js", () => ({
   getTmuxActivity: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@composio/ao-core", () => ({
+vi.mock("@aoagents/ao-core", () => ({
   loadConfig: () => mockConfigRef.current,
 }));
 
@@ -122,6 +122,20 @@ describe("open command", () => {
     expect(output).not.toContain("backend-1");
   });
 
+  it("matches hashed tmux worker session names", async () => {
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "1686e4aaaeaa-app-1\nbackend-1";
+      return null;
+    });
+
+    await program.parseAsync(["node", "test", "open", "my-app"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Opening 1 session");
+    expect(output).toContain("1686e4aaaeaa-app-1");
+    expect(output).not.toContain("backend-1");
+  });
+
   it("opens a single session by name", async () => {
     mockTmux.mockImplementation(async (...args: string[]) => {
       if (args[0] === "list-sessions") return "app-1\napp-2";
@@ -167,7 +181,20 @@ describe("open command", () => {
     await program.parseAsync(["node", "test", "open", "app-1"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(output).toContain("tmux attach");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-1");
+  });
+
+  it("falls back to the owning project for orchestrator sessions", async () => {
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-orchestrator";
+      return null;
+    });
+    mockExec.mockRejectedValue(new Error("command not found"));
+
+    await program.parseAsync(["node", "test", "open", "app-orchestrator"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("http://localhost:3000/projects/my-app/sessions/app-orchestrator");
   });
 
   it("shows 'No sessions to open' when none exist", async () => {

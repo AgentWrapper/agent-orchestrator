@@ -136,9 +136,9 @@ for ISSUE in "${ISSUES[@]}"; do
 
     # Build initial prompt
     if [ "$SESSION_PREFIX" = "splitly" ]; then
-        INITIAL_PROMPT="Please start working on GitHub issue #$ISSUE_NUM. First, fetch the issue details using: gh issue view $ISSUE_NUM --repo $GITHUB_REPO. Then create an appropriate feature branch (e.g., fix/issue-$ISSUE_NUM-short-description or feat/issue-$ISSUE_NUM-short-description), and start implementing the solution."
+        INITIAL_PROMPT="Please start working on GitHub issue #$ISSUE_NUM. First, fetch the issue details using: gh issue view $ISSUE_NUM --repo $GITHUB_REPO. Then implement the solution in the branch already prepared for this session (confirm with \`git branch --show-current\` in the worktree if needed)."
     else
-        INITIAL_PROMPT="Please start working on $ISSUE, fetch ticket info, create the appropriate branch so that github auto links to linear, and start working on the task"
+        INITIAL_PROMPT="Please start working on $ISSUE, fetch ticket info, and implement the task in the branch already prepared for this session (confirm with \`git branch --show-current\` in the worktree if needed)."
     fi
 
     # Send prompt to the running Claude session

@@ -1,3 +1,5 @@
+"use client";
+
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "../SessionDetail";
@@ -5,6 +7,8 @@ import { makePR, makeSession } from "../../__tests__/helpers";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/",
 }));
 
 vi.mock("../DirectTerminal", () => ({
@@ -29,87 +33,37 @@ function mockMobileViewport() {
   });
 }
 
-describe("SessionDetail mobile navbar", () => {
+describe("SessionDetail unified layout (mobile viewport)", () => {
   beforeEach(() => {
     mockMobileViewport();
   });
 
-  it("shows dashboard, PRs, and orchestrator nav on orchestrator pages", () => {
-    const session = makeSession({
-      id: "my-app-orchestrator",
-      projectId: "my-app",
-      metadata: { role: "orchestrator" },
-      summary: "Orchestrator session title",
-    });
-
+  it("shows hamburger toggle button in topbar on mobile", () => {
     render(
       <SessionDetail
-        session={session}
-        isOrchestrator
-        orchestratorZones={{ merge: 1, respond: 0, review: 0, pending: 0, working: 2, done: 0 }}
-        projectOrchestratorId="my-app-orchestrator"
-      />,
-    );
-
-    const nav = screen.getByRole("navigation", { name: /session navigation/i });
-    expect(nav).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=my-app");
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
-    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getAllByText("Orchestrator session title")).toHaveLength(1);
-    expect(screen.queryByText("agents")).not.toBeInTheDocument();
-    expect(screen.queryByText("responding")).not.toBeInTheDocument();
-  });
-
-  it("routes PRs to the dedicated page from worker session pages", () => {
-    render(
-      <SessionDetail
-        session={makeSession({
-          id: "worker-1",
-          projectId: "my-app",
-          pr: makePR({ number: 55, title: "Fix mobile navbar" }),
-        })}
-        projectOrchestratorId="my-app-orchestrator"
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
-    expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)).toHaveAttribute(
-      "href",
-      "/sessions/my-app-orchestrator",
-    );
-  });
-
-  it("hides the orchestrator nav item when no orchestrator destination exists", () => {
-    render(
-      <SessionDetail
-        session={makeSession({
-          id: "worker-4",
-          projectId: "my-app",
-          pr: makePR({ number: 56, title: "No orchestrator yet" }),
-        })}
+        session={makeSession({ id: "worker-1", projectId: "my-app" })}
+        projects={[{ id: "my-app", name: "My App" }]}
         projectOrchestratorId={null}
       />,
     );
 
-    const nav = screen.getByRole("navigation", { name: /session navigation/i });
-
-    expect(within(nav).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
-      "href",
-      "/?project=my-app",
-    );
-    expect(within(nav).getByRole("link", { name: "PRs" })).toHaveAttribute(
-      "href",
-      "/prs?project=my-app",
-    );
-    expect(within(nav).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Toggle sidebar")).toBeInTheDocument();
   });
 
-  it("keeps branch and PR chips in the compact mobile header", () => {
+  it("shows session ID in topbar header", () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-stable-title", projectId: "my-app" })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    // Session id is rendered twice (mobile + desktop copies, media-query toggled);
+    // jsdom ignores media queries so both appear. Assert at least one is present.
+    expect(screen.getAllByText("worker-stable-title").length).toBeGreaterThan(0);
+  });
+
+  it("shows PR info for sessions with a PR", () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -123,61 +77,81 @@ describe("SessionDetail mobile navbar", () => {
       />,
     );
 
-    expect(screen.getByText("Compact mobile header")).toBeInTheDocument();
-    expect(screen.getByText("feat/compact-header")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "PR #77" })).toHaveClass(
-      "session-detail-link-pill--link",
-    );
-    expect(screen.getByRole("link", { name: "feat/compact-header" })).toHaveClass(
-      "session-detail-link-pill--link",
-    );
+    expect(screen.getAllByText("worker-2").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /PR #77/i }).length).toBeGreaterThan(0);
   });
 
-  it("preserves CI and unresolved review comment detail on mobile session pages", () => {
+  it("shows PR info for sessions with enriched PRs", () => {
     render(
       <SessionDetail
         session={makeSession({
           id: "worker-3",
           projectId: "my-app",
-          summary: "Review heavy session",
           pr: makePR({
             number: 88,
             title: "Keep PR detail intact",
             ciStatus: "failing",
-            ciChecks: [
-              { name: "build", status: "failed", url: "https://ci.example/build" },
-              { name: "lint", status: "passed", url: "https://ci.example/lint" },
-            ],
             reviewDecision: "changes_requested",
-            mergeability: {
-              mergeable: false,
-              ciPassing: false,
-              approved: false,
-              noConflicts: true,
-              blockers: ["CI failing", "Changes requested"],
-            },
             unresolvedThreads: 2,
-            unresolvedComments: [
-              {
-                url: "https://github.com/acme/app/pull/88#discussion_r1",
-                path: "src/app.ts",
-                author: "bugbot",
-                body: "### Fix null handling\n<!-- DESCRIPTION START -->Handle missing data safely<!-- DESCRIPTION END -->",
-              },
-            ],
           }),
         })}
         projectOrchestratorId="my-app-orchestrator"
       />,
     );
 
-    expect(screen.getByText(/CI failing/i)).toBeInTheDocument();
-    expect(screen.getByText(/Changes requested/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 unresolved comments/i)).toBeInTheDocument();
-    expect(screen.getByText("Unresolved Comments")).toBeInTheDocument();
-    expect(screen.getByText("Fix null handling")).toBeInTheDocument();
-    expect(screen.getByText("build")).toBeInTheDocument();
-    expect(screen.getByText("lint")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /PR #88/i }).length).toBeGreaterThan(0);
+  });
+
+  it("renders the session detail shell for active sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-terminal", projectId: "my-app", status: "running" })}
+        projects={[{ id: "my-app", name: "My App" }]}
+        projectOrchestratorId={null}
+      />,
+    );
+
+    // The terminal section is always rendered; terminal mounts after rAF
+    expect(screen.getAllByText("worker-terminal").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Toggle sidebar")).toBeInTheDocument();
+  });
+
+  it("shows orchestrator button in topbar when orchestrator exists", () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-4", projectId: "my-app" })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    // Scope to the topbar since MobileBottomNav also has an orchestrator link
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toBeInTheDocument();
+  });
+
+  it("does not show orchestrator button when no orchestrator exists", () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-5", projectId: "my-app" })}
+        projectOrchestratorId={null}
+      />,
+    );
+
+    expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
+  });
+
+  it("shows merged PR link for merged sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-merged",
+          projectId: "my-app",
+          pr: makePR({ number: 89, state: "merged", title: "Preserve merged badge styling" }),
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    expect(screen.getAllByRole("link", { name: /PR #89/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("worker-merged").length).toBeGreaterThan(0);
   });
 });

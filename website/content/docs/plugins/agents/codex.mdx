@@ -1,0 +1,62 @@
+---
+title: Codex
+description: OpenAI's Codex CLI. Full session resume and native JSONL event stream.
+---
+
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="codex" size={28} />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>agent</code> · Name: <code>codex</code> · Binary: <code>codex</code></span>
+</div>
+
+[OpenAI Codex CLI](https://github.com/openai/codex) is a terminal coding agent from OpenAI. AO hooks into it via PATH wrappers and reads its native session JSONL for activity + cost.
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+## Install
+
+```bash
+npm install -g @openai/codex
+```
+
+## Use
+
+```yaml title="agent-orchestrator.yaml"
+agent: codex
+```
+
+No plugin-level config.
+
+## How it works
+
+- **Launch:** `codex` runs inside the worktree. AO sets `CODEX_DISABLE_UPDATE_CHECK=1` to keep the agent quiet about updates mid-session.
+- **Activity tracking:** Codex writes session events to `~/.codex/sessions/YYYY/MM/DD/<id>.jsonl`. AO reads the last entry to determine `active/ready/idle/waiting_input/blocked`.
+- **PR + git tracking:** AO installs wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git`. When Codex runs `gh pr create`, the wrapper records the PR number in the session metadata.
+- **Session resume:** `codex resume <threadId>` — AO stores the thread id in session metadata and replays it.
+
+## Environment variables
+
+| Variable | Set by AO | Purpose |
+|---|---|---|
+| `AO_SESSION_ID` | ✓ | AO session id |
+| `AO_ISSUE_ID` | ✓ | Issue identifier |
+| `PATH` | ✓ | Prepends `~/.ao/bin` for the wrappers |
+| `GH_PATH` | ✓ | Absolute path to the real `gh`, used by the wrapper |
+| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`) | Skip version check |
+
+OpenAI API credentials come from wherever `codex` reads them — AO doesn't set them.
+
+## Troubleshooting
+
+<Accordions>
+  <Accordion title="`codex` not found after install">
+    npm-global install sometimes misses the PATH. Run `which codex` — if empty, add your global bin (`npm config get prefix` + `/bin`) to PATH.
+  </Accordion>
+  <Accordion title="Dashboard activity stuck on `idle`">
+    AO reads `~/.codex/sessions/`. If the date-sharded path doesn't match your clock (e.g. Docker container with wrong TZ), sessions look stale — align the clocks.
+  </Accordion>
+  <Accordion title="PR created but dashboard doesn't know">
+    The PATH wrapper writes session metadata on `gh pr create`. If `gh` was invoked with an absolute path (bypassing the wrapper) AO won't see it. `ao session claim-pr <pr> <sessionId>` fixes this retroactively.
+  </Accordion>
+</Accordions>

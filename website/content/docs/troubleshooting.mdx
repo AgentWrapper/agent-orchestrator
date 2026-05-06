@@ -1,0 +1,108 @@
+---
+title: Troubleshooting
+description: Common AO problems and concrete fixes. Most start with `ao doctor`.
+---
+
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+## First step: `ao doctor`
+
+```bash
+ao doctor
+ao doctor --fix           # auto-repair safe things
+ao doctor --test-notify   # send a test through each notifier
+```
+
+Covers: install health, plugin resolution, notifier connectivity, stale temp files.
+
+## Install & environment
+
+<Accordions>
+  <Accordion title="`ao: command not found`">
+    The npm global bin isn't on your PATH. Find it with `npm config get prefix` and add `<prefix>/bin` to your shell's PATH.
+  </Accordion>
+  <Accordion title="`tmux: command not found` (on Windows)">
+    Expected. Use `runtime: process` in your config. See [Platforms](/docs/platforms#windows).
+  </Accordion>
+  <Accordion title="`gh: authentication required`">
+    Run `gh auth login`. AO uses `gh` for every GitHub interaction.
+  </Accordion>
+  <Accordion title="Port 3000 already in use">
+    AO auto-picks the next free port. You'll see the actual URL in the `ao start` output.
+  </Accordion>
+  <Accordion title="Dashboard crashes with 'vendor-chunks not found'">
+    Stale Next.js artifacts. Run `ao dashboard --rebuild`.
+  </Accordion>
+</Accordions>
+
+## Agents & sessions
+
+<Accordions>
+  <Accordion title="`ao spawn` hangs at 'waiting for idle'">
+    The agent never reached idle state. Run `ao status --watch` to see what's happening — if it's legitimately working (e.g. large install step), wait. Otherwise `ao session kill <session>` and spawn again.
+  </Accordion>
+  <Accordion title="Dashboard activity stuck on 'active' or 'idle'">
+    `getActivityState` reads the agent's JSONL / activity log. If that file is missing or stale, you'll see wrong states. `ao doctor` flags this. See the agent's individual plugin page under [Plugins › Agents](/docs/plugins/agents) for recovery.
+  </Accordion>
+  <Accordion title="Agent opened a PR but the dashboard doesn't know">
+    The PATH wrapper didn't record it (possible if the agent called `gh` by absolute path). Use `ao session claim-pr <pr> <sessionId>` to link retroactively.
+  </Accordion>
+  <Accordion title="Session won't restore">
+    `ao session restore <sessionId>` relaunches the agent in the same worktree. If restore keeps failing, check the agent plugin's resume docs — some agents don't support resume at all (Cursor, Aider).
+  </Accordion>
+  <Accordion title="`Session can't be found` with OpenCode">
+    Run `ao session remap <sessionId>` to re-discover the OpenCode mapping. Use `--force` if a stale mapping is stuck.
+  </Accordion>
+</Accordions>
+
+## GitHub / SCM
+
+<Accordions>
+  <Accordion title="GitHub API rate limit">
+    AO paces calls, but heavy projects can still hit limits. The lifecycle manager backs off automatically. If you see sustained rate-limit errors, check that you're logged in as yourself (`gh auth status`) — unauthenticated calls have much lower limits.
+  </Accordion>
+  <Accordion title="CI recovery never fires">
+    `reactions.ciFailed.enabled: false` in your config, or the PR is in draft. See [CI recovery › When it doesn't kick in](/docs/guides/ci-recovery#when-it-doesnt-kick-in).
+  </Accordion>
+  <Accordion title="Review loop never fires">
+    Review feedback is only replayed on `CHANGES_REQUESTED` — not on plain `COMMENTED` reviews. See [Review loop](/docs/guides/review-loop).
+  </Accordion>
+  <Accordion title="Webhook delivers but nothing happens">
+    HMAC signature check failing. Verify your `secretEnvVar` is exported and matches the secret you set on GitHub.
+  </Accordion>
+</Accordions>
+
+## Notifications
+
+<Accordions>
+  <Accordion title="Desktop notifications silent on macOS">
+    System Settings → Notifications → allow your terminal app.
+  </Accordion>
+  <Accordion title="Desktop notifier warning on Windows">
+    Expected. Add Discord, Slack, or a webhook notifier in the same `notifier:` list.
+  </Accordion>
+  <Accordion title="Slack webhook 429s under load">
+    The slack notifier doesn't honor Retry-After. Use the generic [webhook notifier](/docs/plugins/notifiers/webhook) with `retries` tuned up.
+  </Accordion>
+</Accordions>
+
+## Windows-specific
+
+<Accordions>
+  <Accordion title="`ao open` prints a URL instead of opening a tab">
+    Expected on Windows. The iTerm2 helper only runs on macOS. Use the dashboard's built-in terminal (the printed URL takes you there).
+  </Accordion>
+  <Accordion title="Child process exits immediately">
+    Shell quoting issue. Pass long prompts via `--prompt` with simple ASCII, or via `ao send --file <path>`.
+  </Accordion>
+</Accordions>
+
+## Still stuck
+
+- Check the [FAQ](/docs/faq).
+- Open an issue: [`ComposioHQ/agent-orchestrator`](https://github.com/ComposioHQ/agent-orchestrator/issues).
+When opening an issue, include:
+
+- Output of `ao --version`
+- The contents of `~/.agent-orchestrator/{hash}-observability/processes/` (one JSON snapshot per process; each contains traces, health, and metrics)
+- Your `agent-orchestrator.yaml` (redact any secrets)

@@ -13,7 +13,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
-import type { PRInfo, Session, ProjectConfig, SCMWebhookRequest } from "@composio/ao-core";
+import { createActivitySignal, type PRInfo, type Session, type ProjectConfig, type SCMWebhookRequest } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -44,6 +44,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/my-feature",
     issueId: null,
     pr: null,
@@ -347,6 +352,12 @@ describe("scm-gitlab plugin", () => {
 
     it("returns null when session has no branch", async () => {
       const result = await scm.detectPR(makeSession({ branch: null }), project);
+      expect(result).toBeNull();
+      expect(glabMock).not.toHaveBeenCalled();
+    });
+
+    it("returns null when project has no repo configured", async () => {
+      const result = await scm.detectPR(makeSession(), { ...project, repo: undefined });
       expect(result).toBeNull();
       expect(glabMock).not.toHaveBeenCalled();
     });
@@ -1008,87 +1019,6 @@ describe("scm-gitlab plugin", () => {
     it("throws on error (fail-closed)", async () => {
       mockGlabError("API rate limit");
       await expect(scm.getPendingComments(pr)).rejects.toThrow("API rate limit");
-    });
-  });
-
-  // ---- getAutomatedComments ----------------------------------------------
-
-  describe("getAutomatedComments", () => {
-    it("returns bot discussion notes with severity", async () => {
-      mockGlab([
-        {
-          notes: [
-            {
-              id: 101,
-              author: { username: "gitlab-bot" },
-              body: "Found a critical error",
-              position: { new_path: "a.ts", new_line: 5 },
-              created_at: "2025-01-01T00:00:00Z",
-            },
-          ],
-        },
-        {
-          notes: [
-            {
-              id: 102,
-              author: { username: "alice" },
-              body: "Human comment",
-              created_at: "2025-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments).toHaveLength(1);
-      expect(comments[0].botName).toBe("gitlab-bot");
-      expect(comments[0].severity).toBe("error");
-    });
-
-    it("classifies severity from body content", async () => {
-      mockGlab([
-        {
-          notes: [
-            {
-              id: 1,
-              author: { username: "sast-bot" },
-              body: "Error: build failed",
-              created_at: "2025-01-01T00:00:00Z",
-            },
-          ],
-        },
-        {
-          notes: [
-            {
-              id: 2,
-              author: { username: "sast-bot" },
-              body: "Warning: deprecated API",
-              created_at: "2025-01-01T00:00:00Z",
-            },
-          ],
-        },
-        {
-          notes: [
-            {
-              id: 3,
-              author: { username: "sast-bot" },
-              body: "Deployed to staging",
-              created_at: "2025-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments).toHaveLength(3);
-      expect(comments[0].severity).toBe("error");
-      expect(comments[1].severity).toBe("warning");
-      expect(comments[2].severity).toBe("info");
-    });
-
-    it("throws on error (fail-closed)", async () => {
-      mockGlabError("network failure");
-      await expect(scm.getAutomatedComments(pr)).rejects.toThrow("network failure");
     });
   });
 

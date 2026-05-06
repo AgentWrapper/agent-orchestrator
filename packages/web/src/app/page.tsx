@@ -28,8 +28,9 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
       projectId={pageData.selectedProjectId}
       projectName={pageData.projectName}
       projects={pageData.projects}
-      initialGlobalPause={pageData.globalPause}
       orchestrators={pageData.orchestrators}
+      attentionZones={pageData.attentionZones}
+      dashboardLoadError={pageData.dashboardLoadError}
     />
   );
 }

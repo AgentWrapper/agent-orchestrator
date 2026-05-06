@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   createCorrelationId,
   createProjectObserver,
@@ -5,7 +7,7 @@ import {
   resolveProjectIdForSessionId,
   type OrchestratorConfig,
   type ObservabilitySummary,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { NextResponse } from "next/server";
 
 let webApiObserver: ReturnType<typeof createProjectObserver> | null | undefined;

@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionId, OrchestratorConfig, ProjectConfig } from "../types.js";
 import { listMetadata, readMetadataRaw } from "../metadata.js";
-import { getSessionsDir, generateConfigHash } from "../paths.js";
+import { getProjectSessionsDir, getProjectDir, getAoBaseDir } from "../paths.js";
 
 export interface ScannedSession {
   sessionId: SessionId;
@@ -22,7 +21,7 @@ export function scanAllSessions(
   for (const [projectKey, project] of Object.entries(config.projects)) {
     if (projectIdFilter && projectKey !== projectIdFilter) continue;
 
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const sessionsDir = getProjectSessionsDir(projectKey);
     if (!existsSync(sessionsDir)) continue;
 
     for (const file of listMetadata(sessionsDir)) {
@@ -42,7 +41,10 @@ export function scanAllSessions(
   return results;
 }
 
-export function getRecoveryLogPath(configPath: string): string {
-  const hash = generateConfigHash(configPath);
-  return join(homedir(), ".agent-orchestrator", hash, "recovery.log");
+export function getRecoveryLogPath(_configPath: string, projectId?: string): string {
+  if (projectId) {
+    return join(getProjectDir(projectId), "recovery.log");
+  }
+  // Fallback: store at the AO base dir level (not under projects/)
+  return join(getAoBaseDir(), "recovery.log");
 }

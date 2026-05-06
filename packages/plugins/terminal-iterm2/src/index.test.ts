@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import type { Session } from "@composio/ao-core";
+import { createInitialCanonicalLifecycle, createActivitySignal, type Session } from "@aoagents/ao-core";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -17,11 +17,23 @@ const mockExecFile = execFile as unknown as Mock;
 const mockPlatform = platform as unknown as Mock;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
+  const lifecycle = createInitialCanonicalLifecycle("worker", new Date());
+  lifecycle.session.state = "working";
+  lifecycle.session.reason = "task_in_progress";
+  lifecycle.session.startedAt = lifecycle.session.lastTransitionAt;
+  lifecycle.runtime.state = "alive";
+  lifecycle.runtime.reason = "process_running";
   return {
     id: "app-1",
     projectId: "my-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
+    lifecycle,
     branch: "feat/test",
     issueId: null,
     pr: null,

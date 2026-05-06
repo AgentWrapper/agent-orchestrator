@@ -1,66 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildDirectTerminalWsUrl, buildTerminalThemes } from "@/components/DirectTerminal";
-
-describe("buildDirectTerminalWsUrl", () => {
-  it("keeps non-standard port when proxy path override is set", () => {
-    const wsUrl = buildDirectTerminalWsUrl({
-      location: {
-        protocol: "https:",
-        hostname: "example.com",
-        host: "example.com:8443",
-        port: "8443",
-      },
-      sessionId: "session-1",
-      proxyWsPath: "/ao-terminal-ws",
-    });
-
-    expect(wsUrl).toBe("wss://example.com:8443/ao-terminal-ws?session=session-1");
-  });
-
-  it("uses proxy path without port when default port is used", () => {
-    const wsUrl = buildDirectTerminalWsUrl({
-      location: {
-        protocol: "https:",
-        hostname: "example.com",
-        host: "example.com",
-        port: "",
-      },
-      sessionId: "session-2",
-      proxyWsPath: "/ao-terminal-ws",
-    });
-
-    expect(wsUrl).toBe("wss://example.com/ao-terminal-ws?session=session-2");
-  });
-
-  it("uses default path-based endpoint on standard ports when no proxy override is set", () => {
-    const wsUrl = buildDirectTerminalWsUrl({
-      location: {
-        protocol: "https:",
-        hostname: "example.com",
-        host: "example.com",
-        port: "443",
-      },
-      sessionId: "session-3",
-    });
-
-    expect(wsUrl).toBe("wss://example.com/ao-terminal-ws?session=session-3");
-  });
-
-  it("uses direct terminal port on non-standard ports when no proxy override is set", () => {
-    const wsUrl = buildDirectTerminalWsUrl({
-      location: {
-        protocol: "http:",
-        hostname: "localhost",
-        host: "localhost:3000",
-        port: "3000",
-      },
-      sessionId: "session-4",
-      directTerminalPort: "14888",
-    });
-
-    expect(wsUrl).toBe("ws://localhost:14888/ws?session=session-4");
-  });
-});
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { buildTerminalThemes, resolveMonoFontFamily } from "@/components/DirectTerminal";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ANSI_KEYS = [
@@ -125,15 +64,59 @@ describe("buildTerminalThemes", () => {
     expect(dark.background).toBe("#0a0a0f");
   });
 
-  it("variant changes cursor color between agent and orchestrator", () => {
+  it("orchestrator variant reuses the shared design-system accent", () => {
     const agent = buildTerminalThemes("agent");
     const orch = buildTerminalThemes("orchestrator");
-    expect(agent.dark.cursor).not.toBe(orch.dark.cursor);
-    expect(agent.light.cursor).not.toBe(orch.light.cursor);
+    expect(agent.dark.cursor).toBe(orch.dark.cursor);
+    expect(agent.light.cursor).toBe(orch.light.cursor);
+    expect(agent.dark.selectionBackground).toBe(orch.dark.selectionBackground);
+    expect(agent.light.selectionBackground).toBe(orch.light.selectionBackground);
+  });
+
+  it("keeps ANSI magenta distinct from ANSI blue", () => {
+    const { dark, light } = buildTerminalThemes("agent");
+    expect(dark.magenta).not.toBe(dark.blue);
+    expect(dark.brightMagenta).not.toBe(dark.brightBlue);
+    expect(light.magenta).not.toBe(light.blue);
+    expect(light.brightMagenta).not.toBe(light.brightBlue);
   });
 
   it("selection colors differ between dark and light themes", () => {
     const { dark, light } = buildTerminalThemes("agent");
     expect(dark.selectionBackground).not.toBe(light.selectionBackground);
+  });
+});
+
+describe("resolveMonoFontFamily", () => {
+  const FALLBACK =
+    '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+
+  beforeEach(() => {
+    document.documentElement.style.removeProperty("--font-jetbrains-mono");
+  });
+
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--font-jetbrains-mono");
+  });
+
+  it("prepends the resolved CSS variable to the fallback stack", () => {
+    document.documentElement.style.setProperty(
+      "--font-jetbrains-mono",
+      "__JetBrains_Mono_abc123",
+    );
+    const result = resolveMonoFontFamily();
+    expect(result).toBe(`__JetBrains_Mono_abc123, ${FALLBACK}`);
+  });
+
+  it("returns the fallback stack when the CSS variable is not set", () => {
+    expect(resolveMonoFontFamily()).toBe(FALLBACK);
+  });
+
+  it("never emits `var(...)` (would reintroduce the canvas-parse bug)", () => {
+    document.documentElement.style.setProperty(
+      "--font-jetbrains-mono",
+      "__JetBrains_Mono_abc123",
+    );
+    expect(resolveMonoFontFamily()).not.toMatch(/var\(/);
   });
 });

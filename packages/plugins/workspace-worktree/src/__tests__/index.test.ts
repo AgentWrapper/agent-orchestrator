@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@composio/ao-core";
+import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@aoagents/ao-core/types";
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before any import that uses the mocked modules
@@ -147,6 +147,35 @@ describe("create() factory", () => {
 
     expect(info.path).toBe("/mock-home/custom-path/myproject/session-1");
   });
+
+  it("uses per-call worktreeDir override instead of plugin default", async () => {
+    const ws = create(); // default: ~/.worktrees
+
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitSuccess(""); // worktree add
+
+    const info = await ws.create(
+      makeCreateConfig({ worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees" }),
+    );
+
+    // worktreeDir is used directly (not joined with projectId) — session-manager passes the project-scoped dir
+    expect(info.path).toBe("/mock-home/.agent-orchestrator/projects/myproject/worktrees/session-1");
+  });
+
+  it("per-call worktreeDir overrides plugin-level worktreeDir", async () => {
+    const ws = create({ worktreeDir: "/old/worktrees" });
+
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitSuccess(""); // worktree add
+
+    const info = await ws.create(
+      makeCreateConfig({ worktreeDir: "/new/v2/worktrees" }),
+    );
+
+    expect(info.path).toBe("/new/v2/worktrees/session-1");
+  });
 });
 
 describe("workspace.create()", () => {
@@ -162,18 +191,20 @@ describe("workspace.create()", () => {
     // First call: git remote get-url origin
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["remote", "get-url", "origin"], {
       cwd: "/repo/path",
+      timeout: 30_000,
     });
 
     // Second call: git fetch origin --quiet
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/repo/path",
+      timeout: 30_000,
     });
 
     // Third call: git rev-parse --verify --quiet origin/main
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--verify", "--quiet", "origin/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     // Fourth call: git worktree add -b <branch> <path> <baseRef>
@@ -187,7 +218,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "origin/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
   });
 
@@ -202,6 +233,166 @@ describe("workspace.create()", () => {
 
     expect(mockMkdirSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject", {
       recursive: true,
+    });
+  });
+
+  it("removes a stale unregistered worktree directory before creating a new worktree", async () => {
+    const ws = create();
+
+    mockExistsSync.mockReturnValueOnce(true);
+    mockGitSuccess(""); // git worktree prune
+    mockGitSuccess("worktree /repo/path\nHEAD deadbeef\nbranch refs/heads/main"); // git worktree list --porcelain
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "add", "-b", "feat/TEST-1", "/mock-home/.worktrees/myproject/session-1", "origin/main"],
+      { cwd: "/repo/path", timeout: 30_000 },
+    );
+  });
+
+  it("throws a useful error when the existing worktree path is still registered with git", async () => {
+    const ws = create();
+
+    mockExistsSync.mockReturnValueOnce(true);
+    mockGitSuccess(""); // git worktree prune
+    mockGitSuccess(
+      "worktree /mock-home/.worktrees/myproject/session-1\nHEAD deadbeef\nbranch refs/heads/feat/TEST-1",
+    ); // git worktree list --porcelain
+
+    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
+      'Worktree path "/mock-home/.worktrees/myproject/session-1" already exists and is still registered with git',
+    );
+  });
+
+  it("finds an adoptable worktree in the project-scoped worktree directory", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.agent-orchestrator/projects/myproject/worktrees/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(
+      makeCreateConfig({
+        worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees",
+      }),
+    );
+
+    expect(info).toEqual({
+      path: "/mock-home/.agent-orchestrator/projects/myproject/worktrees/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
+    });
+  });
+
+  it("finds an adoptable worktree in the legacy managed worktree directory", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(
+      makeCreateConfig({
+        worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees",
+      }),
+    );
+
+    expect(info?.path).toBe("/mock-home/.worktrees/myproject/session-1");
+  });
+
+  it("returns null when no managed worktree tracks the requested branch", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-2",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/OTHER",
+      ].join("\n"),
+    );
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toBeNull();
+  });
+
+  it("throws when the matching branch is checked out outside AO-managed worktree directories", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /tmp/manual-worktree",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    await expect(ws.findManagedWorkspace?.(makeCreateConfig())).rejects.toThrow(
+      'outside AO-managed worktree directories',
+    );
+  });
+
+  it("skips worktree entries whose path no longer exists on disk", async () => {
+    const ws = create();
+
+    // The worktree is listed by git but the directory was manually deleted
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    // existsSync returns false for the deleted worktree path
+    mockExistsSync.mockReturnValueOnce(false);
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toBeNull();
+  });
+
+  it("handles CRLF line endings in git worktree list output", async () => {
+    const ws = create();
+
+    // Simulate Windows git output with \r\n line endings
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\r\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toEqual({
+      path: "/mock-home/.worktrees/myproject/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
     });
   });
 
@@ -229,7 +420,7 @@ describe("workspace.create()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--verify", "--quiet", "refs/heads/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     expect(mockExecFileAsync).toHaveBeenCalledWith(
@@ -242,7 +433,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
   });
 
@@ -272,12 +463,13 @@ describe("workspace.create()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "origin/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     // Fourth call: checkout
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
+      timeout: 30_000,
     });
 
     expect(info.branch).toBe("feat/TEST-1");
@@ -297,11 +489,12 @@ describe("workspace.create()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "refs/heads/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
+      timeout: 30_000,
     });
 
     expect(info.branch).toBe("feat/TEST-1");
@@ -325,7 +518,7 @@ describe("workspace.create()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
   });
 
@@ -421,6 +614,7 @@ describe("workspace.create()", () => {
     // fetch should use expanded path
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/mock-home/my-repo",
+      timeout: 30_000,
     });
   });
 
@@ -443,7 +637,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
   });
 });
@@ -470,7 +664,7 @@ describe("workspace.restore()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "origin/feat/TEST-1",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     expect(info.branch).toBe("feat/TEST-1");
@@ -497,7 +691,7 @@ describe("workspace.restore()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
 
     expect(info).toEqual({
@@ -524,14 +718,14 @@ describe("workspace.destroy()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd: "/mock-home/.worktrees/myproject/session-1" },
+      { cwd: "/mock-home/.worktrees/myproject/session-1", timeout: 30_000 },
     );
 
     // Second call: worktree remove
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", timeout: 30_000 },
     );
   });
 

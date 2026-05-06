@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+  type WorkspaceHooksConfig,
+} from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -50,7 +56,14 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+import {
+  create,
+  manifest,
+  default as defaultExport,
+  resetPsCache,
+  toClaudeProjectPath,
+  METADATA_UPDATER_SCRIPT,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -61,6 +74,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -130,6 +148,40 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
+});
+
+describe("toClaudeProjectPath", () => {
+  it("encodes a plain unix path", () => {
+    expect(toClaudeProjectPath("/Users/dev/projects/foo")).toBe("-Users-dev-projects-foo");
+  });
+
+  it("collapses dot directories like .worktrees into a leading double dash", () => {
+    expect(toClaudeProjectPath("/Users/dev/.worktrees/ao/ao-3")).toBe(
+      "-Users-dev--worktrees-ao-ao-3",
+    );
+  });
+
+  it("normalizes underscores to dashes (issue #1611)", () => {
+    // AO project data dirs are named `<sanitized>_<hash>`. Claude Code converts
+    // underscores to dashes when computing its on-disk project slug; without
+    // matching that here the slug points to a non-existent directory and
+    // restore loses the conversation.
+    expect(
+      toClaudeProjectPath(
+        "/Users/dev/.agent-orchestrator/projects/graph-isomorphism_d185b44d56/worktrees/gi-orchestrator",
+      ),
+    ).toBe(
+      "-Users-dev--agent-orchestrator-projects-graph-isomorphism-d185b44d56-worktrees-gi-orchestrator",
+    );
+  });
+
+  it("strips Windows drive colons and folds backslashes", () => {
+    expect(toClaudeProjectPath("C:\\Users\\dev\\foo")).toBe("C-Users-dev-foo");
+  });
+
+  it("collapses any other non-alphanumeric character into a dash", () => {
+    expect(toClaudeProjectPath("/Users/dev/proj@v2/foo bar")).toBe("-Users-dev-proj-v2-foo-bar");
+  });
 });
 
 describe("plugin manifest & exports", () => {
@@ -488,6 +540,19 @@ describe("getSessionInfo", () => {
         "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3",
       );
     });
+
+    it("normalizes underscores to dashes (matches Claude Code on-disk slug, issue #1611)", async () => {
+      mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
+      await agent.getSessionInfo(
+        makeSession({
+          workspacePath:
+            "/Users/dev/.agent-orchestrator/projects/graph-isomorphism_d185b44d56/worktrees/gi-orchestrator",
+        }),
+      );
+      expect(mockReaddir).toHaveBeenCalledWith(
+        "/mock/home/.claude/projects/-Users-dev--agent-orchestrator-projects-graph-isomorphism-d185b44d56-worktrees-gi-orchestrator",
+      );
+    });
   });
 
   describe("summary extraction", () => {
@@ -549,6 +614,28 @@ describe("getSessionInfo", () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hi"}}', ["abc-def-123.jsonl"]);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("abc-def-123");
+      expect(result?.metadata?.claudeSessionUuid).toBe("abc-def-123");
+    });
+  });
+
+  describe("getRestoreCommand metadata", () => {
+    it("uses persisted Claude session UUID without scanning project files", async () => {
+      const agent = create();
+      const session = makeSession({
+        workspacePath: "/workspace/test-project",
+        metadata: { claudeSessionUuid: "persisted-uuid" },
+      });
+
+      const command = await agent.getRestoreCommand!(session, {
+        name: "test-project",
+        repo: "owner/repo",
+        path: "/workspace/test-project",
+        defaultBranch: "main",
+        sessionPrefix: "test",
+      });
+
+      expect(command).toBe("claude --resume 'persisted-uuid'");
+      expect(mockReaddir).not.toHaveBeenCalled();
     });
   });
 
@@ -575,6 +662,17 @@ describe("getSessionInfo", () => {
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(800);
       expect(result?.cost?.outputTokens).toBe(50);
+    });
+
+    it("uses model-aware pricing when cached tokens are present", async () => {
+      const jsonl = [
+        '{"type":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":100,"cache_read_input_tokens":10000,"cache_creation_input_tokens":2000}}',
+      ].join("\n");
+      mockJsonlFiles(jsonl);
+      const result = await agent.getSessionInfo(makeSession());
+      expect(result?.cost?.inputTokens).toBe(13000);
+      expect(result?.cost?.outputTokens).toBe(100);
+      expect(result?.cost?.estimatedCostUsd).toBeGreaterThan(0);
     });
 
     it("uses costUSD field when present", async () => {
@@ -720,12 +818,8 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
     // The old buggy patterns matched $command with ^ anchor.
     // After the fix, ^ is still used but on $clean_command (which has cd stripped).
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^gh/,
-    );
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^git/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^gh/);
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^git/);
   });
 
   it("strips cd prefixes with both && and ; delimiters", () => {
@@ -737,21 +831,15 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   });
 
   it("detects gh pr create on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[/);
   });
 
   it("detects git checkout -b on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^git\[.*checkout/);
   });
 
   it("detects gh pr merge on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[.*merge/);
   });
 });
 

@@ -2,13 +2,15 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
+  withConfigSchema,
   createPluginRegistry,
   findConfigFile,
+  isCanonicalGlobalConfigPath,
   loadConfig,
   type PluginSlot,
   type InstalledPluginConfig,
   type OrchestratorConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { parseDocument } from "yaml";
 import {
   buildPluginDescriptor,
@@ -65,7 +67,9 @@ function writePluginsConfig(configPath: string, plugins: InstalledPluginConfig[]
   } else {
     rawConfig.plugins = plugins;
   }
-  doc.contents = doc.createNode(rawConfig) as typeof doc.contents;
+  doc.contents = doc.createNode(
+    isCanonicalGlobalConfigPath(configPath) ? rawConfig : withConfigSchema(rawConfig),
+  ) as typeof doc.contents;
   const rendered = doc.toString({ indent: 2 });
   const tempPath = `${configPath}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync(tempPath, rendered, "utf-8");
@@ -140,7 +144,9 @@ async function installOrVerifyPlugin(
 
 async function resolveTargetVersion(plugin: InstalledPluginConfig): Promise<string> {
   if (!plugin.package) {
-    throw new Error(`Plugin ${plugin.name} does not have a package-backed source and cannot be updated.`);
+    throw new Error(
+      `Plugin ${plugin.name} does not have a package-backed source and cannot be updated.`,
+    );
   }
 
   const marketplacePlugin =
@@ -158,7 +164,9 @@ async function updateManagedPlugin(
   plugin: InstalledPluginConfig,
 ): Promise<"updated" | "skipped"> {
   if (!plugin.package || plugin.source === "local") {
-    throw new Error(`Plugin ${plugin.name} is local-only and cannot be updated through the AO store.`);
+    throw new Error(
+      `Plugin ${plugin.name} is local-only and cannot be updated through the AO store.`,
+    );
   }
 
   const currentVersion = readInstalledPackageVersion(plugin.package) ?? plugin.version ?? null;
@@ -186,10 +194,7 @@ async function updateManagedPlugin(
       { ...plugin, version: installedVersion },
       plugin.package,
     );
-    writePluginsConfig(
-      configPath,
-      upsertInstalledPlugin(config.plugins ?? [], verifiedDescriptor),
-    );
+    writePluginsConfig(configPath, upsertInstalledPlugin(config.plugins ?? [], verifiedDescriptor));
     console.log(
       chalk.green(
         `Updated ${verifiedDescriptor.name} from ${currentVersion ?? "not installed"} to ${installedVersion}`,
@@ -204,10 +209,9 @@ async function updateManagedPlugin(
         const message = err instanceof Error ? err.message : String(err);
         const rollbackMessage =
           rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
-        throw new Error(
-          `${message}\nRollback failed for ${plugin.package}: ${rollbackMessage}`,
-          { cause: rollbackErr },
-        );
+        throw new Error(`${message}\nRollback failed for ${plugin.package}: ${rollbackMessage}`, {
+          cause: rollbackErr,
+        });
       }
     }
     throw err;
@@ -269,7 +273,13 @@ function printPluginListFromCatalog(
       : installed;
 
     if (filtered.length === 0) {
-      console.log(chalk.dim(slotFilter ? `No installed plugins with type "${slotFilter}".` : "No plugins are installed in this config."));
+      console.log(
+        chalk.dim(
+          slotFilter
+            ? `No installed plugins with type "${slotFilter}".`
+            : "No plugins are installed in this config.",
+        ),
+      );
       return;
     }
 
@@ -286,7 +296,13 @@ function printPluginListFromCatalog(
   const filteredCatalog = slotFilter ? catalog.filter((p) => p.slot === slotFilter) : catalog;
 
   if (filteredCatalog.length === 0) {
-    console.log(chalk.dim(slotFilter ? `No marketplace plugins with type "${slotFilter}".` : "No marketplace plugins found."));
+    console.log(
+      chalk.dim(
+        slotFilter
+          ? `No marketplace plugins with type "${slotFilter}".`
+          : "No marketplace plugins found.",
+      ),
+    );
     return;
   }
 
@@ -315,7 +331,8 @@ export function registerPlugin(program: Command): void {
       if (configPath) {
         config = loadConfig(configPath);
       }
-      const catalog = opts.refresh === true ? await refreshMarketplaceCatalog() : loadMarketplaceCatalog();
+      const catalog =
+        opts.refresh === true ? await refreshMarketplaceCatalog() : loadMarketplaceCatalog();
       printPluginListFromCatalog(config, opts.installed === true, catalog, opts.type);
     });
 
@@ -350,7 +367,10 @@ export function registerPlugin(program: Command): void {
     .description("Scaffold a new AO plugin package")
     .argument("[directory]", "Target directory for the new plugin")
     .option("--name <name>", "Display/plugin name")
-    .option("--slot <slot>", "Plugin slot: runtime | agent | workspace | tracker | scm | notifier | terminal")
+    .option(
+      "--slot <slot>",
+      "Plugin slot: runtime | agent | workspace | tracker | scm | notifier | terminal",
+    )
     .option("--description <description>", "Short plugin description")
     .option("--author <author>", "Package author")
     .option("--package-name <packageName>", "npm package name")
@@ -483,8 +503,14 @@ export function registerPlugin(program: Command): void {
     .command("install")
     .description("Install a plugin into the current config")
     .argument("<reference>", "Marketplace id, package name, or local path")
-    .option("--url <url>", "OpenClaw webhook URL (passed to setup when installing notifier-openclaw)")
-    .option("--token <token>", "OpenClaw hooks auth token (passed to setup when installing notifier-openclaw)")
+    .option(
+      "--url <url>",
+      "OpenClaw webhook URL (passed to setup when installing notifier-openclaw)",
+    )
+    .option(
+      "--token <token>",
+      "OpenClaw hooks auth token (passed to setup when installing notifier-openclaw)",
+    )
     .action(async (reference: string, opts: { url?: string; token?: string }) => {
       const configPath = findConfigFile();
       if (!configPath) {

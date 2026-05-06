@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getAttentionLevel, type DashboardSession } from "@/lib/types";
+import { getAttentionLevel, isPRRateLimited, isPRUnenriched, type DashboardSession } from "@/lib/types";
 import { getSessionTitle } from "@/lib/format";
+import { projectSessionPath } from "@/lib/routes";
 
 function getRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -125,6 +126,9 @@ export function BottomSheet({
     session.summary && !session.summaryIsFallback ? session.summary : null;
   const hasLiveTerminateAction =
     attention !== "done" && attention !== "merge" && session.status !== "terminated";
+  const pr = session.pr;
+  const showLivePrData = Boolean(pr && !isPRRateLimited(pr) && !isPRUnenriched(pr));
+  const showTerminalStatePills = attention === "done" || session.status === "terminated" || session.activity === "exited";
   const tags = [
     { label: formatTagLabel(attention), tone: "accent" as const },
     { label: formatTagLabel(session.status), tone: "neutral" as const },
@@ -156,33 +160,104 @@ export function BottomSheet({
         {/* Drag handle */}
         <div className="bottom-sheet__handle" aria-hidden="true" />
 
-        <div className="bottom-sheet__header">
-          <h2 id="bottom-sheet-title" className="bottom-sheet__title">
-            {mode === "confirm-kill" ? "Terminate session?" : title}
-          </h2>
-          <p className="bottom-sheet__subtitle">
-            {mode === "confirm-kill"
-              ? "This action cannot be undone."
-              : `${attention} · started ${getRelativeTime(session.createdAt)}`}
-          </p>
-        </div>
+        {mode === "confirm-kill" ? (
+          <>
+            <div className="bottom-sheet__header">
+              <h2 id="bottom-sheet-title" className="bottom-sheet__title">
+                Terminate session?
+              </h2>
+              <p className="bottom-sheet__subtitle">This action cannot be undone.</p>
+            </div>
 
-        <div className="bottom-sheet__session-info">
-          {mode === "confirm-kill" ? (
-            <div className="bottom-sheet__session-name">{title}</div>
-          ) : null}
-          <div className="bottom-sheet__session-meta">
-            {tags.map((tag) => (
-              <span
-                key={`${tag.tone}-${tag.label}`}
-                className={`bottom-sheet__tag bottom-sheet__tag--${tag.tone}`}
-              >
-                {tag.label}
-              </span>
-            ))}
-          </div>
-          {summary ? <p className="bottom-sheet__summary">{summary}</p> : null}
-        </div>
+            <div className="bottom-sheet__session-info">
+              <div className="bottom-sheet__session-name">{title}</div>
+              <div className="bottom-sheet__session-meta">
+                {tags.map((tag) => (
+                  <span
+                    key={`${tag.tone}-${tag.label}`}
+                    className={`bottom-sheet__tag bottom-sheet__tag--${tag.tone}`}
+                  >
+                    {tag.label}
+                  </span>
+                ))}
+              </div>
+              {summary ? <p className="bottom-sheet__summary">{summary}</p> : null}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="bottom-sheet__preview-card">
+              <div className="bottom-sheet__preview-strip" data-level={attention} />
+              <div className="bottom-sheet__preview-content">
+                <div className="bottom-sheet__preview-header">
+                  <span className="bottom-sheet__preview-id">{session.id}</span>
+                  <span className="bottom-sheet__preview-time">{getRelativeTime(session.lastActivityAt)}</span>
+                </div>
+                <h2 id="bottom-sheet-title" className="bottom-sheet__title">
+                  {title}
+                </h2>
+                <p className="bottom-sheet__subtitle">
+                  {formatTagLabel(attention)} · started {getRelativeTime(session.createdAt)}
+                </p>
+
+                <div className="bottom-sheet__preview-meta">
+                  {session.branch ? (
+                    <span className="bottom-sheet__preview-branch">{session.branch}</span>
+                  ) : null}
+                  {pr ? <span className="bottom-sheet__preview-pr">#{pr.number}</span> : null}
+                  {showLivePrData && pr ? (
+                    <span className="bottom-sheet__preview-diff">
+                      <span className="bottom-sheet__preview-diff-add">+{pr.additions}</span>
+                      {" "}
+                      <span className="bottom-sheet__preview-diff-del">-{pr.deletions}</span>
+                    </span>
+                  ) : null}
+                </div>
+
+                {showLivePrData && pr ? (
+                  <div className="bottom-sheet__preview-pills">
+                    <span className="bottom-sheet__tag bottom-sheet__tag--neutral">
+                      {pr.ciStatus === "passing"
+                        ? "CI passing"
+                        : pr.ciStatus === "failing"
+                          ? "CI failed"
+                          : "CI pending"}
+                    </span>
+                    <span className="bottom-sheet__tag bottom-sheet__tag--accent">
+                      {pr.reviewDecision === "approved"
+                        ? "approved"
+                        : pr.reviewDecision === "changes_requested"
+                          ? "changes requested"
+                        : "needs review"}
+                    </span>
+                    {showTerminalStatePills ? (
+                      <span className="bottom-sheet__tag bottom-sheet__tag--accent">
+                        {formatTagLabel(session.status)}
+                      </span>
+                    ) : null}
+                    {showTerminalStatePills && session.activity ? (
+                      <span className="bottom-sheet__tag bottom-sheet__tag--neutral">
+                        {formatTagLabel(session.activity)}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="bottom-sheet__preview-pills">
+                    <span className="bottom-sheet__tag bottom-sheet__tag--accent">
+                      {formatTagLabel(session.status)}
+                    </span>
+                    {session.activity ? (
+                      <span className="bottom-sheet__tag bottom-sheet__tag--neutral">
+                        {formatTagLabel(session.activity)}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </div>
+            {summary ? <p className="bottom-sheet__summary">{summary}</p> : null}
+          </>
+        )}
 
         <div className="bottom-sheet__actions">
           {mode === "confirm-kill" ? (
@@ -205,7 +280,7 @@ export function BottomSheet({
           ) : (
             <>
               <a
-                href={`/sessions/${encodeURIComponent(session.id)}`}
+                href={projectSessionPath(session.projectId, session.id)}
                 className="bottom-sheet__btn bottom-sheet__btn--primary"
               >
                 Open session

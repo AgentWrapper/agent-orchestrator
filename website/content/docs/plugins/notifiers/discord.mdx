@@ -1,0 +1,58 @@
+---
+title: Discord notifier
+description: Discord webhook with rich embeds, retry handling, and thread support.
+---
+
+<div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
+  <Logo name="discord" size={28} color />
+  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>discord</code></span>
+</div>
+
+<PlatformSupport macos="full" linux="full" windows="full" />
+
+## Setup
+
+1. In Discord, open the channel you want → **Edit Channel → Integrations → Webhooks → New Webhook**.
+2. Copy the webhook URL (must contain `discord.com/api/webhooks/`).
+3. Add it to AO:
+
+```yaml title="agent-orchestrator.yaml"
+notifier:
+  - type: discord
+    webhookUrl: ${DISCORD_WEBHOOK_URL}
+    username: "AO"                    # optional
+    avatarUrl: https://...png         # optional
+    threadId: "1234567890"            # optional — post into a thread
+    retries: 3                        # default
+    retryDelayMs: 1000                # default
+```
+
+## Config
+
+| Key | Required | Default | What it does |
+|---|---|---|---|
+| `webhookUrl` | ✓ | — | Full `discord.com/api/webhooks/...` URL |
+| `username` | optional | — | Override webhook default username per message |
+| `avatarUrl` | optional | — | Override webhook default avatar |
+| `threadId` | optional | — | Post into an existing thread |
+| `retries` | optional | `3` | Retry count on 5xx / network errors |
+| `retryDelayMs` | optional | `1000` | Base retry delay (exponential backoff) |
+
+## Rich embeds
+
+AO uses Discord embeds, not plain text. Each event shows:
+
+- Colored sidebar (blue for info, red for CI failure, amber for review requested, green for merged)
+- Issue / PR link as a clickable title
+- Session id as a field
+- Short reason as the description
+
+## Retry + rate limiting
+
+Handles Discord's `Retry-After` header on 429 responses — waits the requested interval and retries. 5xx errors use exponential backoff up to `retries` attempts.
+
+## Testing
+
+```bash
+ao doctor --test-notify
+```

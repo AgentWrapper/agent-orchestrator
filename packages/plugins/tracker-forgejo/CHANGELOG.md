@@ -1,4 +1,4 @@
-# @composio/ao-plugin-tracker-github
+# @aoagents/ao-plugin-tracker-forgejo
 
 ## 0.2.0
 

@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* ── Light mode (default) ─────────────────────────────────────── */
+  --color-bg-base: #f5f3f0;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #f9f7f5;
+  --color-bg-subtle: rgba(120, 100, 80, 0.06);
+  --color-bg-inset: #f0ede9;
+  --color-bg-sidebar: #f0ede9;
+
+  --color-text-primary: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-tertiary: #78716c;
+
+  --color-border-default: #d6d3d1;
+  --color-border-subtle: rgba(0, 0, 0, 0.06);
+
+  --color-accent: #5c64b5;
+  --color-accent-amber: #d97706;
+  --color-accent-amber-dim: rgba(217, 119, 6, 0.1);
+  --color-accent-amber-border: rgba(217, 119, 6, 0.3);
+
+  --color-scrollbar: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Dark mode ────────────────────────────────────────────────── */
+.dark {
+  --color-bg-base: #121110;
+  --color-bg-surface: #1a1918;
+  --color-bg-elevated: #242220;
+  --color-bg-subtle: #2b2826;
+  --color-bg-inset: #161514;
+  --color-bg-sidebar: #161514;
+
+  --color-text-primary: #f0ece8;
+  --color-text-secondary: #a8a29e;
+  --color-text-tertiary: #8b8682;
+
+  --color-border-default: rgba(255, 240, 220, 0.14);
+  --color-border-subtle: rgba(255, 240, 220, 0.08);
+
+  --color-accent: #8b9cf7;
+  --color-accent-amber: #f97316;
+  --color-accent-amber-dim: rgba(249, 115, 22, 0.12);
+  --color-accent-amber-border: rgba(249, 115, 22, 0.4);
+
+  --color-scrollbar: rgba(255, 240, 220, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+}
+
+a {
+  color: inherit;
+}
+
+/* ── Landing Page ─────────────────────────────────────────────────── */
+.landing-page {
+  --landing-bg: #121110;
+  --landing-fg: #f0ece8;
+  --landing-muted: #a8a29e;
+  --landing-muted-dim: #57534e;
+  --landing-accent: #f97316;
+  --landing-border-subtle: rgba(255, 240, 220, 0.07);
+  --landing-border-default: rgba(255, 240, 220, 0.13);
+  --landing-border-strong: rgba(255, 240, 220, 0.24);
+  --landing-surface: #1a1918;
+  --landing-card-bg: #1c1b19;
+  background: var(--landing-bg);
+  color: var(--landing-fg);
+  font-family: var(--font-sans, -apple-system, "SF Pro Text", system-ui, sans-serif);
+}
+
+.liquid-glass-solid {
+  background: var(--landing-accent);
+  color: #121110;
+  font-weight: 500;
+  border: none;
+}
+
+.liquid-glass-solid:hover {
+  opacity: 0.9;
+}
+
+.landing-card {
+  background: var(--landing-card-bg);
+  border: 1px solid var(--landing-border-subtle);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.landing-card:hover {
+  border-color: var(--landing-border-default);
+}
+
+.landing-hero-grid {
+  background-image: radial-gradient(rgba(255, 240, 220, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+}
+
+@keyframes landing-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-pulse-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.landing-fade-rise {
+  animation: landing-fade-rise 0.8s ease-out both;
+}
+
+.landing-fade-rise-d1 {
+  animation: landing-fade-rise 0.8s ease-out 0.2s both;
+}
+
+.landing-fade-rise-d2 {
+  animation: landing-fade-rise 0.8s ease-out 0.4s both;
+}
+
+.landing-reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+}
+
+.landing-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.landing-agent-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(134, 239, 172, 0.7);
+  animation: landing-pulse-dot 2s ease-in-out infinite;
+}
+
+/* Terminal typing animations */
+.landing-line-appear {
+  animation: landing-fade-rise 0.3s ease-out both;
+}
+
+@keyframes landing-cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+.landing-cursor-blink {
+  animation: landing-cursor-blink 0.8s step-end infinite;
+}
+
+/* Workflow pipeline pulse */
+@keyframes landing-node-pulse {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 0.6;
+  }
+
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+    opacity: 0;
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 0;
+  }
+}
+
+.landing-node-pulse {
+  border: 1.5px solid;
+  animation: landing-node-pulse 1.5s ease-out infinite;
+}
+
+/* ── Landing page spacing protection ─────────────────────────────────────────
+   Fumadocs bundles its own Tailwind inside @layer fumadocs. Because that sheet
+   loads after the root layout, @layer fumadocs has higher cascade priority than
+   root-level @layer utilities. Its universal preflight reset (* { margin:0;
+   padding:0 }) zeros any spacing utility not present in fumadocs' own bundle.
+   These unlayered rules (outside any @layer) beat ALL named layers and restore
+   the correct values for every margin/padding class used in the landing page. */
+
+.landing-page .mt-1  { margin-top: calc(var(--spacing) * 1); }
+.landing-page .mt-6  { margin-top: calc(var(--spacing) * 6); }
+.landing-page .mt-8  { margin-top: calc(var(--spacing) * 8); }
+.landing-page .mt-10 { margin-top: calc(var(--spacing) * 10); }
+.landing-page .mt-12 { margin-top: calc(var(--spacing) * 12); }
+.landing-page .mt-16 { margin-top: calc(var(--spacing) * 16); }
+.landing-page .mt-20 { margin-top: calc(var(--spacing) * 20); }
+
+.landing-page .mb-1  { margin-bottom: calc(var(--spacing) * 1); }
+.landing-page .mb-2  { margin-bottom: calc(var(--spacing) * 2); }
+.landing-page .mb-3  { margin-bottom: calc(var(--spacing) * 3); }
+.landing-page .mb-4  { margin-bottom: calc(var(--spacing) * 4); }
+.landing-page .mb-5  { margin-bottom: calc(var(--spacing) * 5); }
+.landing-page .mb-6  { margin-bottom: calc(var(--spacing) * 6); }
+.landing-page .mb-8  { margin-bottom: calc(var(--spacing) * 8); }
+.landing-page .mb-10 { margin-bottom: calc(var(--spacing) * 10); }
+.landing-page .mb-12 { margin-bottom: calc(var(--spacing) * 12); }
+.landing-page .mb-16 { margin-bottom: calc(var(--spacing) * 16); }
+.landing-page .mb-1\.5 { margin-bottom: calc(var(--spacing) * 1.5); }
+
+.landing-page .ml-1  { margin-left: calc(var(--spacing) * 1); }
+.landing-page .ml-2  { margin-left: calc(var(--spacing) * 2); }
+.landing-page .ml-1\.5 { margin-left: calc(var(--spacing) * 1.5); }
+
+.landing-page .mr-1  { margin-right: calc(var(--spacing) * 1); }
+.landing-page .mr-1\.5 { margin-right: calc(var(--spacing) * 1.5); }
+
+.landing-page .p-2   { padding: calc(var(--spacing) * 2); }
+.landing-page .p-3   { padding: calc(var(--spacing) * 3); }
+.landing-page .p-6   { padding: calc(var(--spacing) * 6); }
+.landing-page .p-7   { padding: calc(var(--spacing) * 7); }
+.landing-page .p-8   { padding: calc(var(--spacing) * 8); }
+.landing-page .p-2\.5 { padding: calc(var(--spacing) * 2.5); }
+
+.landing-page .pt-10 { padding-top: calc(var(--spacing) * 10); }
+.landing-page .pt-32 { padding-top: calc(var(--spacing) * 32); }
+
+.landing-page .pb-20 { padding-bottom: calc(var(--spacing) * 20); }
+
+.landing-page .px-2  { padding-left: calc(var(--spacing) * 2);   padding-right: calc(var(--spacing) * 2); }
+.landing-page .px-3  { padding-left: calc(var(--spacing) * 3);   padding-right: calc(var(--spacing) * 3); }
+.landing-page .px-4  { padding-left: calc(var(--spacing) * 4);   padding-right: calc(var(--spacing) * 4); }
+.landing-page .px-5  { padding-left: calc(var(--spacing) * 5);   padding-right: calc(var(--spacing) * 5); }
+.landing-page .px-6  { padding-left: calc(var(--spacing) * 6);   padding-right: calc(var(--spacing) * 6); }
+.landing-page .px-8  { padding-left: calc(var(--spacing) * 8);   padding-right: calc(var(--spacing) * 8); }
+.landing-page .px-3\.5 { padding-left: calc(var(--spacing) * 3.5); padding-right: calc(var(--spacing) * 3.5); }
+
+.landing-page .py-1  { padding-top: calc(var(--spacing) * 1);    padding-bottom: calc(var(--spacing) * 1); }
+.landing-page .py-2  { padding-top: calc(var(--spacing) * 2);    padding-bottom: calc(var(--spacing) * 2); }
+.landing-page .py-3  { padding-top: calc(var(--spacing) * 3);    padding-bottom: calc(var(--spacing) * 3); }
+.landing-page .py-4  { padding-top: calc(var(--spacing) * 4);    padding-bottom: calc(var(--spacing) * 4); }
+.landing-page .py-6  { padding-top: calc(var(--spacing) * 6);    padding-bottom: calc(var(--spacing) * 6); }
+.landing-page .py-8  { padding-top: calc(var(--spacing) * 8);    padding-bottom: calc(var(--spacing) * 8); }
+.landing-page .py-20 { padding-top: calc(var(--spacing) * 20);   padding-bottom: calc(var(--spacing) * 20); }
+.landing-page .py-40 { padding-top: calc(var(--spacing) * 40);   padding-bottom: calc(var(--spacing) * 40); }
+.landing-page .py-1\.5 { padding-top: calc(var(--spacing) * 1.5); padding-bottom: calc(var(--spacing) * 1.5); }
+.landing-page .py-2\.5 { padding-top: calc(var(--spacing) * 2.5); padding-bottom: calc(var(--spacing) * 2.5); }
+.landing-page .py-3\.5 { padding-top: calc(var(--spacing) * 3.5); padding-bottom: calc(var(--spacing) * 3.5); }
+
+/* Arbitrary padding values */
+.landing-page .py-\[100px\] { padding-top: 100px; padding-bottom: 100px; }
+.landing-page .py-\[120px\] { padding-top: 120px; padding-bottom: 120px; }
+.landing-page .pt-\[60px\]  { padding-top: 60px; }
+.landing-page .pb-\[120px\] { padding-bottom: 120px; }
+
+/* Border colors — fumadocs * { border-color: var(--color-fd-border) } persists from docs
+   navigation. In light mode --color-fd-border = #d6d3d1 which looks bright on the dark
+   landing background, overriding explicit border-[var(--landing-border-*)] utilities. */
+.landing-page .border-\[var\(--landing-border-subtle\)\]  { border-color: var(--landing-border-subtle); }
+.landing-page .border-\[var\(--landing-border-default\)\] { border-color: var(--landing-border-default); }
+.landing-page .border-\[var\(--landing-border-strong\)\]  { border-color: var(--landing-border-strong); }
+
+/* Font weight — fumadocs heading reset zeroes h1-h6 { font-weight: inherit } */
+.landing-page .font-\[680\] { font-weight: 680; }
+
+/* Font size (clamp values) — fumadocs heading reset zeroes h1-h6 { font-size: inherit } */
+.landing-page .text-\[clamp\(1\.75rem\,4vw\,2\.75rem\)\] { font-size: clamp(1.75rem, 4vw, 2.75rem); }
+.landing-page .text-\[clamp\(1\.375rem\,3vw\,2rem\)\]    { font-size: clamp(1.375rem, 3vw, 2rem); }
+.landing-page .text-\[clamp\(2rem\,4vw\,3rem\)\]          { font-size: clamp(2rem, 4vw, 3rem); }
+.landing-page .text-\[clamp\(2rem\,5vw\,3\.5rem\)\]       { font-size: clamp(2rem, 5vw, 3.5rem); }
+
+/* Responsive md: utilities — fumadocs bundles .hidden but not all md: variants,
+   so its higher-priority layer keeps elements hidden / wrong grid at desktop widths. */
+@media (min-width: 768px) {
+  .landing-page .md\:flex         { display: flex; }
+  .landing-page .md\:block        { display: block; }
+  .landing-page .md\:hidden       { display: none; }
+
+  .landing-page .md\:flex-row     { flex-direction: row; }
+
+  .landing-page .md\:grid-cols-2  { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .landing-page .md\:grid-cols-3  { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .landing-page .md\:grid-cols-4  { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .landing-page .md\:grid-cols-6  { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .landing-page .md\:grid-cols-\[1fr_auto_1fr_1fr\] { grid-template-columns: 1fr auto 1fr 1fr; }
+
+  .landing-page .md\:gap-0        { gap: 0; }
+  .landing-page .md\:gap-6        { gap: calc(var(--spacing) * 6); }
+  .landing-page .md\:gap-12       { gap: calc(var(--spacing) * 12); }
+
+  .landing-page .md\:items-center   { align-items: center; }
+  .landing-page .md\:items-baseline { align-items: baseline; }
+  .landing-page .md\:items-start    { align-items: flex-start; }
+
+  .landing-page .md\:order-1      { order: 1; }
+  .landing-page .md\:order-2      { order: 2; }
+}

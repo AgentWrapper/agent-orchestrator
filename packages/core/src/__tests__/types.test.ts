@@ -4,19 +4,53 @@ import { isOrchestratorSession, isIssueNotFoundError } from "../types.js";
 describe("isOrchestratorSession", () => {
   it("detects orchestrators by explicit role metadata", () => {
     expect(
-      isOrchestratorSession({
-        id: "app-control",
-        metadata: { role: "orchestrator" },
-      }),
+      isOrchestratorSession({ id: "app-control", metadata: { role: "orchestrator" } }, "app"),
     ).toBe(true);
   });
 
-  it("falls back to orchestrator naming for legacy sessions", () => {
-    expect(isOrchestratorSession({ id: "app-orchestrator", metadata: {} })).toBe(true);
+  it("detects numbered worktree orchestrators by prefix pattern", () => {
+    expect(isOrchestratorSession({ id: "app-orchestrator-1", metadata: {} }, "app")).toBe(true);
+    expect(isOrchestratorSession({ id: "app-orchestrator-42", metadata: {} }, "app")).toBe(true);
   });
 
-  it("does not classify worker sessions as orchestrators", () => {
-    expect(isOrchestratorSession({ id: "app-7", metadata: { role: "worker" } })).toBe(false);
+  it("does not false-positive on worker sessions", () => {
+    expect(isOrchestratorSession({ id: "app-7", metadata: { role: "worker" } }, "app")).toBe(false);
+  });
+
+  it("does not false-positive when prefix ends with -orchestrator", () => {
+    // my-orchestrator-1 is a worker when prefix is "my-orchestrator"
+    expect(
+      isOrchestratorSession({ id: "my-orchestrator-1", metadata: {} }, "my-orchestrator"),
+    ).toBe(false);
+    // my-orchestrator-orchestrator-1 is the real worktree orchestrator
+    expect(
+      isOrchestratorSession(
+        { id: "my-orchestrator-orchestrator-1", metadata: {} },
+        "my-orchestrator",
+      ),
+    ).toBe(true);
+  });
+
+  // Regression coverage for issue #1048: stale legacy `{projectId}-orchestrator`
+  // records (foreign prefix — the projectId is "integrator" but the sessionPrefix
+  // is "int") must NOT be treated as orchestrators. The session-manager's
+  // repair-on-read path (`isRepairableOrchestratorRecord`) intentionally does
+  // NOT backfill `role` onto foreign-prefix bare records, so they stay role-less
+  // and fail the public predicate — which is exactly what prevents them from
+  // leaking into the dashboard/CLI and causing the id divergence in #1048.
+  it("rejects bare {projectId}-orchestrator legacy ids without role metadata", () => {
+    expect(
+      isOrchestratorSession({ id: "integrator-orchestrator", metadata: {} }, "int"),
+    ).toBe(false);
+  });
+
+  it("accepts bare legacy ids when role metadata is explicitly stamped", () => {
+    expect(
+      isOrchestratorSession(
+        { id: "integrator-orchestrator", metadata: { role: "orchestrator" } },
+        "int",
+      ),
+    ).toBe(true);
   });
 });
 

@@ -32,6 +32,8 @@ Use this if:
 
 Integrates with Linear for issue tracking. Requires `LINEAR_API_KEY` environment variable.
 
+Spawns prefer Linear’s **Copy git branch name** (API `branchName`); if absent, AO uses `feat/<issue-id>` as before. To change Linear’s pattern, use **Linear → Settings → Integrations → GitHub → Branch format**.
+
 Use this if:
 
 - Your team uses Linear for project management

@@ -1,0 +1,64 @@
+---
+title: FAQ
+description: The questions people actually ask before adopting AO.
+---
+
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+<Accordions>
+  <Accordion title="How is this different from running multiple Claude Code / Cursor sessions in terminal tabs?">
+    Tabs are fine for one or two. AO handles the bookkeeping once you have more than that: per-session worktrees, per-session branches, automatic CI/review reactions, one dashboard, cost tracking, and a state machine that knows what each agent is doing.
+  </Accordion>
+
+  <Accordion title="Do I have to use Claude Code?">
+    No. AO supports Claude Code, Codex, Cursor, Aider, and OpenCode today. Set `agent:` per project (or per spawn with `--agent`). See [Agents](/docs/plugins/agents).
+  </Accordion>
+
+  <Accordion title="Does AO auto-merge?">
+    No, intentionally. AO will get a PR to a mergeable state — CI green, approvals satisfied — and stop. The merge is your call.
+  </Accordion>
+
+  <Accordion title="Does AO need webhooks?">
+    No. AO polls `gh` / `glab` for PR state. Webhooks are an optional latency optimisation for the review loop — wire them up only if you need near-instant reactions.
+  </Accordion>
+
+  <Accordion title="Can it use GitHub Enterprise / self-hosted GitLab?">
+    Yes. `gh` and `glab` both support enterprise hosts — configure them via their own tools. For GitLab, also set `trackerConfig.host` / `scmConfig.host` in AO.
+  </Accordion>
+
+  <Accordion title="Does it work on Windows?">
+    Partially — see [Platforms › Windows](/docs/platforms#windows). You need `runtime: process` instead of tmux, and desktop notifications are a no-op. Everything else (spawning, PR flow, review loop, CI recovery) works the same.
+  </Accordion>
+
+  <Accordion title="Where does session state live?">
+    `~/.agent-orchestrator/{hash}-{projectId}/`. No database. Everything is flat files you can inspect.
+  </Accordion>
+
+  <Accordion title="Can I run AO on a remote server?">
+    Yes. The dashboard is a plain Next.js app — port-forward or put it behind your reverse proxy. AO has no built-in auth, so use your usual SSO / basic-auth layer. Use `runtime: process` in containers.
+  </Accordion>
+
+  <Accordion title="How much does it cost?">
+    AO itself is MIT-licensed and free. Agents cost whatever their underlying API costs (Anthropic, OpenAI, etc.) — AO shows per-session cost on the dashboard for agents that report it (Claude Code today).
+  </Accordion>
+
+  <Accordion title="What happens to my code?">
+    Your code stays in your worktrees on your machine. AO doesn't upload anything — it just coordinates local processes and makes GitHub API calls through your authenticated CLIs.
+  </Accordion>
+
+  <Accordion title="Can I write my own plugin?">
+    Yes. `ao plugin create --slot <slot> --name <name>` scaffolds a starter. Plugins are tiny Node packages exporting a manifest + `create()` function.
+  </Accordion>
+
+  <Accordion title="Why is everything a plugin?">
+    Because the answer to "should AO support Linear?" (or Discord, or Codex, or …) is always yes, but bundling every integration into core makes the CLI heavy. Plugins let you pick what you need.
+  </Accordion>
+
+  <Accordion title="Does AO modify my repo's files?">
+    The agent modifies the worktree — that's the whole point. AO itself doesn't touch `main`, doesn't force-push, and doesn't merge. The session works on its own branch.
+  </Accordion>
+
+  <Accordion title="How do I completely uninstall?">
+    `npm uninstall -g @aoagents/ao`, then `rm -rf ~/.agent-orchestrator` if you want to wipe all session history.
+  </Accordion>
+</Accordions>

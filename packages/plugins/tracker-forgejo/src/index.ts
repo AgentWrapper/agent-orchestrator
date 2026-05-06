@@ -14,7 +14,7 @@ import type {
   IssueUpdate,
   CreateIssueInput,
   ProjectConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -71,6 +71,13 @@ function parseProjectRepo(projectRepo: string): [string, string] {
   return [parts[0], parts[1]];
 }
 
+function requireRepo(project: ProjectConfig): string {
+  if (!project.repo) {
+    throw new Error("Forgejo tracker requires a 'repo' field in project config");
+  }
+  return project.repo;
+}
+
 function defaultForgejoHost(): string | undefined {
   const envHost = process.env["GH_HOST"]?.trim();
   if (!envHost) return undefined;
@@ -88,7 +95,7 @@ function projectConfiguredHost(project: ProjectConfig): string | undefined {
     return scmHost.trim();
   }
 
-  return repoHost(project.repo) ?? defaultForgejoHost();
+  return (project.repo ? repoHost(project.repo) : undefined) ?? defaultForgejoHost();
 }
 
 function getErrorText(err: unknown): string {
@@ -120,6 +127,7 @@ async function ghIssueViewJson(
   project: ProjectConfig,
   hostname?: string,
 ): Promise<string> {
+  const projectRepo = requireRepo(project);
   const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
   try {
     return await gh([
@@ -127,7 +135,7 @@ async function ghIssueViewJson(
       "view",
       identifier,
       "--repo",
-      project.repo,
+      projectRepo,
       "--json",
       fieldsWithStateReason,
     ], hostname);
@@ -138,7 +146,7 @@ async function ghIssueViewJson(
       "view",
       identifier,
       "--repo",
-      project.repo,
+      projectRepo,
       "--json",
       "number,title,body,url,state,labels,assignees",
     ], hostname);
@@ -242,10 +250,11 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     name: "forgejo",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
+      const projectRepo = requireRepo(project);
       const hostname = resolveHost(project);
       if (hostname && token) {
         const issueNumber = Number(identifier.replace(/^#/, ""));
-        const [owner, repo] = parseProjectRepo(project.repo);
+        const [owner, repo] = parseProjectRepo(projectRepo);
         const data = (await forgejoApi(
           hostname,
           token,
@@ -291,7 +300,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         "view",
         identifier,
         "--repo",
-        project.repo,
+        requireRepo(project),
         "--json",
         "state",
       ], hostname);
@@ -302,7 +311,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
       const host = resolveHost(project) ?? "forgejo.example";
-      return `https://${host}/${stripHost(project.repo)}/issues/${num}`;
+      return `https://${host}/${stripHost(requireRepo(project))}/issues/${num}`;
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -348,9 +357,10 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
+      const projectRepo = requireRepo(project);
       const hostname = resolveHost(project);
       if (hostname && token) {
-        const [owner, repo] = parseProjectRepo(project.repo);
+        const [owner, repo] = parseProjectRepo(projectRepo);
         const state =
           filters.state === "all" ? "all" : filters.state === "closed" ? "closed" : "open";
         const data = (await forgejoApi(
@@ -373,7 +383,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         "issue",
         "list",
         "--repo",
-        project.repo,
+        projectRepo,
         "--limit",
         String(filters.limit ?? 30),
       ];
@@ -422,10 +432,11 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
+      const projectRepo = requireRepo(project);
       const hostname = resolveHost(project);
       if (hostname && token) {
         const issueNumber = Number(identifier.replace(/^#/, ""));
-        const [owner, repo] = parseProjectRepo(project.repo);
+        const [owner, repo] = parseProjectRepo(projectRepo);
 
         if (update.state === "closed") {
           await forgejoApi(hostname, token, "PATCH", `/repos/${owner}/${repo}/issues/${issueNumber}`, undefined, {
@@ -497,9 +508,9 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       // Handle state change — Forgejo Issues only supports open/closed.
       // "in_progress" is not a Forgejo state, so it is intentionally a no-op.
       if (update.state === "closed") {
-        await gh(["issue", "close", identifier, "--repo", project.repo], hostname);
+        await gh(["issue", "close", identifier, "--repo", projectRepo], hostname);
       } else if (update.state === "open") {
-        await gh(["issue", "reopen", identifier, "--repo", project.repo], hostname);
+        await gh(["issue", "reopen", identifier, "--repo", projectRepo], hostname);
       }
 
       // Handle label removal
@@ -509,7 +520,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          projectRepo,
           "--remove-label",
           update.removeLabels.join(","),
         ], hostname);
@@ -522,7 +533,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          projectRepo,
           "--add-label",
           update.labels.join(","),
         ], hostname);
@@ -535,7 +546,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          projectRepo,
           "--add-assignee",
           update.assignee,
         ], hostname);
@@ -548,7 +559,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           "comment",
           identifier,
           "--repo",
-          project.repo,
+          projectRepo,
           "--body",
           update.comment,
         ], hostname);
@@ -556,9 +567,10 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
+      const projectRepo = requireRepo(project);
       const hostname = resolveHost(project);
       if (hostname && token) {
-        const [owner, repo] = parseProjectRepo(project.repo);
+        const [owner, repo] = parseProjectRepo(projectRepo);
         const data = (await forgejoApi(
           hostname,
           token,
@@ -579,7 +591,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         "issue",
         "create",
         "--repo",
-        project.repo,
+        projectRepo,
         "--title",
         input.title,
         "--body",

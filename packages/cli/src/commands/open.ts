@@ -1,8 +1,10 @@
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig } from "@aoagents/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
-import { matchesPrefix } from "../lib/session-utils.js";
+import { findProjectForSession, matchesPrefix, stripHashPrefix } from "../lib/session-utils.js";
+import { DEFAULT_PORT } from "../lib/constants.js";
+import { projectSessionUrl } from "../lib/routes.js";
 
 async function openInTerminal(sessionName: string, newWindow?: boolean): Promise<boolean> {
   try {
@@ -60,13 +62,16 @@ export function registerOpen(program: Command): void {
         ),
       );
 
+      const port = config.port ?? DEFAULT_PORT;
       for (const session of sessionsToOpen.sort()) {
         const opened = await openInTerminal(session, opts.newWindow);
         if (opened) {
           console.log(chalk.green(`  Opened: ${session}`));
         } else {
+          const sessionId = stripHashPrefix(session);
+          const matchedProjectId = findProjectForSession(config, session) ?? target ?? sessionId;
           console.log(
-            `  ${chalk.yellow(session)} — attach with: ${chalk.dim(`tmux attach -t ${session}`)}`,
+            `  ${chalk.yellow(session)} — view at: ${chalk.dim(projectSessionUrl(port, matchedProjectId, sessionId))}`,
           );
         }
       }

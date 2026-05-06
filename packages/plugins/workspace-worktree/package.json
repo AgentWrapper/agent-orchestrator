@@ -1,6 +1,6 @@
 {
-  "name": "@composio/ao-plugin-workspace-worktree",
-  "version": "0.2.0",
+  "name": "@aoagents/ao-plugin-workspace-worktree",
+  "version": "0.4.0",
   "description": "Workspace plugin: git worktrees",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

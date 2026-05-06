@@ -4,7 +4,7 @@
  * No hardcoded binary paths — relies entirely on each plugin's detect() export.
  */
 
-import type { PluginModule } from "@composio/ao-core";
+import type { PluginModule } from "@aoagents/ao-core";
 import { isHumanCaller } from "./caller-context.js";
 import { promptSelect } from "./prompts.js";
 
@@ -15,10 +15,12 @@ export interface DetectedAgent {
 
 /** Known agent plugins — package name mapping. */
 const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
-  { name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
-  { name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
-  { name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
-  { name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
+  { name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },
+  { name: "aider", pkg: "@aoagents/ao-plugin-agent-aider" },
+  { name: "codex", pkg: "@aoagents/ao-plugin-agent-codex" },
+  { name: "cursor", pkg: "@aoagents/ao-plugin-agent-cursor" },
+  { name: "kimicode", pkg: "@aoagents/ao-plugin-agent-kimicode" },
+  { name: "opencode", pkg: "@aoagents/ao-plugin-agent-opencode" },
 ];
 
 /**

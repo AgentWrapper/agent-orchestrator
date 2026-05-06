@@ -1,0 +1,155 @@
+---
+title: Platforms
+description: Choose the right AO runtime, terminal, and notification setup for macOS, Linux, Windows, and remote hosts.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+AO's core workflow is the same on every platform: create an isolated workspace, run an agent, track the PR, react to CI and review events, and show progress in the dashboard.
+
+The platform differences come from the tools used to run and attach to long-lived sessions.
+
+<PlatformSupport
+  macos="full"
+  linux="full"
+  windows="partial"
+  note={<>Windows support is actively improving. Use the process runtime instead of tmux.</>}
+/>
+
+## Recommended Setup
+
+| Platform | Runtime | Notifications | Notes |
+| --- | --- | --- | --- |
+| macOS | `tmux` | `desktop`, Slack, Discord, webhook | Best local experience. iTerm2 attach support is macOS-only. |
+| Linux | `tmux` | `desktop`, Slack, Discord, webhook | Best server and workstation setup. Desktop notifications need `notify-send`. |
+| Windows | `process` | Slack, Discord, webhook | Native tmux and iTerm2 are unavailable. Windows support is in progress. |
+| Container or remote VM | `process` or `tmux` | Slack, Discord, webhook | Use persistent storage for AO data and protect the dashboard with your own auth. |
+
+## macOS
+
+macOS is the default local development target.
+
+Install tmux before using the default runtime:
+
+```bash
+brew install tmux
+```
+
+Recommended config:
+
+```yaml title="agent-orchestrator.yaml"
+defaults:
+  runtime: tmux
+  notifiers:
+    - desktop
+```
+
+What works well on macOS:
+
+| Capability | Status |
+| --- | --- |
+| tmux-backed worker sessions | Supported |
+| Browser dashboard terminal | Supported |
+| iTerm2 attach/open helpers | Supported |
+| Desktop notifications | Supported |
+| macOS idle sleep prevention while AO runs | Supported |
+
+<Callout type="info" title="Lid-close sleep still wins">
+  AO can prevent idle sleep on macOS while agents run, but it cannot override hardware lid-close sleep. Use normal clamshell mode if you need the machine available while closed.
+</Callout>
+
+## Linux
+
+Linux is a good fit for local workstations, remote development machines, and always-on hosts.
+
+Install tmux with your distribution package manager:
+
+```bash
+sudo apt install tmux
+```
+
+Recommended config:
+
+```yaml title="agent-orchestrator.yaml"
+defaults:
+  runtime: tmux
+  notifiers:
+    - desktop
+```
+
+What to know:
+
+| Capability | Status |
+| --- | --- |
+| tmux-backed worker sessions | Supported |
+| Browser dashboard terminal | Supported |
+| iTerm2 attach/open helpers | Not available |
+| Desktop notifications | Supported when `notify-send` is installed |
+| Remote dashboard access | Supported through port forwarding, Tailscale, or your proxy |
+
+If you are running AO on a headless Linux host, prefer Slack, Discord, or webhook notifications over desktop notifications.
+
+## Windows
+
+<Callout type="warn" title="Windows support is in progress">
+  The native Windows path uses `runtime: process`. The core spawn and PR workflow is available, but tmux-specific workflows and iTerm2 helpers do not apply.
+</Callout>
+
+Recommended config:
+
+```yaml title="agent-orchestrator.yaml"
+defaults:
+  runtime: process
+  notifiers:
+    - slack
+```
+
+What works:
+
+| Capability | Status |
+| --- | --- |
+| `ao start`, `ao stop`, `ao dashboard` | Supported |
+| `ao spawn` and `ao spawn --prompt` | Supported through the process runtime |
+| GitHub, GitLab, and Linear tracker/SCM integrations | Supported when their CLIs or credentials are configured |
+| Browser dashboard terminal | Supported through the direct PTY server |
+| Slack, Discord, webhook, Composio, and OpenClaw notifiers | Supported |
+
+What is limited:
+
+| Capability | Status | Use instead |
+| --- | --- | --- |
+| `runtime: tmux` | Not available natively | `runtime: process` |
+| iTerm2 terminal integration | Not available | Browser dashboard terminal |
+| Desktop notifier | No-op on Windows | Slack, Discord, webhook, Composio, or OpenClaw |
+| tmux attach commands | Not available | Dashboard terminal and AO session commands |
+
+Use PowerShell or Git Bash for normal CLI commands. If a command behaves differently because of shell quoting, put longer instructions in a file and send them with `ao send --file`.
+
+## Containers And Remote Hosts
+
+AO can run on a remote machine or inside a container, but the dashboard has no built-in authentication. Put it behind your own access layer before exposing it beyond localhost.
+
+Recommended config for containers:
+
+```yaml title="agent-orchestrator.yaml"
+defaults:
+  runtime: process
+  notifiers:
+    - webhook
+```
+
+Operational notes:
+
+- Mount or preserve AO's data directory so session metadata survives restarts.
+- Forward the dashboard port, usually `3000`, only to trusted networks.
+- Prefer network notifiers over desktop notifications.
+- Use `tmux` only if it is installed and you want attachable terminal sessions inside the host.
+
+## Choosing A Runtime
+
+| Runtime | Best for | Tradeoff |
+| --- | --- | --- |
+| `tmux` | macOS/Linux machines where you want durable, attachable terminal sessions | Requires tmux and does not work natively on Windows |
+| `process` | Windows, containers, and simpler process-managed environments | Less of the workflow is tmux-attachable |
+
+Start with the recommended runtime for your OS. Change it only when the default runtime does not match where AO is running.

@@ -1,7 +1,7 @@
 <h1 align="center">Agent Orchestrator — The Orchestration Layer for Parallel AI Agents</h1>
 
 <p align="center">
-<a href="https://platform.composio.dev/?utm_source=Github&utm_medium=Banner&utm_content=AgentOrchestrator">
+<a href="https://github.com/ComposioHQ/agent-orchestrator">
   <img width="800" alt="Agent Orchestrator banner" src="docs/assets/agent_orchestrator_banner.png">
 </a>
 </p>
@@ -11,6 +11,7 @@
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
 
 [![GitHub stars](https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/stargazers)
+[![npm version](https://img.shields.io/npm/v/%40aoagents%2Fao?style=flat-square)](https://www.npmjs.com/package/@aoagents/ao)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![PRs merged](https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged)
 [![Tests](https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1)
@@ -49,7 +50,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 ### Install
 
 ```bash
-npm install -g @composio/ao
+npm install -g @aoagents/ao
 ```
 
 <details>
@@ -64,6 +65,32 @@ git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
 </details>
+
+### Zsh Completion
+
+Generate the completion file from the installed CLI:
+
+```bash
+mkdir -p ~/.zsh/completions
+ao completion zsh > ~/.zsh/completions/_ao
+```
+
+Then make sure the directory is on your `fpath` before `compinit` runs:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For Oh My Zsh, install the same generated file into a custom plugin directory and add `ao` to your plugin list:
+
+```bash
+mkdir -p "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao"
+ao completion zsh > "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao/_ao"
+```
+
+If you are contributing from a source checkout, you can also symlink the repo copy at [`completions/_ao`](completions/_ao).
 
 ### Start
 
@@ -103,6 +130,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 # Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
@@ -135,7 +163,26 @@ reactions:
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
+Keep the `$schema` line so editors can autocomplete and validate against [`schema/config.schema.json`](schema/config.schema.json).
+
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
+
+## Remote Access
+
+AO keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
+
+**How it works:** On macOS, AO automatically holds an idle-sleep prevention assertion using `caffeinate`. When AO exits, the assertion is released.
+
+```yaml
+# agent-orchestrator.yaml
+$schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
+power:
+  preventIdleSleep: true  # Default on macOS, no-op on Linux
+```
+
+Set to `false` if you want to allow idle sleep while AO runs.
+
+**Lid-close limitation:** macOS enforces lid-close sleep at the hardware level — no userspace assertion can override it. If you need remote access while traveling with the lid closed, use [clamshell mode](https://support.apple.com/en-us/102505) (external power + display + input device).
 
 ## Plugin Architecture
 
@@ -144,7 +191,7 @@ Seven plugin slots. Lifecycle stays in core.
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
 | Runtime   | tmux        | process                  |
-| Agent     | claude-code | codex, aider, opencode   |
+| Agent     | claude-code | codex, aider, cursor, opencode, kimicode |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear, gitlab           |
 | SCM       | github      | gitlab                   |

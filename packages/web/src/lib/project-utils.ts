@@ -1,4 +1,5 @@
-import { isOrchestratorSession } from "@composio/ao-core/types";
+import { isOrchestratorSession } from "@aoagents/ao-core/types";
+import { matchesSessionPrefix } from "./session-utils";
 
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
@@ -18,7 +19,9 @@ function matchesProject(
 ): boolean {
   if (session.projectId === projectId) return true;
   const project = projects[projectId];
-  if (project?.sessionPrefix && session.id.startsWith(project.sessionPrefix)) return true;
+  if (project?.sessionPrefix && matchesSessionPrefix(session.id, project.sessionPrefix)) {
+    return true;
+  }
   return projects[session.projectId]?.sessionPrefix === projectId;
 }
 
@@ -44,6 +47,16 @@ export function filterWorkerSessions<T extends SessionLike>(
   projectFilter: string | null | undefined,
   projects: Record<string, ProjectWithPrefix>,
 ): T[] {
-  const workers = sessions.filter((s) => !isOrchestratorSession(s));
+  const allSessionPrefixes = Object.entries(projects).map(
+    ([projectId, p]) => p.sessionPrefix ?? projectId,
+  );
+  const workers = sessions.filter(
+    (s) =>
+      !isOrchestratorSession(
+        s,
+        projects[s.projectId]?.sessionPrefix ?? s.projectId,
+        allSessionPrefixes,
+      ),
+  );
   return filterProjectSessions(workers, projectFilter, projects);
 }

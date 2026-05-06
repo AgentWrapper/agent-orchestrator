@@ -1,4 +1,4 @@
-# @composio/ao-plugin-scm-github
+# @aoagents/ao-plugin-scm-forgejo
 
 ## 0.2.0
 

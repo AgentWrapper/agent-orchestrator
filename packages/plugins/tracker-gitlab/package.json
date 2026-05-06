@@ -1,6 +1,6 @@
 {
-  "name": "@composio/ao-plugin-tracker-gitlab",
-  "version": "0.1.1",
+  "name": "@aoagents/ao-plugin-tracker-gitlab",
+  "version": "0.2.7",
   "description": "Tracker plugin: GitLab Issues",
   "license": "MIT",
   "type": "module",
@@ -34,8 +34,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*",
-    "@composio/ao-plugin-scm-gitlab": "workspace:*"
+    "@aoagents/ao-core": "workspace:*",
+    "@aoagents/ao-plugin-scm-gitlab": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

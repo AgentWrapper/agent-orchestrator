@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+  "title": "Agent Orchestrator Config",
+  "description": "Schema for agent-orchestrator.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projects"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "default": "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+      "description": "Optional schema reference for editor autocomplete and validation."
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 3000,
+      "description": "Web dashboard port."
+    },
+    "terminalPort": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Terminal WebSocket server port override."
+    },
+    "directTerminalPort": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Direct terminal WebSocket server port override."
+    },
+    "readyThresholdMs": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 300000,
+      "description": "Milliseconds before a ready session becomes idle."
+    },
+    "power": {
+      "$ref": "#/$defs/powerConfig"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/lifecycleConfig"
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaultPlugins"
+    },
+    "plugins": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/installedPluginConfig"
+      }
+    },
+    "dashboard": {
+      "$ref": "#/$defs/dashboardConfig"
+    },
+    "projects": {
+      "type": "object",
+      "description": "Project configs keyed by project ID.",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "$ref": "#/$defs/projectConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "notifiers": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/$defs/notifierConfig"
+      }
+    },
+    "notificationRouting": {
+      "$ref": "#/$defs/notificationRouting"
+    },
+    "reactions": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/$defs/reactionConfig"
+      }
+    }
+  },
+  "$defs": {
+    "reactionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto": {
+          "type": "boolean",
+          "default": true
+        },
+        "action": {
+          "type": "string",
+          "enum": ["send-to-agent", "notify", "auto-merge"],
+          "default": "notify"
+        },
+        "message": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["urgent", "action", "warning", "info"]
+        },
+        "retries": {
+          "type": "number"
+        },
+        "escalateAfter": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "threshold": {
+          "type": "string"
+        },
+        "includeSummary": {
+          "type": "boolean"
+        }
+      }
+    },
+    "trackerConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "description": "Built-in or installed tracker plugin name."
+        },
+        "package": {
+          "type": "string",
+          "description": "npm package for an external tracker plugin."
+        },
+        "path": {
+          "type": "string",
+          "description": "Local path for an external tracker plugin."
+        }
+      },
+      "anyOf": [{ "required": ["plugin"] }, { "required": ["package"] }, { "required": ["path"] }],
+      "not": {
+        "required": ["package", "path"]
+      }
+    },
+    "scmWebhookConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "path": {
+          "type": "string"
+        },
+        "secretEnvVar": {
+          "type": "string"
+        },
+        "signatureHeader": {
+          "type": "string"
+        },
+        "eventHeader": {
+          "type": "string"
+        },
+        "deliveryHeader": {
+          "type": "string"
+        },
+        "maxBodyBytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "scmConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "description": "Built-in or installed SCM plugin name."
+        },
+        "package": {
+          "type": "string",
+          "description": "npm package for an external SCM plugin."
+        },
+        "path": {
+          "type": "string",
+          "description": "Local path for an external SCM plugin."
+        },
+        "webhook": {
+          "$ref": "#/$defs/scmWebhookConfig"
+        }
+      },
+      "anyOf": [{ "required": ["plugin"] }, { "required": ["package"] }, { "required": ["path"] }],
+      "not": {
+        "required": ["package", "path"]
+      }
+    },
+    "notifierConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "description": "Built-in or installed notifier plugin name."
+        },
+        "package": {
+          "type": "string",
+          "description": "npm package for an external notifier plugin."
+        },
+        "path": {
+          "type": "string",
+          "description": "Local path for an external notifier plugin."
+        }
+      },
+      "anyOf": [{ "required": ["plugin"] }, { "required": ["package"] }, { "required": ["path"] }],
+      "not": {
+        "required": ["package", "path"]
+      }
+    },
+    "agentPermission": {
+      "type": "string",
+      "enum": ["permissionless", "default", "auto-edit", "suggest", "skip"],
+      "default": "permissionless"
+    },
+    "agentSpecificConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "permissions": {
+          "$ref": "#/$defs/agentPermission"
+        },
+        "model": {
+          "type": "string"
+        },
+        "orchestratorModel": {
+          "type": "string"
+        },
+        "opencodeSessionId": {
+          "type": "string"
+        }
+      }
+    },
+    "roleAgentSpecificConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "permissions": {
+          "$ref": "#/$defs/agentPermission"
+        },
+        "model": {
+          "type": "string"
+        },
+        "orchestratorModel": {
+          "type": "string"
+        },
+        "opencodeSessionId": {
+          "type": "string"
+        }
+      }
+    },
+    "roleAgentDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        }
+      }
+    },
+    "roleAgentConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "agentConfig": {
+          "$ref": "#/$defs/roleAgentSpecificConfig"
+        }
+      }
+    },
+    "projectConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "defaultBranch": {
+          "type": "string",
+          "default": "main"
+        },
+        "sessionPrefix": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "storageKey": {
+          "type": "string"
+        },
+        "originUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "resolveError": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "tracker": {
+          "$ref": "#/$defs/trackerConfig"
+        },
+        "scm": {
+          "$ref": "#/$defs/scmConfig"
+        },
+        "symlinks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "postCreate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "agentConfig": {
+          "$ref": "#/$defs/agentSpecificConfig"
+        },
+        "orchestrator": {
+          "$ref": "#/$defs/roleAgentConfig"
+        },
+        "worker": {
+          "$ref": "#/$defs/roleAgentConfig"
+        },
+        "reactions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/reactionConfig"
+          }
+        },
+        "agentRules": {
+          "type": "string"
+        },
+        "agentRulesFile": {
+          "type": "string"
+        },
+        "orchestratorRules": {
+          "type": "string"
+        },
+        "orchestratorSessionStrategy": {
+          "type": "string",
+          "enum": ["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"]
+        },
+        "opencodeIssueSessionStrategy": {
+          "type": "string",
+          "enum": ["reuse", "delete", "ignore"]
+        }
+      }
+    },
+    "defaultPlugins": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "default": "tmux",
+          "description": "Default runtime plugin name."
+        },
+        "agent": {
+          "type": "string",
+          "default": "claude-code",
+          "description": "Default agent plugin name."
+        },
+        "workspace": {
+          "type": "string",
+          "default": "worktree",
+          "description": "Default workspace plugin name."
+        },
+        "notifiers": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "orchestrator": {
+          "$ref": "#/$defs/roleAgentDefaults"
+        },
+        "worker": {
+          "$ref": "#/$defs/roleAgentDefaults"
+        }
+      }
+    },
+    "installedPluginConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["registry", "npm", "local"]
+        },
+        "package": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "local"
+              }
+            },
+            "required": ["source"]
+          },
+          "then": {
+            "required": ["path"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "enum": ["registry", "npm"]
+              }
+            },
+            "required": ["source"]
+          },
+          "then": {
+            "required": ["package"]
+          }
+        },
+        {
+          "not": {
+            "required": ["package", "path"]
+          }
+        }
+      ]
+    },
+    "powerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preventIdleSleep": {
+          "type": "boolean"
+        }
+      }
+    },
+    "dashboardConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "attentionZones": {
+          "type": "string",
+          "enum": ["simple", "detailed"],
+          "default": "simple"
+        }
+      }
+    },
+    "lifecycleConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "autoCleanupOnMerge": {
+          "type": "boolean",
+          "default": true
+        },
+        "mergeCleanupIdleGraceMs": {
+          "oneOf": [
+            {
+              "const": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 10000
+            }
+          ],
+          "default": 300000
+        }
+      }
+    },
+    "notificationRouting": {
+      "type": "object",
+      "default": {},
+      "properties": {
+        "urgent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warning": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "info": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

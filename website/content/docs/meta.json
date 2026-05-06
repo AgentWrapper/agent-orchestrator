@@ -1,0 +1,24 @@
+{
+  "title": "Docs",
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "installation",
+    "quickstart",
+    "platforms",
+    "---Learn---",
+    "guides",
+    "plugins",
+    "---Reference---",
+    "cli",
+    "configuration",
+    "architecture",
+    "examples",
+    "dashboard",
+    "---Help---",
+    "troubleshooting",
+    "faq",
+    "migration",
+    "changelog"
+  ]
+}

@@ -17,7 +17,7 @@ import type {
   IssueUpdate,
   CreateIssueInput,
   ProjectConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import type { Composio } from "@composio/core";
 
 // ---------------------------------------------------------------------------
@@ -215,6 +215,7 @@ interface LinearIssueNode {
   description: string | null;
   url: string;
   priority: number;
+  branchName?: string | null;
   state: {
     name: string;
     type: string; // "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled"
@@ -260,6 +261,7 @@ const ISSUE_FIELDS = `
   description
   url
   priority
+  branchName
   state { name type }
   labels { nodes { name } }
   assignee { name displayName }
@@ -294,6 +296,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+        branchName: node.branchName ?? undefined,
       };
     },
 
@@ -426,6 +429,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+        branchName: node.branchName ?? undefined,
       }));
     },
 
@@ -618,6 +622,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+        branchName: node.branchName ?? undefined,
       };
 
       // Assign after creation (Linear's issueCreate uses assigneeId, not display name)

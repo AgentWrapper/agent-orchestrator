@@ -17,7 +17,7 @@ vi.mock("@composio/core", () => ({
 }));
 
 import { create } from "../src/index.js";
-import type { ProjectConfig } from "@composio/ao-core";
+import type { ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { parse as yamlParse, parseDocument } from "yaml";
-import { findConfigFile } from "@composio/ao-core";
+import { CONFIG_SCHEMA_URL, findConfigFile, isCanonicalGlobalConfigPath } from "@aoagents/ao-core";
 import {
   probeGateway,
   validateToken,
@@ -290,7 +290,7 @@ function writeOpenClawConfig(
 
   // Add "openclaw" to defaults.notifiers if not already present
   if (!rawConfig.defaults) rawConfig.defaults = {};
-  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = ["desktop"];
+  if (!rawConfig.defaults.notifiers) rawConfig.defaults.notifiers = [];
   if (!Array.isArray(rawConfig.defaults.notifiers)) {
     rawConfig.defaults.notifiers = [rawConfig.defaults.notifiers];
   }
@@ -330,6 +330,12 @@ function writeOpenClawConfig(
   }
 
   // Update the document tree from the modified plain object while preserving comments
+  if (!isCanonicalGlobalConfigPath(configPath)) {
+    const currentSchema = doc.get("$schema");
+    if (!(typeof currentSchema === "string" && currentSchema.trim().length > 0)) {
+      doc.set("$schema", CONFIG_SCHEMA_URL);
+    }
+  }
   doc.setIn(["notifiers"], rawConfig.notifiers);
   doc.setIn(["defaults"], rawConfig.defaults);
   doc.setIn(["notificationRouting"], rawConfig.notificationRouting);
@@ -498,7 +504,10 @@ export function registerSetup(program: Command): void {
       "--routing-preset <preset>",
       "OpenClaw routing preset: urgent-only | urgent-action | all",
     )
-    .option("--non-interactive", "Skip prompts — auto-detects OpenClaw if --url not provided (token auto-generated if not provided)")
+    .option(
+      "--non-interactive",
+      "Skip prompts — auto-detects OpenClaw if --url not provided (token auto-generated if not provided)",
+    )
     .action(async (opts: SetupOptions) => {
       try {
         await runSetupAction(opts);

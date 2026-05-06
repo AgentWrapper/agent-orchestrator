@@ -1,0 +1,209 @@
+---
+title: Installation
+description: Install AO, authenticate the tools it controls, and verify your first project.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
+
+This page gets your machine ready to run Agent Orchestrator. By the end, the `ao` command should be on your `PATH`, your source-control CLI should be authenticated, and `ao doctor` should be able to explain what is ready or missing.
+
+<Callout type="info" title="What AO installs">
+  The published package is `@aoagents/ao`. It provides the global `ao` command and includes the built-in CLI, dashboard, and plugin packages.
+</Callout>
+
+## Prerequisites
+
+<PlatformSupport
+  macos="full"
+  linux="full"
+  windows="partial"
+  note={<>Windows support is actively improving. Use <code>defaults.runtime: process</code> instead of tmux. See <a href="/docs/platforms#windows">Platforms</a>.</>}
+/>
+
+Install these before running AO:
+
+| Tool | Required | Why AO needs it |
+| --- | --- | --- |
+| Node.js 20+ | Yes | Runs the AO CLI, dashboard, and plugins. |
+| Git | Yes | Creates worktrees, branches, commits, and cleanup operations. |
+| GitHub CLI `gh` | For GitHub projects | Reads issues, PRs, reviews, and CI status as your user. |
+| tmux | Default on macOS/Linux | Keeps long-running agent sessions attachable and recoverable. |
+| An agent CLI | Yes | The worker that writes code, such as Claude Code, Codex, Cursor, Aider, or OpenCode. |
+
+If you plan to use GitLab or Linear, install and authenticate their CLIs or credentials as described on the related plugin pages. A GitHub-only setup only needs `gh`.
+
+## Install AO
+
+<Tabs items={["npm", "pnpm", "yarn", "from source"]}>
+  <Tab value="npm">
+  ```bash
+  npm install -g @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="pnpm">
+  ```bash
+  pnpm add -g @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="yarn">
+  ```bash
+  yarn global add @aoagents/ao
+  ```
+  </Tab>
+  <Tab value="from source">
+  ```bash
+  git clone https://github.com/ComposioHQ/agent-orchestrator
+  cd agent-orchestrator
+  pnpm install
+  pnpm build
+  pnpm --filter @aoagents/ao link --global
+  ```
+  </Tab>
+</Tabs>
+
+Confirm the command is available:
+
+```bash
+ao --version
+```
+
+## Authenticate Your Tools
+
+<Steps>
+<Step>
+
+### Authenticate source control
+
+For GitHub projects, AO uses `gh` for issue lookup, PR discovery, reviews, CI checks, and merge readiness.
+
+```bash
+gh auth login
+gh auth status
+```
+
+The authenticated account must be able to read the repository, create branches, push branches, open PRs, and read CI status.
+
+</Step>
+<Step>
+
+### Install and sign in to one agent
+
+AO launches an agent CLI inside each worker session. Start with the one you already use, then add more later if you want per-project or per-role choices.
+
+<Tabs items={["Claude Code", "Codex", "Cursor", "Aider", "OpenCode"]}>
+  <Tab value="Claude Code">
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  claude
+  ```
+  </Tab>
+  <Tab value="Codex">
+  ```bash
+  npm install -g @openai/codex
+  codex
+  ```
+  </Tab>
+  <Tab value="Cursor">
+  ```bash
+  curl https://cursor.com/install -fsS | bash
+  agent --help
+  ```
+  </Tab>
+  <Tab value="Aider">
+  ```bash
+  pip install aider-install
+  aider-install
+  aider --help
+  ```
+  </Tab>
+  <Tab value="OpenCode">
+  ```bash
+  npm install -g opencode-ai
+  opencode --help
+  ```
+  </Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Start AO in a repo
+
+Run `ao start` from a repository you want AO to manage:
+
+```bash
+cd ~/code/my-repo
+ao start
+```
+
+If there is no `agent-orchestrator.yaml`, AO creates one. It also starts the dashboard and an orchestrator session for the project.
+
+You can also start from a path or clone from a URL:
+
+```bash
+ao start ~/code/my-repo
+ao start https://github.com/your-org/your-repo
+```
+
+</Step>
+<Step>
+
+### Run the doctor check
+
+```bash
+ao doctor
+```
+
+`ao doctor` checks the launcher, config, plugin resolution, runtime tools, source-control authentication, notifier setup, and stale temporary files. If it reports a fixable issue, run:
+
+```bash
+ao doctor --fix
+```
+
+</Step>
+</Steps>
+
+## Windows Setup
+
+Windows support is in progress. Use the process runtime instead of tmux:
+
+```yaml title="agent-orchestrator.yaml"
+defaults:
+  runtime: process
+```
+
+Use Slack, Discord, webhook, or another network notifier for alerts. Desktop notifications and iTerm2 integration are not available on Windows.
+
+## Common Install Issues
+
+<Accordions>
+  <Accordion title="`ao` is not found after install">
+    Your global package bin directory is not on `PATH`. Check your package manager's global bin path, then reopen your shell and run `ao --version` again.
+  </Accordion>
+  <Accordion title="`gh` is not authenticated">
+    Run `gh auth login`, then `gh auth status`. AO cannot read GitHub issues, PRs, reviews, or CI checks until `gh` is authenticated.
+  </Accordion>
+  <Accordion title="tmux is missing">
+    Install tmux on macOS or Linux, or set `defaults.runtime: process` if you are on Windows or running in a container.
+  </Accordion>
+  <Accordion title="No agent runtime is detected">
+    Install one supported agent CLI and run it once outside AO so it can complete its own sign-in flow.
+  </Accordion>
+  <Accordion title="Port 3000 is already in use">
+    `ao start` scans for a free port and prints the final dashboard URL. Use the URL in the command output.
+  </Accordion>
+  <Accordion title="The dashboard fails after an update">
+    Run `ao dashboard --rebuild` to clean stale dashboard build artifacts and start again.
+  </Accordion>
+</Accordions>
+
+## Next
+
+<Cards>
+  <Card title="Quickstart" description="Run one worker session from start to pull request." href="/docs/quickstart" />
+  <Card title="Configuration" description="Understand the generated `agent-orchestrator.yaml`." href="/docs/configuration" />
+  <Card title="Platforms" description="Choose the right runtime and notifier for your OS." href="/docs/platforms" />
+</Cards>

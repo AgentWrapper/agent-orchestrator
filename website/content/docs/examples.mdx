@@ -1,0 +1,264 @@
+---
+title: Examples
+description: Five annotated starter configurations covering GitHub, Linear, multi-project, auto-merge, and Codex setups.
+---
+
+All examples live in the [`examples/` directory](https://github.com/ComposioHQ/agent-orchestrator/tree/main/examples) of the AO repository. Pick the one closest to your setup, copy it to your project root as `agent-orchestrator.yaml`, fill in your repo path and any API keys, and you're ready to spawn agents.
+
+```bash
+cp examples/simple-github.yaml agent-orchestrator.yaml
+```
+
+---
+
+## Simple GitHub
+
+For solo devs on a single GitHub repo with GitHub Issues.
+
+```yaml title="simple-github.yaml"
+# Minimal setup for a single GitHub repo with GitHub Issues
+# Perfect for getting started quickly
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+```
+
+**Notable settings:**
+
+- Uses the default GitHub tracker — requires `GITHUB_TOKEN` (set automatically by the `gh` CLI).
+- No `defaults:` block needed — AO's built-in defaults (`tmux` runtime, `claude-code` agent, `worktree` workspace) apply automatically.
+- Replace `owner/my-app` and `~/my-app` with your actual GitHub slug and local checkout path.
+
+[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/simple-github.yaml)
+
+---
+
+## Linear Team
+
+For teams that track work in Linear rather than GitHub Issues.
+
+```yaml title="linear-team.yaml"
+# Linear integration with custom team
+# Requires LINEAR_API_KEY environment variable
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # Linear tracker integration
+    tracker:
+      plugin: linear
+      teamId: "2a6e9b1b-19cd-4e30-b5bd-7b34dc491c7e"
+
+    # Custom rules for agents
+    agentRules: |
+      Always link Linear tickets in commit messages.
+      Run tests before pushing.
+      Use conventional commits (feat:, fix:, chore:).
+```
+
+**Notable settings:**
+
+- `tracker.plugin: linear` swaps out the default GitHub tracker for the Linear plugin.
+- `tracker.teamId` is your Linear team UUID — find it in Linear → Settings → Team → General.
+- Requires a `LINEAR_API_KEY` environment variable (set it in your shell profile or CI secrets).
+- `agentRules` injects project-specific instructions into every agent's prompt — useful for enforcing commit conventions or test requirements.
+
+[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/linear-team.yaml)
+
+---
+
+## Multi-Project
+
+For managing multiple repositories from a single config, with mixed trackers and Slack notifications.
+
+```yaml title="multi-project.yaml"
+# Managing multiple projects with different trackers
+# Shows how to configure multiple repos with different settings
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop, slack]
+
+projects:
+  frontend:
+    name: Frontend
+    repo: org/frontend
+    path: ~/frontend
+    defaultBranch: main
+    sessionPrefix: fe
+
+    tracker:
+      plugin: github
+
+    agentRules: |
+      Use TypeScript strict mode.
+      Follow React best practices.
+      Always run `pnpm test` before pushing.
+
+  backend:
+    name: Backend API
+    repo: org/backend
+    path: ~/backend
+    defaultBranch: main
+    sessionPrefix: api
+
+    tracker:
+      plugin: linear
+      teamId: "your-team-id"
+
+    agentRules: |
+      All endpoints require auth middleware.
+      Add OpenAPI docs for new routes.
+      Run `pnpm test` and `pnpm lint` before pushing.
+
+# Slack notifications (requires SLACK_WEBHOOK_URL)
+notifiers:
+  slack:
+    plugin: slack
+    webhook: ${SLACK_WEBHOOK_URL}
+    channel: "#agent-updates"
+
+# Route notifications by priority
+notificationRouting:
+  urgent: [desktop, slack]
+  action: [desktop, slack]
+  warning: [slack]
+  info: [slack]
+```
+
+**Notable settings:**
+
+- `defaults:` sets the runtime, agent, workspace, and notifier list for all projects — individual projects can override any of these.
+- `sessionPrefix` keeps session IDs readable (`fe-123`, `api-456`) when multiple projects run simultaneously.
+- Each project can use a different tracker — `frontend` uses GitHub Issues, `backend` uses Linear.
+- `notifiers.slack.webhook: ${SLACK_WEBHOOK_URL}` reads the webhook URL from an environment variable — never hardcode secrets in config files.
+- `notificationRouting` routes urgent and actionable events to both desktop and Slack, while lower-priority events go to Slack only.
+
+[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/multi-project.yaml)
+
+---
+
+## Auto-Merge
+
+For teams that want maximum automation — PRs merge automatically when approved and CI is green, with auto-retry for failures.
+
+```yaml title="auto-merge.yaml"
+# Aggressive automation with auto-merge
+# Automatically merges approved PRs with passing CI
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # Enable auto-merge for this project
+    reactions:
+      approved-and-green:
+        auto: true # Automatically merge when PR is approved and CI passes
+        action: auto-merge
+
+# Global reactions
+reactions:
+  # Auto-retry CI failures up to 3 times
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 3
+
+  # Auto-address review comments
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 1h # Notify human if not resolved in 1 hour
+
+  # Notify when agent is stuck
+  agent-stuck:
+    threshold: 10m
+    action: notify
+    priority: urgent
+```
+
+**Notable settings:**
+
+- `reactions.approved-and-green.auto: true` with `action: auto-merge` enables hands-free merging — no human click required once the PR is approved and CI passes.
+- The project-level `reactions` block overrides global reactions for that project only; global `reactions` apply to all projects unless overridden.
+- `ci-failed.retries: 3` lets AO send the agent back to fix CI up to three times before escalating.
+- `changes-requested.escalateAfter: 1h` ensures a human is notified if an agent can't resolve review comments within an hour.
+- `agent-stuck.threshold: 10m` triggers an urgent desktop notification if an agent goes silent for 10 minutes.
+
+[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/auto-merge.yaml)
+
+---
+
+## Codex Integration
+
+For teams that prefer GPT-4/Codex over Claude Code.
+
+```yaml title="codex-integration.yaml"
+# Using Codex instead of Claude Code
+# Demonstrates using a different AI agent
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  agent: codex # Use Codex instead of Claude Code
+  runtime: tmux
+  workspace: worktree
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # Codex-specific configuration
+    agentConfig:
+      model: gpt-4
+      permissions: default
+
+    agentRules: |
+      Write clean, well-documented code.
+      Follow project conventions.
+      Run tests before pushing.
+```
+
+**Notable settings:**
+
+- `defaults.agent: codex` changes the agent for all projects — no need to set it per project.
+- `agentConfig.model: gpt-4` is passed directly to the Codex plugin; valid values depend on your OpenAI subscription and which models the Codex plugin supports.
+- `agentConfig.permissions: default` uses the plugin's built-in permission set — change to `full` to allow broader file access, or `readonly` to restrict writes.
+- Requires an `OPENAI_API_KEY` environment variable.
+
+[View raw file on GitHub](https://github.com/ComposioHQ/agent-orchestrator/blob/main/examples/codex-integration.yaml)
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="Configuration Reference" href="/docs/configuration" description="Full reference for every field in agent-orchestrator.yaml." />
+  <Card title="Plugins" href="/docs/plugins" description="Browse available runtime, agent, tracker, SCM, notifier, and terminal plugins." />
+  <Card title="Guides" href="/docs/guides" description="Step-by-step workflows for common setups and automation patterns." />
+</Cards>

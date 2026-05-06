@@ -1,0 +1,593 @@
+/*
+ * AO Warm Terminal theme for Fumadocs
+ * ====================================
+ * CRITICAL: Fumadocs Tailwind utilities use --color-fd-* variables (NOT --fd-*).
+ * We must override --color-fd-* to change colors. These are inside layer(fumadocs),
+ * so our unlayered :root overrides win.
+ */
+@import "fumadocs-ui/style.css" layer(fumadocs);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. COLOR OVERRIDES — override --color-fd-* with AO design tokens
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Docs primary accent = AMBER (matches dashboard Orchestrator button + active items) */
+  --docs-accent: var(--color-accent-amber);
+  --docs-accent-dim: var(--color-accent-amber-dim);
+  --docs-accent-border: var(--color-accent-amber-border);
+
+  --color-fd-background: var(--color-bg-base);
+  --color-fd-foreground: var(--color-text-primary);
+  --color-fd-muted: var(--color-bg-elevated);
+  --color-fd-muted-foreground: var(--color-text-secondary);
+  --color-fd-popover: var(--color-bg-elevated);
+  --color-fd-popover-foreground: var(--color-text-primary);
+  --color-fd-card: var(--color-bg-surface);
+  --color-fd-card-foreground: var(--color-text-primary);
+  --color-fd-border: var(--color-border-default);
+  --color-fd-primary: var(--docs-accent);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: var(--color-bg-elevated);
+  --color-fd-secondary-foreground: var(--color-text-primary);
+  --color-fd-accent: var(--docs-accent-dim);
+  --color-fd-accent-foreground: var(--docs-accent);
+  --color-fd-ring: var(--docs-accent);
+}
+
+.dark {
+  --docs-accent: var(--color-accent-amber);
+  --docs-accent-dim: var(--color-accent-amber-dim);
+  --docs-accent-border: var(--color-accent-amber-border);
+
+  --color-fd-background: var(--color-bg-base);
+  --color-fd-foreground: var(--color-text-primary);
+  --color-fd-muted: var(--color-bg-surface);
+  --color-fd-muted-foreground: var(--color-text-secondary);
+  --color-fd-popover: var(--color-bg-elevated);
+  --color-fd-popover-foreground: var(--color-text-primary);
+  --color-fd-card: var(--color-bg-surface);
+  --color-fd-card-foreground: var(--color-text-primary);
+  --color-fd-border: var(--color-border-default);
+  --color-fd-primary: var(--docs-accent);
+  --color-fd-primary-foreground: var(--color-bg-base);
+  --color-fd-secondary: var(--color-bg-elevated);
+  --color-fd-secondary-foreground: var(--color-text-primary);
+  --color-fd-accent: var(--docs-accent-dim);
+  --color-fd-accent-foreground: var(--docs-accent);
+  --color-fd-ring: var(--docs-accent);
+}
+
+/* Sidebar-specific dark overrides */
+.dark #nd-sidebar {
+  --color-fd-muted: var(--color-bg-surface);
+  --color-fd-secondary: var(--color-bg-elevated);
+  --color-fd-muted-foreground: var(--color-text-secondary);
+}
+
+/* Sidebar background — match dashboard's very dark sidebar */
+#nd-sidebar {
+  background-color: var(--color-bg-sidebar) !important;
+  border-right-color: var(--color-border-subtle) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1b. FLAT BACKGROUND — kill the body gradient on docs pages
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout {
+  background: var(--color-bg-base) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1c. SEMANTIC COLORS — override fumadocs info/warning/error colors to amber
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --color-fd-info: var(--docs-accent);
+  --color-fd-warning: var(--color-accent-amber);
+  --color-fd-success: #16a34a;
+  --color-fd-error: #dc2626;
+}
+
+.dark {
+  --color-fd-info: var(--docs-accent);
+  --color-fd-warning: var(--color-accent-amber);
+  --color-fd-success: #22c55e;
+  --color-fd-error: #ef4444;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1c. FORCE WARM LINK COLORS — fumadocs uses text-fd-primary (accent blue)
+       on too many elements. Override sidebar, TOC, and breadcrumb links
+       to warm gray. Only prose body links stay accent.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Sidebar links: warm stone gray, not periwinkle (desktop + mobile) */
+#nd-sidebar a:not([data-active="true"]),
+#nd-sidebar button,
+#nd-sidebar-mobile a:not([data-active="true"]),
+#nd-sidebar-mobile button {
+  color: var(--color-text-secondary) !important;
+}
+
+#nd-sidebar a:not([data-active="true"]):hover,
+#nd-sidebar button:hover,
+#nd-sidebar-mobile a:not([data-active="true"]):hover,
+#nd-sidebar-mobile button:hover {
+  color: var(--color-text-primary) !important;
+}
+
+/* Sidebar active link: amber accent (desktop + mobile) */
+#nd-sidebar a[data-active="true"],
+#nd-sidebar-mobile a[data-active="true"] {
+  color: var(--docs-accent) !important;
+}
+
+/* TOC links: warm gray, not blue */
+#nd-toc a,
+#nd-tocnav a {
+  color: var(--color-text-secondary) !important;
+}
+
+#nd-toc a:hover,
+#nd-tocnav a:hover {
+  color: var(--color-text-primary) !important;
+}
+
+#nd-toc a[data-active="true"],
+#nd-tocnav a[data-active="true"] {
+  color: var(--docs-accent) !important;
+}
+
+/* Breadcrumb: warm gray */
+#nd-page nav a,
+#nd-page [aria-label="breadcrumb"] a {
+  color: var(--color-text-secondary) !important;
+  text-decoration: none !important;
+}
+
+#nd-page nav a:hover,
+#nd-page [aria-label="breadcrumb"] a:hover {
+  color: var(--color-text-primary) !important;
+}
+
+/* Page title breadcrumb link (the blue "Installation" at top) */
+#nd-page a[href^="/docs"] {
+  color: var(--color-text-secondary) !important;
+}
+
+#nd-page a[href^="/docs"]:hover {
+  color: var(--color-text-primary) !important;
+}
+
+/* Step number circles: amber */
+#nd-docs-layout .fd-step::before {
+  background: var(--docs-accent) !important;
+}
+
+/* Footer prev/next: warm gray, not blue */
+#nd-page footer a,
+#nd-page [class*="footer"] a {
+  color: var(--color-text-secondary) !important;
+  border-color: var(--color-border-default) !important;
+}
+
+#nd-page footer a:hover,
+#nd-page [class*="footer"] a:hover {
+  color: var(--color-text-primary) !important;
+  border-color: var(--docs-accent) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. TYPOGRAPHY — Geist 13px body, JetBrains Mono code (dashboard match)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout {
+  font-family:
+    var(--font-geist-sans),
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#nd-docs-layout code,
+#nd-docs-layout kbd,
+#nd-docs-layout pre {
+  font-family:
+    var(--font-jetbrains-mono),
+    ui-monospace,
+    "SFMono-Regular",
+    monospace;
+}
+
+/* Sidebar — smaller text like dashboard */
+#nd-sidebar {
+  font-size: 12.5px;
+}
+
+/* TOC — compact */
+#nd-toc,
+#nd-tocnav {
+  font-size: 11.5px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. PROSE — headings, links, tables, inline code
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout .prose h1 {
+  color: var(--color-text-primary);
+  font-weight: 700;
+  font-size: 1.65em;
+  letter-spacing: -0.02em;
+}
+
+#nd-docs-layout .prose h2 {
+  color: var(--color-text-primary);
+  font-weight: 680;
+  font-size: 1.3em;
+  letter-spacing: -0.015em;
+}
+
+#nd-docs-layout .prose h3 {
+  color: var(--color-text-primary);
+  font-weight: 640;
+  font-size: 1.1em;
+}
+
+#nd-docs-layout .prose h4 {
+  color: var(--color-text-primary);
+  font-weight: 620;
+}
+
+/* Heading anchors — strip card border/bg */
+#nd-docs-layout .prose h1 a[data-card],
+#nd-docs-layout .prose h2 a[data-card],
+#nd-docs-layout .prose h3 a[data-card],
+#nd-docs-layout .prose h4 a[data-card] {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Links — amber accent like dashboard */
+#nd-docs-layout .prose a {
+  color: var(--docs-accent);
+  text-decoration: none;
+}
+
+#nd-docs-layout .prose a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Tables — dashboard style: uppercase headers, dense */
+#nd-docs-layout .prose table {
+  font-size: 12.5px;
+}
+
+#nd-docs-layout .prose th {
+  background-color: var(--color-bg-subtle);
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+}
+
+#nd-docs-layout .prose td {
+  padding: 0.5rem 0.75rem;
+}
+
+/* Inline code */
+#nd-docs-layout :not(pre) > code {
+  font-size: 0.85em;
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+  background-color: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--docs-accent);
+  font-weight: 450;
+}
+
+/* No underlines in sidebar (desktop + mobile), TOC, or nav */
+#nd-sidebar a,
+#nd-sidebar button,
+#nd-sidebar-mobile a,
+#nd-sidebar-mobile button,
+#nd-toc a,
+#nd-tocnav a,
+#nd-page nav a {
+  text-decoration: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. CODE BLOCKS — Shiki, single border, copy button
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.shiki span {
+  color: var(--shiki-light) !important;
+  background-color: transparent !important;
+}
+
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+}
+
+#nd-docs-layout pre,
+pre.shiki,
+pre.shiki code {
+  background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
+}
+
+#nd-docs-layout pre {
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+#nd-docs-layout pre:not(figure *) {
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  padding: 0.875rem 1rem;
+}
+
+#nd-docs-layout figure pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+#nd-docs-layout figure.shiki {
+  background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
+  border-color: var(--color-border-subtle) !important;
+  border-radius: 6px;
+}
+
+/* Copy button fade on hover */
+#nd-docs-layout figure[data-rehype-pretty-code-figure] button,
+#nd-docs-layout [data-rehype-pretty-code-figure] button[aria-label] {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#nd-docs-layout figure[data-rehype-pretty-code-figure]:hover button,
+#nd-docs-layout [data-rehype-pretty-code-figure]:hover button[aria-label] {
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. CALLOUTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout [data-callout] {
+  border-radius: 6px;
+  border-left-width: 3px;
+  padding: 0.625rem 0.875rem;
+  margin: 1.25rem 0;
+  font-size: 12.5px;
+}
+
+/* Force info callout to amber (fumadocs uses --color-fd-info internally) */
+#nd-docs-layout [data-callout][data-type="info"] {
+  --callout-color: var(--docs-accent) !important;
+}
+
+/* Edit on GitHub button — force amber colors */
+#nd-docs-layout a[href*="github.com"][href*="/blob/"] {
+  color: var(--color-text-secondary) !important;
+}
+
+#nd-docs-layout a[href*="github.com"][href*="/blob/"]:hover {
+  color: var(--docs-accent) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. SCROLLBAR
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout pre::-webkit-scrollbar {
+  height: 4px;
+}
+
+#nd-docs-layout pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#nd-docs-layout pre::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar, rgba(255, 240, 220, 0.15));
+  border-radius: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. SEARCH MODAL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+[data-search-dialog] {
+  --color-fd-background: var(--color-bg-elevated);
+  --color-fd-border: var(--color-border-default);
+  --color-fd-card: var(--color-bg-surface);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8. DENSITY — tighter spacing to match dashboard
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout .prose > * + * {
+  margin-top: 1em;
+}
+
+#nd-docs-layout .prose > h2 {
+  margin-top: 2em;
+}
+
+#nd-docs-layout .prose > h3 {
+  margin-top: 1.5em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9. DOCS 404
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#nd-docs-layout .docs-missing-wrap {
+  display: flex;
+  min-height: calc(100vh - var(--fd-nav-height, 0px) - 8rem);
+  align-items: center;
+  padding-block: 2rem;
+}
+
+#nd-docs-layout .docs-missing-card {
+  width: 100%;
+  max-width: 56rem;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+}
+
+#nd-docs-layout .docs-missing-label {
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-inset);
+  color: var(--color-accent-amber);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+#nd-docs-layout .docs-missing-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 15rem;
+  gap: 1.5rem;
+  align-items: start;
+  padding: 1.5rem;
+}
+
+#nd-docs-layout .docs-missing-copy h2 {
+  max-width: 42rem;
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 1.875rem;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+#nd-docs-layout .docs-missing-copy p {
+  max-width: 42rem;
+  margin: 0.75rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+#nd-docs-layout .docs-missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+#nd-docs-layout .docs-missing-primary,
+#nd-docs-layout .docs-missing-secondary {
+  display: inline-flex;
+  height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+#nd-docs-layout .docs-missing-primary {
+  background: var(--color-accent-amber);
+  color: #1a1918;
+}
+
+#nd-docs-layout .docs-missing-primary:hover {
+  opacity: 0.9;
+}
+
+#nd-docs-layout .docs-missing-secondary {
+  border: 1px solid var(--color-border-default);
+  color: var(--color-text-secondary);
+}
+
+#nd-docs-layout .docs-missing-secondary:hover {
+  color: var(--color-text-primary);
+}
+
+#nd-docs-layout .docs-missing-terminal {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-inset);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+#nd-docs-layout .docs-missing-terminal p {
+  margin: 0;
+}
+
+#nd-docs-layout .docs-missing-terminal p + p {
+  margin-top: 0.375rem;
+}
+
+#nd-docs-layout .docs-missing-dots {
+  display: flex;
+  gap: 0.375rem;
+  margin-bottom: 0.75rem;
+}
+
+#nd-docs-layout .docs-missing-dots span {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+}
+
+#nd-docs-layout .docs-missing-dot-red {
+  background: #ef4444;
+}
+
+#nd-docs-layout .docs-missing-dot-yellow {
+  background: #f59e0b;
+}
+
+#nd-docs-layout .docs-missing-dot-green {
+  background: #22c55e;
+}
+
+#nd-docs-layout .docs-missing-command {
+  color: var(--color-text-tertiary);
+}
+
+#nd-docs-layout .docs-missing-status {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  #nd-docs-layout .docs-missing-content {
+    grid-template-columns: 1fr;
+  }
+}

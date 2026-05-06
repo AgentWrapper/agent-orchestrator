@@ -6,7 +6,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   loadConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
 
 /**
@@ -29,7 +29,7 @@ function resolveProject(
 
   const ids = Object.keys(config.projects);
   if (ids.length === 0) {
-    console.error(chalk.red("No projects configured. Run `ao init` first."));
+    console.error(chalk.red("No projects configured. Run `ao start` first."));
     process.exit(1);
   }
   if (ids.length > 1) {
@@ -56,10 +56,14 @@ async function getTracker(
 
   // getSessionManager internally creates the registry; we need the registry
   // directly, so we replicate the same pattern from create-session-manager.
-  const { createPluginRegistry } = await import("@composio/ao-core");
+  const { createPluginRegistry } = await import("@aoagents/ao-core");
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config, importPluginModuleFromSource);
 
+  if (!project.tracker.plugin) {
+    console.error(chalk.red("Project tracker plugin not configured."));
+    process.exit(1);
+  }
   const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
   if (!tracker) {
     console.error(chalk.red(`Tracker plugin "${project.tracker.plugin}" not found.`));
@@ -87,7 +91,7 @@ export function registerVerify(program: Command): void {
         try {
           config = loadConfig();
         } catch {
-          console.error(chalk.red("No config found. Run `ao init` first."));
+          console.error(chalk.red("No config found. Run `ao start` first."));
           process.exit(1);
           return;
         }

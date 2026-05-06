@@ -8,7 +8,7 @@ import {
   type OpenCodeSessionManager,
   type Session,
   loadConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { exec, tmux } from "../lib/shell.js";
 import { getAgentByName, getAgentByNameFromRegistry } from "../lib/plugins.js";
 import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
@@ -184,8 +184,13 @@ export function registerSend(program: Command): void {
         }
 
         if (existingSession && sessionManager) {
-          await sessionManager.send(session, message);
-          console.log(chalk.green("Message sent and processing"));
+          try {
+            await sessionManager.send(session, message);
+            console.log(chalk.green("Message sent and processing"));
+          } catch (err) {
+            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+            process.exit(1);
+          }
           return;
         }
 

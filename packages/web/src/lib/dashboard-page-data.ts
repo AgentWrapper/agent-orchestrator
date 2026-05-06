@@ -1,26 +1,59 @@
+import "server-only";
+
 import { cache } from "react";
-import type { DashboardSession, DashboardOrchestratorLink } from "@/lib/types";
-import { getServices, getSCM } from "@/lib/services";
+import {
+  type DashboardSession,
+  type DashboardOrchestratorLink,
+  type DashboardAttentionZoneMode,
+} from "@/lib/types";
+import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
-  resolveProject,
   enrichSessionPR,
-  enrichSessionsMetadata,
+  enrichSessionsMetadataFast,
   listDashboardOrchestrators,
 } from "@/lib/serialize";
-import { prCache, prCacheKey } from "@/lib/cache";
 import { getPrimaryProjectId, getProjectName, getAllProjects, type ProjectInfo } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
-import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
+import { settlesWithin } from "@/lib/async-utils";
+
+const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
+
+/**
+ * Normalize thrown values from dashboard SSR into a single-line message for the UI.
+ * Avoids dumping stack traces into the banner.
+ */
+export function formatDashboardLoadError(err: unknown): string {
+  const rawMessage =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+
+  if (rawMessage.trim()) {
+    const firstLine = rawMessage
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    if (firstLine) return firstLine;
+  }
+  return "The orchestrator could not load dashboard data. Check your configuration file.";
+}
 
 interface DashboardPageData {
   sessions: DashboardSession[];
-  globalPause: GlobalPauseState | null;
   orchestrators: DashboardOrchestratorLink[];
   projectName: string;
   projects: ProjectInfo[];
   selectedProjectId?: string;
+  attentionZones: DashboardAttentionZoneMode;
+  /** Present when services initialization or session listing failed during SSR (distinct from an empty session list). */
+  dashboardLoadError?: string;
 }
+
+/** Default zone mode when no config is loaded or `dashboard` block is absent. */
+export const DEFAULT_ATTENTION_ZONE_MODE: DashboardAttentionZoneMode = "simple";
 
 export const getDashboardProjectName = cache(function getDashboardProjectName(
   projectFilter: string | undefined,
@@ -47,85 +80,55 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
   const projectFilter = resolveDashboardProjectFilter(project);
   const pageData: DashboardPageData = {
     sessions: [],
-    globalPause: null,
     orchestrators: [],
     projectName: getDashboardProjectName(projectFilter),
     projects: getAllProjects(),
     selectedProjectId: projectFilter === "all" ? undefined : projectFilter,
+    attentionZones: DEFAULT_ATTENTION_ZONE_MODE,
   };
 
+  let config: Awaited<ReturnType<typeof getServices>>["config"];
+  let registry: Awaited<ReturnType<typeof getServices>>["registry"];
+  let allSessions: Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["sessionManager"]["listCached"]>>;
+
   try {
-    const { config, registry, sessionManager } = await getServices();
-    const allSessions = await sessionManager.list();
+    const services = await getServices();
+    config = services.config;
+    registry = services.registry;
+    pageData.attentionZones = config.dashboard?.attentionZones ?? DEFAULT_ATTENTION_ZONE_MODE;
+    try {
+      allSessions = await services.sessionManager.listCached();
+    } catch (listErr) {
+      pageData.dashboardLoadError = formatDashboardLoadError(listErr);
+      return pageData;
+    }
+  } catch (err) {
+    pageData.dashboardLoadError = formatDashboardLoadError(err);
+    return pageData;
+  }
 
-    pageData.globalPause = resolveGlobalPause(allSessions);
+  const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
+  pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
 
-    const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
-    pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
+  const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
+  pageData.sessions = coreSessions.map(sessionToDashboard);
 
-    const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
-    pageData.sessions = coreSessions.map(sessionToDashboard);
+  // Fast enrichment: issue labels (sync) + agent summaries (local disk I/O).
+  // Keep a hard cap here so a slow local agent plugin can't stall SSR indefinitely.
+  try {
+    await settlesWithin(
+      enrichSessionsMetadataFast(coreSessions, pageData.sessions, config, registry),
+      FAST_METADATA_ENRICH_TIMEOUT_MS,
+    );
+  } catch (err) {
+    // Keep the base dashboard data if non-critical enrichment fails.
+    console.warn("[dashboard-page-data] metadata fast enrichment failed:", err);
+  }
 
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    await Promise.race([
-      enrichSessionsMetadata(coreSessions, pageData.sessions, config, registry),
-      metaTimeout,
-    ]);
-
-    const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
-    const enrichPromises = coreSessions.map((core, index) => {
-      if (!core.pr) return Promise.resolve();
-
-      const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
-      const cached = prCache.get(cacheKey);
-
-      if (cached) {
-        const sessionPR = pageData.sessions[index]?.pr;
-        if (sessionPR) {
-          sessionPR.state = cached.state;
-          sessionPR.title = cached.title;
-          sessionPR.additions = cached.additions;
-          sessionPR.deletions = cached.deletions;
-          sessionPR.ciStatus = cached.ciStatus as
-            | "none"
-            | "pending"
-            | "passing"
-            | "failing";
-          sessionPR.reviewDecision = cached.reviewDecision as
-            | "none"
-            | "pending"
-            | "approved"
-            | "changes_requested";
-          sessionPR.ciChecks = cached.ciChecks.map((check) => ({
-            name: check.name,
-            status: check.status as "pending" | "running" | "passed" | "failed" | "skipped",
-            url: check.url,
-          }));
-          sessionPR.mergeability = cached.mergeability;
-          sessionPR.unresolvedThreads = cached.unresolvedThreads;
-          sessionPR.unresolvedComments = cached.unresolvedComments;
-        }
-
-        if (
-          terminalStatuses.has(core.status) ||
-          cached.state === "merged" ||
-          cached.state === "closed"
-        ) {
-          return Promise.resolve();
-        }
-      }
-
-      const projectConfig = resolveProject(core, config.projects);
-      const scm = getSCM(registry, projectConfig);
-      if (!scm) return Promise.resolve();
-      return enrichSessionPR(pageData.sessions[index], scm, core.pr);
-    });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-    await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
-  } catch {
-    pageData.sessions = [];
-    pageData.globalPause = null;
-    pageData.orchestrators = [];
+  // PR enrichment from session metadata (no API calls).
+  for (let i = 0; i < coreSessions.length; i++) {
+    if (!coreSessions[i].pr) continue;
+    enrichSessionPR(pageData.sessions[i]);
   }
 
   return pageData;

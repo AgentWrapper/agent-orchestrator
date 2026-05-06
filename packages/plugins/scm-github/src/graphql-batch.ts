@@ -7,24 +7,49 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type {
-  BatchObserver,
-  CIStatus,
-  PREnrichmentData,
-  PRInfo,
-  PRState,
-  ReviewDecision,
-} from "@composio/ao-core";
+import {
+  execGhObserved,
+  type BatchObserver,
+  type CICheck,
+  type CIStatus,
+  type PREnrichmentData,
+  type PRInfo,
+  type PRState,
+  type ReviewDecision,
+} from "@aoagents/ao-core";
 import { LRUCache } from "./lru-cache.js";
 
 let execFileAsync = promisify(execFile);
+let execGhAsync = async (args: string[], timeout: number, operation: string): Promise<string> =>
+  execGhObserved(args, { component: "scm-github-batch", operation }, timeout);
 
 /**
  * Set execFileAsync for testing.
  * Allows mocking the underlying execFile in unit tests.
+ *
+ * NOTE: This bypasses the gh tracer (execGhObserved). Tests that need to
+ * verify tracer behavior should mock execGhObserved directly or use
+ * setExecGhAsync instead.
  */
 export function setExecFileAsync(fn: typeof execFileAsync): void {
   execFileAsync = fn;
+  execGhAsync = async (args: string[], timeout: number): Promise<string> => {
+    const { stdout } = await execFileAsync("gh", args, {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout,
+    });
+    return stdout.trim();
+  };
+}
+
+/**
+ * Set execGhAsync for testing — preserves tracer in the call chain.
+ * Use this when testing code that should exercise the traced execution path.
+ */
+export function setExecGhAsync(
+  fn: (args: string[], timeout: number, operation: string) => Promise<string>,
+): void {
+  execGhAsync = fn;
 }
 
 /**
@@ -33,6 +58,7 @@ export function setExecFileAsync(fn: typeof execFileAsync): void {
  */
 const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
 const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
+const MAX_REVIEW_COMMENTS_ETAGS = 500;  // Number of PRs to cache review ETags
 const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 
 /**
@@ -46,6 +72,7 @@ const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 interface ETagCache {
   prList: LRUCache<string, string>; // Key: "owner/repo", Value: ETag
   commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
+  reviewComments: LRUCache<string, string>; // Key: "owner/repo#number", Value: ETag
 }
 
 /**
@@ -58,6 +85,7 @@ interface ETagCache {
 const etagCache: ETagCache = {
   prList: new LRUCache(MAX_PR_LIST_ETAGS),
   commitStatus: new LRUCache(MAX_COMMIT_STATUS_ETAGS),
+  reviewComments: new LRUCache(MAX_REVIEW_COMMENTS_ETAGS),
 };
 
 /**
@@ -66,6 +94,15 @@ const etagCache: ETagCache = {
 interface ETagGuardResult {
   shouldRefresh: boolean;
   details: string[];
+  /** Repos where Guard 1 returned 304 — no PR list changes, detectPR can be skipped. */
+  prListUnchangedRepos: Set<string>;
+}
+
+/** Result of enrichSessionsPRBatch including Guard 1 PR-discovery info. */
+export interface BatchEnrichmentResult {
+  enrichment: Map<string, PREnrichmentData>;
+  /** Repos where Guard 1 returned 304 — safe to skip detectPR. */
+  prListUnchangedRepos: Set<string>;
 }
 
 /**
@@ -75,6 +112,7 @@ interface ETagGuardResult {
 export function clearETagCache(): void {
   etagCache.prList.clear();
   etagCache.commitStatus.clear();
+  etagCache.reviewComments.clear();
 }
 
 /**
@@ -175,13 +213,11 @@ function updatePRMetadataCache(
  */
 export async function shouldRefreshPREnrichment(
   prs: PRInfo[],
+  extraRepos: string[] = [],
+  observer?: BatchObserver,
 ): Promise<ETagGuardResult> {
   const details: string[] = [];
   let shouldRefresh = false;
-
-  if (prs.length === 0) {
-    return { shouldRefresh: false, details: ["No PRs to check"] };
-  }
 
   // Group PRs by repository for Guard 1 (PR list check)
   const repos = new Map<string, PRInfo[]>();
@@ -197,15 +233,29 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
+  // Include repos from PR-less sessions so Guard 1 runs for them too
+  for (const repoKey of extraRepos) {
+    if (!repos.has(repoKey)) {
+      repos.set(repoKey, []);
+    }
+  }
+
+  if (repos.size === 0) {
+    return { shouldRefresh: false, details: ["No repos to check"], prListUnchangedRepos: new Set() };
+  }
+
   // Guard 1: Check PR list ETag for each repository
   let guard1DetectedChanges = false;
+  const prListUnchangedRepos = new Set<string>();
   for (const [repoKey] of repos) {
     const [owner, repo] = repoKey.split("/");
-    const prListChanged = await checkPRListETag(owner, repo);
+    const prListChanged = await checkPRListETag(owner, repo, observer);
     if (prListChanged) {
       guard1DetectedChanges = true;
       shouldRefresh = true;
       details.push(`PR list changed for ${repoKey} (Guard 1)`);
+    } else {
+      prListUnchangedRepos.add(repoKey);
     }
   }
 
@@ -243,6 +293,7 @@ export async function shouldRefreshPREnrichment(
         pr.owner,
         pr.repo,
         cached.headSha,
+        observer,
       );
       if (statusChanged) {
         shouldRefresh = true;
@@ -253,7 +304,7 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
-  return { shouldRefresh, details };
+  return { shouldRefresh, details, prListUnchangedRepos };
 }
 
 /**
@@ -322,6 +373,36 @@ async function verifyGhCLI(): Promise<void> {
 export const MAX_BATCH_SIZE = 25;
 
 /**
+ * Check if an HTTP response contains a 304 Not Modified status.
+ * Handles HTTP/1.1, HTTP/2, and HTTP/2.0 status lines.
+ */
+function is304(output: string): boolean {
+  return /HTTP\/[\d.]+ 304/i.test(output);
+}
+
+/**
+ * Extract stdout/stderr from an execFile error object.
+ * gh cli puts the HTTP response in stdout even on exit code 1 (e.g. 304).
+ */
+function extractErrorOutput(err: unknown): string | null {
+  const e = err as { stdout?: unknown; stderr?: unknown };
+  const stdout = typeof e.stdout === "string" ? e.stdout : "";
+  const stderr = typeof e.stderr === "string" ? e.stderr : "";
+  const combined = stdout + stderr;
+  return combined.length > 0 ? combined : null;
+}
+
+/**
+ * Extract ETag from HTTP response output.
+ * Used on both 200 and 304 paths — RFC 7232 allows servers to rotate
+ * the validator on a 304, so we must re-read the ETag even when unchanged.
+ */
+function extractETag(output: string): string | undefined {
+  const match = output.match(/etag:\s*(.+)/i);
+  return match ? match[1].trim() : undefined;
+}
+
+/**
  * Guard 1: PR List ETag Check (per repo)
  *
  * Detects if PR metadata has changed in a repository using REST ETag.
@@ -335,6 +416,7 @@ export const MAX_BATCH_SIZE = 25;
 async function checkPRListETag(
   owner: string,
   repo: string,
+  observer?: BatchObserver,
 ): Promise<boolean> {
   const repoKey = `${owner}/${repo}`;
   const cachedETag = etagCache.prList.get(repoKey);
@@ -349,44 +431,55 @@ async function checkPRListETag(
   }
 
   try {
-    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
-    const output = stdout.trim();
+    const output = await execGhAsync(args, 10_000, "gh.api.guard-pr-list");
 
     // Check for HTTP 304 Not Modified response
-    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
-      // No changes detected - cost: 0 GraphQL points
+    if (is304(output)) {
+      // Re-read ETag on 304 — RFC 7232 allows rotated validators
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
       return false;
     }
 
     // Extract new ETag from response headers
-    // ETag header format: "etag": "W/"abc123..." or "etag": "abc123..."
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      // Trim to remove trailing whitespace/newlines that could cause comparison issues
-      const newETag = etagMatch[1].trim();
+    const newETag = extractETag(output);
+    if (newETag) {
       setPRListETag(owner, repo, newETag);
     }
 
     // PR list changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
+    // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
+    const output = extractErrorOutput(err);
+    if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setPRListETag(owner, repo, rotatedETag);
+      return false;
+    }
+
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // Log but don't throw - allow GraphQL batch to proceed
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    // HTTP 304 may surface as an error message without stdout/stderr (e.g. gh cli versions
+    // that don't populate stdout on non-zero exit). Use is304() anchored to the HTTP status
+    // line to avoid false positives from URL paths like "pulls/304/comments".
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
 
 /**
- * Guard 2: Commit Status ETag Check (per PR with pending CI)
+ * Guard 2: Check-Runs ETag Check (per PR with cached head SHA)
  *
  * Detects if CI status has changed for a specific commit using REST ETag.
  *
- * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/status
+ * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/check-runs
+ *   Uses the check-runs endpoint (not legacy /status) because the batch
+ *   query reads `statusCheckRollup` which aggregates check-runs. Pure-Actions
+ *   repos only update check-runs, not the legacy combined-status endpoint.
  * - Detects: CI check starts, passes, fails, or external status updates
- * - Only checked for PRs with ciStatus === "pending" to minimize calls
  *
  * @returns true if CI status has changed (200 OK), false if unchanged (304 Not Modified)
  */
@@ -394,12 +487,14 @@ async function checkCommitStatusETag(
   owner: string,
   repo: string,
   sha: string,
+  observer?: BatchObserver,
 ): Promise<boolean> {
   const commitKey = `${owner}/${repo}#${sha}`;
   const cachedETag = etagCache.commitStatus.get(commitKey);
 
-  // Build gh CLI args for REST API call
-  const url = `repos/${owner}/${repo}/commits/${sha}/status`;
+  // Use check-runs endpoint (not legacy /status) to match statusCheckRollup
+  // data source. per_page=1 keeps the response small — we only need the ETag.
+  const url = `repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=1`;
   const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
@@ -408,32 +503,100 @@ async function checkCommitStatusETag(
   }
 
   try {
-    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
-    const output = stdout.trim();
+    const output = await execGhAsync(args, 10_000, "gh.api.guard-commit-status");
 
     // Check for HTTP 304 Not Modified response
-    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
-      // No CI changes detected - cost: 0 GraphQL points
+    if (is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
       return false;
     }
 
     // Extract new ETag from response headers
-    const etagMatch = output.match(/etag:\s*(.+)/i);
-    if (etagMatch) {
-      // Trim to remove trailing whitespace/newlines that could cause comparison issues
-      const newETag = etagMatch[1].trim();
+    const newETag = extractETag(output);
+    if (newETag) {
       setCommitStatusETag(owner, repo, sha, newETag);
     }
 
     // CI status changed - cost: 1 REST point
     return true;
   } catch (err) {
-    // On error, assume change to ensure we don't miss anything
+    // gh exits code 1 on 304 Not Modified — check stdout/stderr for the status line
+    const output = extractErrorOutput(err);
+    if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) setCommitStatusETag(owner, repo, sha, rotatedETag);
+      return false;
+    }
+
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(
-      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
-    );
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`);
+    return true; // Assume changed to be safe
+  }
+}
+
+/**
+ * Guard 3: Review Comments ETag Check (per PR)
+ *
+ * Detects if inline review comments have changed on a PR.
+ * Used to gate the getReviewThreads GraphQL call — if no new comments
+ * exist (304), the cached result is reused without a GraphQL call.
+ *
+ * - Endpoint: GET /repos/{owner}/{repo}/pulls/{number}/comments
+ *   No per_page limit — the ETag covers the full resource. With per_page=1,
+ *   the ETag only covers the first page, so new comments on page 2+ would
+ *   never bust the validator. Typical PR comment counts are small (<100)
+ *   so the unbounded list is fine.
+ * - Detects: New review comments, edited comments, deleted comments
+ * - Cost: 0 REST points on 304, 1 REST point on 200
+ */
+export async function checkReviewCommentsETag(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  observer?: BatchObserver,
+): Promise<boolean> {
+  const cacheKey = `${owner}/${repo}#${prNumber}`;
+  const cachedETag = etagCache.reviewComments.get(cacheKey);
+
+  const url = `repos/${owner}/${repo}/pulls/${prNumber}/comments`;
+  const args = ["api", "--method", "GET", url, "-i"];
+
+  if (cachedETag) {
+    args.push("-H", `If-None-Match: ${cachedETag}`);
+  }
+
+  try {
+    const output = await execGhAsync(args, 10_000, "gh.api.guard-review-comments");
+
+    if (is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
+      return false;
+    }
+
+    const newETag = extractETag(output);
+    if (newETag) {
+      etagCache.reviewComments.set(cacheKey, newETag);
+    }
+
+    return true;
+  } catch (err) {
+    const output = extractErrorOutput(err);
+    if (output && is304(output)) {
+      const rotatedETag = extractETag(output);
+      if (rotatedETag) etagCache.reviewComments.set(cacheKey, rotatedETag);
+      return false;
+    }
+
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -454,18 +617,33 @@ const PR_FIELDS = `
   reviewDecision
   headRefName
   headRefOid
-  reviews(last: 5) {
-    nodes {
-      author { login }
-      state
-      submittedAt
-    }
-  }
   commits(last: 1) {
     nodes {
       commit {
         statusCheckRollup {
           state
+          # 11 keeps per-PR node cost under budget for 25-PR batch queries
+          # (total cost ≤5000). Repos with >11 checks lose individual check
+          # visibility, but the rollup "state" still reflects all checks —
+          # overall pass/fail detection remains correct.
+          contexts(first: 11) {
+            nodes {
+              ... on CheckRun {
+                name
+                status
+                conclusion
+                detailsUrl
+              }
+              ... on StatusContext {
+                context
+                state
+                targetUrl
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
         }
       }
     }
@@ -515,6 +693,7 @@ export function generateBatchQuery(prs: PRInfo[]): {
   return {
     query: `query BatchPRs(${variableDefs}) {
       ${selections.join("\n")}
+      rateLimit { cost remaining resetAt }
     }`,
     variables,
   };
@@ -548,22 +727,32 @@ async function executeBatchQuery(
     }
   }
 
-  const args = ["api", "graphql", ...varArgs, "-f", `query=${query}`];
+  const args = ["api", "graphql", "-i", ...varArgs, "-f", `query=${query}`];
 
   // Scale timeout based on batch size to prevent large batches from timing out
   // Base: 30s, +2s per PR beyond first 10
   const batchSize = prs.length;
   const adaptiveTimeout = 30_000 + Math.max(0, (batchSize - 10) * 2000);
 
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    timeout: adaptiveTimeout,
-  });
+  const stdout = await execGhAsync(args, adaptiveTimeout, "gh.api.graphql-batch");
+
+  // With -i, stdout contains HTTP headers + blank line + JSON body.
+  // Split at first blank line to get the JSON body for parsing.
+  // The tracer (execGhObserved) already parses the headers for its trace row.
+  const blankLineIdx = stdout.indexOf("\r\n\r\n");
+  const altBlankLineIdx = stdout.indexOf("\n\n");
+  const splitIdx =
+    blankLineIdx >= 0 && (altBlankLineIdx < 0 || blankLineIdx < altBlankLineIdx)
+      ? blankLineIdx + 4
+      : altBlankLineIdx >= 0
+        ? altBlankLineIdx + 2
+        : 0;
+  const body = splitIdx > 0 ? stdout.slice(splitIdx) : stdout;
 
   const result: {
     data?: Record<string, unknown>;
     errors?: Array<{ message: string; path?: string[] }>;
-  } = JSON.parse(stdout.trim());
+  } = JSON.parse(body.trim());
 
   // Check for GraphQL errors and throw to allow individual API fallback
   if (result.errors && result.errors.length > 0) {
@@ -575,11 +764,107 @@ async function executeBatchQuery(
 }
 
 /**
+ * Parse individual CI check contexts from statusCheckRollup.contexts.nodes.
+ * Handles both CheckRun (GitHub Actions) and StatusContext (legacy status checks).
+ */
+function parseCheckContexts(contexts: unknown): CICheck[] {
+  if (!contexts || typeof contexts !== "object") return [];
+
+  const nodes = (contexts as Record<string, unknown>)["nodes"];
+  if (!Array.isArray(nodes)) return [];
+
+  const checks: CICheck[] = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const n = node as Record<string, unknown>;
+
+    // CheckRun node (GitHub Actions)
+    if (typeof n["name"] === "string" && typeof n["status"] === "string") {
+      const rawStatus = (n["status"] as string).toUpperCase();
+      // Uppercase conclusion to match REST getCIChecks/getCIChecksFromStatusRollup format
+      // so fingerprints are consistent regardless of which data source is used.
+      const rawConclusion =
+        typeof n["conclusion"] === "string" ? (n["conclusion"] as string).toUpperCase() : null;
+
+      let status: CICheck["status"];
+      if (rawStatus === "COMPLETED") {
+        if (rawConclusion === "SUCCESS") {
+          status = "passed";
+        } else if (
+          rawConclusion === "SKIPPED" ||
+          rawConclusion === "NEUTRAL" ||
+          rawConclusion === "STALE" ||
+          rawConclusion === "NOT_REQUIRED" ||
+          rawConclusion === "NONE"
+        ) {
+          // Mirror mapRawCheckStateToStatus() in the REST path: all non-failure
+          // terminal conclusions that are not SUCCESS map to "skipped".
+          status = "skipped";
+        } else if (
+          rawConclusion === "FAILURE" ||
+          rawConclusion === "TIMED_OUT" ||
+          rawConclusion === "CANCELLED" ||
+          rawConclusion === "ACTION_REQUIRED" ||
+          rawConclusion === "ERROR"
+        ) {
+          // Explicit failure conclusions — mirrors the failure list in mapRawCheckStateToStatus()
+          status = "failed";
+        } else {
+          // STARTUP_FAILURE and any other unrecognized conclusion → "skipped",
+          // matching mapRawCheckStateToStatus()'s default return "skipped" in the REST path.
+          status = "skipped";
+        }
+      } else if (rawStatus === "IN_PROGRESS") {
+        // Only IN_PROGRESS maps to "running" — matches mapRawCheckStateToStatus() in REST path
+        status = "running";
+      } else {
+        // QUEUED, WAITING, and any other non-COMPLETED status → "pending"
+        // (REST path maps QUEUED/WAITING to "pending", not "running")
+        status = "pending";
+      }
+
+      checks.push({
+        name: n["name"] as string,
+        status,
+        // Store the uppercased conclusion to match REST format
+        conclusion: rawConclusion ?? undefined,
+        url: typeof n["detailsUrl"] === "string" ? (n["detailsUrl"] as string) : undefined,
+      });
+      continue;
+    }
+
+    // StatusContext node (legacy commit statuses)
+    if (typeof n["context"] === "string" && typeof n["state"] === "string") {
+      const rawState = (n["state"] as string).toUpperCase();
+      let status: CICheck["status"];
+      if (rawState === "SUCCESS") {
+        status = "passed";
+      } else if (rawState === "FAILURE" || rawState === "ERROR") {
+        status = "failed";
+      } else {
+        status = "pending";
+      }
+
+      // Set conclusion to match the REST getCIChecksFromStatusRollup format
+      // (which sets conclusion = rawState.toUpperCase()) so fingerprints are
+      // consistent regardless of which data source is used.
+      checks.push({
+        name: n["context"] as string,
+        status,
+        conclusion: rawState,
+        url: typeof n["targetUrl"] === "string" ? (n["targetUrl"] as string) : undefined,
+      });
+    }
+  }
+
+  return checks;
+}
+
+/**
  * Parse raw CI state from status check rollup.
  *
- * Uses only the top-level aggregate state, which is much cheaper
- * than fetching individual check contexts. The top-level state
- * provides the same semantic information (passing/failing/pending).
+ * Uses only the top-level aggregate state to determine overall CI status.
+ * Individual check details are parsed separately via parseCheckContexts().
  */
 function parseCIState(
   statusCheckRollup: unknown,
@@ -645,7 +930,6 @@ function extractPREnrichment(
   if (
     pr["state"] === undefined &&
     pr["title"] === undefined &&
-    pr["reviews"] === undefined &&
     pr["commits"] === undefined
   ) {
     return null;
@@ -679,13 +963,30 @@ function extractPREnrichment(
   // Extract review decision
   const reviewDecision = parseReviewDecision(pr["reviewDecision"]);
 
-  // Extract CI status from commits
+  // Extract CI status and individual checks from commits
   const commits = pr["commits"] as
-    | { nodes?: Array<{ commit?: { statusCheckRollup?: unknown } }> }
+    | { nodes?: Array<{ commit?: { statusCheckRollup?: Record<string, unknown> } }> }
     | undefined;
-  const ciStatus = commits?.nodes?.[0]?.commit?.statusCheckRollup
-    ? parseCIState(commits.nodes[0].commit.statusCheckRollup)
-    : "none";
+  const statusCheckRollup = commits?.nodes?.[0]?.commit?.statusCheckRollup;
+  const ciStatus = statusCheckRollup ? parseCIState(statusCheckRollup) : "none";
+
+  // Only include ciChecks when the list is complete (no truncation).
+  // contexts(first: 20) silently truncates PRs with >20 checks — when truncated,
+  // the failing check may be missing, so we set ciChecks to undefined to force
+  // the getCIChecks() REST fallback in maybeDispatchCIFailureDetails.
+  const contextsField = statusCheckRollup?.["contexts"] as
+    | Record<string, unknown>
+    | undefined;
+  const pageInfo = contextsField?.["pageInfo"];
+  const contextsHasNextPage =
+    pageInfo !== null &&
+    pageInfo !== undefined &&
+    typeof pageInfo === "object" &&
+    (pageInfo as Record<string, unknown>)["hasNextPage"] === true;
+  const ciChecks =
+    contextsField && !contextsHasNextPage
+      ? parseCheckContexts(contextsField)
+      : undefined;
 
   // Build blockers list
   const blockers: string[] = [];
@@ -722,6 +1023,7 @@ function extractPREnrichment(
     hasConflicts,
     isBehind,
     blockers,
+    ...(ciChecks !== undefined ? { ciChecks } : {}),
   };
 
   return { data, headSha };
@@ -749,15 +1051,17 @@ function extractPREnrichment(
 export async function enrichSessionsPRBatch(
   prs: PRInfo[],
   observer?: BatchObserver,
-): Promise<Map<string, PREnrichmentData>> {
+  repos: string[] = [],
+): Promise<BatchEnrichmentResult> {
   const result = new Map<string, PREnrichmentData>();
 
-  if (prs.length === 0) {
-    return result;
-  }
-
   // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
-  const guardResult = await shouldRefreshPREnrichment(prs);
+  // Guard 1 runs for all repos (including those with no PRs yet) so the
+  // lifecycle manager knows whether detectPR can be skipped.
+  const guardResult = await shouldRefreshPREnrichment(prs, repos, observer);
+
+  // Report which repos had no PR list changes so the lifecycle can skip detectPR
+  observer?.reportPRListUnchangedRepos?.(guardResult.prListUnchangedRepos);
 
   if (!guardResult.shouldRefresh) {
     // No changes detected - try to return cached data
@@ -780,7 +1084,7 @@ export async function enrichSessionsPRBatch(
         "info",
         `[ETag Guard] Skipping GraphQL batch - all ${result.size} PRs cached. Reasons: ${guardResult.details.join(", ")}`,
       );
-      return result;
+      return { enrichment: result, prListUnchangedRepos: guardResult.prListUnchangedRepos };
     }
 
     // Some PRs not cached - fetch missing PRs via GraphQL
@@ -860,8 +1164,7 @@ export async function enrichSessionsPRBatch(
       });
 
       // Log error for observability but don't fail entirely
-      // eslint-disable-next-line no-console -- Observability logging for batch errors
-      console.error(`[GraphQL Batch Warning] Batch enrichment partially failed: ${errorMsg}`);
+      observer?.log("error", `[GraphQL Batch] Batch enrichment partially failed: ${errorMsg}`);
 
       // Don't add placeholder entries to result or cache.
       // This allows lifecycle-manager to fall back to individual API calls
@@ -873,7 +1176,7 @@ export async function enrichSessionsPRBatch(
     }
   }
 
-  return result;
+  return { enrichment: result, prListUnchangedRepos: guardResult.prListUnchangedRepos };
 }
 
 // Export internal functions for testing

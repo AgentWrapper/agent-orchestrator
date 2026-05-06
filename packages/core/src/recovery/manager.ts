@@ -18,6 +18,12 @@ export interface RecoveryManagerOptions {
   recoveryConfig?: Partial<RecoveryConfig>;
   dryRun?: boolean;
   projectFilter?: string;
+  /**
+   * Called after each metadata mutation performed by recovery actions.
+   * Pass `sessionManager.invalidateCache` when wiring recovery into a
+   * surface that also reads from listCached() (dashboard, SSE).
+   */
+  invalidateCache?: () => void;
 }
 
 export interface RecoveryRunResult {
@@ -28,7 +34,7 @@ export interface RecoveryRunResult {
 }
 
 export async function runRecovery(options: RecoveryManagerOptions): Promise<RecoveryRunResult> {
-  const { config, registry, dryRun = false, projectFilter } = options;
+  const { config, registry, dryRun = false, projectFilter, invalidateCache } = options;
   const startTime = Date.now();
 
   const recoveryConfig: RecoveryConfig = {
@@ -41,6 +47,7 @@ export async function runRecovery(options: RecoveryManagerOptions): Promise<Reco
     configPath: config.configPath,
     recoveryConfig,
     dryRun,
+    invalidateCache,
   };
 
   const report = createEmptyReport();
@@ -147,7 +154,7 @@ export async function recoverSessionById(
   sessionId: string,
   options: RecoveryManagerOptions,
 ): Promise<RecoveryResult | null> {
-  const { config, registry, dryRun = false } = options;
+  const { config, registry, dryRun = false, invalidateCache } = options;
 
   const recoveryConfig: RecoveryConfig = {
     ...DEFAULT_RECOVERY_CONFIG,
@@ -159,6 +166,7 @@ export async function recoverSessionById(
     configPath: config.configPath,
     recoveryConfig,
     dryRun,
+    invalidateCache,
   };
 
   const allSessions = scanAllSessions(config);

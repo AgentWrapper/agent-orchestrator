@@ -12,7 +12,7 @@ vi.mock("node:https", () => ({
 }));
 
 import { create, manifest } from "../src/index.js";
-import type { ProjectConfig } from "@composio/ao-core";
+import type { ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -43,6 +43,7 @@ const sampleIssueNode = {
   description: "Users can't log in with SSO",
   url: "https://linear.app/acme/issue/INT-123",
   priority: 2,
+  branchName: "feat/INT-123",
   state: { name: "In Progress", type: "started" },
   labels: { nodes: [{ name: "bug" }, { name: "high-priority" }] },
   assignee: { name: "Alice Smith", displayName: "Alice" },
@@ -189,6 +190,7 @@ describe("tracker-linear plugin", () => {
         labels: ["bug", "high-priority"],
         assignee: "Alice",
         priority: 2,
+        branchName: "feat/INT-123",
       });
     });
 
@@ -639,6 +641,7 @@ describe("tracker-linear plugin", () => {
         id: "INT-123",
         title: "Fix login bug",
         state: "in_progress",
+        branchName: "feat/INT-123",
       });
     });
 

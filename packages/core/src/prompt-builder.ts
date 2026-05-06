@@ -6,8 +6,8 @@
  *   2. Config-derived context — project name, repo, default branch, tracker info, reaction rules
  *   3. User rules — inline agentRules and/or agentRulesFile content
  *
- * buildPrompt() always returns the AO base guidance and project context so
- * bare launches still know about AO-specific commands such as PR claiming.
+ * buildPrompt() returns the split between persistent system instructions and
+ * task-specific text so callers can route them to agents separately.
  */
 
 import { readFileSync } from "node:fs";
@@ -27,6 +27,23 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - If CI fails, the orchestrator will send you the failures — fix them and push again.
 - If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
 
+## Reporting Progress to AO
+The orchestrator infers your status from runtime signals, but explicit reports are always preferred — they are accurate and fresh. Run these commands from the session shell (AO_SESSION_ID is pre-set for you):
+
+- \`ao acknowledge\` — run once after reading the initial task so AO knows you picked it up.
+- \`ao report working\` — declare you are actively making progress (useful after pauses or long thinking blocks).
+- \`ao report waiting\` — you are blocked on something AO cannot unblock on its own (e.g. waiting for a human, external service).
+- \`ao report needs-input\` — you need a decision or info from the human before proceeding.
+- \`ao report fixing-ci\` — you are working specifically on making CI green again.
+- \`ao report addressing-reviews\` — you are working on reviewer-requested changes.
+- \`ao report pr-created --pr-url <url>\` / \`draft-pr-created\` / \`ready-for-review\` — declare PR workflow milestones as soon as you create or update the PR.
+- \`ao report completed\` — you finished non-coding research or analysis work that doesn't produce a PR.
+
+Rules:
+- Do NOT self-report \`done\`, \`terminated\`, or terminal PR states like \`merged\`/\`closed\` — AO owns those transitions via SCM ground truth.
+- A fresh report is trusted over weak inference but runtime death, activity-based waiting_input, and SCM events (merged/closed PR, CI failure, reviews) still take precedence.
+- Use \`--note "<text>"\` to attach a short rationale when the state change is non-obvious.
+
 ## Git Workflow
 - Always create a feature branch from the default branch (never commit directly to it).
 - Use conventional commit messages (feat:, fix:, chore:, etc.).
@@ -38,6 +55,25 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
 - Respond to every review comment, even if just to acknowledge it.`;
+
+/** Trimmed base prompt for projects without a configured repo/remote. */
+export const BASE_AGENT_PROMPT_NO_REPO = `You are an AI coding agent managed by the Agent Orchestrator (ao).
+
+## Session Lifecycle
+- You are running inside a managed session. Focus on the assigned task.
+- No remote repository is configured — work locally. PR, CI, and review features are unavailable.
+
+## Reporting Progress to AO
+Explicit reports help the orchestrator track your state accurately. Run these from the session shell (AO_SESSION_ID is pre-set):
+- \`ao acknowledge\` — run once after reading the initial task.
+- \`ao report working\` / \`waiting\` / \`needs-input\` — declare your current phase.
+- \`ao report pr-created --pr-url <url>\` or \`draft-pr-created\` / \`ready-for-review\` — declare non-terminal PR workflow events when relevant.
+- \`ao report completed\` — finish non-coding research or analysis work.
+Do NOT self-report \`done\` or \`terminated\` — AO owns those transitions.
+
+## Git Workflow
+- Always create a feature branch from the default branch (never commit directly to it).
+- Use conventional commit messages (feat:, fix:, chore:, etc.).`;
 
 // =============================================================================
 // TYPES
@@ -58,12 +94,6 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
-
-  /** Decomposition context — ancestor task chain (from decomposer) */
-  lineage?: string[];
-
-  /** Decomposition context — sibling task descriptions (from decomposer) */
-  siblings?: string[];
 }
 
 // =============================================================================
@@ -76,7 +106,9 @@ function buildConfigLayer(config: PromptBuildConfig): string {
 
   lines.push("## Project Context");
   lines.push(`- Project: ${project.name ?? projectId}`);
-  lines.push(`- Repository: ${project.repo}`);
+  if (project.repo) {
+    lines.push(`- Repository: ${project.repo}`);
+  }
   lines.push(`- Default branch: ${project.defaultBranch}`);
 
   if (project.tracker) {
@@ -146,48 +178,32 @@ function readUserRules(project: ProjectConfig): string | null {
 
 /**
  * Compose a layered prompt for an agent session.
- *
- * Always returns the AO base guidance plus project context, then layers on
- * issue context, user rules, and explicit instructions when available.
  */
-export function buildPrompt(config: PromptBuildConfig): string {
+export function buildPrompt(
+  config: PromptBuildConfig,
+): { systemPrompt: string; taskPrompt?: string } {
   const userRules = readUserRules(config.project);
-  const sections: string[] = [];
+  const systemSections: string[] = [];
 
   // Layer 1: Base prompt is always included for every managed session.
-  sections.push(BASE_AGENT_PROMPT);
+  // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
+  systemSections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
 
-  // Layer 2: Config-derived context
-  sections.push(buildConfigLayer(config));
+  // Layer 2: Worker sessions are scoped to a single issue, so issue/task
+  // context belongs in the system prompt with the rest of the session context.
+  systemSections.push(buildConfigLayer(config));
 
   // Layer 3: User rules
   if (userRules) {
-    sections.push(`## Project Rules\n${userRules}`);
+    systemSections.push(`## Project Rules\n${userRules}`);
   }
 
-  // Layer 4: Decomposition context (lineage + siblings)
-  if (config.lineage && config.lineage.length > 0) {
-    const hierarchy = config.lineage.map((desc, i) => `${"  ".repeat(i)}${i}. ${desc}`);
-    // Add current task marker using issueId or last lineage entry
-    const currentLabel = config.issueId ?? "this task";
-    hierarchy.push(`${"  ".repeat(config.lineage.length)}${config.lineage.length}. ${currentLabel}  <-- (this task)`);
-
-    sections.push(
-      `## Task Hierarchy\nThis task is part of a larger decomposed plan. Your place in the hierarchy:\n\n\`\`\`\n${hierarchy.join("\n")}\n\`\`\`\n\nStay focused on YOUR specific task. Do not implement functionality that belongs to other tasks in the hierarchy.`,
-    );
-  }
-
-  if (config.siblings && config.siblings.length > 0) {
-    const siblingLines = config.siblings.map((s) => `  - ${s}`);
-    sections.push(
-      `## Parallel Work\nSibling tasks being worked on in parallel:\n${siblingLines.join("\n")}\n\nDo not duplicate work that sibling tasks handle. If you need interfaces/types from siblings, define reasonable stubs.`,
-    );
-  }
-
-  // Explicit user prompt (appended last, highest priority)
-  if (config.userPrompt) {
-    sections.push(`## Additional Instructions\n${config.userPrompt}`);
-  }
-
-  return sections.join("\n\n");
+  return {
+    systemPrompt: systemSections.join("\n\n"),
+    taskPrompt: config.userPrompt
+      ? config.userPrompt
+      : config.issueId
+        ? `Work on issue: ${config.issueId}`
+        : undefined,
+  };
 }

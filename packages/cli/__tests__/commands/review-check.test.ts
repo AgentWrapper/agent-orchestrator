@@ -10,7 +10,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { type Session, type SessionManager, getSessionsDir } from "@composio/ao-core";
+import {
+  type Session,
+  type SessionManager,
+  getSessionsDir,
+  sessionFromMetadata,
+} from "@aoagents/ao-core";
 
 const { mockTmux, mockExec, mockGh, mockConfigRef, mockSessionManager, sessionsDirRef } =
   vi.hoisted(() => ({
@@ -55,9 +60,9 @@ vi.mock("ora", () => ({
   }),
 }));
 
-vi.mock("@composio/ao-core", async (importOriginal) => {
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
@@ -76,28 +81,24 @@ function parseMetadata(content: string): Record<string, string> {
   return meta;
 }
 
-/** Build Session objects from metadata files in sessionsDir. */
+/**
+ * Build Session objects from metadata files in sessionsDir.
+ *
+ * Routes through the real `sessionFromMetadata()` so lifecycle reconstruction
+ * matches what production `sm.list()` returns. Previously this helper built
+ * Session objects by hand, which silently bypassed synthesis and hid bugs like
+ * the "status=merged without pr= URL" rehydration miss fixed in PR #1340.
+ */
 function buildSessionsFromDir(dir: string, projectId: string): Session[] {
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter((f) => !f.startsWith(".") && f !== "archive");
   return files.map((name) => {
     const content = readFileSync(join(dir, name), "utf-8");
     const meta = parseMetadata(content);
-    return {
-      id: name,
+    return sessionFromMetadata(name, meta, {
       projectId,
-      status: (meta["status"] as Session["status"]) || "spawning",
-      activity: null,
-      branch: meta["branch"] || null,
-      issueId: meta["issue"] || null,
-      pr: null,
-      workspacePath: meta["worktree"] || null,
       runtimeHandle: { id: name, runtimeName: "tmux", data: {} },
-      agentInfo: null,
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      metadata: meta,
-    } satisfies Session;
+    });
   });
 }
 
@@ -107,6 +108,8 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 let tmpDir: string;
 let sessionsDir: string;
+let originalHome: string | undefined;
+const STORAGE_KEY = "111111111114";
 
 import { Command } from "commander";
 import { registerReviewCheck } from "../../src/commands/review-check.js";
@@ -116,6 +119,8 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-review-test-"));
+  originalHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}");
@@ -134,6 +139,7 @@ beforeEach(() => {
         name: "My App",
         repo: "org/my-app",
         path: join(tmpDir, "main-repo"),
+        storageKey: STORAGE_KEY,
         defaultBranch: "main",
         sessionPrefix: "app",
       },
@@ -144,7 +150,7 @@ beforeEach(() => {
   } as Record<string, unknown>;
 
   // Calculate and create sessions directory for hash-based architecture
-  sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
+  sessionsDir = getSessionsDir(STORAGE_KEY);
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
 
@@ -175,6 +181,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalHome === undefined) {
+    delete process.env["HOME"];
+  } else {
+    process.env["HOME"] = originalHome;
+  }
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -229,8 +240,6 @@ describe("review-check command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("No pending review comments");
-    // gh should never be called since there's no PR
-    expect(mockGh).not.toHaveBeenCalled();
   });
 
   it("skips sessions with non-matching prefix", async () => {

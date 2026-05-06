@@ -1,0 +1,14 @@
+{
+  "title": "Plugins",
+  "defaultOpen": false,
+  "pages": [
+    "agents",
+    "runtimes",
+    "workspaces",
+    "trackers",
+    "scm",
+    "notifiers",
+    "terminals",
+    "authoring"
+  ]
+}

@@ -1,5 +1,6 @@
 import { git, gh, execSilent } from "./shell.js";
 import { detectDefaultBranch } from "./git-utils.js";
+import { extractOwnerRepo } from "./repo-utils.js";
 
 export interface EnvironmentInfo {
   isGitRepo: boolean;
@@ -24,10 +25,7 @@ export async function detectEnvironment(workingDir: string): Promise<Environment
   if (isGitRepo) {
     gitRemote = await git(["remote", "get-url", "origin"], workingDir);
     if (gitRemote) {
-      const match = gitRemote.match(/github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/);
-      if (match) {
-        ownerRepo = match[1];
-      }
+      ownerRepo = extractOwnerRepo(gitRemote);
     }
   }
 

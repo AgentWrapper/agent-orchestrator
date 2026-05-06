@@ -1,5 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
+import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+
+// Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
+  };
+});
+
+// Mock activity log utilities from core
+const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
+  vi.hoisted(() => ({
+    mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
+    mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  }));
+
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    appendActivityEntry: mockAppendActivityEntry,
+    readLastActivityEntry: mockReadLastActivityEntry,
+    recordTerminalActivity: mockRecordTerminalActivity,
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -26,6 +53,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test-project",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -272,6 +304,27 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("   \n  ")).toBe("idle");
   });
 
+  it("returns idle when prompt char visible", () => {
+    expect(agent.detectActivity("some output\n> ")).toBe("idle");
+    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+  });
+
+  it("returns idle for aider-specific prompt", () => {
+    expect(agent.detectActivity("Tokens: 1.2k\naider> ")).toBe("idle");
+  });
+
+  it("returns waiting_input for Y/N confirmation", () => {
+    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for add-to-chat prompt", () => {
+    expect(agent.detectActivity("Add src/utils.ts to the chat? (Y)es/(N)o")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for proceed prompt", () => {
+    expect(agent.detectActivity("This will modify 5 files. proceed?")).toBe("waiting_input");
+  });
+
   it("returns active for non-empty terminal output", () => {
     expect(agent.detectActivity("aider is processing files\n")).toBe("active");
   });
@@ -283,8 +336,171 @@ describe("detectActivity", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("always returns null (not implemented)", async () => {
+  it("returns null when workspacePath is null", async () => {
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
+  });
+
+  it("returns null when no chat history file exists", async () => {
+    const { readFile } = await import("node:fs/promises");
+    vi.mocked(readFile).mockRejectedValueOnce(new Error("ENOENT"));
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  });
+
+  it("extracts summary from chat history file", async () => {
+    const { readFile } = await import("node:fs/promises");
+    vi.mocked(readFile).mockResolvedValueOnce(
+      "# aider chat started\n\n#### Fix the login bug in auth.ts\n\nSome response here...\n",
+    );
+    const info = await agent.getSessionInfo(makeSession());
+    expect(info).not.toBeNull();
+    expect(info!.summary).toBe("Fix the login bug in auth.ts");
+    expect(info!.summaryIsFallback).toBe(true);
+    expect(info!.agentSessionId).toBeNull();
+    expect(info!.cost).toBeUndefined();
+  });
+
+  it("truncates long summaries to 120 chars", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const longMsg = "A".repeat(200);
+    vi.mocked(readFile).mockResolvedValueOnce(`#### ${longMsg}\n`);
+    const info = await agent.getSessionInfo(makeSession());
+    expect(info!.summary).toHaveLength(123); // 120 + "..."
+    expect(info!.summary!.endsWith("...")).toBe(true);
+  });
+});
+
+// =========================================================================
+// getRestoreCommand
+// =========================================================================
+describe("getRestoreCommand", () => {
+  const agent = create();
+
+  it("returns null (aider does not support session resume)", async () => {
+    const result = await agent.getRestoreCommand!(
+      makeSession(),
+      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
+    );
+    expect(result).toBeNull();
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks
+// =========================================================================
+describe("setupWorkspaceHooks", () => {
+  const agent = create();
+
+  it("is defined (delegates to shared setupPathWrapperWorkspace)", () => {
+    expect(agent.setupWorkspaceHooks).toBeDefined();
+    expect(typeof agent.setupWorkspaceHooks).toBe("function");
+  });
+});
+
+// =========================================================================
+// postLaunchSetup
+// =========================================================================
+describe("postLaunchSetup", () => {
+  const agent = create();
+
+  it("is defined", () => {
+    expect(agent.postLaunchSetup).toBeDefined();
+    expect(typeof agent.postLaunchSetup).toBe("function");
+  });
+
+  it("does nothing when workspacePath is null", async () => {
+    // Should not throw
+    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
+  });
+});
+
+// =========================================================================
+// getEnvironment — PATH wrapping
+// =========================================================================
+describe("getEnvironment PATH", () => {
+  const agent = create();
+
+  it("does not set PATH (injected by session-manager)", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["PATH"]).toBeUndefined();
+  });
+
+  it("does not set GH_PATH (injected by session-manager)", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["GH_PATH"]).toBeUndefined();
+  });
+});
+
+// =========================================================================
+// recordActivity
+// =========================================================================
+describe("recordActivity", () => {
+  const agent = create();
+
+  it("is defined", () => {
+    expect(agent.recordActivity).toBeDefined();
+  });
+
+  it("does nothing when workspacePath is null", async () => {
+    await agent.recordActivity!(makeSession({ workspacePath: null }), "some output");
+    expect(mockRecordTerminalActivity).not.toHaveBeenCalled();
+  });
+
+  it("delegates to recordTerminalActivity", async () => {
+    await agent.recordActivity!(makeSession(), "aider is processing files");
+    expect(mockRecordTerminalActivity).toHaveBeenCalledWith(
+      "/workspace/test",
+      "aider is processing files",
+      expect.any(Function),
+    );
+  });
+});
+
+// =========================================================================
+// getActivityState — reads from activity JSONL
+// =========================================================================
+describe("getActivityState with activity JSONL", () => {
+  const agent = create();
+
+  it("returns waiting_input from activity JSONL", async () => {
+    mockTmuxWithProcess("aider");
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "waiting_input", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked from activity JSONL", async () => {
+    mockTmuxWithProcess("aider");
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "blocked", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("falls through to JSONL mtime fallback for non-critical states when native signals unavailable", async () => {
+    mockTmuxWithProcess("aider");
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+
+    // Non-critical "active" from AO JSONL is ignored by checkActivityLogState —
+    // falls through to git/chat fallbacks. With no git commits or chat history,
+    // falls through to JSONL mtime fallback (step 4) which returns "active"
+    // since modifiedAt is recent.
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+    expect(result?.state).toBe("active");
   });
 });

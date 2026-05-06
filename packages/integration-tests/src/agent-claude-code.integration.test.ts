@@ -23,9 +23,9 @@ import {
   readLastJsonlEntry,
   type ActivityDetection,
   type AgentSessionInfo,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import claudeCodePlugin, { toClaudeProjectPath } from "@composio/ao-plugin-agent-claude-code";
+import claudeCodePlugin, { toClaudeProjectPath } from "@aoagents/ao-plugin-agent-claude-code";
 import {
   isTmuxAvailable,
   killSessionsByPrefix,
@@ -143,6 +143,7 @@ describe.skipIf(!realProject)("path encoding & JSONL reading (real Claude data)"
         "tool_use",
         "progress",
         "permission_request",
+        "permission-mode",
         "error",
         "summary",
         "result",

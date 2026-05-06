@@ -55,15 +55,15 @@ cd "$WORKTREE"
 # ── build CLI/core/plugins ─────────────────────────────────────────────────────
 echo -e "\n${BOLD}Building $SESSION${RESET} (branch: ${CYAN}$BRANCH${RESET})\n"
 
-pnpm --filter @composio/ao-core \
-     --filter @composio/ao-cli \
-     --filter '@composio/ao-plugin-*' \
+pnpm --filter @aoagents/ao-core \
+     --filter @aoagents/ao-cli \
+     --filter '@aoagents/ao-plugin-*' \
      build
 
 # ── build web if requested ─────────────────────────────────────────────────────
 if [ "$WITH_WEB" = true ]; then
   echo -e "\n${BOLD}Building dashboard...${RESET}\n"
-  pnpm --filter @composio/ao-web build
+  pnpm --filter @aoagents/ao-web build
 fi
 
 # ── link ao ───────────────────────────────────────────────────────────────────

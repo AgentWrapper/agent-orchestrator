@@ -9,8 +9,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Dashboard for managing parallel AI coding agents",
     start_url: "/",
     display: "standalone",
-    background_color: "#0a0d12",
-    theme_color: "#0a0d12",
+    background_color: "#121110",
+    theme_color: "#121110",
     icons: [
       { src: "/apple-icon", sizes: "180x180", type: "image/png" },
       { src: "/icon-192", sizes: "192x192", type: "image/png", purpose: "any" },

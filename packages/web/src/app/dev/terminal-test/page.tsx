@@ -1,9 +1,21 @@
 "use client";
 
-import { DirectTerminal } from "@/components/DirectTerminal";
-import { Terminal } from "@/components/Terminal";
+import nextDynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
+
+const DirectTerminal = nextDynamic(
+  () =>
+    import("@/components/DirectTerminal").then((m) => ({
+      default: m.DirectTerminal,
+    })),
+  { ssr: false },
+);
+
+const Terminal = nextDynamic(
+  () => import("@/components/Terminal").then((m) => ({ default: m.Terminal })),
+  { ssr: false },
+);
 
 // Force dynamic rendering (required for useSearchParams)
 export const dynamic = "force-dynamic";
@@ -76,7 +88,7 @@ function TerminalTestPageContent() {
         </div>
 
         {/* The Problem */}
-        <section className="mb-8 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="mb-8 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             🐛 The Problem
           </h2>
@@ -97,7 +109,7 @@ function TerminalTestPageContent() {
         </section>
 
         {/* Root Cause */}
-        <section className="mb-8 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="mb-8 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             🔍 Root Cause Analysis
           </h2>
@@ -110,7 +122,9 @@ function TerminalTestPageContent() {
                 <li>tmux uses OSC 52 escape sequences to synchronize clipboard with terminals</li>
                 <li>
                   Format:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">\x1b]52;c;&lt;base64&gt;\x07</code>
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
+                    \x1b]52;c;&lt;base64&gt;\x07
+                  </code>
                 </li>
                 <li>Terminal must support OSC 52 and have proper capabilities declared</li>
               </ul>
@@ -123,8 +137,8 @@ function TerminalTestPageContent() {
               <ul className="ml-6 list-disc space-y-1 text-[var(--color-text-secondary)]">
                 <li>tmux queries terminal capabilities using Device Attributes (DA/XDA)</li>
                 <li>
-                  XDA query: <code className="rounded bg-black px-1 py-0.5">CSI &gt; q</code> (also
-                  called XTVERSION)
+                  XDA query: <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code>{" "}
+                  (also called XTVERSION)
                 </li>
                 <li>
                   Terminal responds with identification string containing terminal type (e.g.,
@@ -138,14 +152,14 @@ function TerminalTestPageContent() {
               <h3 className="mb-2 font-semibold text-[var(--color-text-primary)]">
                 3. The Missing Piece
               </h3>
-              <div className="rounded-lg border border-[var(--color-accent-red)] bg-[var(--color-bg-tertiary)] p-4">
+              <div className="rounded-[2px] border border-[var(--color-accent-red)] bg-[var(--color-bg-tertiary)] p-4">
                 <p className="font-semibold text-[var(--color-accent-red)]">
                   xterm.js does NOT implement XDA (Extended Device Attributes)
                 </p>
                 <ul className="ml-6 mt-2 list-disc space-y-1 text-[var(--color-text-secondary)]">
                   <li>
                     XDA is marked as TODO in xterm.js codebase:{" "}
-                    <code className="rounded bg-black px-1 py-0.5">
+                    <code className="rounded-[2px] bg-black px-1 py-0.5">
                       test.skip('CSI &gt; Ps q - Report xterm name and version (XTVERSION)')
                     </code>
                   </li>
@@ -164,7 +178,7 @@ function TerminalTestPageContent() {
               <ul className="ml-6 list-disc space-y-1 text-[var(--color-text-secondary)]">
                 <li>
                   iTerm2 sends proper XDA response identifying itself as{" "}
-                  <code className="rounded bg-black px-1 py-0.5">"iTerm2 "</code>
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">"iTerm2 "</code>
                 </li>
                 <li>tmux detects this and enables clipboard for the entire session</li>
                 <li>
@@ -177,7 +191,7 @@ function TerminalTestPageContent() {
         </section>
 
         {/* The Solution */}
-        <section className="mb-8 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="mb-8 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             ✅ The Solution
           </h2>
@@ -190,7 +204,7 @@ function TerminalTestPageContent() {
                 Created custom terminal component that registers an XDA handler using xterm.js
                 parser API:
               </p>
-              <pre className="overflow-x-auto rounded-lg bg-black p-4 text-xs">
+              <pre className="overflow-x-auto rounded-[2px] bg-black p-4 text-xs">
                 <code className="text-[var(--color-accent-green)]">
                   {`terminal.parser.registerCsiHandler(
   { prefix: ">", final: "q" }, // CSI > q is XDA query
@@ -211,7 +225,8 @@ function TerminalTestPageContent() {
               <ol className="ml-6 list-decimal space-y-1 text-[var(--color-text-secondary)]">
                 <li>Intercepts XDA queries from tmux</li>
                 <li>
-                  Responds with <code className="rounded bg-black px-1 py-0.5">XTerm(370)</code>{" "}
+                  Responds with{" "}
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">XTerm(370)</code>{" "}
                   identification
                 </li>
                 <li>tmux detects "XTerm(" in response and enables TTYC_MS capability</li>
@@ -245,12 +260,12 @@ function TerminalTestPageContent() {
         </section>
 
         {/* Node Version Requirement */}
-        <section className="mb-8 rounded-lg border border-[var(--color-accent-orange)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="mb-8 rounded-[2px] border border-[var(--color-accent-orange)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             ⚠️ Node Version Requirement
           </h2>
           <div className="space-y-3 text-sm">
-            <div className="rounded-lg border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-4">
+            <div className="rounded-[2px] border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-4">
               <p className="font-semibold text-[var(--color-accent-orange)]">
                 CRITICAL: This implementation requires Node 20.x (currently 20.20.0)
               </p>
@@ -264,7 +279,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   Error on Node 25.6.1:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">posix_spawnp failed</code>
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">posix_spawnp failed</code>
                 </li>
                 <li>
                   Root cause: node-pty's native module (darwin-arm64 prebuild) fails to spawn
@@ -294,7 +309,7 @@ function TerminalTestPageContent() {
               </ul>
             </div>
 
-            <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-4">
+            <div className="rounded-[2px] bg-[var(--color-bg-tertiary)] p-4">
               <h3 className="mb-2 font-semibold text-[var(--color-text-primary)]">
                 ⚡ Testing Instructions for Upgrades
               </h3>
@@ -304,13 +319,14 @@ function TerminalTestPageContent() {
               <ol className="ml-6 list-decimal space-y-1 text-xs text-[var(--color-text-secondary)]">
                 <li>
                   Test node-pty directly:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
                     node -e "const pty = require('node-pty'); pty.spawn('/bin/bash', [],
                     &#123;&#125;)"
                   </code>
                 </li>
                 <li>
-                  If no <code className="rounded bg-black px-1 py-0.5">posix_spawnp failed</code>{" "}
+                  If no{" "}
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">posix_spawnp failed</code>{" "}
                   error, proceed
                 </li>
                 <li>Start dev servers and open this page</li>
@@ -327,7 +343,7 @@ function TerminalTestPageContent() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => setShowComparison(!showComparison)}
-              className="rounded-lg bg-[var(--color-accent-blue)] px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80"
+              className="rounded-[2px] bg-[var(--color-accent-blue)] px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80"
             >
               {showComparison ? "Hide" : "Show"} Side-by-Side Comparison
             </button>
@@ -336,10 +352,10 @@ function TerminalTestPageContent() {
             </span>
           </div>
           {oldSessionId === newSessionId && (
-            <div className="mt-2 rounded border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-2 text-xs text-[var(--color-text-secondary)]">
+            <div className="mt-2 rounded-[2px] border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-2 text-xs text-[var(--color-text-secondary)]">
               ⚠️ Using same session for both terminals. To avoid port conflicts, use different
               sessions:
-              <code className="ml-1 rounded bg-black px-1">
+              <code className="ml-1 rounded-[2px] bg-black px-1">
                 ?old_session=ao-orchestrator&new_session=ao-20
               </code>
             </div>
@@ -351,9 +367,9 @@ function TerminalTestPageContent() {
           <section className="mb-8">
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Old Implementation */}
-              <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
+              <div className="rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="rounded bg-[var(--color-accent-red)] px-2 py-1 text-xs font-semibold text-white">
+                  <span className="rounded-[2px] bg-[var(--color-accent-red)] px-2 py-1 text-xs font-semibold text-white">
                     OLD
                   </span>
                   <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -370,9 +386,9 @@ function TerminalTestPageContent() {
               </div>
 
               {/* New Implementation */}
-              <div className="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
+              <div className="rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="rounded bg-[var(--color-accent-green)] px-2 py-1 text-xs font-semibold text-white">
+                  <span className="rounded-[2px] bg-[var(--color-accent-green)] px-2 py-1 text-xs font-semibold text-white">
                     NEW
                   </span>
                   <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -386,11 +402,11 @@ function TerminalTestPageContent() {
                   <br />
                   ⚠️ Requires Node 20.x (node-pty)
                 </div>
-                <DirectTerminal sessionId={newSessionId} />
+                <DirectTerminal sessionId={newSessionId} tmuxName={newSessionId} />
               </div>
             </div>
 
-            <div className="mt-4 rounded-lg border border-[var(--color-accent-blue)] bg-[var(--color-bg-secondary)] p-4">
+            <div className="mt-4 rounded-[2px] border border-[var(--color-accent-blue)] bg-[var(--color-bg-secondary)] p-4">
               <h3 className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
                 🧪 How to Test Clipboard
               </h3>
@@ -409,13 +425,13 @@ function TerminalTestPageContent() {
         )}
 
         {/* Debugging Journey */}
-        <section className="rounded-lg border border-[var(--color-accent-purple)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="rounded-[2px] border border-[var(--color-accent)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             🔬 The Debugging Journey
           </h2>
 
           <div className="space-y-4 text-sm text-[var(--color-text-secondary)]">
-            <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-4">
+            <div className="rounded-[2px] bg-[var(--color-bg-tertiary)] p-4">
               <p className="font-semibold text-[var(--color-accent-red)]">
                 Total Time Wasted: 12+ hours across Feb 15-16, 2026
               </p>
@@ -446,7 +462,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   <strong>Tried force-enabling tmux clipboard</strong> - Used{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
                     set-option -s set-clipboard on
                   </code>{" "}
                   in tmux.conf. Didn't help - tmux needs the terminal to declare support.
@@ -462,11 +478,11 @@ function TerminalTestPageContent() {
                 <p>
                   <strong>What finally worked:</strong> Registering an XDA (Extended Device
                   Attributes) handler in xterm.js using{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
                     terminal.parser.registerCsiHandler()
                   </code>
                 </p>
-                <pre className="mt-2 overflow-x-auto rounded-lg bg-black p-3 text-xs">
+                <pre className="mt-2 overflow-x-auto rounded-[2px] bg-black p-3 text-xs">
                   <code className="text-[var(--color-accent-green)]">
                     {`terminal.parser.registerCsiHandler(
   { prefix: ">", final: "q" },
@@ -492,13 +508,13 @@ function TerminalTestPageContent() {
                 <li>
                   <strong>Deep-dive into tmux source code</strong> - Used DeepWiki.com to analyze
                   tmux's terminal capability detection logic in{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tty-keys.c</code> and{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tty.c</code>
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">tty-keys.c</code> and{" "}
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">tty.c</code>
                 </li>
                 <li>
                   <strong>Discovered XDA queries</strong> - Found that tmux sends{" "}
-                  <code className="rounded bg-black px-1 py-0.5">CSI &gt; q</code> (XTVERSION) to
-                  detect terminal type
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code> (XTVERSION)
+                  to detect terminal type
                 </li>
                 <li>
                   <strong>Traced the "iTerm2 magic"</strong> - Realized why clipboard worked when
@@ -508,7 +524,7 @@ function TerminalTestPageContent() {
                 <li>
                   <strong>Checked xterm.js implementation</strong> - Found that XDA is marked as
                   TODO in xterm.js tests:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
                     test.skip('CSI &gt; Ps q - Report xterm name and version (XTVERSION)')
                   </code>
                 </li>
@@ -519,7 +535,7 @@ function TerminalTestPageContent() {
               </ol>
             </div>
 
-            <div className="rounded-lg border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-4">
+            <div className="rounded-[2px] border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-4">
               <h3 className="mb-2 font-semibold text-[var(--color-text-primary)]">
                 ⚡ How We Could Have Figured It Out Faster
               </h3>
@@ -531,7 +547,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   <strong>Monitor escape sequences</strong> - Running{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tmux -vvv</code> or using a
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">tmux -vvv</code> or using a
                   terminal protocol analyzer would have revealed the XDA queries being sent
                 </li>
                 <li>
@@ -560,8 +576,8 @@ function TerminalTestPageContent() {
                 <li>xterm.js parser API documentation</li>
                 <li>XTerm Control Sequences: XTVERSION / Device Attributes</li>
                 <li>
-                  tmux <code className="rounded bg-black px-1 py-0.5">tty-keys.c</code>: Terminal
-                  type detection logic
+                  tmux <code className="rounded-[2px] bg-black px-1 py-0.5">tty-keys.c</code>:
+                  Terminal type detection logic
                 </li>
               </ul>
             </div>
@@ -569,25 +585,25 @@ function TerminalTestPageContent() {
         </section>
 
         {/* Implementation Files */}
-        <section className="mt-6 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
+        <section className="mt-6 rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-6">
           <h2 className="mb-4 text-xl font-bold text-[var(--color-text-primary)]">
             📁 Implementation Files
           </h2>
           <ul className="ml-6 list-disc space-y-1 text-sm text-[var(--color-text-secondary)]">
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded-[2px] bg-black px-1 py-0.5">
                 packages/web/src/components/DirectTerminal.tsx
               </code>{" "}
               - Main component with XDA handler
             </li>
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded-[2px] bg-black px-1 py-0.5">
                 packages/web/server/direct-terminal-ws.ts
               </code>{" "}
               - WebSocket server using node-pty
             </li>
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded-[2px] bg-black px-1 py-0.5">
                 packages/web/src/app/dev/terminal-test/page.tsx
               </code>{" "}
               - This test page

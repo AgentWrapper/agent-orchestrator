@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { toClaudeProjectPath, create } from "../index.js";
-import type { Session, RuntimeHandle } from "@composio/ao-core";
+import { createActivitySignal, type Session, type RuntimeHandle } from "@aoagents/ao-core";
 
 // Mock homedir() so getActivityState looks in our temp dir
 vi.mock("node:os", async (importOriginal) => {
@@ -25,6 +25,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "idle",
+    activitySignal: createActivitySignal("valid", {
+      activity: "idle",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "main",
     issueId: null,
     pr: null,
@@ -136,19 +141,23 @@ describe("Claude Code Activity Detection", () => {
     // Fallback cases (no JSONL data available)
     // -----------------------------------------------------------------------
 
-    it("returns null when no session file exists yet", async () => {
-      // projectDir exists but is empty — no .jsonl files
-      expect(await agent.getActivityState(makeSession())).toBeNull();
+    it("returns 'idle' when no session file exists yet", async () => {
+      // projectDir exists but is empty — no .jsonl files yet (freshly spawned session)
+      const session = makeSession();
+      const result = await agent.getActivityState(session);
+      expect(result?.state).toBe("idle");
+      // timestamp must be session.createdAt so stuck-detection can fire eventually
+      expect(result?.timestamp).toBe(session.createdAt);
     });
 
     it("returns null when no workspacePath", async () => {
       expect(await agent.getActivityState(makeSession({ workspacePath: null }))).toBeNull();
     });
 
-    it("returns null when project directory does not exist", async () => {
-      // Point to a workspace whose project dir doesn't exist
+    it("returns 'idle' when project directory does not exist", async () => {
+      // Process is running but no Claude project dir yet — treat as idle
       const badPath = join(fakeHome, "nonexistent-workspace");
-      expect(await agent.getActivityState(makeSession({ workspacePath: badPath }))).toBeNull();
+      expect((await agent.getActivityState(makeSession({ workspacePath: badPath })))?.state).toBe("idle");
     });
 
     // -----------------------------------------------------------------------
@@ -267,10 +276,17 @@ describe("Claude Code Activity Detection", () => {
       });
 
       it("custom threshold applies to active types too", async () => {
-        // 2 minutes old
+        // 2 minutes old — past active window (30s), within 300s threshold → ready
         writeJsonl([{ type: "user" }], 120_000);
 
         expect((await agent.getActivityState(makeSession(), 60_000))?.state).toBe("idle");
+        expect((await agent.getActivityState(makeSession(), 300_000))?.state).toBe("ready");
+      });
+
+      it("active types within 30s window return active", async () => {
+        // 10 seconds old — within active window → active
+        writeJsonl([{ type: "user" }], 10_000);
+
         expect((await agent.getActivityState(makeSession(), 300_000))?.state).toBe("active");
       });
     });
@@ -290,8 +306,8 @@ describe("Claude Code Activity Detection", () => {
 
       it("ignores agent- prefixed JSONL files", async () => {
         writeJsonl([{ type: "user" }], 0, "agent-toolkit.jsonl");
-        // No real session file → returns null (cannot determine activity)
-        expect(await agent.getActivityState(makeSession())).toBeNull();
+        // No real session file → process is running, treat as idle
+        expect((await agent.getActivityState(makeSession()))?.state).toBe("idle");
       });
 
       it("reads last entry from multi-entry JSONL (not first)", async () => {

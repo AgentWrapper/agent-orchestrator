@@ -1,254 +1,101 @@
-import { spawn } from "node:child_process";
 import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-import { getProjectBaseDir, type OrchestratorConfig } from "@composio/ao-core";
+  createCorrelationId,
+  createProjectObserver,
+  type LifecycleManager,
+  type OrchestratorConfig,
+} from "@aoagents/ao-core";
+import { getLifecycleManager } from "./create-session-manager.js";
 
-const LIFECYCLE_PID_FILE = "lifecycle-worker.pid";
-const LIFECYCLE_LOG_FILE = "lifecycle-worker.log";
-const DEFAULT_START_TIMEOUT_MS = 5_000;
-const STOP_TIMEOUT_MS = 5_000;
+const DEFAULT_INTERVAL_MS = 30_000;
+
+interface ActiveLoop {
+  lifecycle: LifecycleManager;
+  stop: () => void;
+}
+
+const active = new Map<string, ActiveLoop>();
+
+// Note: no SIGINT/SIGTERM listeners are installed here. Adding a listener for
+// those signals removes Node.js's default "exit on signal" behavior, which
+// would leave `ao start` hanging when `ao stop` sends SIGTERM (the setInterval
+// keeps the event loop alive forever). Default signal handling terminates the
+// process cleanly; the OS reclaims the interval timer. Callers that need to
+// flush state explicitly before exit can call `stopAllLifecycleWorkers()`.
 
 export interface LifecycleWorkerStatus {
   running: boolean;
-  pid: number | null;
-  pidFile: string;
-  logFile: string;
-}
-
-function getProjectBase(config: OrchestratorConfig, projectId: string): string {
-  const project = config.projects[projectId];
-  if (!project) {
-    throw new Error(`Unknown project: ${projectId}`);
-  }
-  return getProjectBaseDir(config.configPath, project.path);
-}
-
-export function getLifecyclePidFile(config: OrchestratorConfig, projectId: string): string {
-  return join(getProjectBase(config, projectId), LIFECYCLE_PID_FILE);
-}
-
-export function getLifecycleLogFile(config: OrchestratorConfig, projectId: string): string {
-  return join(getProjectBase(config, projectId), LIFECYCLE_LOG_FILE);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
-}
-
-function readPid(pidFile: string): number | null {
-  if (!existsSync(pidFile)) return null;
-
-  try {
-    const raw = readFileSync(pidFile, "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeLifecycleWorkerPid(
-  config: OrchestratorConfig,
-  projectId: string,
-  pid: number,
-): void {
-  const pidFile = getLifecyclePidFile(config, projectId);
-  mkdirSync(getProjectBase(config, projectId), { recursive: true });
-  writeFileSync(pidFile, `${pid}\n`, "utf-8");
-}
-
-export function clearLifecycleWorkerPid(
-  config: OrchestratorConfig,
-  projectId: string,
-  pid?: number,
-): void {
-  const pidFile = getLifecyclePidFile(config, projectId);
-  if (!existsSync(pidFile)) return;
-
-  if (pid !== undefined) {
-    const currentPid = readPid(pidFile);
-    if (currentPid !== null && currentPid !== pid) {
-      return;
-    }
-  }
-
-  try {
-    unlinkSync(pidFile);
-  } catch {
-    // Best effort cleanup
-  }
-}
-
-export function getLifecycleWorkerStatus(
-  config: OrchestratorConfig,
-  projectId: string,
-): LifecycleWorkerStatus {
-  const pidFile = getLifecyclePidFile(config, projectId);
-  const logFile = getLifecycleLogFile(config, projectId);
-  const pid = readPid(pidFile);
-
-  if (pid !== null && isProcessRunning(pid)) {
-    return { running: true, pid, pidFile, logFile };
-  }
-
-  if (pid !== null) {
-    clearLifecycleWorkerPid(config, projectId, pid);
-  }
-
-  return { running: false, pid: null, pidFile, logFile };
-}
-
-function resolveLifecycleWorkerLaunch(projectId: string): { command: string; args: string[] } {
-  const entry = process.argv[1];
-  const workerArgs = ["lifecycle-worker", projectId];
-
-  if (entry && /\.(?:c|m)?js$/i.test(entry)) {
-    return {
-      command: process.execPath,
-      args: [entry, ...workerArgs],
-    };
-  }
-
-  if (entry && /\.ts$/i.test(entry)) {
-    return {
-      command: "npx",
-      args: ["tsx", entry, ...workerArgs],
-    };
-  }
-
-  return {
-    command: "ao",
-    args: workerArgs,
-  };
-}
-
-async function waitForLifecycleWorker(
-  config: OrchestratorConfig,
-  projectId: string,
-  timeoutMs = DEFAULT_START_TIMEOUT_MS,
-): Promise<LifecycleWorkerStatus> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const status = getLifecycleWorkerStatus(config, projectId);
-    if (status.running) {
-      return status;
-    }
-    await sleep(100);
-  }
-
-  return getLifecycleWorkerStatus(config, projectId);
+  started: boolean;
 }
 
 export async function ensureLifecycleWorker(
   config: OrchestratorConfig,
   projectId: string,
-): Promise<LifecycleWorkerStatus & { started: boolean }> {
-  const current = getLifecycleWorkerStatus(config, projectId);
-  if (current.running) {
-    return { ...current, started: false };
+  intervalMs: number = DEFAULT_INTERVAL_MS,
+): Promise<LifecycleWorkerStatus> {
+  if (!config.projects[projectId]) {
+    throw new Error(`Unknown project: ${projectId}`);
   }
 
-  const baseDir = getProjectBase(config, projectId);
-  const logFile = getLifecycleLogFile(config, projectId);
-  mkdirSync(baseDir, { recursive: true });
-
-  const stdoutFd = openSync(logFile, "a");
-  const stderrFd = openSync(logFile, "a");
-
-  try {
-    const launch = resolveLifecycleWorkerLaunch(projectId);
-    const child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(),
-      detached: true,
-      stdio: ["ignore", stdoutFd, stderrFd],
-      env: {
-        ...process.env,
-        AO_LIFECYCLE_PROJECT: projectId,
-        AO_CONFIG_PATH: config.configPath,
-      },
-    });
-
-    child.unref();
-
-    // Write PID from the parent immediately after spawn to close the TOCTOU
-    // window: without this, a second concurrent `ensureLifecycleWorker` call
-    // could pass the "not running" check before the child writes its own PID.
-    if (child.pid) {
-      writeLifecycleWorkerPid(config, projectId, child.pid);
-    }
-  } finally {
-    closeSync(stdoutFd);
-    closeSync(stderrFd);
+  if (active.has(projectId)) {
+    return { running: true, started: false };
   }
 
-  const status = await waitForLifecycleWorker(config, projectId);
-  if (!status.running) {
-    throw new Error(
-      `Lifecycle worker failed to start for project ${projectId}. See ${status.logFile}`,
-    );
-  }
+  const observer = createProjectObserver(config, "lifecycle-service");
+  const lifecycle = await getLifecycleManager(config, projectId);
 
-  return { ...status, started: true };
+  lifecycle.start(intervalMs);
+
+  observer.setHealth({
+    surface: "lifecycle.worker",
+    status: "ok",
+    projectId,
+    correlationId: createCorrelationId("lifecycle-service"),
+    details: { projectId, intervalMs, inProcess: true },
+  });
+
+  active.set(projectId, {
+    lifecycle,
+    stop: () => {
+      try {
+        lifecycle.stop();
+      } finally {
+        observer.setHealth({
+          surface: "lifecycle.worker",
+          status: "warn",
+          projectId,
+          correlationId: createCorrelationId("lifecycle-service"),
+          reason: "Lifecycle polling stopped",
+          details: { projectId },
+        });
+      }
+    },
+  });
+
+  return { running: true, started: true };
 }
 
-export async function stopLifecycleWorker(
-  config: OrchestratorConfig,
-  projectId: string,
-): Promise<boolean> {
-  const status = getLifecycleWorkerStatus(config, projectId);
-  if (!status.running || status.pid === null) {
-    clearLifecycleWorkerPid(config, projectId);
-    return false;
-  }
+export function stopLifecycleWorker(projectId: string): void {
+  const entry = active.get(projectId);
+  if (!entry) return;
 
   try {
-    process.kill(status.pid, "SIGTERM");
+    entry.stop();
   } catch {
-    clearLifecycleWorkerPid(config, projectId, status.pid);
-    return false;
+    // Best-effort
   }
+  active.delete(projectId);
+}
 
-  const deadline = Date.now() + STOP_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (!isProcessRunning(status.pid)) {
-      clearLifecycleWorkerPid(config, projectId, status.pid);
-      return true;
-    }
-    await sleep(100);
+export function stopAllLifecycleWorkers(): void {
+  for (const projectId of Array.from(active.keys())) {
+    stopLifecycleWorker(projectId);
   }
+}
 
-  try {
-    process.kill(status.pid, "SIGKILL");
-  } catch {
-    // Best effort hard stop
-  }
+export function isLifecycleWorkerRunning(projectId: string): boolean {
+  return active.has(projectId);
+}
 
-  clearLifecycleWorkerPid(config, projectId, status.pid);
-  return true;
+export function listLifecycleWorkers(): string[] {
+  return Array.from(active.keys());
 }

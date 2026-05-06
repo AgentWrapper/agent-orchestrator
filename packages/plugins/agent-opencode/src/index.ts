@@ -1,27 +1,33 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  recordTerminalActivity,
   asValidOpenCodeSessionId,
+  getCachedOpenCodeSessionList,
+  getOpenCodeChildEnv,
+  ensureOpenCodeTmpDir,
+  resetOpenCodeSessionListCache,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
+  type WorkspaceHooksConfig,
   type OpenCodeAgentConfig,
-} from "@composio/ao-core";
+  type OpenCodeSessionListEntry,
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-interface OpenCodeSessionListEntry {
-  id: string;
-  title?: string;
-  updated?: string | number;
-}
 
 function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
   if (typeof updated === "number") {
@@ -47,20 +53,8 @@ function parseUpdatedTimestamp(updated: string | number | undefined): Date | nul
   return new Date(parsedMs);
 }
 
-function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((item): item is OpenCodeSessionListEntry => {
-    if (!item || typeof item !== "object") return false;
-    const record = item as Record<string, unknown>;
-    return asValidOpenCodeSessionId(record["id"]) !== undefined;
-  });
-}
+// Re-export for backward compat — see @aoagents/ao-core/opencode-shared.
+export { resetOpenCodeSessionListCache };
 
 /**
  * Parse JSON stream lines from `opencode run --format json` output.
@@ -81,8 +75,9 @@ process.stdin.on('data', chunk => {
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed);
-      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
-        captured = obj.session_id;
+      const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
+      if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
+        captured = sid;
       }
     } catch {}
   }
@@ -90,8 +85,9 @@ process.stdin.on('data', chunk => {
   if (buffer.trim()) {
     try {
       const obj = JSON.parse(buffer.trim());
-      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
-        captured = obj.session_id;
+      const sid = (typeof obj.session_id === 'string' && obj.session_id) || (typeof obj.sessionID === 'string' && obj.sessionID);
+      if (sid && /^ses_[A-Za-z0-9_-]+$/.test(sid)) {
+        captured = sid;
       }
     } catch {}
   }
@@ -138,6 +134,41 @@ process.stdin.on('data', c => input += c).on('end', () => {
 }
 
 // =============================================================================
+// Session List Helpers
+// =============================================================================
+
+/**
+ * Query OpenCode's session list and find the matching session for this AO session.
+ * Tries metadata `opencodeSessionId` first, then falls back to title matching.
+ */
+async function findOpenCodeSession(
+  session: Session,
+): Promise<OpenCodeSessionListEntry | null> {
+  try {
+    const sessions = await getCachedOpenCodeSessionList();
+
+    // Prefer exact ID match from metadata
+    if (session.metadata?.opencodeSessionId) {
+      const match = sessions.find((s) => s.id === session.metadata.opencodeSessionId);
+      if (match) return match;
+    }
+
+    // Fallback: title match — pick the most recently updated session
+    // to avoid binding to a stale session when titles collide.
+    const titleMatches = sessions.filter((s) => s.title === `AO:${session.id}`);
+    if (titleMatches.length === 0) return null;
+    if (titleMatches.length === 1) return titleMatches[0]!;
+    return titleMatches.reduce((best, s) => {
+      const bestTs = parseUpdatedTimestamp(best.updated)?.getTime() ?? 0;
+      const sTs = parseUpdatedTimestamp(s.updated)?.getTime() ?? 0;
+      return sTs > bestTs ? s : best;
+    });
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
 // Plugin Manifest
 // =============================================================================
 
@@ -161,34 +192,23 @@ function createOpenCodeAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const options: string[] = [];
       const sharedOptions: string[] = [];
+      const agentConfig = config.projectConfig.agentConfig;
 
       const existingSessionId = asValidOpenCodeSessionId(
-        (config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined)?.opencodeSessionId,
+        agentConfig?.opencodeSessionId,
       );
 
       if (existingSessionId) {
         options.push("--session", shellEscape(existingSessionId));
       }
 
-      // Select specific OpenCode subagent if configured
-      if (config.subagent) {
-        sharedOptions.push("--agent", shellEscape(config.subagent));
+      const selectedAgentName = config.subagent;
+
+      if (selectedAgentName) {
+        sharedOptions.push("--agent", shellEscape(selectedAgentName));
       }
 
-      let promptValue: string | undefined;
-      if (config.prompt) {
-        if (config.systemPromptFile) {
-          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
-        } else if (config.systemPrompt) {
-          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
-        } else {
-          promptValue = shellEscape(config.prompt);
-        }
-      } else if (config.systemPromptFile) {
-        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
-      } else if (config.systemPrompt) {
-        promptValue = shellEscape(config.systemPrompt);
-      }
+      const promptValue = config.prompt ? shellEscape(config.prompt) : undefined;
 
       if (config.model) {
         sharedOptions.push("--model", shellEscape(config.model));
@@ -233,12 +253,37 @@ function createOpenCodeAgent(): Agent {
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
+
+      // Point Bun's embedded shared-library extraction at an AO-owned temp
+      // dir so the cli-side janitor only needs to sweep our own files
+      // (issue #1046). Setting all three keys covers POSIX (TMPDIR) and
+      // Windows fallbacks; opencode itself ships POSIX-only today.
+      const tmpDir = ensureOpenCodeTmpDir();
+      env["TMPDIR"] = tmpDir;
+      env["TMP"] = tmpDir;
+      env["TEMP"] = tmpDir;
+
+      // PATH and GH_PATH are injected by session-manager for all agents.
+
       return env;
     },
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // OpenCode doesn't have rich terminal output patterns yet
+
+      const lines = terminalOutput.trim().split("\n");
+      const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+      // OpenCode's input prompt — agent is idle
+      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+      // Check the last few lines for permission/confirmation prompts
+      const tail = lines.slice(-5).join("\n");
+      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+      if (/approval required/i.test(tail)) return "waiting_input";
+      if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
+      if (/Allow .+\?/i.test(tail)) return "waiting_input";
+
       return "active";
     },
 
@@ -247,7 +292,7 @@ function createOpenCodeAgent(): Agent {
       readyThresholdMs?: number,
     ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
-      const activeWindowMs = Math.min(30_000, threshold);
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
 
       // Check if process is running first
       const exitedAt = new Date();
@@ -255,42 +300,44 @@ function createOpenCodeAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      try {
-        const { stdout } = await execFileAsync(
-          "opencode",
-          ["session", "list", "--format", "json"],
-          {
-            timeout: 30_000,
-          },
-        );
-
-        const sessions = parseSessionList(stdout);
-        const targetSession =
-          (session.metadata?.opencodeSessionId
-            ? sessions.find((s) => s.id === session.metadata.opencodeSessionId)
-            : undefined) ?? sessions.find((s) => s.title === `AO:${session.id}`);
-
-        if (targetSession) {
-          const lastActivity = parseUpdatedTimestamp(targetSession.updated);
-
-          if (lastActivity) {
-            const ageMs = Math.max(0, Date.now() - lastActivity.getTime());
-            if (ageMs <= activeWindowMs) {
-              return { state: "active", timestamp: lastActivity };
-            }
-            if (ageMs <= threshold) {
-              return { state: "ready", timestamp: lastActivity };
-            }
-            return { state: "idle", timestamp: lastActivity };
-          }
-
-          return null;
-        }
-      } catch {
-        return null;
+      // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
+      //    This is the only source of waiting_input/blocked states for OpenCode.
+      let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
+      if (session.workspacePath) {
+        activityResult = await readLastActivityEntry(session.workspacePath);
+        const activityState = checkActivityLogState(activityResult);
+        if (activityState) return activityState;
       }
 
+      // 2. Fallback: query OpenCode's session list API for timestamp-based detection
+      const targetSession = await findOpenCodeSession(session);
+      if (targetSession) {
+        const lastActivity = parseUpdatedTimestamp(targetSession.updated);
+
+        if (lastActivity) {
+          const ageMs = Math.max(0, Date.now() - lastActivity.getTime());
+          if (ageMs <= activeWindowMs) {
+            return { state: "active", timestamp: lastActivity };
+          }
+          if (ageMs <= threshold) {
+            return { state: "ready", timestamp: lastActivity };
+          }
+          return { state: "idle", timestamp: lastActivity };
+        }
+      }
+
+      // 3. Fallback: use JSONL entry with age-based decay when session list is unavailable.
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
+
       return null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -344,9 +391,43 @@ function createOpenCodeAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // OpenCode doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      const targetSession = await findOpenCodeSession(session);
+      if (!targetSession) return null;
+
+      return {
+        summary: targetSession.title ?? null,
+        summaryIsFallback: true,
+        agentSessionId: targetSession.id,
+        // OpenCode doesn't expose token/cost data in session list
+      };
+    },
+
+    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+      // Try metadata first, then query OpenCode's session list
+      const sessionId =
+        asValidOpenCodeSessionId(session.metadata?.opencodeSessionId) ??
+        (await findOpenCodeSession(session))?.id ??
+        null;
+
+      if (!sessionId) return null;
+
+      const parts: string[] = ["opencode", "--session", shellEscape(sessionId)];
+
+      const agentConfig = project.agentConfig as OpenCodeAgentConfig | undefined;
+      if (agentConfig?.model) {
+        parts.push("--model", shellEscape(agentConfig.model as string));
+      }
+
+      return parts.join(" ");
+    },
+
+    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      // PATH wrappers are installed by session-manager for all agents.
+    },
+
+    async postLaunchSetup(_session: Session): Promise<void> {
+      // PATH wrappers are re-ensured by session-manager.
     },
   };
 }
@@ -361,7 +442,7 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("opencode", ["version"], { stdio: "ignore" });
+    execFileSync("opencode", ["version"], { stdio: "ignore", env: getOpenCodeChildEnv() });
     return true;
   } catch {
     return false;

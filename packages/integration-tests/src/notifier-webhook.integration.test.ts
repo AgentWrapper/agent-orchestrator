@@ -5,8 +5,8 @@
  * Everything else runs for real: config parsing, retry logic, payload serialization.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { NotifyAction } from "@composio/ao-core";
-import webhookPlugin from "@composio/ao-plugin-notifier-webhook";
+import type { NotifyAction } from "@aoagents/ao-core";
+import webhookPlugin from "@aoagents/ao-plugin-notifier-webhook";
 import { makeEvent } from "./helpers/event-factory.js";
 
 describe("notifier-webhook integration", () => {

@@ -1,4 +1,20 @@
-# @composio/ao
+# @aoagents/ao
+
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies [2306078]
+- Updated dependencies [f09cc72]
+- Updated dependencies [f330a1e]
+- Updated dependencies [e1bb51f]
+- Updated dependencies [f674422]
+- Updated dependencies [e7ad928]
+- Updated dependencies [4701122]
+- Updated dependencies [c8af50f]
+- Updated dependencies [bcdda4b]
+- Updated dependencies [1cbf657]
+  - @aoagents/ao-cli@0.4.0
 
 ## 0.2.2
 

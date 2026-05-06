@@ -17,7 +17,7 @@ vi.mock("@/lib/services", () => ({
   getSCM: vi.fn(),
 }));
 
-import { resolveDashboardProjectFilter } from "@/lib/dashboard-page-data";
+import { formatDashboardLoadError, resolveDashboardProjectFilter } from "@/lib/dashboard-page-data";
 
 describe("resolveDashboardProjectFilter", () => {
   beforeEach(() => {
@@ -44,5 +44,31 @@ describe("resolveDashboardProjectFilter", () => {
 
   it("falls back to primary project when no project is given", () => {
     expect(resolveDashboardProjectFilter(undefined)).toBe("mono");
+  });
+});
+
+describe("formatDashboardLoadError", () => {
+  it("uses Error.message when present", () => {
+    expect(formatDashboardLoadError(new Error("No agent-orchestrator.yaml found"))).toBe(
+      "No agent-orchestrator.yaml found",
+    );
+  });
+
+  it("trims whitespace from Error messages", () => {
+    expect(formatDashboardLoadError(new Error("  boom  "))).toBe("boom");
+  });
+
+  it("keeps only the first non-empty line from multiline errors", () => {
+    expect(formatDashboardLoadError(new Error("\n  config parse failed  \n  at line 4\n"))).toBe(
+      "config parse failed",
+    );
+  });
+
+  it("accepts string throws", () => {
+    expect(formatDashboardLoadError("config invalid")).toBe("config invalid");
+  });
+
+  it("falls back for unknown throws", () => {
+    expect(formatDashboardLoadError(null)).toMatch(/could not load dashboard data/i);
   });
 });

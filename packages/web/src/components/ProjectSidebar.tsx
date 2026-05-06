@@ -1,118 +1,307 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
-import { isOrchestratorSession } from "@composio/ao-core/types";
-import { getSessionTitle } from "@/lib/format";
+import { isOrchestratorSession } from "@aoagents/ao-core/types";
+import { getSessionTitle, humanizeBranch } from "@/lib/format";
+import { usePopoverClamp } from "@/hooks/usePopoverClamp";
+import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { ThemeToggle } from "./ThemeToggle";
+import { AddProjectModal } from "./AddProjectModal";
+import { ProjectSettingsModal } from "./ProjectSettingsModal";
+
+/** Minimal shape needed to render an orchestrator link in the sidebar. */
+export interface ProjectSidebarOrchestrator {
+  id: string;
+  projectId: string;
+}
 
 interface ProjectSidebarProps {
   projects: ProjectInfo[];
-  sessions: DashboardSession[];
+  sessions: DashboardSession[] | null;
+  /**
+   * Per-project orchestrator link. Sourced upstream from `/api/sessions`
+   * (the `orchestrators` field), which already applies the canonical
+   * "prefer live, fall back to terminal" selection. Not derivable from
+   * `sessions`: the sessions endpoint strips orchestrators out.
+   */
+  orchestrators?: ProjectSidebarOrchestrator[];
   activeProjectId: string | undefined;
   activeSessionId: string | undefined;
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-  mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
 
-type ProjectHealth = "red" | "yellow" | "green" | "gray";
+type SessionDotLevel = "respond" | "review" | "action" | "pending" | "working" | "merge" | "done";
 
-function computeProjectHealth(sessions: DashboardSession[]): ProjectHealth {
-  const workers = sessions.filter((s) => !isOrchestratorSession(s));
-  if (workers.length === 0) return "gray";
-  for (const s of workers) {
-    if (getAttentionLevel(s) === "respond") return "red";
-  }
-  for (const s of workers) {
-    const lvl = getAttentionLevel(s);
-    if (lvl === "review" || lvl === "pending") return "yellow";
-  }
-  return "green";
+function SessionDot({ level }: { level: SessionDotLevel }) {
+  return (
+    <div
+      className={cn(
+        "sidebar-session-dot shrink-0 rounded-full",
+        level === "working" && "sidebar-session-dot--glow",
+      )}
+      data-level={level}
+    />
+  );
 }
 
-const healthDotColor: Record<ProjectHealth, string> = {
-  red: "var(--color-status-error)",
-  yellow: "var(--color-status-attention)",
-  green: "var(--color-status-ready)",
-  gray: "var(--color-text-tertiary)",
-};
+// ProjectSidebar consumes `getAttentionLevel()` without passing a mode,
+// so the function defaults to "detailed" and `action` never appears here
+// in practice. The entry is kept for exhaustiveness — TypeScript requires
+// every `AttentionLevel` variant to be present in this `Record` — and
+// as forward-compat in case the sidebar ever opts into simple mode.
+const SHOW_SESSION_ID_KEY = "ao:sidebar:show-session-id";
 
-const sessionDotColor: Record<AttentionLevel, string> = {
-  merge: "var(--color-status-ready)",
-  respond: "var(--color-status-error)",
-  review: "var(--color-accent-orange)",
-  pending: "var(--color-status-attention)",
-  working: "var(--color-status-working)",
-  done: "var(--color-text-tertiary)",
-};
+function loadShowSessionId(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(SHOW_SESSION_ID_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
-const sessionToneLabel: Record<AttentionLevel, string> = {
-  merge: "merge",
-  respond: "reply",
+const LEVEL_LABELS: Record<AttentionLevel, string> = {
+  working: "working",
+  pending: "pending",
   review: "review",
-  pending: "wait",
-  working: "live",
+  respond: "respond",
+  action: "action",
+  merge: "merge",
   done: "done",
 };
 
-function SessionDot({ level }: { level: AttentionLevel }) {
-  return (
-    <div
-      className={cn(
-        "h-[7px] w-[7px] shrink-0 rounded-full",
-        level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
-      )}
-      style={{ background: sessionDotColor[level] }}
-    />
-  );
-}
-
-function HealthDot({ health }: { health: ProjectHealth }) {
-  return (
-    <div
-      className={cn(
-        "h-2 w-2 shrink-0 rounded-full",
-        health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
-      )}
-      style={{ background: healthDotColor[health] }}
-    />
-  );
-}
-
 export function ProjectSidebar(props: ProjectSidebarProps) {
-  if (props.projects.length <= 1) {
-    return null;
+  if (props.projects.length === 0) {
+    return <ProjectSidebarEmpty collapsed={props.collapsed} />;
+  }
+  return <ProjectSidebarInner {...props} />;
+}
+
+function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
+
+  if (collapsed) {
+    return (
+      <aside className="project-sidebar project-sidebar--collapsed flex h-full flex-col items-center gap-1 py-2">
+        <button
+          type="button"
+          className="project-sidebar__add-btn"
+          aria-label="New project"
+          onClick={() => setAddProjectOpen(true)}
+        >
+          <svg
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        <AddProjectModal open={addProjectOpen} onClose={() => setAddProjectOpen(false)} />
+      </aside>
+    );
   }
 
-  return <ProjectSidebarInner {...props} />;
+  return (
+    <aside className="project-sidebar flex h-full flex-col">
+      <div className="project-sidebar__compact-hdr">
+        <span className="project-sidebar__sect-label">Projects</span>
+        <button
+          type="button"
+          className="project-sidebar__add-btn"
+          aria-label="New project"
+          onClick={() => setAddProjectOpen(true)}
+        >
+          <svg
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      </div>
+      <div className="project-sidebar__empty flex-1 text-[var(--color-text-tertiary)]">
+        No projects yet. Click + to add one.
+      </div>
+      <div className="project-sidebar__footer">
+        <div className="flex items-center justify-end gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
+          <ThemeToggle className="project-sidebar__theme-toggle" />
+        </div>
+      </div>
+      <AddProjectModal open={addProjectOpen} onClose={() => setAddProjectOpen(false)} />
+    </aside>
+  );
 }
 
 function ProjectSidebarInner({
   projects,
   sessions,
+  orchestrators,
   activeProjectId,
   activeSessionId,
+  loading = false,
+  error = false,
+  onRetry,
   collapsed = false,
-  onToggleCollapsed,
-  mobileOpen = false,
+  onToggleCollapsed: _onToggleCollapsed,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const isLoading = loading || sessions === null;
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
   );
+  const [showKilled, setShowKilled] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const [showSessionId, setShowSessionId] = useState<boolean>(loadShowSessionId);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+  const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [removedProjectIds, setRemovedProjectIds] = useState<Set<string>>(new Set());
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const projectMenuPopoverRef = useRef<HTMLDivElement>(null);
+  usePopoverClamp(settingsOpen, settingsPopoverRef);
+  usePopoverClamp(Boolean(projectMenuOpenId), projectMenuPopoverRef);
+
+  // Persist the session-id preference across reloads.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHOW_SESSION_ID_KEY, String(showSessionId));
+    } catch {
+      // localStorage unavailable — accept the in-memory state for this session.
+    }
+  }, [showSessionId]);
+
+  // Close the settings popover on outside click or Escape.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handlePointer = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpenId) return;
+    const handlePointer = (e: MouseEvent) => {
+      if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
+        setProjectMenuOpenId(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProjectMenuOpenId(null);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [projectMenuOpenId]);
 
   useEffect(() => {
     if (activeProjectId && activeProjectId !== "all") {
       setExpandedProjects((prev) => new Set([...prev, activeProjectId]));
     }
   }, [activeProjectId]);
+
+  useEffect(() => {
+    setRemovedProjectIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(
+        [...prev].filter((projectId) => !projects.some((project) => project.id === projectId)),
+      );
+      return next.size === prev.size ? prev : next;
+    });
+  }, [projects]);
+
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => !removedProjectIds.has(project.id)),
+    [projects, removedProjectIds],
+  );
+
+  const prefixByProject = useMemo(
+    () => new Map(visibleProjects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
+    [visibleProjects],
+  );
+
+  const allPrefixes = useMemo(
+    () => visibleProjects.map((p) => p.sessionPrefix ?? p.id),
+    [visibleProjects],
+  );
+
+  // The API (selectPreferredOrchestratorId) sends at most one entry per
+  // project, so collapsing into a Map keyed by projectId is lossless. If a
+  // future API change starts emitting multiples, the last one wins here.
+  const orchestratorByProject = useMemo(
+    () => new Map((orchestrators ?? []).map((o) => [o.projectId, o])),
+    [orchestrators],
+  );
+
+  const sessionsByProject = useMemo(() => {
+    const map = new Map<string, DashboardSession[]>();
+    // Build a set of valid project IDs to filter sessions strictly
+    const validProjectIds = new Set(visibleProjects.map((p) => p.id));
+
+    for (const s of sessions ?? []) {
+      // Only include sessions whose projectId matches a configured project
+      if (!validProjectIds.has(s.projectId)) continue;
+      if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
+      // Keep terminal sessions visible when they still need human attention.
+      // Otherwise ACTION-column cards disappear from the sidebar just because
+      // their runtime has ended.
+      const level = getAttentionLevel(s);
+      if (level === "done") {
+        if (s.status === "killed" ? !showKilled && !showDone : !showDone) continue;
+      }
+      const list = map.get(s.projectId) ?? [];
+      list.push(s);
+      map.set(s.projectId, list);
+    }
+    return map;
+  }, [sessions, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
+
+  const navigate = (url: string, session?: DashboardSession) => {
+    if (session) {
+      try {
+        sessionStorage.setItem(`ao-session-nav:${session.id}`, JSON.stringify(session));
+      } catch {
+        // sessionStorage unavailable — silent fallback
+      }
+    }
+    router.push(url);
+    onMobileClose?.();
+  };
 
   const toggleExpand = (projectId: string) => {
     setExpandedProjects((prev) => {
@@ -126,272 +315,572 @@ function ProjectSidebarInner({
     });
   };
 
-  const handleProjectHeaderClick = (projectId: string) => {
-    toggleExpand(projectId);
-    router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
-  };
+  const handleRemoveProject = async (project: ProjectInfo) => {
+    const confirmed = window.confirm(
+      `Remove project ${project.name} from AO? This clears its AO sessions/history and removes it from the portfolio, but keeps the repository folder on disk.`,
+    );
+    if (!confirmed) return;
 
-  const sessionsByProject = useMemo(() => {
-    const map = new Map<string, { all: DashboardSession[]; workers: DashboardSession[] }>();
-    let totalWorkers = 0;
-    let needsInput = 0;
-    let reviewLoad = 0;
+    setDeletingProjectId(project.id);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "DELETE",
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          (body && typeof body === "object" && "error" in body && typeof body.error === "string"
+            ? body.error
+            : null) ?? "Failed to remove project.",
+        );
+      }
 
-    for (const s of sessions) {
-      let entry = map.get(s.projectId);
-      if (!entry) {
-        entry = { all: [], workers: [] };
-        map.set(s.projectId, entry);
+      setRemovedProjectIds((prev) => new Set(prev).add(project.id));
+      setExpandedProjects((prev) => {
+        const next = new Set(prev);
+        next.delete(project.id);
+        return next;
+      });
+      setProjectMenuOpenId(null);
+      if (activeProjectId === project.id) {
+        router.push("/");
+      } else if ("refresh" in router && typeof router.refresh === "function") {
+        router.refresh();
       }
-      entry.all.push(s);
-      if (!isOrchestratorSession(s)) {
-        entry.workers.push(s);
-        totalWorkers++;
-      }
-      const lvl = getAttentionLevel(s);
-      if (lvl === "respond") needsInput++;
-      if (lvl === "review" || lvl === "pending") reviewLoad++;
+      onMobileClose?.();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Failed to remove project.");
+    } finally {
+      setDeletingProjectId(null);
     }
-
-    return { map, totalWorkers, needsInput, reviewLoad };
-  }, [sessions]);
-
-  const { totalWorkers: totalWorkerSessions, needsInput: needsInputCount, reviewLoad: reviewLoadCount } = sessionsByProject;
+  };
 
   if (collapsed) {
     return (
-      <>
-        {mobileOpen && (
-          <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />
+      <aside
+        className={cn(
+          "project-sidebar project-sidebar--collapsed flex flex-col h-full items-center py-2 gap-1 overflow-y-auto",
         )}
-        <aside className={cn("project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-3", mobileOpen && "project-sidebar--mobile-open")}>
-          <div className="flex flex-1 flex-col items-center gap-2">
-            {projects.map((project) => {
-              const entry = sessionsByProject.map.get(project.id);
-              const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
-              const isActive = activeProjectId === project.id;
-              const initial = project.name.charAt(0).toUpperCase();
-              return (
-                <button
-                  key={project.id}
-                  type="button"
-                  onClick={() => router.push(pathname + `?project=${encodeURIComponent(project.id)}`)}
-                  className={cn(
-                    "project-sidebar__collapsed-project",
-                    isActive && "project-sidebar__collapsed-project--active",
-                  )}
-                  title={project.name}
-                >
-                  <span className="project-sidebar__avatar">{initial}</span>
-                  {health !== "gray" && (
-                    <span
-                      className={cn(
-                        "project-sidebar__health-indicator",
-                        health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
-                      )}
-                      style={{ background: healthDotColor[health] }}
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => { onToggleCollapsed?.(); onMobileClose?.(); }}
-            className="project-sidebar__collapsed-toggle mt-auto"
-            aria-label="Show project sidebar"
-          >
-            <svg
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              viewBox="0 0 24 24"
-              className="h-4 w-4"
-            >
-              <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-              <path d="M9 4.5v15M12 10l3 2-3 2" />
-            </svg>
-          </button>
-        </aside>
-      </>
+      >
+        {visibleProjects.map((project, idx) => {
+          const workerSessions = sessionsByProject.get(project.id) ?? [];
+          // sessionsByProject already applies the showDone filter consistently.
+          const visibleSessions = workerSessions;
+          const projectAbbr = project.name.slice(0, 2).toUpperCase();
+          return (
+            <div key={project.id} className="flex flex-col items-center gap-0.5 w-full px-1">
+              {idx > 0 && <div className="project-sidebar__collapsed-divider" aria-hidden="true" />}
+              <a
+                href={projectDashboardPath(project.id)}
+                className={cn(
+                  "project-sidebar__collapsed-icon",
+                  activeProjectId === project.id && "project-sidebar__collapsed-icon--active",
+                )}
+                title={project.name}
+                aria-label={project.name}
+              >
+                <span className="project-sidebar__collapsed-abbr">{projectAbbr}</span>
+              </a>
+              {visibleSessions.slice(0, 5).map((session) => {
+                const level = getAttentionLevel(session);
+                const rawTitle = session.branch ?? getSessionTitle(session);
+                const displayTitle = session.branch
+                  ? humanizeBranch(session.branch) || rawTitle
+                  : rawTitle;
+                const abbr = displayTitle.replace(/\s+/g, "").slice(0, 3).toUpperCase();
+                const isActive = activeSessionId === session.id;
+                const sessionHref = projectSessionPath(project.id, session.id);
+                return (
+                  <a
+                    key={session.id}
+                    href={sessionHref}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
+                      navigate(sessionHref, session);
+                    }}
+                    className={cn(
+                      "project-sidebar__collapsed-session-btn",
+                      isActive && "project-sidebar__collapsed-session-btn--active",
+                    )}
+                    data-level={level}
+                    title={rawTitle}
+                    aria-label={rawTitle}
+                  >
+                    <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
+                    <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
+                  </a>
+                );
+              })}
+              {visibleSessions.length > 5 && (
+                <span className="project-sidebar__collapsed-overflow">
+                  +{visibleSessions.length - 5}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </aside>
     );
   }
 
   return (
-    <>
-      {mobileOpen && (
-        <div className="sidebar-mobile-backdrop" onClick={onMobileClose} />
-      )}
-      <aside className={cn("project-sidebar flex h-full w-[244px] flex-col", mobileOpen && "project-sidebar--mobile-open")}>
-      <div className="project-sidebar__header px-4 pb-3 pt-4">
-        <div className="project-sidebar__eyebrow">Portfolio</div>
-        <div className="project-sidebar__title-row">
-          <div>
-            <h2 className="project-sidebar__title">Projects</h2>
-            <p className="project-sidebar__subtitle">Live project overview.</p>
-          </div>
-          <div className="project-sidebar__badge">{projects.length}</div>
-        </div>
-        <div className="project-sidebar__summary">
-          <div className="project-sidebar__metric">
-            <span className="project-sidebar__metric-value">{totalWorkerSessions}</span>
-            <span className="project-sidebar__metric-label">active</span>
-          </div>
-          <div className="project-sidebar__metric">
-            <span
-              className="project-sidebar__metric-value"
-              style={{ color: "var(--color-status-attention)" }}
-            >
-              {reviewLoadCount}
-            </span>
-            <span className="project-sidebar__metric-label">review</span>
-          </div>
-          <div className="project-sidebar__metric">
-            <span
-              className="project-sidebar__metric-value"
-              style={{ color: "var(--color-status-error)" }}
-            >
-              {needsInputCount}
-            </span>
-            <span className="project-sidebar__metric-label">blocked</span>
-          </div>
-        </div>
-      </div>
-
-      <nav className="flex-1 overflow-y-auto px-2 pb-3">
+    <aside className="project-sidebar flex h-full flex-col">
+      <div className="project-sidebar__compact-hdr">
+        <span className="project-sidebar__sect-label">Projects</span>
         <button
-          onClick={() => router.push(pathname + "?project=all")}
-          className={cn(
-            "project-sidebar__item mb-1 flex w-full items-center gap-2 px-2.5 py-[9px] text-left text-[12px] font-medium transition-colors",
-            activeProjectId === undefined || activeProjectId === "all"
-              ? "project-sidebar__item--active text-[var(--color-accent)]"
-              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-          )}
+          type="button"
+          className="project-sidebar__add-btn"
+          aria-label="New project"
+          onClick={() => setAddProjectOpen(true)}
         >
           <svg
-            className="h-3.5 w-3.5 shrink-0 opacity-50"
+            aria-hidden="true"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.5"
+            strokeWidth="2"
             viewBox="0 0 24 24"
           >
-            <path d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            <path d="M12 5v14M5 12h14" />
           </svg>
-          All Projects
         </button>
+      </div>
 
-        <div className="project-sidebar__divider mx-2 my-2" />
+      {/* Stale-data banner: keep cached sessions visible on fetch failure but
+            surface the error so users know the list may be out of date. */}
+      {error && sessions && sessions.length > 0 ? (
+        <div
+          role="status"
+          className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-2 py-1.5 text-[11px] text-[var(--color-text-tertiary)]"
+        >
+          <span>Failed to refresh · showing cached sessions</span>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="font-medium text-[var(--color-link)] hover:underline"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
-        {projects.map((project) => {
-          const entry = sessionsByProject.map.get(project.id);
-          const projectSessions = entry?.all ?? [];
-          const workerSessions = entry?.workers ?? [];
-          const health = computeProjectHealth(projectSessions);
+      {/* Project tree */}
+      <div className="project-sidebar__tree flex-1 overflow-y-auto overflow-x-hidden">
+        {visibleProjects.map((project) => {
+          const workerSessions = sessionsByProject.get(project.id) ?? [];
           const isExpanded = expandedProjects.has(project.id);
           const isActive = activeProjectId === project.id;
+          const isDegraded = Boolean(project.resolveError);
+          const projectHref = projectDashboardPath(project.id);
+          // sessionsByProject already applies the showDone filter consistently.
+          const visibleSessions = workerSessions;
+          const hasActiveSessions = visibleSessions.length > 0;
+
+          const orchestratorLink = orchestratorByProject.get(project.id) ?? null;
 
           return (
-            <div key={project.id} className="mb-0.5">
-              {/* Project header */}
-              <button
-                onClick={() => handleProjectHeaderClick(project.id)}
-                className={cn(
-                  "project-sidebar__item flex w-full items-center gap-2 px-2.5 py-[9px] text-left text-[12px] font-medium transition-colors",
-                  isActive
-                    ? "project-sidebar__item--active text-[var(--color-accent)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+            <div key={project.id} className="project-sidebar__project">
+              {/* Project row: toggle + action buttons */}
+              <div className="project-sidebar__proj-row flex items-center">
+                {isDegraded ? (
+                  <a
+                    href={projectHref}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
+                      navigate(projectHref);
+                    }}
+                    className={cn(
+                      "project-sidebar__proj-toggle project-sidebar__proj-toggle--link project-sidebar__proj-toggle--degraded",
+                      isActive && "project-sidebar__proj-toggle--active",
+                    )}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <svg
+                      className="project-sidebar__proj-chevron project-sidebar__proj-chevron--degraded"
+                      width="10"
+                      height="10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 9v4" />
+                      <path d="M12 17h.01" />
+                      <path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.72 3h16.92a2 2 0 0 0 1.72-3L13.7 3.86a2 2 0 0 0-3.4 0Z" />
+                    </svg>
+                    <span className="project-sidebar__proj-name">{project.name}</span>
+                    <span className="project-sidebar__proj-badge project-sidebar__proj-badge--degraded">
+                      degraded
+                    </span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(project.id)}
+                    className={cn(
+                      "project-sidebar__proj-toggle",
+                      isActive && "project-sidebar__proj-toggle--active",
+                    )}
+                    aria-expanded={isExpanded}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <svg
+                      className={cn(
+                        "project-sidebar__proj-chevron",
+                        isExpanded && "project-sidebar__proj-chevron--open",
+                      )}
+                      width="10"
+                      height="10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <span className="project-sidebar__proj-name">{project.name}</span>
+                    <span
+                      className={cn(
+                        "project-sidebar__proj-badge",
+                        hasActiveSessions && "project-sidebar__proj-badge--active",
+                      )}
+                    >
+                      {workerSessions.length}
+                    </span>
+                  </button>
                 )}
-              >
-                <svg
-                  className={cn(
-                    "h-3 w-3 shrink-0 opacity-40 transition-transform duration-150",
-                    isExpanded && "rotate-90",
-                  )}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-                <HealthDot health={health} />
-                <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                {workerSessions.length > 0 && (
-                  <span className="project-sidebar__count shrink-0 px-1.5 py-px text-[10px] tabular-nums text-[var(--color-text-tertiary)]">
-                    {workerSessions.length}
-                  </span>
-                )}
-              </button>
 
-              {isExpanded && workerSessions.length > 0 && (
-                <div className="project-sidebar__children ml-3 py-0.5">
-                  {workerSessions.filter((s) => getAttentionLevel(s) !== "done").map((session) => {
-                    const level = getAttentionLevel(session);
-                    const isSessionActive = activeSessionId === session.id;
-                    const title = getSessionTitle(session);
-                    return (
-                      <div
-                        key={session.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() =>
-                          router.push(
-                            `${pathname}?project=${encodeURIComponent(project.id)}&session=${encodeURIComponent(session.id)}`,
-                          )
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            router.push(
-                              `${pathname}?project=${encodeURIComponent(project.id)}&session=${encodeURIComponent(session.id)}`,
-                            );
-                          }
-                        }}
-                        className={cn(
-                          "project-sidebar__session group flex w-full cursor-pointer items-center gap-2 py-[6px] pl-3 pr-2 transition-colors",
-                          isSessionActive
-                            ? "project-sidebar__session--active text-[var(--color-accent)]"
-                            : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]",
-                        )}
-                      >
-                        <SessionDot level={level} />
-                        <span className="min-w-0 flex-1 truncate text-[11px]">{title}</span>
-                        <span className="project-sidebar__session-tone">
-                          {sessionToneLabel[level]}
-                        </span>
-                        <a
-                          href={`/sessions/${encodeURIComponent(session.id)}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="project-sidebar__session-id shrink-0 font-mono text-[9px] hover:underline"
-                          title={session.id}
+                {/* Dashboard button */}
+                {!isDegraded ? (
+                  <Link
+                    href={projectHref}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMobileClose?.();
+                    }}
+                    className="project-sidebar__proj-action"
+                    aria-label={`Open ${project.name} dashboard`}
+                    title="Dashboard"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
+                    </svg>
+                  </Link>
+                ) : null}
+
+                {/* Orchestrator button */}
+                {!isDegraded && orchestratorLink && (
+                  <Link
+                    href={projectSessionPath(project.id, orchestratorLink.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMobileClose?.();
+                    }}
+                    className="project-sidebar__proj-action"
+                    aria-label={`Open ${project.name} orchestrator`}
+                    title="Orchestrator"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                      <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                      <circle cx="6" cy="17" r="2" />
+                      <circle cx="12" cy="17" r="2" />
+                      <circle cx="18" cy="17" r="2" />
+                    </svg>
+                  </Link>
+                )}
+
+                <div
+                  className="project-sidebar__proj-menu"
+                  ref={projectMenuOpenId === project.id ? projectMenuRef : undefined}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProjectMenuOpenId((current) =>
+                        current === project.id ? null : project.id,
+                      );
+                    }}
+                    className="project-sidebar__proj-action project-sidebar__proj-action--menu"
+                    aria-label={`Project actions for ${project.name}`}
+                    aria-expanded={projectMenuOpenId === project.id}
+                    aria-haspopup="menu"
+                    title="Project actions"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="5" r="1.75" />
+                      <circle cx="12" cy="12" r="1.75" />
+                      <circle cx="12" cy="19" r="1.75" />
+                    </svg>
+                  </button>
+                  {projectMenuOpenId === project.id ? (
+                    <div
+                      ref={projectMenuPopoverRef}
+                      className="project-sidebar__proj-menu-popover"
+                      role="menu"
+                      aria-label={`${project.name} actions`}
+                    >
+                      {orchestratorLink ? (
+                        <button
+                          type="button"
+                          className="project-sidebar__proj-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            setProjectMenuOpenId(null);
+                            navigate(projectSessionPath(project.id, orchestratorLink.id));
+                          }}
                         >
-                          {session.id.slice(0, 8)}
+                          Open orchestrator
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="project-sidebar__proj-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setProjectMenuOpenId(null);
+                          setProjectSettingsProjectId(project.id);
+                        }}
+                      >
+                        Project settings
+                      </button>
+                      <button
+                        type="button"
+                        className="project-sidebar__proj-menu-item project-sidebar__proj-menu-item--danger"
+                        role="menuitem"
+                        onClick={() => void handleRemoveProject(project)}
+                        disabled={deletingProjectId === project.id}
+                      >
+                        {deletingProjectId === project.id ? "Removing..." : "Remove project"}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {isDegraded ? (
+                <div className="project-sidebar__degraded-note">Config needs repair</div>
+              ) : null}
+
+              {/* Sessions */}
+              {!isDegraded && isExpanded && (
+                <div className="project-sidebar__sessions">
+                  {isLoading ? (
+                    <div className="space-y-2 px-3 py-2" aria-label="Loading sessions">
+                      {Array.from({ length: 3 }, (_, index) => (
+                        <div
+                          key={`${project.id}-loading-${index}`}
+                          className="flex items-center gap-3 border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-2 py-2"
+                        >
+                          <div className="h-2 w-2 shrink-0 animate-pulse bg-[var(--color-border-strong)]" />
+                          <div className="h-3 flex-1 animate-pulse bg-[var(--color-bg-primary)]" />
+                          <div className="h-3 w-12 animate-pulse bg-[var(--color-bg-primary)]" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : visibleSessions.length > 0 ? (
+                    visibleSessions.map((session) => {
+                      const level = getAttentionLevel(session);
+                      const isSessionActive = activeSessionId === session.id;
+                      const title = session.branch ?? getSessionTitle(session);
+                      const sessionHref = projectSessionPath(project.id, session.id);
+                      return (
+                        <a
+                          key={session.id}
+                          href={sessionHref}
+                          onClick={(e) => {
+                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                            e.preventDefault();
+                            navigate(sessionHref, session);
+                          }}
+                          className={cn(
+                            "project-sidebar__sess-row",
+                            isSessionActive && "project-sidebar__sess-row--active",
+                          )}
+                          aria-current={isSessionActive ? "page" : undefined}
+                          aria-label={`Open ${title}`}
+                        >
+                          <SessionDot level={level} />
+                          <div className="flex-1 min-w-0">
+                            <span
+                              className={cn(
+                                "project-sidebar__sess-label",
+                                isSessionActive && "project-sidebar__sess-label--active",
+                              )}
+                            >
+                              {title}
+                            </span>
+                            {showSessionId ? (
+                              <div className="project-sidebar__sess-meta">
+                                <span className="project-sidebar__sess-id">{session.id}</span>
+                                <span className="project-sidebar__sess-status">
+                                  {LEVEL_LABELS[level]}
+                                </span>
+                              </div>
+                            ) : null}
+                          </div>
+                          {!showSessionId ? (
+                            <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
+                              {LEVEL_LABELS[level]}
+                            </span>
+                          ) : null}
                         </a>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  ) : error ? (
+                    <div className="px-3 py-2">
+                      <div className="project-sidebar__empty">Failed to load sessions</div>
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-medium text-[var(--color-link)] hover:underline"
+                        onClick={onRetry}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="project-sidebar__empty">No sessions shown</div>
+                  )}
                 </div>
               )}
             </div>
           );
         })}
-      </nav>
-      <div className="border-t border-[var(--color-border-subtle)] p-2">
-        <button type="button" onClick={() => { onToggleCollapsed?.(); onMobileClose?.(); }} className="project-sidebar__collapse-btn">
-          <svg
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            viewBox="0 0 24 24"
-            className="h-3.5 w-3.5"
-          >
-            <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-            <path d="M9 4.5v15M15 10l-3 2 3 2" />
-          </svg>
-          Hide sidebar
-        </button>
       </div>
+      <div className="project-sidebar__footer">
+        <div className="flex items-center gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
+          {/* Show killed toggle */}
+          <button
+            type="button"
+            onClick={() => setShowKilled(!showKilled)}
+            className={cn(
+              "project-sidebar__footer-btn",
+              showKilled && "project-sidebar__footer-btn--active",
+            )}
+            aria-pressed={showKilled}
+            title={showKilled ? "Hide killed sessions" : "Show killed sessions"}
+            aria-label={showKilled ? "Hide killed sessions" : "Show killed sessions"}
+          >
+            {/* skull / terminated icon */}
+            <svg
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M12 3C7.03 3 3 7.03 3 12c0 3.1 1.5 5.84 3.8 7.55V21h2.4v-1h1.6v1h2.4v-1h1.6v1H17v-1.45A9 9 0 0 0 21 12c0-4.97-4.03-9-9-9z" />
+              <circle cx="9" cy="11" r="1.5" fill="currentColor" stroke="none" />
+              <circle cx="15" cy="11" r="1.5" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          {/* Show done toggle */}
+          <button
+            type="button"
+            onClick={() => setShowDone(!showDone)}
+            className={cn(
+              "project-sidebar__footer-btn",
+              showDone && "project-sidebar__footer-btn--active",
+            )}
+            aria-pressed={showDone}
+            title={showDone ? "Hide completed sessions" : "Show completed sessions"}
+            aria-label={showDone ? "Hide completed sessions" : "Show completed sessions"}
+          >
+            {/* checkmark / done icon */}
+            <svg
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
+          <div className="flex-1" />
+          {/* Sidebar display settings (gear) */}
+          <div className="project-sidebar__settings-wrap" ref={settingsRef}>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              className={cn(
+                "project-sidebar__footer-btn",
+                settingsOpen && "project-sidebar__footer-btn--active",
+              )}
+              aria-expanded={settingsOpen}
+              aria-haspopup="dialog"
+              title="Sidebar settings"
+              aria-label="Sidebar settings"
+            >
+              <svg
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            {settingsOpen ? (
+              <div
+                ref={settingsPopoverRef}
+                className="project-sidebar__settings-popover"
+                role="dialog"
+                aria-label="Sidebar settings"
+              >
+                <label className="project-sidebar__settings-row">
+                  <input
+                    type="checkbox"
+                    checked={showSessionId}
+                    onChange={(e) => setShowSessionId(e.target.checked)}
+                  />
+                  <span>Show session ID</span>
+                </label>
+              </div>
+            ) : null}
+          </div>
+          <ThemeToggle className="project-sidebar__theme-toggle" />
+        </div>
+      </div>
+      <AddProjectModal open={addProjectOpen} onClose={() => setAddProjectOpen(false)} />
+      <ProjectSettingsModal
+        open={projectSettingsProjectId !== null}
+        projectId={projectSettingsProjectId}
+        onClose={() => setProjectSettingsProjectId(null)}
+      />
     </aside>
-    </>
   );
 }

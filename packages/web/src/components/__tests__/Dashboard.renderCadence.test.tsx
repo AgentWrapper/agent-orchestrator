@@ -1,5 +1,5 @@
-import { act, render, waitFor } from "@testing-library/react";
-import { memo } from "react";
+import { act, render } from "@testing-library/react";
+import { memo, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renderCounts = new Map<string, number>();
@@ -17,69 +17,108 @@ vi.mock("@/components/SessionCard", () => ({
   }),
 }));
 
+import type { SessionPatch } from "@/lib/mux-protocol";
+
+// Module-level sessions updated by tests, read by the mock on every render.
+let currentMuxSessions: SessionPatch[] = [];
+
+vi.mock("@/providers/MuxProvider", () => ({
+  useMuxOptional: () => ({
+    subscribeTerminal: () => () => {},
+    writeTerminal: () => {},
+    openTerminal: () => {},
+    closeTerminal: () => {},
+    resizeTerminal: () => {},
+    status: "connected" as const,
+    sessions: currentMuxSessions,
+  }),
+  MuxProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 import { Dashboard } from "../Dashboard";
 import { makeSession } from "../../__tests__/helpers";
 
-describe("Dashboard render cadence", () => {
-  let eventSourceMock: {
-    onmessage: ((event: MessageEvent) => void) | null;
-    onerror: (() => void) | null;
-    close: () => void;
-  };
+// Wrapper that exposes a forceUpdate so tests can trigger re-renders after
+// updating currentMuxSessions, causing Dashboard to re-call useMuxOptional().
+let forceUpdate: () => void = () => {};
 
+function ControlledDashboard({
+  initialSessions,
+}: {
+  initialSessions: ReturnType<typeof makeSession>[];
+}) {
+  const [, tick] = useState(0);
+  forceUpdate = () => tick((n) => n + 1);
+  return <Dashboard initialSessions={initialSessions} />;
+}
+
+describe("Dashboard render cadence", () => {
   beforeEach(() => {
     renderCounts.clear();
-    eventSourceMock = {
-      onmessage: null,
-      onerror: null,
-      close: vi.fn(),
-    };
-    const eventSourceConstructor = vi.fn(() => eventSourceMock as unknown as EventSource);
-    global.EventSource = Object.assign(eventSourceConstructor, {
-      CONNECTING: 0,
-      OPEN: 1,
-      CLOSED: 2,
-    }) as unknown as typeof EventSource;
+    currentMuxSessions = [];
     global.fetch = vi.fn();
   });
 
   it("rerenders only the changed session card for same-membership snapshots", async () => {
+    const ts = new Date().toISOString();
     const initialSessions = [
-      makeSession({ id: "session-1", summary: "First session" }),
-      makeSession({ id: "session-2", summary: "Second session" }),
+      makeSession({ id: "session-1", status: "working", activity: "active", lastActivityAt: ts }),
+      makeSession({ id: "session-2", status: "working", activity: "active", lastActivityAt: ts }),
     ];
 
-    render(<Dashboard initialSessions={initialSessions} />);
+    render(<ControlledDashboard initialSessions={initialSessions} />);
 
     expect(renderCounts.get("session-1")).toBe(1);
     expect(renderCounts.get("session-2")).toBe(1);
 
-    await waitFor(() => expect(eventSourceMock.onmessage).not.toBeNull());
-
+    // Push a snapshot where only session-1 changes
     await act(async () => {
-      eventSourceMock.onmessage!({
-        data: JSON.stringify({
-          type: "snapshot",
-          sessions: [
-            {
-              id: "session-1",
-              status: "working",
-              activity: "idle",
-              lastActivityAt: new Date().toISOString(),
-            },
-            {
-              id: "session-2",
-              status: initialSessions[1].status,
-              activity: initialSessions[1].activity,
-              lastActivityAt: initialSessions[1].lastActivityAt,
-            },
-          ],
-        }),
-      } as MessageEvent);
+      currentMuxSessions = [
+        {
+          id: "session-1",
+          status: "working",
+          activity: "idle",
+          attentionLevel: "working",
+          lastActivityAt: new Date(Date.now() + 1000).toISOString(),
+        },
+        {
+          id: "session-2",
+          status: "working",
+          activity: "active",
+          attentionLevel: "working",
+          lastActivityAt: ts,
+        },
+      ];
+      forceUpdate();
     });
 
     expect(renderCounts.get("session-1")).toBe(2);
     expect(renderCounts.get("session-2")).toBe(1);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not rerender any card when snapshot data is identical", async () => {
+    const ts = new Date().toISOString();
+    const initialSessions = [
+      makeSession({ id: "session-1", status: "working", activity: "active", lastActivityAt: ts }),
+    ];
+
+    render(<ControlledDashboard initialSessions={initialSessions} />);
+    const countAfterInit = renderCounts.get("session-1") ?? 0;
+
+    await act(async () => {
+      currentMuxSessions = [
+        {
+          id: "session-1",
+          status: "working",
+          activity: "active",
+          attentionLevel: "working",
+          lastActivityAt: ts,
+        },
+      ];
+      forceUpdate();
+    });
+
+    expect(renderCounts.get("session-1")).toBe(countAfterInit);
   });
 });

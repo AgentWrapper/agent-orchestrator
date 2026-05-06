@@ -9,8 +9,8 @@ import {
   type OrchestratorEvent,
   type PluginModule,
   getObservabilityBaseDir,
-} from "@composio/ao-core";
-import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
+} from "@aoagents/ao-core";
+import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@aoagents/ao-core/utils";
 
 /**
  * Read the hooks token from ~/.openclaw/openclaw.json as a fallback for

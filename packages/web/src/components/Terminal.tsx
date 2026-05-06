@@ -40,7 +40,7 @@ export function Terminal({ sessionId }: TerminalProps) {
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border border-[var(--color-border-default)] bg-black",
+        "overflow-hidden rounded-[2px] border border-[var(--color-border-default)] bg-black",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
     >
@@ -68,7 +68,7 @@ export function Terminal({ sessionId }: TerminalProps) {
         </span>
         <button
           onClick={() => setFullscreen(!fullscreen)}
-          className="ml-auto rounded px-2 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+          className="ml-auto rounded-[2px] px-2 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
         >
           {fullscreen ? "exit fullscreen" : "fullscreen"}
         </button>

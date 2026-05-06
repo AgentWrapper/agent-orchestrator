@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig } from "@aoagents/ao-core";
 import { gh } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 

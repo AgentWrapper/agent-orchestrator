@@ -23,7 +23,7 @@ Every abstraction is a swappable plugin. All interfaces are defined in [`package
 | Slot      | Interface   | Default       | Alternatives                             |
 | --------- | ----------- | ------------- | ---------------------------------------- |
 | Runtime   | `Runtime`   | `tmux`        | `process`, `docker`, `k8s`, `ssh`, `e2b` |
-| Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `opencode`             |
+| Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `cursor`, `kimicode`, `opencode` |
 | Workspace | `Workspace` | `worktree`    | `clone`                                  |
 | Tracker   | `Tracker`   | `github`      | `linear`                                 |
 | SCM       | `SCM`       | `github`      | —                                        |
@@ -65,12 +65,23 @@ Activity states (orthogonal to lifecycle): `active`, `ready`, `idle`, `waiting_i
 | ---------------------------------------- | ----------------------------------------------- |
 | `packages/core/src/session-manager.ts`   | Session CRUD: spawn, list, kill, send, restore  |
 | `packages/core/src/lifecycle-manager.ts` | State machine, polling loop, reactions engine   |
-| `packages/core/src/prompt-builder.ts`    | 3-layer prompt assembly (base + config + rules) |
+| `packages/core/src/prompt-builder.ts`    | Layered worker prompt assembly (system + task)  |
 | `packages/core/src/config.ts`            | Config loading and Zod validation               |
 | `packages/core/src/plugin-registry.ts`   | Plugin discovery, loading, resolution           |
 | `packages/core/src/agent-selection.ts`   | Resolves worker vs orchestrator agent roles     |
 | `packages/core/src/observability.ts`     | Correlation IDs, structured logging, metrics    |
 | `packages/core/src/paths.ts`             | Hash-based path and session name generation     |
+
+### Working Principles
+
+These apply to both human contributors and AI agents:
+
+1. **Think before coding.** If a task is ambiguous, ask for clarification. If multiple approaches exist, present the tradeoff.
+2. **Minimum code.** No speculative features. No abstractions for code used once. Plugin slots exist for extensibility - use them instead of config proliferation.
+3. **Surgical diffs.** Don't touch files outside your change scope. Don't reformat adjacent code. Match existing patterns even if you prefer differently. Every changed line should trace to a specific requirement.
+4. **Verifiable goals.** Before implementing, state what "done" looks like and how to verify it. For bug fixes: write a test that reproduces the bug first.
+
+For AI agent-specific guidance (including high-risk files like `types.ts`, `lifecycle-manager.ts`, `globals.css`), see CLAUDE.md -> Working Principles.
 
 ---
 
@@ -158,7 +169,7 @@ git status --short --branch   # `ao update` expects a clean working tree on main
 ao update
 ```
 
-`ao update` is intentionally conservative: it fast-forwards the local install checkout from `origin/main`, runs `pnpm install`, clean-rebuilds `@composio/ao-core`, `@composio/ao-cli`, and `@composio/ao-web`, refreshes the global launcher with `npm link`, and ends with CLI smoke tests. Use `ao update --skip-smoke` to stop after the rebuild, or `ao update --smoke-only` to rerun the smoke checks without fetching or rebuilding.
+`ao update` is intentionally conservative: it fast-forwards the local install checkout from `origin/main`, runs `pnpm install`, clean-rebuilds `@aoagents/ao-core`, `@aoagents/ao-cli`, and `@aoagents/ao-web`, refreshes the global launcher with `npm link`, and ends with CLI smoke tests. Use `ao update --skip-smoke` to stop after the rebuild, or `ao update --smoke-only` to rerun the smoke checks without fetching or rebuilding.
 
 If your branch has drift from `main`, update the install checkout first and then return to your feature worktree. That keeps CLI behavior and generated docs aligned with the version contributors are expected to run.
 
@@ -185,7 +196,7 @@ function processInput(value: unknown): string {
 }
 
 // Type-only imports for type-only usage
-import type { PluginModule, Runtime } from "@composio/ao-core";
+import type { PluginModule, Runtime } from "@aoagents/ao-core";
 ```
 
 Formatting: semicolons, double quotes, 2-space indent, strict mode.
@@ -223,7 +234,7 @@ A plugin exports a `manifest`, a `create()` factory, and a default `PluginModule
 
 ```typescript
 // packages/plugins/runtime-myplugin/src/index.ts
-import type { PluginModule, Runtime } from "@composio/ao-core";
+import type { PluginModule, Runtime } from "@aoagents/ao-core";
 
 export const manifest = {
   name: "myplugin",
@@ -257,7 +268,7 @@ export default { manifest, create } satisfies PluginModule<Runtime>;
 
 ```json
 {
-  "name": "@composio/ao-runtime-myplugin",
+  "name": "@aoagents/ao-runtime-myplugin",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -268,7 +279,7 @@ export default { manifest, create } satisfies PluginModule<Runtime>;
     "test": "vitest"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   }
 }
 ```
@@ -288,8 +299,10 @@ spawn(config)
   ├─ Determine branch name
   ├─ Create workspace (Workspace.create)
   ├─ Generate issue prompt (Tracker.generatePrompt)
+  ├─ Assemble layered prompt (prompt-builder.ts) → {systemPrompt, taskPrompt}
+  ├─ Persist worker system prompt file
+  ├─ For OpenCode workers: write OPENCODE_CONFIG pointing at that file
   ├─ Build agent launch command (Agent.getLaunchCommand)
-  ├─ Assemble full prompt (prompt-builder.ts)
   ├─ Create runtime session (Runtime.create)
   ├─ Post-launch setup (Agent.postLaunchSetup, optional)
   └─ Write metadata file → return Session
@@ -301,11 +314,13 @@ If issue validation fails, nothing is created — fail before allocating resourc
 
 ## Prompt Assembly
 
-Prompts are built in three layers (`packages/core/src/prompt-builder.ts`):
+Worker prompts are built in three persistent layers (`packages/core/src/prompt-builder.ts`):
 
 1. **Base agent guidance** — standard instructions for all sessions (git workflow, PR conventions, lifecycle hooks)
-2. **Config context** — project-specific info (repo, branch, issue details, agent rules from `agentRules` / `agentRulesFile`)
-3. **User rules** — inlined last, highest priority
+2. **Config context** — project-specific info (repo, branch, tracker, issue details, automated reactions)
+3. **Project rules** — content from `agentRules` / `agentRulesFile`
+
+The explicit user request is returned separately as `taskPrompt`. This lets session manager persist stable system instructions to disk while still sending only task-specific text to agents that need post-launch prompt delivery.
 
 Orchestrator sessions use a separate prompt from `packages/core/src/orchestrator-prompt.ts`.
 
@@ -318,10 +333,10 @@ Orchestrator sessions use a separate prompt from `packages/core/src/orchestrator
 pnpm test
 
 # Run tests for a specific package
-pnpm --filter @composio/ao-core test
+pnpm --filter @aoagents/ao-core test
 
 # Watch mode
-pnpm --filter @composio/ao-core test -- --watch
+pnpm --filter @aoagents/ao-core test -- --watch
 
 # Integration tests
 pnpm test:integration
@@ -344,7 +359,7 @@ Use mock plugins in tests — don't call real tmux or external services in unit 
 
 1. Edit `Session` interface in `packages/core/src/types.ts`
 2. Initialize the field in `spawn()` in `session-manager.ts`
-3. Rebuild: `pnpm --filter @composio/ao-core build`
+3. Rebuild: `pnpm --filter @aoagents/ao-core build`
 
 ### Add a new reaction
 
@@ -431,8 +446,7 @@ regexes = ['''your-pattern-here''']
 ## Environment Variables
 
 ```bash
-# Terminal server ports (web dashboard)
-TERMINAL_PORT=14800
+# Mux WebSocket server port (web dashboard terminal + session updates)
 DIRECT_TERMINAL_PORT=14801
 
 # User integrations

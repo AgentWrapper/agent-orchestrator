@@ -19,9 +19,9 @@
  */
 
 import { request } from "node:https";
-import type { ProjectConfig } from "@composio/ao-core";
+import type { ProjectConfig } from "@aoagents/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import trackerLinear from "@composio/ao-plugin-tracker-linear";
+import trackerLinear from "@aoagents/ao-plugin-tracker-linear";
 import { pollUntil, pollUntilEqual } from "./helpers/polling.js";
 
 // ---------------------------------------------------------------------------
@@ -217,6 +217,10 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     expect(issue.state).toBe("open");
     expect(Array.isArray(issue.labels)).toBe(true);
     expect(issue.priority).toBe(4);
+
+    expect(issue.branchName).toBeDefined();
+    expect(typeof issue.branchName).toBe("string");
+    expect(issue.branchName!.length).toBeGreaterThan(0);
   });
 
   it("isCompleted returns false for an open issue", async () => {

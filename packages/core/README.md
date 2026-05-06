@@ -1,4 +1,4 @@
-# @composio/ao-core
+# @aoagents/ao-core
 
 Core services, types, and configuration for the Agent Orchestrator system.
 
@@ -47,13 +47,16 @@ Handles session lifecycle:
 4. Determine branch name
 5. Create workspace via `Workspace.create()`
 6. Generate prompt via `Tracker.generatePrompt()`
-7. Build launch command via `Agent.getLaunchCommand()`
-8. Create runtime session via `Runtime.create()`
-9. Run `Agent.postLaunchSetup()` (optional)
-10. Write metadata file
-11. Return Session object
+7. Build layered worker prompt via `buildPrompt()` into `systemPrompt` + `taskPrompt`
+8. Persist `systemPromptFile` for the session and, for OpenCode workers, write `OPENCODE_CONFIG`
+9. Build launch command via `Agent.getLaunchCommand()`
+10. Create runtime session via `Runtime.create()`
+11. Run `Agent.postLaunchSetup()` (optional)
+12. Write metadata file
+13. Return Session object
 
 **Note:** If issue validation fails (not found, auth error), spawn fails before creating any resources (no workspace, no runtime, no session ID). This prevents spawning sessions with broken issue references.
+Worker sessions keep persistent instructions in the prompt file. OpenCode workers consume that file through `OPENCODE_CONFIG`, while OpenCode orchestrators continue to project their system prompt into workspace `AGENTS.md`.
 
 ### `src/services/lifecycle-manager.ts` — State Machine + Reactions
 
@@ -93,7 +96,7 @@ Loads plugins and provides access to them:
 **Built-in plugins** (loaded by default):
 
 - runtime-tmux, runtime-process
-- agent-claude-code, agent-codex, agent-aider, agent-opencode
+- agent-claude-code, agent-codex, agent-aider, agent-cursor, agent-kimicode, agent-opencode
 - workspace-worktree, workspace-clone
 - tracker-github, tracker-linear, tracker-gitlab
 - scm-github, scm-gitlab
@@ -125,7 +128,7 @@ Loads and validates `agent-orchestrator.yaml`:
 
 1. Edit `src/types.ts` → `Session` interface
 2. Edit `src/services/session-manager.ts` → initialize field in `spawn()`
-3. Rebuild: `pnpm --filter @composio/ao-core build`
+3. Rebuild: `pnpm --filter @aoagents/ao-core build`
 
 ### Adding an Event Type
 
@@ -141,7 +144,7 @@ Loads and validates `agent-orchestrator.yaml`:
 
 ### Feedback Tools (v1)
 
-`@composio/ao-core` exports two structured feedback tool contracts:
+`@aoagents/ao-core` exports two structured feedback tool contracts:
 
 - `bug_report`
 - `improvement_suggestion`
@@ -158,7 +161,7 @@ Both share the same required input fields:
 Example:
 
 ```ts
-import { FEEDBACK_TOOL_NAMES, FeedbackReportStore, getFeedbackReportsDir } from "@composio/ao-core";
+import { FEEDBACK_TOOL_NAMES, FeedbackReportStore, getFeedbackReportsDir } from "@aoagents/ao-core";
 
 const reportsDir = getFeedbackReportsDir(configPath, projectPath);
 const store = new FeedbackReportStore(reportsDir);
@@ -188,13 +191,13 @@ Migration notes:
 
 ```bash
 # Run all core tests
-pnpm --filter @composio/ao-core test
+pnpm --filter @aoagents/ao-core test
 
 # Run in watch mode
-pnpm --filter @composio/ao-core test -- --watch
+pnpm --filter @aoagents/ao-core test -- --watch
 
 # Run specific test
-pnpm --filter @composio/ao-core test -- session-manager.test.ts
+pnpm --filter @aoagents/ao-core test -- session-manager.test.ts
 ```
 
 Tests are in `src/__tests__/`:
@@ -209,10 +212,10 @@ Tests are in `src/__tests__/`:
 
 ```bash
 # Build core
-pnpm --filter @composio/ao-core build
+pnpm --filter @aoagents/ao-core build
 
 # Typecheck
-pnpm --filter @composio/ao-core typecheck
+pnpm --filter @aoagents/ao-core typecheck
 ```
 
 This package is a dependency of all other packages. Build it first if working on the codebase.

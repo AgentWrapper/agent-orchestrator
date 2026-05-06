@@ -24,17 +24,16 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
-  type AutomatedComment,
   type MergeReadiness,
   type PREnrichmentData,
   type BatchObserver,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
   parseWebhookTimestamp,
-} from "@composio/ao-core/scm-webhook-utils";
+} from "@aoagents/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -573,8 +572,9 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch) return null;
-      const [owner, repo] = parseProjectRepo(project.repo);
+      if (!session.branch || !project.repo) return null;
+      const projectRepo = project.repo;
+      const [owner, repo] = parseProjectRepo(projectRepo);
 
       if (useRest && hostname && token) {
         try {
@@ -616,7 +616,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
           "pr",
           "list",
           "--repo",
-          project.repo,
+          projectRepo,
           "--head",
           session.branch,
           "--json",
@@ -636,15 +636,20 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
 
         if (prs.length === 0) return null;
 
-        return prInfoFromView(prs[0], project.repo);
+        return prInfoFromView(prs[0], projectRepo);
       } catch {
         return null;
       }
     },
 
     async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
+      if (!project.repo) {
+        throw new Error("Cannot resolve PR: project has no repo configured");
+      }
+      const projectRepo = project.repo;
+
       if (useRest && hostname && token) {
-        const [owner, repo] = parseProjectRepo(project.repo);
+        const [owner, repo] = parseProjectRepo(projectRepo);
         const numberMatch = reference.match(/(\d+)$/);
         if (!numberMatch) {
           throw new Error(`Unsupported PR reference for Forgejo REST mode: ${reference}`);
@@ -674,7 +679,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         "view",
         reference,
         "--repo",
-        project.repo,
+        projectRepo,
         "--json",
         "number,url,title,headRefName,baseRefName,isDraft",
       ]);
@@ -688,7 +693,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         isDraft: boolean;
       } = JSON.parse(raw);
 
-      return prInfoFromView(data, project.repo);
+      return prInfoFromView(data, projectRepo);
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
@@ -1141,154 +1146,6 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
           }));
       } catch (err) {
         throw new Error("Failed to fetch pending comments", { cause: err });
-      }
-    },
-
-    async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
-      try {
-        if (useRest && hostname && token) {
-          const perPage = 100;
-          const comments: Array<{
-            id: number;
-            user: { login: string };
-            body: string;
-            path: string;
-            line: number | null;
-            original_line: number | null;
-            created_at: string;
-            html_url: string;
-          }> = [];
-
-          for (let page = 1; ; page++) {
-            const pageComments = (await forgejoApi(
-              hostname,
-              token,
-              "GET",
-              `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments`,
-              { per_page: perPage, page },
-            )) as Array<{
-              id: number;
-              user: { login: string };
-              body: string;
-              path: string;
-              line: number | null;
-              original_line: number | null;
-              created_at: string;
-              html_url: string;
-            }>;
-
-            if (pageComments.length === 0) break;
-            comments.push(...pageComments);
-            if (pageComments.length < perPage) break;
-          }
-
-          return comments
-            .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
-            .map((c) => {
-              let severity: AutomatedComment["severity"] = "info";
-              const bodyLower = c.body.toLowerCase();
-              if (
-                bodyLower.includes("error") ||
-                bodyLower.includes("bug") ||
-                bodyLower.includes("critical") ||
-                bodyLower.includes("potential issue")
-              ) {
-                severity = "error";
-              } else if (
-                bodyLower.includes("warning") ||
-                bodyLower.includes("suggest") ||
-                bodyLower.includes("consider")
-              ) {
-                severity = "warning";
-              }
-
-              return {
-                id: String(c.id),
-                botName: c.user?.login ?? "unknown",
-                body: c.body,
-                path: c.path || undefined,
-                line: c.line ?? c.original_line ?? undefined,
-                severity,
-                createdAt: parseDate(c.created_at),
-                url: c.html_url,
-              };
-            });
-        }
-
-        const perPage = 100;
-        const comments: Array<{
-          id: number;
-          user: { login: string };
-          body: string;
-          path: string;
-          line: number | null;
-          original_line: number | null;
-          created_at: string;
-          html_url: string;
-        }> = [];
-
-        for (let page = 1; ; page++) {
-          const raw = await gh([
-            "api",
-            "--method",
-            "GET",
-            `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`,
-          ]);
-          const pageComments: Array<{
-            id: number;
-            user: { login: string };
-            body: string;
-            path: string;
-            line: number | null;
-            original_line: number | null;
-            created_at: string;
-            html_url: string;
-          }> = JSON.parse(raw);
-
-          if (pageComments.length === 0) {
-            break;
-          }
-
-          comments.push(...pageComments);
-          if (pageComments.length < perPage) {
-            break;
-          }
-        }
-
-        return comments
-          .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
-          .map((c) => {
-            // Determine severity from body content
-            let severity: AutomatedComment["severity"] = "info";
-            const bodyLower = c.body.toLowerCase();
-            if (
-              bodyLower.includes("error") ||
-              bodyLower.includes("bug") ||
-              bodyLower.includes("critical") ||
-              bodyLower.includes("potential issue")
-            ) {
-              severity = "error";
-            } else if (
-              bodyLower.includes("warning") ||
-              bodyLower.includes("suggest") ||
-              bodyLower.includes("consider")
-            ) {
-              severity = "warning";
-            }
-
-            return {
-              id: String(c.id),
-              botName: c.user?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? c.original_line ?? undefined,
-              severity,
-              createdAt: parseDate(c.created_at),
-              url: c.html_url,
-            };
-          });
-      } catch (err) {
-        throw new Error("Failed to fetch automated comments", { cause: err });
       }
     },
 

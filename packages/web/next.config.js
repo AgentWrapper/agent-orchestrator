@@ -1,16 +1,27 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
-    "@composio/ao-core",
-    "@composio/ao-plugin-agent-claude-code",
-    "@composio/ao-plugin-agent-opencode",
-    "@composio/ao-plugin-runtime-tmux",
-    "@composio/ao-plugin-scm-forgejo",
-    "@composio/ao-plugin-scm-github",
-    "@composio/ao-plugin-tracker-forgejo",
-    "@composio/ao-plugin-tracker-github",
-    "@composio/ao-plugin-tracker-linear",
-    "@composio/ao-plugin-workspace-worktree",
+    "@aoagents/ao-core",
+    "@aoagents/ao-plugin-agent-claude-code",
+    "@aoagents/ao-plugin-agent-codex",
+    "@aoagents/ao-plugin-agent-opencode",
+    "@aoagents/ao-plugin-runtime-tmux",
+    "@aoagents/ao-plugin-scm-forgejo",
+    "@aoagents/ao-plugin-scm-github",
+    "@aoagents/ao-plugin-tracker-forgejo",
+    "@aoagents/ao-plugin-tracker-github",
+    "@aoagents/ao-plugin-tracker-linear",
+    "@aoagents/ao-plugin-workspace-worktree",
+  ],
+  serverExternalPackages: [
+    "yaml",
+    "zod",
   ],
   async headers() {
     return [
@@ -25,4 +36,11 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Only load bundle analyzer when ANALYZE=true (dev-only dependency)
+let config = nextConfig;
+if (process.env.ANALYZE === "true") {
+  const { default: bundleAnalyzer } = await import("@next/bundle-analyzer");
+  config = bundleAnalyzer({ enabled: true })(nextConfig);
+}
+
+export default config;

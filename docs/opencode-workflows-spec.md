@@ -27,7 +27,7 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
 ## 1) Plugin Resolution
 
 - CLI must resolve `opencode` via `getAgentByName` and `getAgent` without error.
-- Core plugin registry built-ins must include `@composio/ao-plugin-agent-opencode` under slot `agent`.
+- Core plugin registry built-ins must include `@aoagents/ao-plugin-agent-opencode` under slot `agent`.
 - Expected failure mode: unknown agent names fail fast with `Unknown agent plugin: <name>`.
 
 ## 2) `ao start` (orchestrator session)
@@ -44,10 +44,14 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
 ## 3) `ao spawn`
 
 - Uses selected agent (default/project/override) and launches OpenCode command from plugin launch config.
+- Worker sessions write persistent system instructions to `worker-prompt-<session>.md`.
 - OpenCode launch behavior:
   - no mapped id: run with `--title AO:<session>` and then continue via discovered session id.
   - mapped id (`agentConfig.opencodeSessionId`): launch directly with `--session <id>`.
-- Model/subagent/system prompt inputs are forwarded into OpenCode launch command.
+- For OpenCode workers, core writes `OPENCODE_CONFIG` with an `instructions` array pointing at the worker prompt file instead of mutating workspace `AGENTS.md`.
+- The explicit user request remains separate task text and is forwarded as `prompt` only when present.
+- OpenCode orchestrators still use workspace `AGENTS.md` for persisted system prompt context.
+- Model/subagent/task prompt inputs are forwarded into OpenCode launch command.
 
 ## 4) `ao send`
 
@@ -76,6 +80,8 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
   - attempt title discovery using longer interactive timeout.
   - if still missing, fail with non-restorable error (`OpenCode session mapping is missing`).
 - Restore must recreate runtime with preserved metadata/session fields and keep mapping persisted.
+- For restored OpenCode workers, core recreates `OPENCODE_CONFIG` from the saved worker prompt file when it exists.
+- For restored OpenCode orchestrators, core rewrites workspace `AGENTS.md` from the saved orchestrator prompt file.
 
 ## 8) `ao session remap`
 
@@ -98,7 +104,7 @@ This document defines intended behavior for Agent Orchestrator when `agent: open
 ## Revalidation Baseline (Current)
 
 - Unit/integration validation that should remain green for OpenCode workflows:
-  - `@composio/ao-plugin-agent-opencode` tests.
-  - `@composio/ao-core` tests: `session-manager.test.ts`, `plugin-registry.test.ts`.
-  - `@composio/ao-cli` tests: `plugins.test.ts`, `start.test.ts`, `session.test.ts`, `send.test.ts`, `status.test.ts`.
-  - `@composio/ao-integration-tests` with `test:integration` (includes `agent-opencode.integration.test.ts`, conditionally skipped tests where prerequisites are unavailable).
+  - `@aoagents/ao-plugin-agent-opencode` tests.
+  - `@aoagents/ao-core` tests: `session-manager.test.ts`, `plugin-registry.test.ts`.
+  - `@aoagents/ao-cli` tests: `plugins.test.ts`, `start.test.ts`, `session.test.ts`, `send.test.ts`, `status.test.ts`.
+  - `@aoagents/ao-integration-tests` with `test:integration` (includes `agent-opencode.integration.test.ts`, conditionally skipped tests where prerequisites are unavailable).

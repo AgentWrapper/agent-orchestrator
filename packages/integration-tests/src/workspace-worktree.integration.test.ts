@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import worktreePlugin from "@composio/ao-plugin-workspace-worktree";
-import type { ProjectConfig, WorkspaceInfo } from "@composio/ao-core";
+import worktreePlugin from "@aoagents/ao-plugin-workspace-worktree";
+import type { ProjectConfig, WorkspaceInfo } from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);
 

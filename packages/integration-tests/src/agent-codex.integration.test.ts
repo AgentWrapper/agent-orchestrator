@@ -14,9 +14,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ActivityDetection, AgentSessionInfo } from "@composio/ao-core";
+import type { ActivityDetection, AgentSessionInfo } from "@aoagents/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import codexPlugin from "@composio/ao-plugin-agent-codex";
+import codexPlugin from "@aoagents/ao-plugin-agent-codex";
 import {
   isTmuxAvailable,
   killSessionsByPrefix,

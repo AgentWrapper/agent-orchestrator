@@ -1,6 +1,13 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
+  readLastJsonlEntry,
+  normalizeAgentPermissionMode,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  recordTerminalActivity,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -12,53 +19,17 @@ import {
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { writeFile, mkdir, readFile, readdir, rename, stat, lstat, open } from "node:fs/promises";
+import { readdir, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { randomBytes } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
-
-/** Shared bin directory for ao shell wrappers (prepended to PATH) */
-const AO_BIN_DIR = join(homedir(), ".ao", "bin");
-const DEFAULT_PATH = "/usr/bin:/bin";
-const PREFERRED_GH_BIN_DIR = "/usr/local/bin";
-const PREFERRED_GH_PATH = `${PREFERRED_GH_BIN_DIR}/gh`;
-
-function buildAgentPath(basePath: string | undefined): string {
-  const inherited = (basePath ?? DEFAULT_PATH).split(":").filter(Boolean);
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-
-  const add = (entry: string): void => {
-    if (!entry || seen.has(entry)) return;
-    ordered.push(entry);
-    seen.add(entry);
-  };
-
-  // Ensure wrappers are always first, then prioritize /usr/local/bin so
-  // wrapper-discovered `gh` resolves there before linuxbrew paths.
-  add(AO_BIN_DIR);
-  add(PREFERRED_GH_BIN_DIR);
-
-  for (const entry of inherited) add(entry);
-
-  return ordered.join(":");
-}
 
 // =============================================================================
 // Plugin Manifest
@@ -73,254 +44,8 @@ export const manifest = {
 };
 
 // =============================================================================
-// Shell Wrappers (automatic metadata updates — like Claude Code's PostToolUse)
+// Workspace Setup (delegates to shared PATH-wrapper hooks from @aoagents/ao-core)
 // =============================================================================
-
-/**
- * Helper script sourced by both gh and git wrappers.
- * Provides update_ao_metadata() for writing key=value to the session file.
- */
-/* eslint-disable no-useless-escape -- \$ escapes are intentional: bash scripts in JS template literals */
-const AO_METADATA_HELPER = `#!/usr/bin/env bash
-# ao-metadata-helper — shared by gh/git wrappers
-# Provides: update_ao_metadata <key> <value>
-
-update_ao_metadata() {
-  local key="\$1" value="\$2"
-  local ao_dir="\${AO_DATA_DIR:-}"
-  local ao_session="\${AO_SESSION:-}"
-
-  [[ -z "\$ao_dir" || -z "\$ao_session" ]] && return 0
-
-  # Validate: session name must not contain path separators or traversal
-  case "\$ao_session" in
-    */* | *..*) return 0 ;;
-  esac
-
-  # Validate: ao_dir must be an absolute path under known ao directories or /tmp
-  case "\$ao_dir" in
-    "\$HOME"/.ao/* | "\$HOME"/.agent-orchestrator/* | /tmp/*) ;;
-    *) return 0 ;;
-  esac
-
-  local metadata_file="\$ao_dir/\$ao_session"
-
-  # Resolve and verify the file is still within ao_dir
-  local real_dir real_ao_dir
-  real_ao_dir="\$(cd "\$ao_dir" 2>/dev/null && pwd -P)" || return 0
-  real_dir="\$(cd "\$(dirname "\$metadata_file")" 2>/dev/null && pwd -P)" || return 0
-  [[ "\$real_dir" == "\$real_ao_dir"* ]] || return 0
-
-  [[ -f "\$metadata_file" ]] || return 0
-
-  local temp_file="\${metadata_file}.tmp.\$\$"
-
-  # Strip newlines from value to prevent metadata line injection
-  local clean_value="\$(printf '%s' "\$value" | tr -d '\\n')"
-
-  # Escape sed metacharacters in value (& expands to matched text, | breaks delimiter)
-  local escaped_value="\$(printf '%s' "\$clean_value" | sed 's/[&|\\\\]/\\\\&/g')"
-
-  if grep -q "^\${key}=" "\$metadata_file" 2>/dev/null; then
-    sed "s|^\${key}=.*|\${key}=\${escaped_value}|" "\$metadata_file" > "\$temp_file"
-  else
-    cp "\$metadata_file" "\$temp_file"
-    printf '%s=%s\\n' "\$key" "\$clean_value" >> "\$temp_file"
-  fi
-
-  mv "\$temp_file" "\$metadata_file"
-}
-`;
-
-/**
- * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
- */
-const GH_WRAPPER = `#!/usr/bin/env bash
-# ao gh wrapper — auto-updates session metadata on PR operations
-
-# Find real gh by removing our wrapper directory from PATH
-ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
-clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
-clean_path="\${clean_path%:}"
-real_gh=""
-
-# Prefer explicit gh path when provided by AO environment.
-# Guard against recursive self-reference to the wrapper in ~/.ao/bin.
-if [[ -n "\${GH_PATH:-}" && -x "\$GH_PATH" ]]; then
-  gh_dir="\$(cd "\$(dirname "\$GH_PATH")" 2>/dev/null && pwd)"
-  if [[ "\$gh_dir" != "\$ao_bin_dir" ]]; then
-    real_gh="\$GH_PATH"
-  fi
-fi
-
-if [[ -z "\$real_gh" ]]; then
-  real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
-fi
-
-if [[ -z "\$real_gh" ]]; then
-  echo "ao-wrapper: gh not found in PATH" >&2
-  exit 127
-fi
-
-# Source the metadata helper
-source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
-
-# Only capture output for commands we need to parse (pr/create, pr/merge).
-# All other commands pass through transparently without stream merging.
-case "\$1/\$2" in
-  pr/create|pr/merge)
-    tmpout="\$(mktemp)"
-    trap 'rm -f "\$tmpout"' EXIT
-
-    "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
-    exit_code=\${PIPESTATUS[0]}
-
-    if [[ \$exit_code -eq 0 ]]; then
-      output="\$(cat "\$tmpout")"
-      case "\$1/\$2" in
-        pr/create)
-          pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
-          if [[ -n "\$pr_url" ]]; then
-            update_ao_metadata pr "\$pr_url"
-            update_ao_metadata status pr_open
-          fi
-          ;;
-        pr/merge)
-          update_ao_metadata status merged
-          ;;
-      esac
-    fi
-
-    exit \$exit_code
-    ;;
-  *)
-    exec "\$real_gh" "\$@"
-    ;;
-esac
-`;
-
-/**
- * git wrapper — intercepts branch creation commands to auto-update metadata.
- * All other commands pass through transparently.
- */
-const GIT_WRAPPER = `#!/usr/bin/env bash
-# ao git wrapper — auto-updates session metadata on branch operations
-
-# Find real git by removing our wrapper directory from PATH
-ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
-clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
-clean_path="\${clean_path%:}"
-real_git="\$(PATH="\$clean_path" command -v git 2>/dev/null)"
-
-if [[ -z "\$real_git" ]]; then
-  echo "ao-wrapper: git not found in PATH" >&2
-  exit 127
-fi
-
-# Source the metadata helper
-source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
-
-# Run real git
-"\$real_git" "\$@"
-exit_code=\$?
-
-# Only update metadata on success
-if [[ \$exit_code -eq 0 ]]; then
-  case "\$1/\$2" in
-    checkout/-b)
-      update_ao_metadata branch "\$3"
-      ;;
-    switch/-c)
-      update_ao_metadata branch "\$3"
-      ;;
-  esac
-fi
-
-exit \$exit_code
-`;
-
-// =============================================================================
-// Workspace Setup
-// =============================================================================
-
-/**
- * Section appended to AGENTS.md as a secondary signal. The PATH-based wrappers
- * handle metadata updates automatically, but AGENTS.md reinforces the intent
- * and helps if the wrappers are bypassed.
- */
-const AO_AGENTS_MD_SECTION = `
-## Agent Orchestrator (ao) Session
-
-You are running inside an Agent Orchestrator managed workspace.
-Session metadata is updated automatically via shell wrappers.
-
-If automatic updates fail, you can manually update metadata:
-\`\`\`bash
-~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
-# Then call: update_ao_metadata <key> <value>
-\`\`\`
-`;
-/* eslint-enable no-useless-escape */
-
-/**
- * Atomically write a file by writing to a temp file in the same directory,
- * then renaming. This prevents concurrent sessions from reading partially
- * written wrapper scripts.
- */
-async function atomicWriteFile(filePath: string, content: string, mode: number): Promise<void> {
-  const suffix = randomBytes(6).toString("hex");
-  const tmpPath = `${filePath}.tmp.${suffix}`;
-  await writeFile(tmpPath, content, { encoding: "utf-8", mode });
-  await rename(tmpPath, filePath);
-}
-
-async function setupCodexWorkspace(workspacePath: string): Promise<void> {
-  // 1. Write shared wrappers to ~/.ao/bin/
-  await mkdir(AO_BIN_DIR, { recursive: true });
-
-  await atomicWriteFile(
-    join(AO_BIN_DIR, "ao-metadata-helper.sh"),
-    AO_METADATA_HELPER,
-    0o755,
-  );
-
-  // Only write wrappers if they don't exist or are outdated (check marker)
-  const markerPath = join(AO_BIN_DIR, ".ao-version");
-  const currentVersion = "0.1.1";
-  let needsUpdate = true;
-  try {
-    const existing = await readFile(markerPath, "utf-8");
-    if (existing.trim() === currentVersion) needsUpdate = false;
-  } catch {
-    // File doesn't exist — needs update
-  }
-
-  if (needsUpdate) {
-    // Write wrappers atomically, then write the version marker last.
-    // If we crash between wrapper writes and marker write, the next
-    // invocation will redo the writes (safe: wrappers are idempotent).
-    await atomicWriteFile(join(AO_BIN_DIR, "gh"), GH_WRAPPER, 0o755);
-    await atomicWriteFile(join(AO_BIN_DIR, "git"), GIT_WRAPPER, 0o755);
-    await atomicWriteFile(markerPath, currentVersion, 0o644);
-  }
-
-  // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
-  const agentsMdPath = join(workspacePath, "AGENTS.md");
-  let existing = "";
-  try {
-    existing = await readFile(agentsMdPath, "utf-8");
-  } catch {
-    // File doesn't exist yet
-  }
-
-  if (!existing.includes("Agent Orchestrator (ao) Session")) {
-    const content = existing
-      ? existing.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
-      : AO_AGENTS_MD_SECTION.trimStart();
-    await writeFile(agentsMdPath, content, "utf-8");
-  }
-}
 
 // =============================================================================
 // Codex Session JSONL Parsing (for getSessionInfo)
@@ -328,25 +53,47 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 
 /** Codex session directory: ~/.codex/sessions/ */
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
+const SESSION_MATCH_SCAN_CHUNK_BYTES = 8192;
+const SESSION_MATCH_SCAN_LINE_LIMIT = 10;
 
-/** Typed representation of a line in a Codex JSONL session file */
-interface CodexJsonlLine {
-  type?: string;
+interface CodexTokenUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cached_input_tokens?: number;
+  cached_tokens?: number;
+  reasoning_output_tokens?: number;
+  reasoning_tokens?: number;
+}
+
+interface CodexJsonlPayload extends CodexTokenUsage {
+  id?: string;
   cwd?: string;
+  model_provider?: string;
   model?: string;
-  // Thread ID from thread_started notifications
+  turn_id?: string;
   threadId?: string;
-  // User message content (from user input events)
   content?: string;
   role?: string;
-  // event_msg with token_count subtype
-  msg?: {
-    type?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    cached_tokens?: number;
-    reasoning_tokens?: number;
+  type?: string;
+  info?: {
+    total_token_usage?: CodexTokenUsage;
+    last_token_usage?: CodexTokenUsage;
   };
+}
+
+/**
+ * Recent Codex versions wrap event fields in `payload`, while older fixtures
+ * used a flat shape. Accept both so session discovery works against real
+ * Codex JSONL and existing tests remain valid.
+ */
+interface CodexJsonlLine extends CodexJsonlPayload {
+  type?: string;
+  payload?: CodexJsonlPayload;
+  msg?: CodexTokenUsage & { type?: string };
+}
+
+function getCodexPayload(entry: CodexJsonlLine): CodexJsonlPayload {
+  return entry.payload ?? entry;
 }
 
 /**
@@ -392,41 +139,61 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
   return results;
 }
 
-/**
- * Check if the first few lines of a JSONL file contain a session_meta
- * entry matching the given workspace path. Reads only the first 4 KB
- * to avoid loading large rollout files into memory.
- */
-async function sessionFileMatchesCwd(
-  filePath: string,
-  workspacePath: string,
-): Promise<boolean> {
+async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise<string[]> {
+  const handle = await open(filePath, "r");
+  const lines: string[] = [];
+  let partialLine = "";
+  // Reuse a single decoder across reads so multi-byte UTF-8 sequences that
+  // straddle a chunk boundary (e.g. CJK characters in base_instructions) get
+  // buffered correctly instead of producing U+FFFD replacement characters.
+  const decoder = new StringDecoder("utf8");
+
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
-    const handle = await open(filePath, "r");
-    let content: string;
-    try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf-8");
-    } finally {
-      await handle.close();
+    while (lines.length < maxLines) {
+      const buffer = Buffer.allocUnsafe(SESSION_MATCH_SCAN_CHUNK_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+
+      if (bytesRead === 0) {
+        partialLine += decoder.end();
+        const finalLine = partialLine.trim();
+        if (finalLine) lines.push(finalLine);
+        break;
+      }
+
+      partialLine += decoder.write(buffer.subarray(0, bytesRead));
+
+      let newlineIndex = partialLine.indexOf("\n");
+      while (newlineIndex !== -1 && lines.length < maxLines) {
+        const line = partialLine.slice(0, newlineIndex).trim();
+        if (line) lines.push(line);
+        partialLine = partialLine.slice(newlineIndex + 1);
+        newlineIndex = partialLine.indexOf("\n");
+      }
     }
-    const lines = content.split("\n").slice(0, 10);
+  } finally {
+    await handle.close();
+  }
+
+  return lines;
+}
+
+/**
+ * Check if the first few complete JSONL records of a session file contain a
+ * session_meta entry matching the given workspace path. This avoids parsing a
+ * truncated session_meta line when Codex embeds large base_instructions.
+ */
+async function sessionFileMatchesCwd(filePath: string, workspacePath: string): Promise<boolean> {
+  try {
+    const lines = await readJsonlPrefixLines(filePath, SESSION_MATCH_SCAN_LINE_LIMIT);
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
       try {
-        const parsed: unknown = JSON.parse(trimmed);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          !Array.isArray(parsed) &&
-          (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
-        ) {
-          return true;
+        const parsed: unknown = JSON.parse(line);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          const entry = parsed as CodexJsonlLine;
+          const payload = getCodexPayload(entry);
+          if (entry.type === "session_meta" && payload.cwd === workspacePath) {
+            return true;
+          }
         }
       } catch {
         // Skip malformed lines
@@ -472,6 +239,8 @@ interface CodexSessionData {
   threadId: string | null;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
 }
 
 /**
@@ -481,7 +250,14 @@ interface CodexSessionData {
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
   try {
-    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const data: CodexSessionData = {
+      model: null,
+      threadId: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      reasoningTokens: 0,
+    };
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf-8" }),
       crlfDelay: Infinity,
@@ -495,15 +271,59 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
         const entry = parsed as CodexJsonlLine;
 
-        if (entry.type === "session_meta" && typeof entry.model === "string") {
-          data.model = entry.model;
+        const payload = getCodexPayload(entry);
+
+        if (entry.type === "session_meta") {
+          if (typeof payload.id === "string" && payload.id) {
+            data.threadId = payload.id;
+          } else if (typeof payload.threadId === "string" && payload.threadId) {
+            data.threadId = payload.threadId;
+          }
         }
-        if (typeof entry.threadId === "string" && entry.threadId) {
-          data.threadId = entry.threadId;
+
+        if (!data.threadId) {
+          if (typeof payload.threadId === "string" && payload.threadId) {
+            data.threadId = payload.threadId;
+          } else if (typeof entry.threadId === "string" && entry.threadId) {
+            data.threadId = entry.threadId;
+          }
         }
+
+        if (entry.type === "turn_context" && typeof payload.model === "string" && payload.model) {
+          data.model = payload.model;
+        } else if (!data.model && typeof payload.model === "string" && payload.model) {
+          data.model = payload.model;
+        }
+
+        // Token sources are precedence-ordered: total → last → flat → legacy.
+        // `continue` ensures only one source is counted per entry.
+        // `total_token_usage` is a cumulative snapshot (last-write-wins, so `=`);
+        // the rest are per-turn deltas (accumulate with `+=`). Do not "fix" this.
+        const totalUsage = payload.info?.total_token_usage;
+        if (typeof totalUsage?.input_tokens === "number") {
+          data.inputTokens = totalUsage.input_tokens;
+          data.outputTokens = totalUsage.output_tokens ?? 0;
+          continue;
+        }
+
+        const lastUsage = payload.info?.last_token_usage;
+        if (typeof lastUsage?.input_tokens === "number") {
+          data.inputTokens += lastUsage.input_tokens;
+          data.outputTokens += lastUsage.output_tokens ?? 0;
+          continue;
+        }
+
+        if (typeof payload.input_tokens === "number") {
+          data.inputTokens += payload.input_tokens;
+          data.outputTokens += payload.output_tokens ?? 0;
+          continue;
+        }
+
         if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
           data.inputTokens += entry.msg.input_tokens ?? 0;
           data.outputTokens += entry.msg.output_tokens ?? 0;
+          data.cachedTokens += entry.msg.cached_tokens ?? 0;
+          data.reasoningTokens += entry.msg.reasoning_tokens ?? 0;
         }
       } catch {
         // Skip malformed lines
@@ -562,10 +382,18 @@ export async function resolveCodexBinary(): Promise<string> {
 // =============================================================================
 
 /** Append approval-policy flags to a command parts array */
-function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
-  const mode = normalizePermissionMode(permissions);
+function appendApprovalFlags(
+  parts: string[],
+  permissions: string | undefined,
+  allowDangerousBypass = true,
+): void {
+  const mode = normalizeAgentPermissionMode(permissions);
   if (mode === "permissionless") {
-    parts.push("--dangerously-bypass-approvals-and-sandbox");
+    if (allowDangerousBypass) {
+      parts.push("--dangerously-bypass-approvals-and-sandbox");
+    } else {
+      parts.push("--ask-for-approval", "never");
+    }
   } else if (mode === "auto-edit") {
     parts.push("--ask-for-approval", "never");
   } else if (mode === "suggest") {
@@ -606,7 +434,10 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
     return cached.path;
   }
   const result = await findCodexSessionFile(workspacePath);
-  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  sessionFileCache.set(workspacePath, {
+    path: result,
+    expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS,
+  });
   return result;
 }
 
@@ -653,11 +484,7 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
+      // PATH and GH_PATH are injected by session-manager for all agents.
       // Disable Codex's version check/update prompt for non-interactive AO sessions.
       env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
@@ -683,7 +510,10 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
       // Check if process is running first
@@ -692,29 +522,103 @@ function createCodexAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Use session file mtime as a proxy for activity. Codex continuously
-      // appends to its rollout JSONL file while working, so a recently
-      // modified file means the agent is active.
       if (!session.workspacePath) return null;
 
+      // 1. Try Codex's native JSONL first — it has richer 6-state detection
+      //    (approval_request, error, tool_call, etc.) that terminal parsing can't match.
       const sessionFile = await findCodexSessionFileCached(session.workspacePath);
-      if (!sessionFile) return null;
+      if (sessionFile) {
+        const entry = await readLastJsonlEntry(sessionFile);
+        if (entry) {
+          const ageMs = Date.now() - entry.modifiedAt.getTime();
+          const timestamp = entry.modifiedAt;
 
-      try {
-        const s = await stat(sessionFile);
-        const timestamp = s.mtime;
-        const ageMs = Date.now() - s.mtimeMs;
+          // Real Codex wraps the semantic type in `payload.type` on event_msg
+          // records (e.g. `{"type":"event_msg","payload":{"type":"error",...}}`).
+          // Prefer payloadType when present so approval_request/error surface
+          // correctly instead of decaying to ready/idle via the event_msg case.
+          const effectiveType = entry.payloadType ?? entry.lastType;
 
-        if (ageMs <= threshold) {
-          // File was recently modified — agent is actively working
-          return { state: "active", timestamp };
+          // Map Codex JSONL entry types to activity states.
+          // Confirmed types: session_meta, event_msg. Others are best-effort.
+          const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+          switch (effectiveType) {
+            case "approval_request":
+            case "exec_approval_request":
+            case "apply_patch_approval_request":
+              return { state: "waiting_input", timestamp };
+
+            case "error":
+            case "stream_error":
+              return { state: "blocked", timestamp };
+
+            case "task_started":
+            case "agent_reasoning":
+            case "response_item":
+            case "turn_context":
+            case "user_input":
+            case "tool_call":
+            case "exec_command":
+            case "exec_command_begin":
+            case "exec_command_end":
+              if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+            case "task_complete":
+            case "turn_aborted":
+            case "agent_message":
+            case "assistant_message":
+            case "session_meta":
+            case "event_msg":
+            case "compacted":
+            case "token_count":
+              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+            default:
+              if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+              return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+          }
         }
 
-        // File is stale — agent finished or is idle
-        return { state: "idle", timestamp };
-      } catch {
-        return null;
+        // Session file exists but no parseable entry — fall through to AO JSONL
+        // checks below instead of returning early, so waiting_input/blocked
+        // from terminal parsing can still be detected.
       }
+
+      // 2. Fallback: check AO activity JSONL (terminal-derived) for waiting_input/blocked
+      //    that the native JSONL may not have captured.
+      const activityResult = await readLastActivityEntry(session.workspacePath);
+      const activityState = checkActivityLogState(activityResult);
+      if (activityState) return activityState;
+
+      // 3. Fallback: use JSONL entry with age-based decay when native session file
+      //    is missing or unparseable.
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
+
+      // 4. Last resort: native session file exists but nothing else — use its mtime
+      if (sessionFile) {
+        try {
+          const s = await stat(sessionFile);
+          const ageMs = Date.now() - s.mtimeMs;
+          const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+          if (ageMs <= activeWindowMs) return { state: "active", timestamp: s.mtime };
+          if (ageMs <= threshold) return { state: "ready", timestamp: s.mtime };
+          return { state: "idle", timestamp: s.mtime };
+        } catch {
+          // stat failed — no signal available
+        }
+      }
+
+      return null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -781,35 +685,51 @@ function createCodexAgent(): Agent {
 
       const agentSessionId = basename(sessionFile, ".jsonl");
 
-      const cost: CostEstimate | undefined =
-        data.inputTokens === 0 && data.outputTokens === 0
-          ? undefined
-          : {
-              inputTokens: data.inputTokens,
-              outputTokens: data.outputTokens,
-              estimatedCostUsd:
-                (data.inputTokens / 1_000_000) * 2.5 + (data.outputTokens / 1_000_000) * 10.0,
-            };
+      let cost: CostEstimate | undefined;
+      const totalInputTokens = data.inputTokens + data.cachedTokens;
+      if (totalInputTokens > 0 || data.outputTokens > 0 || data.reasoningTokens > 0) {
+        const estimatedCostUsd =
+          (data.inputTokens / 1_000_000) * 2.5 +
+          (data.cachedTokens / 1_000_000) * 0.625 +
+          ((data.outputTokens + data.reasoningTokens) / 1_000_000) * 10.0;
+        cost = {
+          inputTokens: totalInputTokens,
+          outputTokens: data.outputTokens,
+          estimatedCostUsd,
+        };
+      }
 
       return {
         summary: data.model ? `Codex session (${data.model})` : null,
         summaryIsFallback: true,
         agentSessionId,
+        metadata: data.threadId
+          ? {
+              codexThreadId: data.threadId,
+              ...(data.model ? { codexModel: data.model } : {}),
+            }
+          : undefined,
         cost,
       };
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
-      if (!session.workspacePath) return null;
+      let threadId = session.metadata?.["codexThreadId"]?.trim();
+      let model: string | null = session.metadata?.["codexModel"]?.trim() || null;
+      if (!threadId) {
+        if (!session.workspacePath) return null;
 
-      // Find the Codex session file for this workspace
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
-      if (!sessionFile) return null;
+        // Find the Codex session file for this workspace
+        const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+        if (!sessionFile) return null;
 
-      // Stream the file line-by-line to avoid loading potentially huge
-      // rollout files (100 MB+) entirely into memory.
-      const data = await streamCodexSessionData(sessionFile);
-      if (!data?.threadId) return null;
+        // Stream the file line-by-line to avoid loading potentially huge
+        // rollout files (100 MB+) entirely into memory.
+        const data = await streamCodexSessionData(sessionFile);
+        if (!data?.threadId) return null;
+        threadId = data.threadId;
+        model = data.model;
+      }
 
       // Use Codex's native `resume` subcommand for proper conversation resume.
       // This restores the full thread state, not just a text prompt re-injection.
@@ -819,20 +739,20 @@ function createCodexAgent(): Agent {
       appendNoUpdateCheckFlag(parts);
 
       appendApprovalFlags(parts, project.agentConfig?.permissions);
-      const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
+      const effectiveModel = (project.agentConfig?.model ?? model) as string | undefined;
       appendModelFlags(parts, effectiveModel ?? undefined);
 
       // Positional threadId goes last, after all flags
-      parts.push(shellEscape(data.threadId));
+      parts.push(shellEscape(threadId));
 
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupCodexWorkspace(workspacePath);
+    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      // PATH wrappers are installed by session-manager for all agents.
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
+    async postLaunchSetup(_session: Session): Promise<void> {
       // Resolve binary path on first launch (cached for subsequent calls).
       // Uses a promise guard to prevent concurrent calls from racing.
       if (!resolvedBinary) {
@@ -845,8 +765,7 @@ function createCodexAgent(): Agent {
           resolvingBinary = null;
         }
       }
-      if (!session.workspacePath) return;
-      await setupCodexWorkspace(session.workspacePath);
+      // PATH wrappers are re-ensured by session-manager.
     },
   };
 }

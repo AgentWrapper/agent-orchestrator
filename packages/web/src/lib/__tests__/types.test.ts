@@ -5,10 +5,14 @@
 import { describe, it, expect } from "vitest";
 import {
   getAttentionLevel,
+  getActivitySignalLabel,
+  getActivitySignalReasonLabel,
   isPRMergeReady,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
+  isDashboardSessionDone,
+  isDashboardSessionRestorable,
   type DashboardSession,
   type DashboardPR,
 } from "../types";
@@ -16,7 +20,7 @@ import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES as CORE_TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES as CORE_NON_RESTORABLE_STATUSES,
-} from "@composio/ao-core/types";
+} from "@aoagents/ao-core/types";
 
 // Helper to create a minimal DashboardSession for testing
 function createSession(overrides?: Partial<DashboardSession>): DashboardSession {
@@ -25,6 +29,12 @@ function createSession(overrides?: Partial<DashboardSession>): DashboardSession 
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: {
+      state: "valid",
+      activity: "active",
+      timestamp: new Date().toISOString(),
+      source: "native",
+    },
     branch: "feat/test",
     issueId: null,
     issueUrl: null,
@@ -70,6 +80,33 @@ describe("getAttentionLevel", () => {
     it("should return 'done' for merged PR regardless of session status", () => {
       const session = createSession({
         status: "working",
+        lifecycle: {
+          sessionState: "idle",
+          sessionReason: "merged_waiting_decision",
+          prState: "merged",
+          prReason: "merged",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "idle",
+            reason: "merged_waiting_decision",
+            label: "merged, waiting decision",
+            reasonLabel: "merged waiting decision",
+          },
+          pr: { state: "merged", reason: "merged", label: "merged", reasonLabel: "merged" },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "merged",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "PR merged; worker session will be cleaned up automatically",
+          guidance: null,
+        },
         pr: {
           number: 1,
           url: "https://github.com/test/repo/pull/1",
@@ -99,9 +136,41 @@ describe("getAttentionLevel", () => {
       expect(getAttentionLevel(session)).toBe("done");
     });
 
-    it("should return 'done' for closed PR regardless of session status", () => {
+    it("should keep closed-unmerged PR sessions actionable", () => {
       const session = createSession({
         status: "working",
+        lifecycle: {
+          sessionState: "idle",
+          sessionReason: "pr_closed_waiting_decision",
+          prState: "closed",
+          prReason: "closed_unmerged",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "idle",
+            reason: "pr_closed_waiting_decision",
+            label: "idle",
+            reasonLabel: "pr closed waiting decision",
+          },
+          pr: {
+            state: "closed",
+            reason: "closed_unmerged",
+            label: "closed",
+            reasonLabel: "closed unmerged",
+          },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "idle",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "PR closed without merge",
+          guidance: null,
+        },
         pr: {
           number: 1,
           url: "https://github.com/test/repo/pull/1",
@@ -127,6 +196,16 @@ describe("getAttentionLevel", () => {
           unresolvedThreads: 0,
           unresolvedComments: [],
         },
+      });
+      expect(isDashboardSessionDone(session)).toBe(false);
+      expect(isDashboardSessionRestorable(session)).toBe(false);
+      expect(getAttentionLevel(session)).toBe("pending");
+    });
+
+    it("should ignore metadata attention overrides for terminal sessions", () => {
+      const session = createSession({
+        status: "terminated",
+        metadata: { attentionLevel: "working" },
       });
       expect(getAttentionLevel(session)).toBe("done");
     });
@@ -174,11 +253,90 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("merge");
     });
+
+    it("should ignore metadata attention overrides when merge criteria are met", () => {
+      const session = createSession({
+        status: "mergeable",
+        metadata: { attentionLevel: "working" },
+      });
+      expect(getAttentionLevel(session)).toBe("merge");
+    });
+  });
+
+  describe("restore affordances", () => {
+    it("should not mark merged sessions as restorable", () => {
+      const session = createSession({
+        status: "merged",
+        lifecycle: {
+          sessionState: "idle",
+          sessionReason: "merged_waiting_decision",
+          prState: "merged",
+          prReason: "merged",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "idle",
+            reason: "merged_waiting_decision",
+            label: "merged, waiting decision",
+            reasonLabel: "merged waiting decision",
+          },
+          pr: { state: "merged", reason: "merged", label: "merged", reasonLabel: "merged" },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "merged",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "PR merged; worker session will be cleaned up automatically",
+          guidance: null,
+        },
+      });
+
+      expect(isDashboardSessionRestorable(session)).toBe(false);
+    });
   });
 
   describe("respond state", () => {
     it("should return 'respond' for waiting_input activity", () => {
       const session = createSession({ activity: "waiting_input" });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+
+    it("should return 'respond' for detecting lifecycle state", () => {
+      const session = createSession({
+        status: "detecting",
+        lifecycle: {
+          sessionState: "detecting",
+          sessionReason: "probe_failure",
+          prState: "open",
+          prReason: "in_progress",
+          runtimeState: "probe_failed",
+          runtimeReason: "probe_error",
+          session: {
+            state: "detecting",
+            reason: "probe_failure",
+            label: "detecting",
+            reasonLabel: "probe failure",
+          },
+          pr: { state: "open", reason: "in_progress", label: "open", reasonLabel: "in progress" },
+          runtime: {
+            state: "probe_failed",
+            reason: "probe_error",
+            label: "probe failed",
+            reasonLabel: "probe error",
+          },
+          legacyStatus: "detecting",
+          evidence: "signal_disagreement",
+          detectingAttempts: 1,
+          detectingEscalatedAt: null,
+          summary: "Detecting runtime truth (probe failure)",
+          guidance: "Checking runtime and process evidence now. Retry 1 is in progress.",
+        },
+      });
       expect(getAttentionLevel(session)).toBe("respond");
     });
 
@@ -386,6 +544,42 @@ describe("getAttentionLevel", () => {
       expect(getAttentionLevel(session)).toBe("pending");
     });
 
+    it("should not mark an actively working session as pending only because PR truth is in progress", () => {
+      const session = createSession({
+        status: "working",
+        activity: "active",
+        lifecycle: {
+          sessionState: "working",
+          sessionReason: "task_in_progress",
+          prState: "open",
+          prReason: "in_progress",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "working",
+            reason: "task_in_progress",
+            label: "working",
+            reasonLabel: "task in progress",
+          },
+          pr: { state: "open", reason: "in_progress", label: "open", reasonLabel: "in progress" },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "pr_open",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "Session working (task in progress)",
+          guidance: null,
+        },
+      });
+
+      expect(getAttentionLevel(session)).toBe("working");
+    });
+
     it("should not flag draft PRs as pending", () => {
       const session = createSession({
         status: "working",
@@ -415,6 +609,47 @@ describe("getAttentionLevel", () => {
           unresolvedComments: [],
         },
       });
+      expect(getAttentionLevel(session)).toBe("working");
+    });
+
+    it("should keep idle sessions with open PRs and in-flight CI in working", () => {
+      const session = createSession({
+        status: "working",
+        lifecycle: {
+          sessionState: "idle",
+          sessionReason: "task_in_progress",
+          prState: "open",
+          prReason: "in_progress",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "idle",
+            reason: "task_in_progress",
+            label: "idle",
+            reasonLabel: "task in progress",
+          },
+          pr: {
+            state: "open",
+            reason: "in_progress",
+            label: "open",
+            reasonLabel: "in progress",
+          },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "working",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "Session idle while CI is still running",
+          guidance: null,
+        },
+        pr: null,
+      });
+
       expect(getAttentionLevel(session)).toBe("working");
     });
   });
@@ -585,5 +820,37 @@ describe("constants sync with core", () => {
 
   it("NON_RESTORABLE_STATUSES matches core", () => {
     expect(NON_RESTORABLE_STATUSES).toBe(CORE_NON_RESTORABLE_STATUSES);
+  });
+});
+
+describe("activity signal fallback", () => {
+  it("treats legacy idle activity without a timestamp as stale", () => {
+    const session = createSession({
+      activity: "idle",
+      activitySignal: undefined,
+    });
+
+    expect(getActivitySignalLabel(session)).toBe("idle (stale)");
+    expect(getActivitySignalReasonLabel(session)).toBe("missing timestamp");
+  });
+
+  it("treats legacy blocked activity without a timestamp as stale", () => {
+    const session = createSession({
+      activity: "blocked",
+      activitySignal: undefined,
+    });
+
+    expect(getActivitySignalLabel(session)).toBe("blocked (stale)");
+    expect(getActivitySignalReasonLabel(session)).toBe("missing timestamp");
+  });
+
+  it("keeps legacy active activity valid", () => {
+    const session = createSession({
+      activity: "active",
+      activitySignal: undefined,
+    });
+
+    expect(getActivitySignalLabel(session)).toBe("active");
+    expect(getActivitySignalReasonLabel(session)).toBeNull();
   });
 });

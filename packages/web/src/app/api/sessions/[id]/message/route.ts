@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import { getServices } from "@/lib/services";
 import { stripControlChars, validateIdentifier, validateString } from "@/lib/validation";
-import { SessionNotFoundError } from "@composio/ao-core";
+import { SessionNotFoundError } from "@aoagents/ao-core";
 import {
   getCorrelationId,
   jsonWithCorrelation,

@@ -15,7 +15,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
-import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@composio/ao-core";
+import { _clearProcessCacheForTests, createActivitySignal, type PreflightContext, type PRInfo, type SCMWebhookRequest, type Session, type ProjectConfig } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,6 +46,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "test",
     status: "working",
     activity: "active",
+    activitySignal: createActivitySignal("valid", {
+      activity: "active",
+      timestamp: new Date(),
+      source: "native",
+    }),
     branch: "feat/my-feature",
     issueId: null,
     pr: null,
@@ -423,6 +428,12 @@ describe("scm-github plugin", () => {
       expect(ghMock).not.toHaveBeenCalled();
     });
 
+    it("returns null when project has no repo configured", async () => {
+      const result = await scm.detectPR(makeSession(), { ...project, repo: undefined });
+      expect(result).toBeNull();
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
     it("returns null on gh CLI error", async () => {
       mockGhError("gh: not found");
       const result = await scm.detectPR(makeSession(), project);
@@ -472,7 +483,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.assignPRToCurrentUser?.(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["pr", "edit", "42", "--repo", "acme/repo", "--add-assignee", "@me"],
         expect.any(Object),
       );
@@ -519,7 +530,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["pr", "merge", "42", "--repo", "acme/repo", "--squash", "--delete-branch"],
         expect.any(Object),
       );
@@ -529,7 +540,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr, "merge");
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--merge"]),
         expect.any(Object),
       );
@@ -539,7 +550,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr, "rebase");
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         expect.arrayContaining(["--rebase"]),
         expect.any(Object),
       );
@@ -553,7 +564,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.closePR(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        "gh",
+        expect.stringMatching(/(?:^|\/)?gh$/),
         ["pr", "close", "42", "--repo", "acme/repo"],
         expect.any(Object),
       );
@@ -905,169 +916,6 @@ describe("scm-github plugin", () => {
     });
   });
 
-  // ---- getAutomatedComments ----------------------------------------------
-
-  describe("getAutomatedComments", () => {
-    it("uses explicit GET query for pulls comments and paginates", async () => {
-      const page1 = Array.from({ length: 100 }, (_, i) => ({
-        id: i + 1,
-        user: { login: "cursor[bot]" },
-        body: "Potential issue detected",
-        path: "a.ts",
-        line: i + 1,
-        original_line: null,
-        created_at: "2025-01-01T00:00:00Z",
-        html_url: `u${i + 1}`,
-      }));
-
-      const page2 = [
-        {
-          id: 101,
-          user: { login: "cursor[bot]" },
-          body: "Warning: check this",
-          path: "b.ts",
-          line: 7,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u101",
-        },
-      ];
-
-      mockGh(page1);
-      mockGh(page2);
-
-      const comments = await scm.getAutomatedComments(pr);
-
-      expect(comments).toHaveLength(101);
-      expect(ghMock).toHaveBeenNthCalledWith(
-        1,
-        "gh",
-        ["api", "--method", "GET", "repos/acme/repo/pulls/42/comments?per_page=100&page=1"],
-        expect.any(Object),
-      );
-      expect(ghMock).toHaveBeenNthCalledWith(
-        2,
-        "gh",
-        ["api", "--method", "GET", "repos/acme/repo/pulls/42/comments?per_page=100&page=2"],
-        expect.any(Object),
-      );
-    });
-
-    it("returns bot comments filtered from all PR comments", async () => {
-      mockGh([
-        {
-          id: 1,
-          user: { login: "cursor[bot]" },
-          body: "Found a potential issue",
-          path: "a.ts",
-          line: 5,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u1",
-        },
-        {
-          id: 2,
-          user: { login: "alice" },
-          body: "Human comment",
-          path: "a.ts",
-          line: 1,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u2",
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments).toHaveLength(1);
-      expect(comments[0].botName).toBe("cursor[bot]");
-      expect(comments[0].severity).toBe("error"); // "potential issue" → error
-    });
-
-    it("classifies severity from body content", async () => {
-      mockGh([
-        {
-          id: 1,
-          user: { login: "github-actions[bot]" },
-          body: "Error: build failed",
-          path: "a.ts",
-          line: 1,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u",
-        },
-        {
-          id: 2,
-          user: { login: "github-actions[bot]" },
-          body: "Warning: deprecated API",
-          path: "a.ts",
-          line: 2,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u",
-        },
-        {
-          id: 3,
-          user: { login: "github-actions[bot]" },
-          body: "Deployed to staging",
-          path: "a.ts",
-          line: 3,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u",
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments).toHaveLength(3);
-      expect(comments[0].severity).toBe("error");
-      expect(comments[1].severity).toBe("warning");
-      expect(comments[2].severity).toBe("info");
-    });
-
-    it("returns empty when no bot comments", async () => {
-      mockGh([
-        {
-          id: 1,
-          user: { login: "alice" },
-          body: "Human comment",
-          path: "a.ts",
-          line: 1,
-          original_line: null,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u",
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments).toEqual([]);
-    });
-
-    it("throws on error", async () => {
-      mockGhError("network failure");
-      await expect(scm.getAutomatedComments(pr)).rejects.toThrow(
-        "Failed to fetch automated comments",
-      );
-    });
-
-    it("uses original_line as fallback", async () => {
-      mockGh([
-        {
-          id: 1,
-          user: { login: "dependabot[bot]" },
-          body: "Suggest update",
-          path: "a.ts",
-          line: null,
-          original_line: 15,
-          created_at: "2025-01-01T00:00:00Z",
-          html_url: "u",
-        },
-      ]);
-
-      const comments = await scm.getAutomatedComments(pr);
-      expect(comments[0].line).toBe(15);
-    });
-  });
-
   // ---- getMergeability ---------------------------------------------------
 
   describe("getMergeability", () => {
@@ -1253,4 +1101,369 @@ describe("scm-github plugin", () => {
       expect(result.mergeable).toBe(false);
     });
   });
+
+  // ---- PR cache (per-method TTLs, write invalidation) -------------------
+
+  describe("PR cache", () => {
+    it("getPRState second call within 5s hits cache", async () => {
+      mockGh({ state: "OPEN" });
+      const first = await scm.getPRState(pr);
+      const second = await scm.getPRState(pr);
+      expect(first).toBe("open");
+      expect(second).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("getPRState re-fetches after TTL expires (5s)", async () => {
+      vi.useFakeTimers();
+      try {
+        mockGh({ state: "OPEN" });
+        await scm.getPRState(pr);
+        expect(ghMock).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(5_001);
+
+        mockGh({ state: "MERGED" });
+        const fresh = await scm.getPRState(pr);
+        expect(fresh).toBe("merged");
+        expect(ghMock).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("getPRState and getPRSummary use separate cache slots", async () => {
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "OPEN", title: "T", additions: 10, deletions: 5 });
+
+      await scm.getPRState(pr);
+      await scm.getPRSummary(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      // Both now cached — second round hits cache, no new gh calls
+      await scm.getPRState(pr);
+      await scm.getPRSummary(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("getReviews caches independently of getReviewDecision", async () => {
+      mockGh({ reviews: [] });
+      mockGh({ reviewDecision: "APPROVED" });
+      await scm.getReviews(pr);
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      // Cache hits on second round
+      await scm.getReviews(pr);
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("different PRs cache independently", async () => {
+      const otherPR = { ...pr, number: 99 };
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "MERGED" });
+      const a = await scm.getPRState(pr);
+      const b = await scm.getPRState(otherPR);
+      expect(a).toBe("open");
+      expect(b).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("mergePR invalidates the PR's cache", async () => {
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
+      await scm.mergePR(pr);
+
+      mockGh({ state: "MERGED" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("closePR invalidates the PR's cache", async () => {
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr close
+      await scm.closePR(pr);
+
+      mockGh({ state: "CLOSED" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("closed");
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("assignPRToCurrentUser invalidates the PR's cache", async () => {
+      mockGh({ reviewDecision: "REVIEW_REQUIRED" });
+      await scm.getReviewDecision(pr);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr edit
+      await scm.assignPRToCurrentUser(pr);
+
+      mockGh({ reviewDecision: "REVIEW_REQUIRED" });
+      await scm.getReviewDecision(pr);
+      expect(ghMock).toHaveBeenCalledTimes(3); // view + edit + view again
+    });
+
+    it("invalidating one PR does not affect a different PR's cache", async () => {
+      const otherPR = { ...pr, number: 99 };
+      mockGh({ state: "OPEN" });
+      mockGh({ state: "OPEN" });
+      await scm.getPRState(pr);
+      await scm.getPRState(otherPR);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.closePR(pr); // wipes pr #42 only
+
+      mockGh({ state: "CLOSED" });
+      await scm.getPRState(pr); // re-fetches
+      await scm.getPRState(otherPR); // still cached
+      expect(ghMock).toHaveBeenCalledTimes(4);
+    });
+
+    it("resolvePR caches by reference for 60s", async () => {
+      mockGh({
+        number: 7,
+        url: "https://github.com/acme/repo/pull/7",
+        title: "Fix",
+        headRefName: "feat/x",
+        baseRefName: "main",
+        isDraft: false,
+      });
+      const first = await scm.resolvePR("feat/x", project);
+      const second = await scm.resolvePR("feat/x", project);
+      expect(first).toEqual(second);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("failures are not cached", async () => {
+      ghMock.mockRejectedValueOnce(new Error("boom"));
+      await expect(scm.getPRState(pr)).rejects.toThrow();
+
+      mockGh({ state: "OPEN" });
+      const fresh = await scm.getPRState(pr);
+      expect(fresh).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("each create() returns an isolated cache", async () => {
+      const scmA = create();
+      const scmB = create();
+      mockGh({ state: "OPEN" });
+      await scmA.getPRState(pr);
+      mockGh({ state: "MERGED" });
+      const fromB = await scmB.getPRState(pr);
+      expect(fromB).toBe("merged");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    // ---- detectPR (positive-only cache) ----
+
+    it("detectPR caches positive results (PR found)", async () => {
+      mockGh([
+        {
+          number: 42,
+          url: "https://github.com/acme/repo/pull/42",
+          title: "feat: add feature",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+        },
+      ]);
+      const a = await scm.detectPR(makeSession(), project);
+      const b = await scm.detectPR(makeSession(), project);
+      expect(a?.number).toBe(42);
+      expect(b?.number).toBe(42);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("detectPR does NOT cache negative results (no PR yet)", async () => {
+      mockGh([]);
+      mockGh([]);
+      const a = await scm.detectPR(makeSession(), project);
+      const b = await scm.detectPR(makeSession(), project);
+      expect(a).toBeNull();
+      expect(b).toBeNull();
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("detectPR transitions null → PR on next call without cache poisoning", async () => {
+      mockGh([]); // first call: no PR yet
+      const before = await scm.detectPR(makeSession(), project);
+      expect(before).toBeNull();
+
+      mockGh([
+        {
+          number: 7,
+          url: "https://github.com/acme/repo/pull/7",
+          title: "Just created",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+        },
+      ]);
+      const after = await scm.detectPR(makeSession(), project);
+      expect(after?.number).toBe(7);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("detectPR caches different branches independently", async () => {
+      mockGh([
+        {
+          number: 1,
+          url: "u1",
+          title: "t1",
+          headRefName: "feat/a",
+          baseRefName: "main",
+          isDraft: false,
+        },
+      ]);
+      mockGh([
+        {
+          number: 2,
+          url: "u2",
+          title: "t2",
+          headRefName: "feat/b",
+          baseRefName: "main",
+          isDraft: false,
+        },
+      ]);
+      const a = await scm.detectPR(makeSession({ branch: "feat/a" }), project);
+      const b = await scm.detectPR(makeSession({ branch: "feat/b" }), project);
+      expect(a?.number).toBe(1);
+      expect(b?.number).toBe(2);
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("mergePR invalidates the branch's detectPR entry", async () => {
+      mockGh([
+        {
+          number: 42,
+          url: "https://github.com/acme/repo/pull/42",
+          title: "feat",
+          headRefName: pr.branch,
+          baseRefName: "main",
+          isDraft: false,
+        },
+      ]);
+      await scm.detectPR(makeSession({ branch: pr.branch }), project);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
+      await scm.mergePR(pr);
+
+      // detectPR re-fetches because the merge invalidated the branch entry
+      mockGh([]);
+      const after = await scm.detectPR(makeSession({ branch: pr.branch }), project);
+      expect(after).toBeNull();
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    // ---- getCIChecks / getMergeability / getPendingComments ----
+
+    it("getCIChecks caches result (5s TTL)", async () => {
+      mockGh([{ name: "build", state: "SUCCESS", link: "u", startedAt: "", completedAt: "" }]);
+      await scm.getCIChecks(pr);
+      await scm.getCIChecks(pr);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("getMergeability caches the composite result", async () => {
+      // First call: getPRState (1) + pr view mergeable (2) + getCISummary→getCIChecks (3)
+      mockGh({ state: "OPEN" }); // getPRState
+      mockGh({
+        mergeable: "MERGEABLE",
+        reviewDecision: "APPROVED",
+        mergeStateStatus: "CLEAN",
+        isDraft: false,
+      });
+      mockGh([{ name: "build", state: "SUCCESS" }]); // getCIChecks
+      const first = await scm.getMergeability(pr);
+      expect(first.mergeable).toBe(true);
+
+      // Second call within TTL: top-level getMergeability cache hits.
+      // No new gh calls because the composite result short-circuits.
+      const second = await scm.getMergeability(pr);
+      expect(second).toEqual(first);
+      expect(ghMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("mergePR invalidates getMergeability cache", async () => {
+      mockGh({ state: "OPEN" });
+      mockGh({
+        mergeable: "MERGEABLE",
+        reviewDecision: "APPROVED",
+        mergeStateStatus: "CLEAN",
+        isDraft: false,
+      });
+      mockGh([{ name: "build", state: "SUCCESS" }]);
+      await scm.getMergeability(pr);
+      expect(ghMock).toHaveBeenCalledTimes(3);
+
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
+      await scm.mergePR(pr);
+
+      // After merge: state cached as merged; getMergeability re-derives
+      // the merged shortcut result without making more gh calls.
+      mockGh({ state: "MERGED" }); // getPRState refetch
+      const after = await scm.getMergeability(pr);
+      expect(after.mergeable).toBe(true);
+      expect(after.blockers).toEqual([]);
+    });
+
+    it("getPendingComments caches result", async () => {
+      mockGhRaw(
+        JSON.stringify({
+          data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } },
+        }),
+      );
+      await scm.getPendingComments(pr);
+      await scm.getPendingComments(pr);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("preflight", () => {
+    function ctxWith(willClaim: boolean): PreflightContext {
+      return { project, intent: { role: "worker", willClaimExistingPR: willClaim } };
+    }
+
+    beforeEach(() => {
+      _clearProcessCacheForTests();
+    });
+
+    it("is a no-op when willClaimExistingPR is false (no gh calls made)", async () => {
+      await expect(scm.preflight!(ctxWith(false))).resolves.toBeUndefined();
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
+    it("checks gh installed + authenticated when willClaimExistingPR is true", async () => {
+      mockGhRaw("gh version 2.40.0");
+      mockGhRaw("Logged in to github.com as alice");
+      await expect(scm.preflight!(ctxWith(true))).resolves.toBeUndefined();
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("throws 'not installed' when `gh --version` fails", async () => {
+      mockGhError("ENOENT");
+      const err = (await scm.preflight!(ctxWith(true)).catch((e: unknown) => e)) as Error;
+      expect(err.message).toContain("GitHub CLI (gh) is not installed");
+    });
+
+    it("throws 'not authenticated' when `gh auth status` fails", async () => {
+      mockGhRaw("gh version 2.40.0");
+      mockGhError("not logged in");
+      const err = (await scm.preflight!(ctxWith(true)).catch((e: unknown) => e)) as Error;
+      expect(err.message).toContain("not authenticated");
+    });
+  });
 });
+
+function mockGhRaw(stdout: string) {
+  ghMock.mockResolvedValueOnce({ stdout });
+}

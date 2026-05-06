@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import {
+  isGitBranchNameSafe,
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
 
 describe("readLastJsonlEntry", () => {
@@ -85,6 +90,60 @@ describe("readLastJsonlEntry", () => {
     const result = await readLastJsonlEntry(path);
     expect(result!.modifiedAt).toBeInstanceOf(Date);
   });
+
+  it("extracts payloadType from nested payload.type", async () => {
+    // Real Codex writes records like {"type":"event_msg","payload":{"type":"error",...}}
+    // Consumers need the inner payload.type to classify activity correctly.
+    const path = setup(
+      '{"type":"event_msg","payload":{"type":"error","message":"bad"}}\n',
+    );
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("event_msg");
+    expect(result!.payloadType).toBe("error");
+  });
+
+  it("returns payloadType null when payload has no type field", async () => {
+    const path = setup('{"type":"session_meta","payload":{"cwd":"/workspace"}}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("session_meta");
+    expect(result!.payloadType).toBeNull();
+  });
+
+  it("returns payloadType null when payload is not an object", async () => {
+    const path = setup('{"type":"x","payload":"string"}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("x");
+    expect(result!.payloadType).toBeNull();
+  });
+});
+
+describe("isGitBranchNameSafe", () => {
+  it("accepts typical Linear-style branch names", () => {
+    expect(isGitBranchNameSafe("feature/foo-bar-123")).toBe(true);
+    expect(isGitBranchNameSafe("feat/INT-123")).toBe(true);
+  });
+
+  it("rejects empty, @, lock suffix, double dots, and leading dot", () => {
+    expect(isGitBranchNameSafe("")).toBe(false);
+    expect(isGitBranchNameSafe("@")).toBe(false);
+    expect(isGitBranchNameSafe("foo.lock")).toBe(false);
+    expect(isGitBranchNameSafe("a..b")).toBe(false);
+    expect(isGitBranchNameSafe(".hidden")).toBe(false);
+  });
+
+  it("rejects consecutive slashes and dot-prefixed components", () => {
+    expect(isGitBranchNameSafe("feat//bar")).toBe(false);
+    expect(isGitBranchNameSafe("feat/.hidden")).toBe(false);
+  });
+
+  it("rejects characters invalid in git refs", () => {
+    expect(isGitBranchNameSafe("bad branch")).toBe(false);
+    expect(isGitBranchNameSafe("x:y")).toBe(false);
+    expect(isGitBranchNameSafe("x~y")).toBe(false);
+    expect(isGitBranchNameSafe("x?y")).toBe(false);
+    expect(isGitBranchNameSafe("x[y]")).toBe(false);
+    expect(isGitBranchNameSafe("a\nb")).toBe(false);
+  });
 });
 
 describe("retry utilities", () => {
@@ -128,10 +187,28 @@ describe("parsePrFromUrl", () => {
 
   it("falls back to trailing number for non-GitHub URLs", () => {
     expect(parsePrFromUrl("https://gitlab.com/foo/bar/-/merge_requests/456")).toEqual({
-      owner: "",
-      repo: "",
+      owner: "foo",
+      repo: "bar",
       number: 456,
       url: "https://gitlab.com/foo/bar/-/merge_requests/456",
+    });
+  });
+
+  it("parses GitHub Enterprise pull request URLs", () => {
+    expect(parsePrFromUrl("https://github.example.com/foo/bar/pull/789")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 789,
+      url: "https://github.example.com/foo/bar/pull/789",
+    });
+  });
+
+  it("parses GitHub pull request URLs with trailing path segments", () => {
+    expect(parsePrFromUrl("https://github.com/foo/bar/pull/123/files")).toEqual({
+      owner: "foo",
+      repo: "bar",
+      number: 123,
+      url: "https://github.com/foo/bar/pull/123/files",
     });
   });
 

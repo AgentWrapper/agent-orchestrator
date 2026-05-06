@@ -1,0 +1,54 @@
+---
+title: Notifiers overview
+description: Who gets pinged when an agent needs you. Six notifiers ship; pick one or stack several.
+---
+
+Notifiers deliver AO events — session stuck, PR opened, review requested, CI failed — to wherever you actually pay attention.
+
+<PluginGrid>
+  <PluginCard name="Desktop" logo="apple" href="/docs/plugins/notifiers/desktop" description="Native macOS/Linux notifications. No-op on Windows." />
+  <PluginCard name="Discord" logo="discord" href="/docs/plugins/notifiers/discord" description="Discord webhook with rich embeds." />
+  <PluginCard name="Slack" logo="slack" href="/docs/plugins/notifiers/slack" description="Slack incoming webhook." />
+  <PluginCard name="Webhook" logo="webhook" href="/docs/plugins/notifiers/webhook" description="Generic HTTP POST. Retries + exponential backoff." />
+  <PluginCard name="Composio" logo="composio" href="/docs/plugins/notifiers/composio" description="Route through Composio — Slack, Discord, or Gmail." />
+  <PluginCard name="OpenClaw" logo="openclaw" href="/docs/plugins/notifiers/openclaw" description="Local OpenClaw gateway for personal alerts." />
+</PluginGrid>
+
+## Stacking notifiers
+
+Notifier config is a list — pass as many as you want:
+
+```yaml
+notifier:
+  - type: desktop
+  - type: discord
+    webhookUrl: ${DISCORD_URL}
+  - type: slack
+    webhookUrl: ${SLACK_URL}
+    channel: "#agents"
+```
+
+Each notifier gets every event. AO doesn't try to dedupe across channels — that's your channel-configuration problem, not ours.
+
+## Testing
+
+```bash
+ao doctor --test-notify
+```
+
+Sends a dummy notification through each configured notifier. Good way to verify your webhooks work before an agent needs to wake you at 3 AM.
+
+## What gets notified
+
+| Event | When |
+|---|---|
+| `session.spawned` | `ao spawn` succeeds |
+| `session.working` | Agent is actively editing code |
+| `pr.opened` | Agent pushed a branch and opened a PR |
+| `ci.failed` | Required check fails |
+| `review.requested` | Reviewer asks for changes |
+| `session.mergeable` | CI green, no blockers |
+| `session.merged` | PR merged |
+| `session.blocked` | Agent is stuck — you need to intervene |
+
+You can tune which events fire via [`reactions` config](/docs/configuration).

@@ -1,5 +1,5 @@
 {
-  "name": "@composio/ao-plugin-tracker-forgejo",
+  "name": "@aoagents/ao-plugin-tracker-forgejo",
   "version": "0.2.0",
   "description": "Tracker plugin: Forgejo Issues",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

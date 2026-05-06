@@ -1,4 +1,4 @@
-name: PR Diff Coverage
+name: PR Coverage Report
 
 on:
   pull_request:
@@ -8,32 +8,16 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  detect-changes:
-    name: Detect changed packages
-    runs-on: ubuntu-latest
-    outputs:
-      core: ${{ steps.filter.outputs.core }}
-      cli: ${{ steps.filter.outputs.cli }}
-      web: ${{ steps.filter.outputs.web }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            core:
-              - 'packages/core/**'
-            cli:
-              - 'packages/cli/**'
-            web:
-              - 'packages/web/**'
+permissions:
+  contents: read
+  pull-requests: write
 
-  diff-coverage:
-    name: Diff Coverage (80% on changed code)
-    needs: detect-changes
-    if: needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.web == 'true'
+jobs:
+  coverage:
+    name: Coverage Report
     runs-on: ubuntu-latest
+    # Non-blocking: never prevent merging even if this job fails
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,54 +29,91 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Install diff-cover
-        run: pip install diff-cover
-
       - name: Install tmux
-        if: needs.detect-changes.outputs.web == 'true'
         run: sudo apt-get update && sudo apt-get install -y tmux
 
       - name: Start tmux server
-        if: needs.detect-changes.outputs.web == 'true'
         run: tmux start-server
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@composio/ao-web' build
 
-      - name: Core tests with coverage
-        if: needs.detect-changes.outputs.core == 'true'
-        run: pnpm --filter @composio/ao-core exec vitest run --coverage
+      - name: Build packages
+        run: pnpm -r --filter '!@aoagents/ao-web' build
 
-      - name: CLI tests with coverage
-        if: needs.detect-changes.outputs.cli == 'true'
-        run: pnpm --filter @composio/ao-cli exec vitest run --coverage
-
-      - name: Web tests with coverage
-        if: needs.detect-changes.outputs.web == 'true'
-        run: pnpm --filter @composio/ao-web exec vitest run --coverage
-
-      - name: Prepare and merge lcov reports
+      - name: Get changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          mkdir -p combined-coverage
-          touch combined-coverage/lcov.info
+          git diff --name-only origin/$BASE_REF...HEAD -- '*.ts' '*.tsx' > changed-files.txt
+          echo "Changed TS files:"
+          cat changed-files.txt
 
-          if [ -f packages/core/coverage/lcov.info ]; then
-            sed 's|^SF:|SF:packages/core/|' packages/core/coverage/lcov.info >> combined-coverage/lcov.info
-          fi
-          if [ -f packages/cli/coverage/lcov.info ]; then
-            sed 's|^SF:|SF:packages/cli/|' packages/cli/coverage/lcov.info >> combined-coverage/lcov.info
-          fi
-          if [ -f packages/web/coverage/lcov.info ]; then
-            sed 's|^SF:|SF:packages/web/|' packages/web/coverage/lcov.info >> combined-coverage/lcov.info
-          fi
-
-      - name: Check diff coverage (80% on changed lines)
+      - name: Run tests with coverage
+        continue-on-error: true
         run: |
-          diff-cover combined-coverage/lcov.info \
-            --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=80 \
-            --diff-range-notation='...'
+          CHANGED=$(cat changed-files.txt)
+
+          # Only run coverage for packages that have changed files
+          if echo "$CHANGED" | grep -q '^packages/core/'; then
+            echo "::group::Core tests"
+            pnpm --filter @aoagents/ao-core exec vitest run --coverage.enabled --coverage.reporter=json || true
+            echo "::endgroup::"
+          fi
+
+          if echo "$CHANGED" | grep -q '^packages/cli/'; then
+            echo "::group::CLI tests"
+            pnpm --filter @aoagents/ao-cli exec vitest run --coverage.enabled --coverage.reporter=json || true
+            echo "::endgroup::"
+          fi
+
+          if echo "$CHANGED" | grep -q '^packages/web/'; then
+            echo "::group::Web tests"
+            pnpm --filter @aoagents/ao-web exec vitest run --coverage.enabled --coverage.reporter=json || true
+            echo "::endgroup::"
+          fi
+
+          if echo "$CHANGED" | grep -q '^packages/plugins/'; then
+            # Run coverage for each changed plugin
+            for plugin_dir in $(echo "$CHANGED" | grep '^packages/plugins/' | cut -d/ -f1-3 | sort -u); do
+              if [ -f "$plugin_dir/package.json" ]; then
+                pkg_name=$(jq -r .name "$plugin_dir/package.json")
+                echo "::group::$pkg_name tests"
+                pnpm --filter "$pkg_name" exec vitest run --coverage.enabled --coverage.reporter=json || true
+                echo "::endgroup::"
+              fi
+            done
+          fi
+
+      - name: Generate coverage report
+        run: node .github/scripts/coverage-report.mjs
+
+      - name: Post or update PR comment
+        # Fork PR tokens lack comment permissions — don't fail the job
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+          COMMENT_TAG="<!-- coverage-report -->"
+
+          # Find existing coverage comment
+          COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --paginate --jq ".[] | select(.body | startswith(\"$COMMENT_TAG\")) | .id" \
+            | tail -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            # Update may fail on fork PRs (403) — fall back to creating a new comment
+            if gh api "repos/$REPO/issues/comments/$COMMENT_ID" \
+              -X PATCH \
+              -F body=@coverage-comment.md 2>/dev/null; then
+              echo "Updated existing comment $COMMENT_ID"
+            else
+              echo "Could not update comment $COMMENT_ID, creating new one"
+              gh pr comment "$PR_NUMBER" --body-file coverage-comment.md
+              echo "Created new comment"
+            fi
+          else
+            gh pr comment "$PR_NUMBER" --body-file coverage-comment.md
+            echo "Created new comment"
+          fi

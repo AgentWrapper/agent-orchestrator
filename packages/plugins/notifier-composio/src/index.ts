@@ -5,7 +5,7 @@ import type {
   NotifyAction,
   NotifyContext,
   EventPriority,
-} from "@composio/ao-core";
+} from "@aoagents/ao-core";
 
 export const manifest = {
   name: "composio",

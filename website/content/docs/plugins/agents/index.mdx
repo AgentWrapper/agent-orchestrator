@@ -1,0 +1,67 @@
+---
+title: Agents overview
+description: Pick the agent that writes the code. AO supports five today, and they're swappable per-project.
+---
+
+The agent is the piece that actually writes code. Everything else in AO — worktrees, runtimes, notifiers — is plumbing around it.
+
+<Callout type="info">
+**PR metadata is captured automatically.** Non-Claude-Code agents (Codex, Cursor, Aider, OpenCode) use `~/.ao/bin/gh` and `~/.ao/bin/git` PATH wrappers that intercept commands like `gh pr create` and record the resulting PR number and branch so the dashboard stays in sync. Claude Code uses PostToolUse hooks in `.claude/settings.json` instead — the same metadata is written through Claude Code's native hook system. Both approaches are set up transparently by AO; you don't need to configure anything.
+</Callout>
+
+## Supported agents
+
+| Agent | Slot name | Binary | Session resume |
+|---|---|---|---|
+| [Claude Code](/docs/plugins/agents/claude-code) | `claude-code` | `claude` | ✅ `--resume` |
+| [Codex](/docs/plugins/agents/codex) | `codex` | `codex` | ✅ `codex resume <threadId>` |
+| [Cursor](/docs/plugins/agents/cursor) | `cursor` | `agent` | ❌ |
+| [Aider](/docs/plugins/agents/aider) | `aider` | `aider` | ❌ |
+| [OpenCode](/docs/plugins/agents/opencode) | `opencode` | `opencode` | ✅ via OpenCode session API |
+
+<PluginGrid>
+  <PluginCard name="Claude Code" logo="claude-code" href="/docs/plugins/agents/claude-code" description="Anthropic's CLI coding agent." />
+  <PluginCard name="Codex" logo="codex" href="/docs/plugins/agents/codex" description="OpenAI's Codex CLI." />
+  <PluginCard name="Cursor" logo="cursor" href="/docs/plugins/agents/cursor" description="Cursor Agent CLI." />
+  <PluginCard name="Aider" logo="aider" href="/docs/plugins/agents/aider" description="Aider pair-programming CLI." />
+  <PluginCard name="OpenCode" logo="opencode" href="/docs/plugins/agents/opencode" description="OpenCode terminal agent." />
+</PluginGrid>
+
+## Choosing
+
+- **Want session resume** (pick up where you left off)? Claude Code, Codex, or OpenCode.
+- **One-shot per session** is fine? Any of the five.
+- **Pair-programming style editor**? Aider.
+- **Native IDE-like behavior in the terminal**? Cursor.
+
+## How AO talks to them
+
+Two patterns exist:
+
+- **Agent-native hooks** — Claude Code ships a PostToolUse hook in `.claude/settings.json`. AO's workspace bootstrap installs it; the agent writes activity events directly to AO's JSONL.
+- **PATH wrappers** — Codex, Cursor, Aider, and OpenCode don't have a hook system. AO installs small shell wrappers in `~/.ao/bin/gh` and `~/.ao/bin/git` and prepends them to `PATH`. When the agent runs `gh pr create` or `git commit`, the wrapper records metadata (PR number, branch, etc.) so the dashboard knows what the agent did.
+
+Neither approach requires you to change your agent's config — AO sets it up transparently.
+
+## Mixing agents
+
+Per-project overrides:
+
+```yaml
+agent: claude-code       # global default
+projects:
+  api:
+    repo: myorg/api
+    agent: codex
+  web:
+    repo: myorg/web
+    agent: cursor
+```
+
+You can also override at spawn time:
+
+```bash
+ao spawn 42 --agent codex
+```
+
+Great for A/B testing which agent does better on a specific kind of issue.

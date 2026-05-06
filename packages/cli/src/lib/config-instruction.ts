@@ -2,10 +2,14 @@
  * Returns the complete AO config schema as formatted text.
  * Used by `ao config-help` and injected into orchestrator system prompts.
  */
+import { CONFIG_SCHEMA_URL } from "@aoagents/ao-core";
+
 export function getConfigInstruction(): string {
   return `
 # Agent Orchestrator Config Reference
 # File: agent-orchestrator.yaml
+
+$schema: ${CONFIG_SCHEMA_URL}
 
 # ── Top-level settings ──────────────────────────────────────────────
 # Runtime data paths are auto-derived from the config location under:
@@ -21,7 +25,7 @@ readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | opencode
+  agent: claude-code          # claude-code | aider | codex | cursor | kimicode | opencode
   workspace: worktree         # worktree | clone
   notifiers:
     - desktop                 # desktop | discord | slack | webhook | composio | openclaw
@@ -95,13 +99,6 @@ projects:
     scm:
       plugin: github          # github | gitlab
 
-    # ── Task decomposition (optional) ─────────────────────────────
-    decomposer:
-      enabled: false          # Auto-decompose backlog issues
-      maxDepth: 3             # Max recursion depth
-      model: claude-sonnet-4-20250514
-      requireApproval: true   # Require human approval before executing
-
     # ── Per-project reaction overrides (optional) ─────────────────
     # reactions:
     #   ci-failed:
@@ -141,7 +138,7 @@ notificationRouting:
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, opencode
+# Agent:     claude-code, aider, codex, cursor, kimicode, opencode
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab

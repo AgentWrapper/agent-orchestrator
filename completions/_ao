@@ -1,0 +1,8 @@
+#compdef ao
+
+# For development repos, this dynamically loads completion scripts from `ao`.
+# Prefer a static install for daily use:
+#   ao completion zsh > "$fpath[1]/_ao"
+(( $+commands[ao] )) || return 1
+
+eval "$(command ao completion zsh 2>/dev/null)"
