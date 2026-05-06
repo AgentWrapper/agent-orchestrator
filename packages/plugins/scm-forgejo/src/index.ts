@@ -780,7 +780,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
           "GET",
           `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
         )) as Record<string, unknown>;
-        if (Boolean(data["merged"])) return "merged";
+        if (data["merged"]) return "merged";
         const state = String(data["state"] ?? "").toUpperCase();
         if (state === "CLOSED") return "closed";
         return "open";
@@ -1124,7 +1124,8 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
           }
 
           return comments
-            .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") && c.in_reply_to_id == null)
+            .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") &&
+              (c.in_reply_to_id === null || c.in_reply_to_id === undefined))
             .map((c) => ({
               id: String(c.id),
               author: c.user?.login ?? "unknown",
@@ -1178,7 +1179,8 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         }
 
         return comments
-          .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") && c.in_reply_to_id == null)
+          .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") &&
+              (c.in_reply_to_id === null || c.in_reply_to_id === undefined))
           .map((c) => ({
             id: String(c.id),
             author: c.user?.login ?? "unknown",
@@ -1279,7 +1281,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       }
 
       // Draft
-      if (Boolean(data["isDraft"] ?? data["draft"])) {
+      if (data["isDraft"] ?? data["draft"]) {
         blockers.push("PR is still a draft");
       }
 
