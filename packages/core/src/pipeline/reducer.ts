@@ -221,7 +221,17 @@ function reduceStageStarted(state: EngineState, event: StageStartedEvent): Reduc
         type: "EMIT_OBSERVATION",
         event: {
           name: "pipeline.stage.started",
-          data: { runId, stageName, attempt: stage.attempt },
+          // `stageRunId` rotates on every retry/revival, so it's the only
+          // field that uniquely identifies *this* execution. `attempt` is
+          // not enough now that outdated revival keeps the counter
+          // unchanged — two `stage.started` events for the same
+          // (runId, stageName) can otherwise share the same attempt.
+          data: {
+            runId,
+            stageName,
+            stageRunId: stage.stageRunId,
+            attempt: stage.attempt,
+          },
         },
       },
     ],
