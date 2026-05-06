@@ -452,7 +452,8 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         //
         // Already fixed on Forgejo `next` (verified 16.0.0-dev-239+gitea-1.22.0
         // against v16.next.forgejo.org) — this workaround can be retired once
-        // 15.x is no longer supported.
+        // 15.x is no longer supported. Upstream tracker:
+        // https://codeberg.org/forgejo/forgejo/issues/12438.
         //
         // The cross-repo /repos/issues/search endpoint honors the same
         // documented contract correctly on both versions, so we route through
