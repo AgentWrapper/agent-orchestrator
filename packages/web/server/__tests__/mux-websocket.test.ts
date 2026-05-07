@@ -311,3 +311,119 @@ describe("TerminalManager.open — tmux target args (regression for #1714)", () 
     expect(args).toEqual(["attach-session", "-t", "=ao-177"]);
   });
 });
+
+describe("TerminalManager — PTY idle grace period (issue #1718)", () => {
+  // Stable mock fns shared across spawns within a single test, reset per test.
+  // The unit under test relies on `pty.kill()` being called exactly once on
+  // grace expiry, so kill needs a stable identity to count against.
+  let ptyKill: ReturnType<typeof vi.fn>;
+  let ptyOnData: ReturnType<typeof vi.fn>;
+  let ptyOnExit: ReturnType<typeof vi.fn>;
+  let manager: InstanceType<typeof TerminalManager>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockSpawn.mockReset();
+    mockPtySpawn.mockReset();
+
+    ptyKill = vi.fn();
+    ptyOnData = vi.fn();
+    ptyOnExit = vi.fn();
+
+    mockSpawn.mockImplementation(() => new EventEmitter());
+    mockPtySpawn.mockImplementation(() => ({
+      onData: ptyOnData,
+      onExit: ptyOnExit,
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: ptyKill,
+    }));
+
+    manager = new TerminalManager("/usr/bin/tmux");
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("does not kill the PTY immediately when the last subscriber unsubscribes", () => {
+    const unsub = manager.subscribe("ao-177", undefined, vi.fn());
+    expect(mockPtySpawn).toHaveBeenCalledTimes(1);
+
+    unsub();
+
+    // PTY must remain alive during the grace window — killing here would
+    // burn a fresh ptmx slot on the next reconnect (issue #1718).
+    expect(ptyKill).not.toHaveBeenCalled();
+  });
+
+  it("kills the PTY after the grace period expires with no reconnect", () => {
+    const unsub = manager.subscribe("ao-177", undefined, vi.fn());
+    unsub();
+
+    // Just before the window closes — still alive.
+    vi.advanceTimersByTime(29_999);
+    expect(ptyKill).not.toHaveBeenCalled();
+
+    // Window closes — kill fires.
+    vi.advanceTimersByTime(1);
+    expect(ptyKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the PTY when a new subscriber arrives within the grace window", () => {
+    const unsub1 = manager.subscribe("ao-177", undefined, vi.fn());
+    expect(mockPtySpawn).toHaveBeenCalledTimes(1);
+    unsub1();
+
+    // A reconnect lands halfway through the grace window.
+    vi.advanceTimersByTime(15_000);
+    const unsub2 = manager.subscribe("ao-177", undefined, vi.fn());
+
+    // No new PTY allocated and the original is still alive — reconnect
+    // reused the existing slot, which is the whole point of the fix.
+    expect(mockPtySpawn).toHaveBeenCalledTimes(1);
+    expect(ptyKill).not.toHaveBeenCalled();
+
+    // After the original timer's deadline passes, the cancelled timer must
+    // not retroactively kill the still-subscribed PTY.
+    vi.advanceTimersByTime(60_000);
+    expect(ptyKill).not.toHaveBeenCalled();
+
+    unsub2();
+  });
+
+  it("only kills once when last subscriber leaves and grace expires", () => {
+    const unsub1 = manager.subscribe("ao-177", undefined, vi.fn());
+    const unsub2 = manager.subscribe("ao-177", undefined, vi.fn());
+
+    unsub1();
+    // First unsubscribe is not the last subscriber — no timer scheduled.
+    vi.advanceTimersByTime(60_000);
+    expect(ptyKill).not.toHaveBeenCalled();
+
+    unsub2();
+    // Now we are at zero subscribers — schedule the grace timer.
+    vi.advanceTimersByTime(30_000);
+    expect(ptyKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("buffer is preserved across an unsubscribe/resubscribe within grace", () => {
+    const cb = vi.fn();
+    const unsub = manager.subscribe("ao-177", undefined, cb);
+
+    // Simulate the PTY emitting some output by invoking the captured handler.
+    const onDataHandler = ptyOnData.mock.calls[0]?.[0] as (data: string) => void;
+    onDataHandler("hello");
+
+    unsub();
+    vi.advanceTimersByTime(10_000);
+
+    // The terminal entry must still exist — buffered output is still there.
+    expect(manager.getBuffer("ao-177")).toBe("hello");
+
+    // After full grace expiry, the entry is cleaned up.
+    vi.advanceTimersByTime(20_001);
+    expect(manager.getBuffer("ao-177")).toBe("");
+  });
+});

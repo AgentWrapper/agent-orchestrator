@@ -200,6 +200,15 @@ interface ManagedTerminal {
    * reachable for up to 5 s after teardown.
    */
   resetTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Pending kill scheduled when the last subscriber leaves. macOS never
+   * recycles ptmx slot numbers within a boot, so churning PTYs across
+   * tab reloads / sleep-wake / network blips burns slots and eventually
+   * exhausts kern.tty.ptmx_max=511 (issue #1718). A grace window lets a
+   * quick reconnect reuse the existing PTY instead of allocating a fresh
+   * one.
+   */
+  idleGraceTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const RING_BUFFER_MAX = 50 * 1024; // 50KB max per terminal
@@ -217,6 +226,7 @@ const MAX_REATTACH_ATTEMPTS = 3;
  * crashes hours later gets a fresh retry budget.
  */
 const REATTACH_RESET_GRACE_MS = 5_000;
+const PTY_IDLE_GRACE_MS = 30_000; // delay before killing an unsubscribed PTY (issue #1718)
 
 /**
  * TerminalManager manages PTY processes independently of WebSocket connections.
@@ -265,6 +275,7 @@ export class TerminalManager {
         buffer: [],
         bufferBytes: 0,
         reattachAttempts: 0,
+        idleGraceTimer: null,
       };
       this.terminals.set(key, terminal);
     }
@@ -444,21 +455,40 @@ export class TerminalManager {
     terminal.subscribers.add(callback);
     if (onExit) terminal.exitCallbacks.add(onExit);
 
+    // A subscriber arrived in time — cancel any pending idle-grace kill
+    // (e.g. tab reload landed within the grace window after a previous
+    // unsubscribe). The PTY is preserved; no new ptmx slot is allocated.
+    if (terminal.idleGraceTimer) {
+      clearTimeout(terminal.idleGraceTimer);
+      terminal.idleGraceTimer = null;
+    }
+
     // Return unsubscribe function
     return () => {
       terminal.subscribers.delete(callback);
       if (onExit) terminal.exitCallbacks.delete(onExit);
-      // Kill PTY and clean up when the last subscriber leaves
-      if (terminal.subscribers.size === 0) {
-        if (terminal.resetTimer) {
-          clearTimeout(terminal.resetTimer);
-          terminal.resetTimer = undefined;
-        }
-        if (terminal.pty) {
-          terminal.pty.kill();
-          terminal.pty = null;
-        }
-        this.terminals.delete(key);
+      // Defer PTY kill when the last subscriber leaves. macOS burns a ptmx
+      // slot per allocation for the lifetime of a boot (issue #1718), so
+      // killing immediately on every disconnect drains kern.tty.ptmx_max.
+      // A grace window lets a quick reconnect reuse the existing PTY.
+      // The reattach-counter resetTimer (#1640) is cleared at kill time so
+      // its closure doesn't keep the evicted terminal reachable.
+      if (terminal.subscribers.size === 0 && terminal.idleGraceTimer === null) {
+        terminal.idleGraceTimer = setTimeout(() => {
+          terminal.idleGraceTimer = null;
+          // Re-check: a subscriber may have arrived during the window.
+          if (terminal.subscribers.size > 0) return;
+          if (terminal.resetTimer) {
+            clearTimeout(terminal.resetTimer);
+            terminal.resetTimer = undefined;
+          }
+          if (terminal.pty) {
+            terminal.pty.kill();
+            terminal.pty = null;
+          }
+          this.terminals.delete(key);
+        }, PTY_IDLE_GRACE_MS);
+        terminal.idleGraceTimer.unref();
       }
     };
   }

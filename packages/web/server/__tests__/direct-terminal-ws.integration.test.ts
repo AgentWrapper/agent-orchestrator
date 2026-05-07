@@ -392,9 +392,13 @@ describe("mux terminal I/O", () => {
   it("receives terminal data after open", async () => {
     const ws = await connectMux();
 
-    ws.send(
-      JSON.stringify({ ch: "terminal", id: "test-session", tmuxName: TEST_SESSION, type: "open" }),
-    );
+    // Use a unique terminal id so we exercise a fresh tmux attach. The shared
+    // "test-session" id used by earlier tests in this file would land in the
+    // post-#1718 PTY-grace path (PTY reused, no fresh init-data flow), and
+    // the prior test closes its WS too quickly for the buffer to populate —
+    // so a grace-path replay would deliver an empty buffer and time out.
+    const id = `test-data-flow-${Date.now()}`;
+    ws.send(JSON.stringify({ ch: "terminal", id, tmuxName: TEST_SESSION, type: "open" }));
     await waitForMessage(ws, (m) => m.ch === "terminal" && m.type === "opened");
 
     // tmux sends terminal init sequences on attach — wait for any data
