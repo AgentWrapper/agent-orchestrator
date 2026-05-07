@@ -1,5 +1,41 @@
 # @aoagents/ao-cli
 
+## 0.6.0
+
+### Patch Changes
+
+- 0f539a3: Fix dashboard 404 after adding a project from the "AO is already running" menu. The CLI now notifies the running daemon to reload its cached config so the new project's page is reachable immediately.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies [40aeb78]
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @aoagents/ao-core@0.6.0
+  - @aoagents/ao-web@0.6.0
+  - @aoagents/ao-plugin-runtime-tmux@0.6.0
+  - @aoagents/ao-plugin-agent-aider@0.6.0
+  - @aoagents/ao-plugin-agent-claude-code@0.6.0
+  - @aoagents/ao-plugin-agent-codex@0.6.0
+  - @aoagents/ao-plugin-agent-cursor@0.1.4
+  - @aoagents/ao-plugin-agent-kimicode@0.1.3
+  - @aoagents/ao-plugin-agent-opencode@0.6.0
+  - @aoagents/ao-plugin-notifier-composio@0.6.0
+  - @aoagents/ao-plugin-notifier-desktop@0.6.0
+  - @aoagents/ao-plugin-notifier-discord@0.2.9
+  - @aoagents/ao-plugin-notifier-openclaw@0.2.9
+  - @aoagents/ao-plugin-notifier-slack@0.6.0
+  - @aoagents/ao-plugin-notifier-webhook@0.6.0
+  - @aoagents/ao-plugin-runtime-process@0.6.0
+  - @aoagents/ao-plugin-scm-github@0.6.0
+  - @aoagents/ao-plugin-terminal-iterm2@0.6.0
+  - @aoagents/ao-plugin-terminal-web@0.6.0
+  - @aoagents/ao-plugin-tracker-github@0.6.0
+  - @aoagents/ao-plugin-tracker-linear@0.6.0
+  - @aoagents/ao-plugin-workspace-clone@0.6.0
+  - @aoagents/ao-plugin-workspace-worktree@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes

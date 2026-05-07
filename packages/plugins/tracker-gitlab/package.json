@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-tracker-gitlab",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Tracker plugin: GitLab Issues",
   "license": "MIT",
   "type": "module",

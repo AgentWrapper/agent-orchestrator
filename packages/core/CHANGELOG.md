@@ -1,5 +1,17 @@
 # @aoagents/ao-core
 
+## 0.6.0
+
+### Minor Changes
+
+- Wire activity events into `lifecycle-manager` failure paths so failures surface as activity entries for downstream consumers (#1620).
+- 40aeb78: Add optional per-project `env` block to `ProjectConfig` that forwards string-to-string env vars into worker session runtimes (e.g. pin `GH_TOKEN` per project). AO-internal vars (`AO_SESSION`, `AO_PROJECT_ID`, etc.) always take precedence.
+
+### Patch Changes
+
+- Disable the tmux status bar in the runtime-tmux plugin and clean up dead code in core (#1711).
+- Disable tmux status bar at session creation (#1683). The change touched dead code; the actual user-visible fix landed in #1711.
+
 ## 0.5.0
 
 ### Patch Changes

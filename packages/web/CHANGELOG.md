@@ -1,5 +1,28 @@
 # @aoagents/ao-web
 
+## 0.6.0
+
+### Patch Changes
+
+- Drop `=` prefix from `set-option` invocation in `mux-websocket` so tmux accepts the option without erroring out (#1715).
+- Bound the PTY re-attach loop with a grace-period counter reset to prevent runaway reconnect attempts (#1640).
+- Disable xterm scrollback to prevent terminal right-side clipping (#1678).
+- Updated dependencies
+- Updated dependencies [40aeb78]
+- Updated dependencies
+- Updated dependencies
+  - @aoagents/ao-core@0.6.0
+  - @aoagents/ao-plugin-runtime-tmux@0.6.0
+  - @aoagents/ao-plugin-agent-claude-code@0.6.0
+  - @aoagents/ao-plugin-agent-codex@0.6.0
+  - @aoagents/ao-plugin-agent-cursor@0.1.4
+  - @aoagents/ao-plugin-agent-kimicode@0.1.3
+  - @aoagents/ao-plugin-agent-opencode@0.6.0
+  - @aoagents/ao-plugin-scm-github@0.6.0
+  - @aoagents/ao-plugin-tracker-github@0.6.0
+  - @aoagents/ao-plugin-tracker-linear@0.6.0
+  - @aoagents/ao-plugin-workspace-worktree@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes

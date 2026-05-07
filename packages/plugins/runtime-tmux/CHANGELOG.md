@@ -1,5 +1,16 @@
 # @aoagents/ao-plugin-runtime-tmux
 
+## 0.6.0
+
+### Patch Changes
+
+- Disable the tmux status bar in the runtime-tmux plugin and clean up dead code in core (#1711).
+- Updated dependencies
+- Updated dependencies [40aeb78]
+- Updated dependencies
+- Updated dependencies
+  - @aoagents/ao-core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
