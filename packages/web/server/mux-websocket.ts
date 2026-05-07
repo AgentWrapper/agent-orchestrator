@@ -222,7 +222,7 @@ const REATTACH_RESET_GRACE_MS = 5_000;
  * TerminalManager manages PTY processes independently of WebSocket connections.
  * A single manager instance is shared across all mux connections.
  */
-class TerminalManager {
+export class TerminalManager {
   private terminals = new Map<string, ManagedTerminal>();
   private TMUX: string;
 
@@ -274,16 +274,18 @@ class TerminalManager {
       return tmuxSessionId;
     }
 
-    // Enable mouse mode
+    // tmux 3.4 only honours the `=` exact-match prefix for has-session and
+    // attach-session — set-option silently ignores it, so use the bare id here.
     const exactTmuxTarget = `=${tmuxSessionId}`;
 
-    const mouseProc = spawn(this.TMUX, ["set-option", "-t", exactTmuxTarget, "mouse", "on"]);
+    // Enable mouse mode
+    const mouseProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
     mouseProc.on("error", (err) => {
       console.error(`[MuxServer] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
     });
 
     // Hide the status bar
-    const statusProc = spawn(this.TMUX, ["set-option", "-t", exactTmuxTarget, "status", "off"]);
+    const statusProc = spawn(this.TMUX, ["set-option", "-t", tmuxSessionId, "status", "off"]);
     statusProc.on("error", (err) => {
       console.error(`[MuxServer] Failed to hide status bar for ${tmuxSessionId}:`, err.message);
     });
