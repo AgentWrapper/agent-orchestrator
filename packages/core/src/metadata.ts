@@ -35,6 +35,7 @@ import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./u
 import { flattenToStringRecord } from "./utils/metadata-flatten.js";
 import { validateStatus } from "./utils/validation.js";
 import { withFileLockSync } from "./file-lock.js";
+import { parseKeyValueContent } from "./key-value.js";
 
 const JSON_EXTENSION = ".json";
 
@@ -43,14 +44,18 @@ function serializeMetadata(data: Record<string, unknown>): string {
   return JSON.stringify(data, null, 2) + "\n";
 }
 
-/** Parse JSON metadata file content. Returns null on invalid JSON. */
+/** Parse JSON metadata file content, with legacy key=value fallback. */
 function parseMetadataContent(content: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(content);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
   } catch {
-    return null;
+    const trimmed = content.trimStart();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return null;
+
+    const parsed = parseKeyValueContent(content);
+    return Object.keys(parsed).length > 0 ? parsed : null;
   }
 }
 

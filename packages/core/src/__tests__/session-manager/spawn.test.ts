@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
@@ -1708,6 +1708,33 @@ describe("spawn", () => {
       expect(s1.id).toBe("app-orchestrator");
       expect(s2.id).toBe("app-orchestrator");
       expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("ensureOrchestrator reuses canonical orchestrator metadata stored as legacy key=value in a .json file", async () => {
+      const runtimeHandle = makeHandle("app-orchestrator");
+      writeFileSync(
+        join(sessionsDir, "app-orchestrator.json"),
+        [
+          "role=orchestrator",
+          "project=my-app",
+          "status=working",
+          "branch=orchestrator/app-orchestrator",
+          `worktree=${join(tmpDir, "legacy-orchestrator")}`,
+          "tmuxName=app-orchestrator",
+          `runtimeHandle=${JSON.stringify(runtimeHandle)}`,
+        ].join("\n"),
+        "utf-8",
+      );
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.ensureOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      expect(session.metadata["role"]).toBe("orchestrator");
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+      expect(mockRuntime.isAlive).toHaveBeenCalledWith(runtimeHandle);
     });
 
     it("ensureOrchestrator coalesces concurrent creation calls", async () => {
