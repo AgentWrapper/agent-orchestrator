@@ -1020,7 +1020,7 @@ describe("check (single session)", () => {
       metadata: { agent: "mock-agent" },
     });
     session.lifecycle.pr.state = "merged";
-    session.lifecycle.pr.reason = "merge_observed";
+    session.lifecycle.pr.reason = "merged";
     session.lifecycle.pr.number = mergedPR.number;
     session.lifecycle.pr.url = mergedPR.url;
     session.lifecycle.pr.lastObservedAt = new Date().toISOString();
