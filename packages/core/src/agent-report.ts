@@ -26,6 +26,7 @@ import type {
   SessionId,
   SessionStatus,
 } from "./types.js";
+import { recordActivityEvent } from "./activity-events.js";
 import { mutateMetadata, readMetadataRaw } from "./metadata.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus, parseCanonicalLifecycle } from "./lifecycle-state.js";
 import { parsePrFromUrl } from "./utils/pr.js";
@@ -385,6 +386,18 @@ export function applyAgentReport(
 ): ApplyAgentReportResult {
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) {
+    recordActivityEvent({
+      sessionId,
+      source: "api",
+      kind: "api.agent_report.session_not_found",
+      level: "warn",
+      summary: `applyAgentReport: session not found: ${sessionId}`,
+      data: {
+        reportState: input.state,
+        actor: input.actor,
+        source: input.source,
+      },
+    });
     throw new Error(`Session not found: ${sessionId}`);
   }
 
@@ -439,6 +452,7 @@ export function applyAgentReport(
     before = buildAuditSnapshot(current, previousLegacyStatus);
     const validation = validateAgentReportTransition(current, input.state);
     if (!validation.ok) {
+      const rejectionReason = validation.reason ?? "transition rejected";
       appendAgentReportAuditEntry(dataDir, sessionId, {
         timestamp: now,
         actor,
@@ -449,11 +463,27 @@ export function applyAgentReport(
         prUrl: trimmedPrUrl,
         prIsDraft,
         accepted: false,
-        rejectionReason: validation.reason ?? "transition rejected",
+        rejectionReason,
         before,
         after: before,
       });
-      throw new Error(validation.reason ?? "transition rejected");
+      recordActivityEvent({
+        sessionId,
+        source: "api",
+        kind: "api.agent_report.transition_rejected",
+        level: "warn",
+        summary: `applyAgentReport rejected ${input.state} for ${sessionId}: ${rejectionReason}`,
+        data: {
+          reportState: input.state,
+          rejectionReason,
+          actor,
+          reportSource: source,
+          fromState: current.session.state,
+          fromReason: current.session.reason,
+          legacyStatus: previousLegacyStatus,
+        },
+      });
+      throw new Error(rejectionReason);
     }
     const mapped = mapAgentReportToLifecycle(input.state);
     previousState = current.session.state;

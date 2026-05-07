@@ -21,7 +21,8 @@ export type ActivityEventSource =
   | "runtime"
   | "agent"
   | "reaction"
-  | "report-watcher";
+  | "report-watcher"
+  | "recovery";
 
 export type ActivityEventKind =
   | "session.spawn_started"
@@ -52,7 +53,13 @@ export type ActivityEventKind =
   | "lifecycle.poll_failed"
   | "detecting.escalated"
   // Report watcher
-  | "report_watcher.triggered";
+  | "report_watcher.triggered"
+  // Recovery/forensic instrumentation
+  | "recovery.session_failed"
+  | "recovery.action_failed"
+  | "metadata.corrupt_detected"
+  | "api.agent_report.session_not_found"
+  | "api.agent_report.transition_rejected";
 
 export type ActivityEventLevel = "debug" | "info" | "warn" | "error";
 
