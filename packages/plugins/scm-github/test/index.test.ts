@@ -465,6 +465,67 @@ describe("scm-github plugin", () => {
       expect(result?.isDraft).toBe(true);
     });
 
+    it("returns null when session.branch === project.defaultBranch", async () => {
+      const result = await scm.detectPR(
+        makeSession({ branch: "main" }),
+        { ...project, defaultBranch: "main" },
+      );
+      expect(result).toBeNull();
+      // Must short-circuit before any gh call — fork PRs on `--head main`
+      // would otherwise be incorrectly auto-associated.
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
+    it("filters out fork-owned PRs (different headRepositoryOwner)", async () => {
+      mockGh([
+        {
+          number: 643,
+          url: "https://github.com/acme/repo/pull/643",
+          title: "Fork PR by other contributor",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+          headRepositoryOwner: { login: "MayurVirkar" },
+        },
+        {
+          number: 415,
+          url: "https://github.com/acme/repo/pull/415",
+          title: "Another fork PR",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+          headRepositoryOwner: { login: "zvictor" },
+        },
+      ]);
+      const result = await scm.detectPR(makeSession(), project);
+      expect(result).toBeNull();
+    });
+
+    it("picks the same-repo PR when fork and same-repo PRs both match", async () => {
+      mockGh([
+        {
+          number: 643,
+          url: "https://github.com/acme/repo/pull/643",
+          title: "Fork PR",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+          headRepositoryOwner: { login: "fork-owner" },
+        },
+        {
+          number: 42,
+          url: "https://github.com/acme/repo/pull/42",
+          title: "Same-repo PR",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+          headRepositoryOwner: { login: "acme" },
+        },
+      ]);
+      const result = await scm.detectPR(makeSession(), project);
+      expect(result?.number).toBe(42);
+    });
+
     it("resolves PR by reference", async () => {
       mockGh({
         number: 42,

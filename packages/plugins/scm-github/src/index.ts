@@ -607,6 +607,12 @@ function createGitHubSCM(): SCM {
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
       if (!session.branch || !project.repo) return null;
+      // Refuse to associate a session with the project's default branch.
+      // `gh pr list --head <branch>` matches PRs across all forks, so when
+      // session.branch === defaultBranch (typically "main") we'd match
+      // unrelated contributors' fork PRs. A worker session should never
+      // legitimately have its head ref be the default branch.
+      if (project.defaultBranch && session.branch === project.defaultBranch) return null;
       parseProjectRepo(project.repo);
       const [owner, repoName] = project.repo.split("/");
       // Positive-only cache: never cache [] (null). A just-created PR must
@@ -624,9 +630,13 @@ function createGitHubSCM(): SCM {
           "--head",
           session.branch,
           "--json",
-          "number,url,title,headRefName,baseRefName,isDraft",
+          "number,url,title,headRefName,baseRefName,isDraft,headRepositoryOwner",
+          // Pull more rows than we need so we can filter out fork-owned PRs
+          // before picking one. `--head` matches by branch name only and
+          // returns PRs from forks where the contributor's branch happens to
+          // share the name (very common when the branch is "main").
           "--limit",
-          "1",
+          "10",
         ]);
 
         const prs: Array<{
@@ -636,11 +646,19 @@ function createGitHubSCM(): SCM {
           headRefName: string;
           baseRefName: string;
           isDraft: boolean;
+          headRepositoryOwner?: { login?: string } | null;
         }> = JSON.parse(raw);
 
-        if (prs.length === 0) return null;
+        // Only same-repo PRs auto-associate. Fork PRs (different head owner)
+        // are someone else's work — never the session's.
+        const sameRepoPrs = prs.filter((pr) => {
+          const headOwner = pr.headRepositoryOwner?.login;
+          return !headOwner || headOwner === owner;
+        });
 
-        const info = prInfoFromView(prs[0], project.repo);
+        if (sameRepoPrs.length === 0) return null;
+
+        const info = prInfoFromView(sameRepoPrs[0], project.repo);
         writePRCache(cacheK, info, PR_CACHE_TTL_MS.detectPR);
         return info;
       } catch {
