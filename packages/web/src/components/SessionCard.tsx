@@ -9,6 +9,7 @@ import {
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   CI_STATUS,
+  type SessionStatus,
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
@@ -22,6 +23,259 @@ interface SessionCardProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+}
+
+function getStatusBadgeInfo(status: SessionStatus): {
+  label: string;
+  colorClass: string;
+  bgColorClass: string;
+  icon: React.ReactNode;
+} {
+  const iconProps = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    viewBox: "0 0 24 24",
+    className: "h-3 w-3",
+  };
+
+  const iconPropsSmall = { ...iconProps, className: "h-2.5 w-2.5" };
+
+  switch (status) {
+    case "spawning":
+      return {
+        label: "spawning",
+        colorClass: "text-[var(--color-accent)]",
+        bgColorClass: "bg-[var(--color-tint-blue)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+        ),
+      };
+
+    case "working":
+      return {
+        label: "working",
+        colorClass: "text-[var(--color-status-working)]",
+        bgColorClass: "bg-[var(--color-tint-green)]",
+        icon: (
+          <svg {...iconProps}>
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+        ),
+      };
+
+    case "pr_open":
+      return {
+        label: "pr open",
+        colorClass: "text-[var(--color-accent)]",
+        bgColorClass: "bg-[var(--color-tint-blue)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4" />
+            <path d="M9 18c-4.51 2-5-2-7-2" />
+          </svg>
+        ),
+      };
+
+    case "ci_failed":
+      return {
+        label: "ci failed",
+        colorClass: "text-[var(--color-status-error)]",
+        bgColorClass: "bg-[var(--color-tint-red)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        ),
+      };
+
+    case "review_pending":
+      return {
+        label: "review pending",
+        colorClass: "text-[var(--color-status-respond)]",
+        bgColorClass: "bg-[var(--color-tint-yellow)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+        ),
+      };
+
+    case "changes_requested":
+      return {
+        label: "changes requested",
+        colorClass: "text-[var(--color-status-error)]",
+        bgColorClass: "bg-[var(--color-tint-red)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18Z" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+        ),
+      };
+
+    case "approved":
+      return {
+        label: "approved",
+        colorClass: "text-[var(--color-status-working)]",
+        bgColorClass: "bg-[var(--color-tint-green)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9 12l2 2 4-4" />
+          </svg>
+        ),
+      };
+
+    case "mergeable":
+      return {
+        label: "mergeable",
+        colorClass: "text-[var(--color-status-working)]",
+        bgColorClass: "bg-[var(--color-tint-green)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="18" cy="18" r="2" />
+            <circle cx="18" cy="6" r="2" />
+            <path d="M8 6h5a3 3 0 0 1 3 3v7" />
+            <path d="M8 6h5a3 3 0 0 0 3-3V8" />
+          </svg>
+        ),
+      };
+
+    case "merged":
+      return {
+        label: "merged",
+        colorClass: "text-[var(--color-status-working)]",
+        bgColorClass: "bg-[var(--color-tint-green)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        ),
+      };
+
+    case "cleanup":
+      return {
+        label: "cleanup",
+        colorClass: "text-[var(--color-text-muted)]",
+        bgColorClass: "bg-[var(--color-tint-neutral)]",
+        icon: (
+          <svg {...iconProps}>
+            <polyline points="3 6 5 4 21 4 23 6" />
+            <line x1="19" y1="6" x2="5" y2="6" />
+            <polyline points="10 11 10 17" />
+            <polyline points="14 11 14 17" />
+            <path d="M4.5 6L6 19c0 .55.45 1 1 1h10c.55 0 1-.45 1-1L19.5 6" />
+          </svg>
+        ),
+      };
+
+    case "done":
+      return {
+        label: "done",
+        colorClass: "text-[var(--color-text-muted)]",
+        bgColorClass: "bg-[var(--color-tint-neutral)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9 12h6" />
+          </svg>
+        ),
+      };
+
+    case "idle":
+      return {
+        label: "idle",
+        colorClass: "text-[var(--color-text-muted)]",
+        bgColorClass: "bg-[var(--color-tint-neutral)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M9 12h6" />
+          </svg>
+        ),
+      };
+
+    case "needs_input":
+      return {
+        label: "needs input",
+        colorClass: "text-[var(--color-status-respond)]",
+        bgColorClass: "bg-[var(--color-tint-yellow)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+        ),
+      };
+
+    case "stuck":
+      return {
+        label: "stuck",
+        colorClass: "text-[var(--color-status-error)]",
+        bgColorClass: "bg-[var(--color-tint-red)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        ),
+      };
+
+    case "errored":
+      return {
+        label: "errored",
+        colorClass: "text-[var(--color-status-error)]",
+        bgColorClass: "bg-[var(--color-tint-red)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+        ),
+      };
+
+    case "killed":
+      return {
+        label: "killed",
+        colorClass: "text-[var(--color-status-error)]",
+        bgColorClass: "bg-[var(--color-tint-red)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        ),
+      };
+
+    case "terminated":
+      return {
+        label: "terminated",
+        colorClass: "text-[var(--color-text-muted)]",
+        bgColorClass: "bg-[var(--color-tint-neutral)]",
+        icon: (
+          <svg {...iconProps}>
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        ),
+      };
+
+    default:
+      return {
+        label: status,
+        colorClass: "text-[var(--color-text-muted)]",
+        bgColorClass: "bg-[var(--color-tint-neutral)]",
+        icon: (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+        ),
+      };
+  }
 }
 
 /**
@@ -90,6 +344,22 @@ function getDoneStatusInfo(session: DashboardSession): {
       </svg>
     ),
   };
+}
+
+function StatusBadge({ status }: { status: SessionStatus }) {
+  const badgeInfo = getStatusBadgeInfo(status);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] text-[10px] font-medium whitespace-nowrap",
+        badgeInfo.colorClass,
+        badgeInfo.bgColorClass,
+      )}
+    >
+      {badgeInfo.icon}
+      <span>{badgeInfo.label}</span>
+    </span>
+  );
 }
 
 function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
@@ -196,7 +466,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           setExpanded(!expanded);
         }}
       >
-        {/* Row 1: Status pill + session id + restore */}
+        {/* Row 1: Status pill + session id + status badge + restore */}
         <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
           <span className={cn("done-status-pill", statusInfo.pillClass)}>
             {statusInfo.icon}
@@ -206,6 +476,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             {session.id}
           </span>
           <div className="flex-1" />
+          <StatusBadge status={session.status} />
           {isRestorable && (
             <button
               onClick={(e) => {
@@ -407,13 +678,14 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
       )}
       style={dynamicCardStyle}
     >
-      {/* Header row: dot + session ID + terminal link */}
+      {/* Header row: dot + session ID + status badge + terminal link */}
       <div className="session-card__header flex items-center gap-2 px-4 pt-4 pb-2">
         {isReadyToMerge ? <ActivityDot activity="ready" /> : <ActivityDot activity={session.activity} />}
         <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
           {session.id}
         </span>
         <div className="flex-1" />
+        <StatusBadge status={session.status} />
         {isRestorable && (
           <button
             onClick={(e) => {
