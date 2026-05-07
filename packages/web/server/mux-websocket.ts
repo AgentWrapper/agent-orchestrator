@@ -201,8 +201,10 @@ const MAX_REATTACH_ATTEMPTS = 3;
 /**
  * TerminalManager manages PTY processes independently of WebSocket connections.
  * A single manager instance is shared across all mux connections.
+ *
+ * Exported for unit testing. Not part of the public package API.
  */
-class TerminalManager {
+export class TerminalManager {
   private terminals = new Map<string, ManagedTerminal>();
   private TMUX: string;
 
@@ -496,22 +498,32 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
               };
               ws.send(JSON.stringify(openedMsg));
 
-              // Subscribe and send history buffer only for new subscribers.
-              // Skipping the buffer on re-open prevents duplicate output when
-              // MuxProvider re-sends open for all terminals on reconnect.
+              // Always send buffered history on open. Covers fresh connects,
+              // MuxProvider reconnect (new WS = fresh subscriptions Map), and
+              // same-connection re-open (close→open). Re-sending the buffer to
+              // an already-subscribed client is safe: tmux's full-screen redraw
+              // sequences are idempotent, so xterm just re-renders the same
+              // pane content. Previously this was wrapped in the
+              // `!subscriptions.has(subscriptionKey)` guard, which silently
+              // skipped replay when a same-connection double-open occurred
+              // (e.g. React strict-mode double-mount), leaving the terminal
+              // blank — see issue #1689.
+              const buffer = terminalManager.getBuffer(id, projectId);
+              if (buffer) {
+                const bufferMsg: ServerMessage = {
+                  ch: "terminal",
+                  id,
+                  type: "data",
+                  data: buffer,
+                  ...(projectId && { projectId }),
+                };
+                ws.send(JSON.stringify(bufferMsg));
+              }
+
+              // Subscribe at most once per connection per terminal — a
+              // duplicate subscription would double-deliver every live data
+              // event from the shared PTY.
               if (!subscriptions.has(subscriptionKey)) {
-                // Send buffered history to catch up the new subscriber
-                const buffer = terminalManager.getBuffer(id, projectId);
-                if (buffer) {
-                  const bufferMsg: ServerMessage = {
-                    ch: "terminal",
-                    id,
-                    type: "data",
-                    data: buffer,
-                    ...(projectId && { projectId }),
-                  };
-                  ws.send(JSON.stringify(bufferMsg));
-                }
                 const unsub = terminalManager.subscribe(
                   id,
                   projectId,
