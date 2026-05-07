@@ -73,7 +73,8 @@ import {
   getProjectSessionsDir,
   getProjectWorktreesDir,
   getProjectDir,
-  generateSessionName,
+  generateTmuxName,
+  generateOrchestratorTmuxName,
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
@@ -824,7 +825,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
       const tmuxName = project.path
-        ? generateSessionName(project.sessionPrefix, num)
+        ? generateTmuxName(project.path, project.sessionPrefix, num)
         : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
@@ -853,7 +854,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     return {
       sessionId,
-      tmuxName: config.configPath ? sessionId : undefined,
+      tmuxName:
+        config.configPath && project.path
+          ? generateOrchestratorTmuxName(project.path, project.sessionPrefix)
+          : undefined,
     };
   }
 

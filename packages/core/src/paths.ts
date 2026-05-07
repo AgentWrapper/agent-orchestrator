@@ -212,31 +212,50 @@ export function generateSessionName(prefix: string, num: number): string {
 }
 
 /**
- * @deprecated Session prefixes are globally unique — hash prefix is no longer needed.
- * Use generateSessionName(prefix, num) instead (same output as the new tmux name).
+ * Generate a tmux session name discriminated by a hash of the project path.
  *
- * Generate tmux session name (legacy format with hash).
- * Format: {storageKey}-{prefix}-{num}
- * Example: "a3b4c5d6e7f8-int-1"
+ * tmux session names are global per user, but `sessionPrefix` is only unique
+ * within a single AO config. Two checkouts on the same machine that share a
+ * `sessionPrefix` (e.g. two clones of the same repo) would otherwise collide
+ * when both try to call `tmux new-session -d -s {prefix}-{num}`. The
+ * `sessionId` and persisted metadata stay bare ({prefix}-{num}); only the
+ * tmux name carries the discriminator.
+ *
+ * Format: {6-hex-hash}-{prefix}-{num}
+ * Example: "c13a01-int-1"
  */
-export function generateTmuxName(
-  storageKey: string | undefined,
-  prefix: string,
-  num: number,
-): string {
-  return `${requireStorageKey(storageKey)}-${prefix}-${num}`;
+export function generateTmuxName(projectPath: string, prefix: string, num: number): string {
+  return `${hashProjectPath(projectPath)}-${prefix}-${num}`;
 }
 
 /**
- * @deprecated Use parseTmuxNameV2 instead.
- * Parse a legacy tmux session name (with hash prefix).
+ * Same as {@link generateTmuxName} for the orchestrator session, whose
+ * sessionId has the fixed `{prefix}-orchestrator` form.
+ */
+export function generateOrchestratorTmuxName(projectPath: string, prefix: string): string {
+  return `${hashProjectPath(projectPath)}-${prefix}-orchestrator`;
+}
+
+function hashProjectPath(projectPath: string): string {
+  let resolved: string;
+  try {
+    resolved = realpathSync(projectPath);
+  } catch {
+    resolved = resolve(projectPath);
+  }
+  return createHash("sha256").update(resolved).digest("hex").slice(0, 6);
+}
+
+/**
+ * Parse a tmux session name produced by {@link generateTmuxName}.
+ * Format: {6-hex-hash}-{prefix}-{num}
  */
 export function parseTmuxName(tmuxName: string): {
   hash: string;
   prefix: string;
   num: number;
 } | null {
-  const match = tmuxName.match(/^([a-f0-9]{12})-([a-zA-Z0-9_-]+)-(\d+)$/);
+  const match = tmuxName.match(/^([a-f0-9]{6})-([a-zA-Z0-9_-]+)-(\d+)$/);
   if (!match) return null;
 
   return {

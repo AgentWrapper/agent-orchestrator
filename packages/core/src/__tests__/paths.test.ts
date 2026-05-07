@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   generateProjectId,
   generateSessionName,
+  generateOrchestratorTmuxName,
   generateSessionPrefix,
   generateTmuxName,
   getArchiveDir,
@@ -39,19 +40,38 @@ describe("paths", () => {
     expect(generateSessionName("ao", 7)).toBe("ao-7");
   });
 
-  it("uses the storage key as the tmux hash segment", () => {
-    const tmuxName = generateTmuxName(storageKey, "ao", 3);
-    expect(tmuxName).toBe("aaaaaaaaaaaa-ao-3");
+  it("derives a stable 6-hex hash from the project path for tmux names", () => {
+    const tmuxName = generateTmuxName("/tmp/repo-a", "ao", 3);
+    expect(tmuxName).toMatch(/^[a-f0-9]{6}-ao-3$/);
+    // Same path → same hash (stable across calls)
+    expect(generateTmuxName("/tmp/repo-a", "ao", 3)).toBe(tmuxName);
     expect(parseTmuxName(tmuxName)).toEqual({
-      hash: storageKey,
+      hash: tmuxName.slice(0, 6),
       prefix: "ao",
       num: 3,
     });
   });
 
-  it("keeps parseTmuxName strict about the 12-hex storage key", () => {
+  it("produces different tmux names for two checkouts sharing a sessionPrefix", () => {
+    // Regression test for #1705: two checkouts with the same sessionPrefix
+    // must not collide on tmux session names (tmux names are global per user).
+    const a = generateTmuxName("/tmp/repo-a", "int", 1);
+    const b = generateTmuxName("/tmp/repo-b", "int", 1);
+    expect(a).not.toBe(b);
+  });
+
+  it("disambiguates orchestrator tmux names by project path", () => {
+    const a = generateOrchestratorTmuxName("/tmp/repo-a", "int");
+    const b = generateOrchestratorTmuxName("/tmp/repo-b", "int");
+    expect(a).toMatch(/^[a-f0-9]{6}-int-orchestrator$/);
+    expect(b).toMatch(/^[a-f0-9]{6}-int-orchestrator$/);
+    expect(a).not.toBe(b);
+  });
+
+  it("keeps parseTmuxName strict about the 6-hex hash prefix", () => {
     expect(parseTmuxName("not-a-key-ao-1")).toBeNull();
     expect(parseTmuxName("abc-ao-1")).toBeNull();
+    expect(parseTmuxName("aaaaaaaaaaaa-ao-1")).toBeNull(); // legacy 12-hex no longer matches
   });
 });
 
