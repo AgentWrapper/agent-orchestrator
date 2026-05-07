@@ -1440,7 +1440,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             // Use exponential backoff: 3s, 6s, 9s between attempts
             reportProgress(
               spawnConfig.onProgress,
-              `Delivering prompt (attempt ${attempt}/${maxRetries})`,
+              `Waiting to deliver prompt (attempt ${attempt}/${maxRetries})`,
             );
             await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
             await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);

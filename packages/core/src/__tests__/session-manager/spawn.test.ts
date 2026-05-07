@@ -1288,9 +1288,10 @@ describe("spawn", () => {
     await vi.advanceTimersByTimeAsync(18_000);
     await spawnPromise;
 
-    expect(onProgress).toHaveBeenCalledWith("Delivering prompt (attempt 1/3)");
-    expect(onProgress).toHaveBeenCalledWith("Delivering prompt (attempt 2/3)");
-    expect(onProgress).toHaveBeenCalledWith("Delivering prompt (attempt 3/3)");
+    expect(onProgress).toHaveBeenCalledTimes(3);
+    expect(onProgress).toHaveBeenNthCalledWith(1, "Waiting to deliver prompt (attempt 1/3)");
+    expect(onProgress).toHaveBeenNthCalledWith(2, "Waiting to deliver prompt (attempt 2/3)");
+    expect(onProgress).toHaveBeenNthCalledWith(3, "Waiting to deliver prompt (attempt 3/3)");
     vi.useRealTimers();
   }, 30_000);
 
