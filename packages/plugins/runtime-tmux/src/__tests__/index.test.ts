@@ -238,12 +238,39 @@ describe("runtime.create()", () => {
         launchCommand: "bad-command",
         environment: {},
       }),
-    ).rejects.toThrow('Failed to send launch command to session "fail-session"');
+    ).rejects.toThrow('Failed to configure or launch session "fail-session"');
 
     // Verify kill-session was called for cleanup
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
       ["kill-session", "-t", "fail-session"],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("cleans up session if set-option fails", async () => {
+    const runtime = create();
+
+    // 1: new-session succeeds
+    mockTmuxSuccess();
+    // 2: set-option fails (e.g. tmux command timeout on a slow host)
+    mockTmuxError("set-option timed out");
+    // 3: kill-session (cleanup attempt)
+    mockTmuxSuccess();
+
+    await expect(
+      runtime.create({
+        sessionId: "setopt-fail",
+        workspacePath: "/tmp/ws",
+        launchCommand: "echo hi",
+        environment: {},
+      }),
+    ).rejects.toThrow('Failed to configure or launch session "setopt-fail"');
+
+    // kill-session must run so we don't leave an orphaned tmux session
+    expect(mockExecFileCustom).toHaveBeenCalledWith(
+      "tmux",
+      ["kill-session", "-t", "setopt-fail"],
       expectedTmuxOptions,
     );
   });

@@ -66,11 +66,6 @@ export function create(): Runtime {
       // Create tmux session in detached mode
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
 
-      // Hide the tmux status bar — sessions are embedded in the web terminal,
-      // and the green bar at the bottom is visual noise (and racy with the
-      // web layer's own set-option call, which only fires on WebSocket connect).
-      await tmux("set-option", "-t", sessionName, "status", "off");
-
       // Re-export PATH inside the launch script. macOS zsh runs path_helper
       // during shell startup which resets PATH, wiping entries set via tmux -e.
       // Including the export in the script file (not send-keys) avoids terminal
@@ -83,10 +78,16 @@ export function create(): Runtime {
         launchCommand = `export PATH=$(printf '%s' ${JSON.stringify(pathValue)})\n${launchCommand}`;
       }
 
-      // Send the launch command — clean up the session if this fails.
-      // Use a temp script for long commands so the pane shows a short
+      // Configure the session and send the launch command — kill the session
+      // if any of these fail so we don't leave an orphaned tmux process.
+      // Use a temp script for long launch commands so the pane shows a short
       // invocation instead of a pasted wall of shell.
       try {
+        // Hide the tmux status bar — sessions are embedded in the web terminal,
+        // and the green bar at the bottom is visual noise (and racy with the
+        // web layer's own set-option call, which only fires on WebSocket connect).
+        await tmux("set-option", "-t", sessionName, "status", "off");
+
         if (launchCommand.length > 200) {
           const invocation = writeLaunchScript(launchCommand);
           await tmux("send-keys", "-t", sessionName, "-l", invocation);
@@ -102,7 +103,7 @@ export function create(): Runtime {
           // Best-effort cleanup
         }
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to send launch command to session "${sessionName}": ${msg}`, {
+        throw new Error(`Failed to configure or launch session "${sessionName}": ${msg}`, {
           cause: err,
         });
       }
