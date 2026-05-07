@@ -221,8 +221,8 @@ export function generateSessionName(prefix: string, num: number): string {
  * `sessionId` and persisted metadata stay bare ({prefix}-{num}); only the
  * tmux name carries the discriminator.
  *
- * Format: {6-hex-hash}-{prefix}-{num}
- * Example: "c13a01-int-1"
+ * Format: {8-hex-hash}-{prefix}-{num}
+ * Example: "c13a01d4-int-1"
  */
 export function generateTmuxName(projectPath: string, prefix: string, num: number): string {
   return `${hashProjectPath(projectPath)}-${prefix}-${num}`;
@@ -243,19 +243,23 @@ function hashProjectPath(projectPath: string): string {
   } catch {
     resolved = resolve(projectPath);
   }
-  return createHash("sha256").update(resolved).digest("hex").slice(0, 6);
+  return createHash("sha256").update(resolved).digest("hex").slice(0, 8);
 }
 
 /**
- * Parse a tmux session name produced by {@link generateTmuxName}.
- * Format: {6-hex-hash}-{prefix}-{num}
+ * Parse a tmux session name produced by {@link generateTmuxName} (current
+ * 8-hex form) or by the pre-v0.4.0 `{storageKey}-{prefix}-{num}` form
+ * (12-hex). Both widths are accepted so external consumers that persisted
+ * names under the old format keep parsing.
+ *
+ * Format: {8-hex-hash | 12-hex-hash}-{prefix}-{num}
  */
 export function parseTmuxName(tmuxName: string): {
   hash: string;
   prefix: string;
   num: number;
 } | null {
-  const match = tmuxName.match(/^([a-f0-9]{6})-([a-zA-Z0-9_-]+)-(\d+)$/);
+  const match = tmuxName.match(/^([a-f0-9]{8}|[a-f0-9]{12})-([a-zA-Z0-9_-]+)-(\d+)$/);
   if (!match) return null;
 
   return {

@@ -40,13 +40,13 @@ describe("paths", () => {
     expect(generateSessionName("ao", 7)).toBe("ao-7");
   });
 
-  it("derives a stable 6-hex hash from the project path for tmux names", () => {
+  it("derives a stable 8-hex hash from the project path for tmux names", () => {
     const tmuxName = generateTmuxName("/tmp/repo-a", "ao", 3);
-    expect(tmuxName).toMatch(/^[a-f0-9]{6}-ao-3$/);
+    expect(tmuxName).toMatch(/^[a-f0-9]{8}-ao-3$/);
     // Same path → same hash (stable across calls)
     expect(generateTmuxName("/tmp/repo-a", "ao", 3)).toBe(tmuxName);
     expect(parseTmuxName(tmuxName)).toEqual({
-      hash: tmuxName.slice(0, 6),
+      hash: tmuxName.slice(0, 8),
       prefix: "ao",
       num: 3,
     });
@@ -63,15 +63,31 @@ describe("paths", () => {
   it("disambiguates orchestrator tmux names by project path", () => {
     const a = generateOrchestratorTmuxName("/tmp/repo-a", "int");
     const b = generateOrchestratorTmuxName("/tmp/repo-b", "int");
-    expect(a).toMatch(/^[a-f0-9]{6}-int-orchestrator$/);
-    expect(b).toMatch(/^[a-f0-9]{6}-int-orchestrator$/);
+    expect(a).toMatch(/^[a-f0-9]{8}-int-orchestrator$/);
+    expect(b).toMatch(/^[a-f0-9]{8}-int-orchestrator$/);
     expect(a).not.toBe(b);
   });
 
-  it("keeps parseTmuxName strict about the 6-hex hash prefix", () => {
+  it("parseTmuxName accepts both current 8-hex and legacy 12-hex forms", () => {
+    expect(parseTmuxName("c13a01d4-ao-1")).toEqual({
+      hash: "c13a01d4",
+      prefix: "ao",
+      num: 1,
+    });
+    // Legacy pre-v0.4.0 storageKey-prefixed names still parse (back-compat
+    // for external consumers that persisted the old form).
+    expect(parseTmuxName("aaaaaaaaaaaa-ao-1")).toEqual({
+      hash: "aaaaaaaaaaaa",
+      prefix: "ao",
+      num: 1,
+    });
+  });
+
+  it("parseTmuxName rejects non-hex or wrong-width hash segments", () => {
     expect(parseTmuxName("not-a-key-ao-1")).toBeNull();
     expect(parseTmuxName("abc-ao-1")).toBeNull();
-    expect(parseTmuxName("aaaaaaaaaaaa-ao-1")).toBeNull(); // legacy 12-hex no longer matches
+    expect(parseTmuxName("c13a01-ao-1")).toBeNull(); // 6-hex no longer matches
+    expect(parseTmuxName("c13a01d4ff-ao-1")).toBeNull(); // 10-hex doesn't match either
   });
 });
 
