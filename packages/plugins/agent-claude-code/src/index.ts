@@ -694,9 +694,6 @@ function createClaudeCodeAgent(): Agent {
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       } else if (permissionMode === "auto") {
-        // Claude Code's classifier-driven auto mode — decides per-tool whether
-        // to prompt. Avoids the bypass-mode confirmation that blocks
-        // non-interactive workers while still being safer than a full bypass.
         parts.push("--permission-mode", "auto");
       }
 
@@ -867,7 +864,6 @@ function createClaudeCodeAgent(): Agent {
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       } else if (permissionMode === "auto") {
-        // Mirror getLaunchCommand so resumed sessions match fresh launches.
         parts.push("--permission-mode", "auto");
       }
 
