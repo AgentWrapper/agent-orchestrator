@@ -239,6 +239,12 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--dangerously-skip-permissions");
   });
 
+  it("maps permissions=auto to --permission-mode auto on Claude", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto" }));
+    expect(cmd).toContain("--permission-mode auto");
+    expect(cmd).not.toContain("--dangerously-skip-permissions");
+  });
+
   it("shell-escapes model argument", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "claude-opus-4-6" }));
     expect(cmd).toContain("--model 'claude-opus-4-6'");
@@ -636,6 +642,25 @@ describe("getSessionInfo", () => {
 
       expect(command).toBe("claude --resume 'persisted-uuid'");
       expect(mockReaddir).not.toHaveBeenCalled();
+    });
+
+    it("propagates --permission-mode auto on restore when project is configured for auto", async () => {
+      const agent = create();
+      const session = makeSession({
+        workspacePath: "/workspace/test-project",
+        metadata: { claudeSessionUuid: "persisted-uuid" },
+      });
+
+      const command = await agent.getRestoreCommand!(session, {
+        name: "test-project",
+        repo: "owner/repo",
+        path: "/workspace/test-project",
+        defaultBranch: "main",
+        sessionPrefix: "test",
+        agentConfig: { permissions: "auto" },
+      });
+
+      expect(command).toBe("claude --resume 'persisted-uuid' --permission-mode auto");
     });
   });
 

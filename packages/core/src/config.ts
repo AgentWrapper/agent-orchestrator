@@ -198,7 +198,7 @@ const NotifierConfigSchema = z
   .superRefine((value, ctx) => validatePluginConfigFields(value, ctx, "Notifier"));
 
 const AgentPermissionSchema = z
-  .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])
+  .enum(["permissionless", "default", "auto-edit", "auto", "suggest", "skip"])
   .default("permissionless")
   .transform((value) => (value === "skip" ? "permissionless" : value));
 
@@ -214,7 +214,10 @@ const AgentSpecificConfigSchema = z
 const RoleAgentSpecificConfigSchema = z
   .object({
     permissions: z
-      .union([z.enum(["permissionless", "default", "auto-edit", "suggest"]), z.literal("skip")])
+      .union([
+        z.enum(["permissionless", "default", "auto-edit", "auto", "suggest"]),
+        z.literal("skip"),
+      ])
       .optional(),
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),

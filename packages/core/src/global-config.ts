@@ -233,7 +233,7 @@ export const LocalProjectConfigSchema = z
     agentConfig: z
       .object({
         permissions: z
-          .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])
+          .enum(["permissionless", "default", "auto-edit", "auto", "suggest", "skip"])
           .optional(),
         model: z.string().optional(),
         orchestratorModel: z.string().optional(),
