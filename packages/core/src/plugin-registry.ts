@@ -51,10 +51,12 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "workspace", name: "clone", pkg: "@aoagents/ao-plugin-workspace-clone" },
   // Trackers
   { slot: "tracker", name: "github", pkg: "@aoagents/ao-plugin-tracker-github" },
+  { slot: "tracker", name: "forgejo", pkg: "@aoagents/ao-plugin-tracker-forgejo" },
   { slot: "tracker", name: "linear", pkg: "@aoagents/ao-plugin-tracker-linear" },
   { slot: "tracker", name: "gitlab", pkg: "@aoagents/ao-plugin-tracker-gitlab" },
   // SCM
   { slot: "scm", name: "github", pkg: "@aoagents/ao-plugin-scm-github" },
+  { slot: "scm", name: "forgejo", pkg: "@aoagents/ao-plugin-scm-forgejo" },
   { slot: "scm", name: "gitlab", pkg: "@aoagents/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@aoagents/ao-plugin-notifier-composio" },

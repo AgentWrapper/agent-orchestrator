@@ -147,21 +147,27 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("aider");
   });
 
-  it("includes --yes when permissions=permissionless", () => {
+  it("includes --yes-always when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
-    expect(cmd).toContain("--yes");
+    expect(cmd).toContain("--yes-always");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--yes");
+    expect(cmd).toContain("--yes-always");
   });
 
   it("maps permissions=auto-edit to no-prompt mode on Aider", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
-    expect(cmd).toContain("--yes");
+    expect(cmd).toContain("--yes-always");
+  });
+
+  it("uses --message with orchestrator systemPromptFile", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/tmp/orchestrator-prompt.md" }));
+    expect(cmd).toContain("--message \"$(cat '/tmp/orchestrator-prompt.md')\"");
+    expect(cmd).not.toContain("--system-prompt");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -178,7 +184,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "sonnet", prompt: "Go" }),
     );
-    expect(cmd).toBe("aider --yes --model 'sonnet' --message 'Go'");
+    expect(cmd).toBe("aider --yes-always --model 'sonnet' --message 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -188,7 +194,7 @@ describe("getLaunchCommand", () => {
 
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--yes");
+    expect(cmd).not.toContain("--yes-always");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("--message");
   });

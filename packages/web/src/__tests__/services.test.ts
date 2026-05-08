@@ -12,7 +12,9 @@ const {
   codexPlugin,
   opencodePlugin,
   worktreePlugin,
+  scmForgejoPlugin,
   scmPlugin,
+  trackerForgejoPlugin,
   trackerGithubPlugin,
   trackerLinearPlugin,
 } = vi.hoisted(() => {
@@ -46,7 +48,9 @@ const {
     codexPlugin: { manifest: { name: "codex" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
+    scmForgejoPlugin: { manifest: { name: "forgejo" } },
     scmPlugin: { manifest: { name: "github" } },
+    trackerForgejoPlugin: { manifest: { name: "forgejo" } },
     trackerGithubPlugin: { manifest: { name: "github" } },
     trackerLinearPlugin: { manifest: { name: "linear" } },
   };
@@ -72,7 +76,9 @@ vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin 
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
+vi.mock("@aoagents/ao-plugin-scm-forgejo", () => ({ default: scmForgejoPlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
+vi.mock("@aoagents/ao-plugin-tracker-forgejo", () => ({ default: trackerForgejoPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: trackerLinearPlugin }));
 

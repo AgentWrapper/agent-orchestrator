@@ -32,29 +32,70 @@ import {
 } from "./global-config.js";
 import { loadEffectiveProjectConfig } from "./project-resolver.js";
 
+function hostLabels(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const host = value.trim().toLowerCase().replace(/:\d+$/, "");
+  if (!host) return [];
+  return host.split(".");
+}
+
+function isGitLabHost(value: unknown): boolean {
+  const labels = hostLabels(value);
+  return labels.includes("gitlab");
+}
+
+function isForgejoLikeHost(value: unknown): boolean {
+  const labels = hostLabels(value);
+  return labels.includes("forgejo") || labels.includes("gitea");
+}
+
 function inferScmPlugin(project: {
   repo?: string;
   scm?: Record<string, unknown>;
   tracker?: Record<string, unknown>;
-}): "github" | "gitlab" {
+}): "github" | "gitlab" | "forgejo" {
+  if (project.scm?.["plugin"] === "github") {
+    return "github";
+  }
+
+  if (project.scm?.["plugin"] === "forgejo") {
+    return "forgejo";
+  }
+
   const scmPlugin = project.scm?.["plugin"];
   if (scmPlugin === "gitlab") {
     return "gitlab";
   }
 
   const scmHost = project.scm?.["host"];
-  if (typeof scmHost === "string" && scmHost.toLowerCase().includes("gitlab")) {
+  if (isGitLabHost(scmHost)) {
     return "gitlab";
   }
 
+  if (isForgejoLikeHost(scmHost)) {
+    return "forgejo";
+  }
+
   const trackerPlugin = project.tracker?.["plugin"];
+  if (trackerPlugin === "github") {
+    return "github";
+  }
+
+  if (trackerPlugin === "forgejo") {
+    return "forgejo";
+  }
+
   if (trackerPlugin === "gitlab") {
     return "gitlab";
   }
 
   const trackerHost = project.tracker?.["host"];
-  if (typeof trackerHost === "string" && trackerHost.toLowerCase().includes("gitlab")) {
+  if (isGitLabHost(trackerHost)) {
     return "gitlab";
+  }
+
+  if (isForgejoLikeHost(trackerHost)) {
+    return "forgejo";
   }
 
   return "github";
@@ -589,15 +630,29 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     }
 
     const inferredPlugin = inferScmPlugin(project);
+    const scmHost =
+      project.scm && typeof project.scm.host === "string" && project.scm.host.length > 0
+        ? project.scm.host
+        : undefined;
+    const trackerHost =
+      project.tracker && typeof project.tracker.host === "string" && project.tracker.host.length > 0
+        ? project.tracker.host
+        : undefined;
 
     // Infer SCM from repo if not set
     if (!project.scm && project.repo?.includes("/")) {
-      project.scm = { plugin: inferredPlugin };
+      project.scm =
+        inferredPlugin === "forgejo" && trackerHost
+          ? { plugin: "forgejo", host: trackerHost }
+          : { plugin: inferredPlugin };
     }
 
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker && project.repo?.includes("/")) {
-      project.tracker = { plugin: inferredPlugin };
+      project.tracker =
+        inferredPlugin === "forgejo" && scmHost
+          ? { plugin: "forgejo", host: scmHost }
+          : { plugin: inferredPlugin };
     }
   }
 

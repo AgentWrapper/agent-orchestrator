@@ -6,6 +6,7 @@ import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
 import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
 import githubSCMPlugin from "@aoagents/ao-plugin-scm-github";
+import forgejoSCMPlugin from "@aoagents/ao-plugin-scm-forgejo";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -16,8 +17,9 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   opencode: opencodePlugin,
 };
 
-const scmPlugins: Record<string, { create(): SCM }> = {
+const scmPlugins: Record<string, { create(config?: Record<string, unknown>): SCM }> = {
   github: githubSCMPlugin,
+  forgejo: forgejoSCMPlugin,
 };
 
 /**
@@ -52,12 +54,13 @@ export function getAgentByNameFromRegistry(registry: PluginRegistry, name: strin
  * Resolve the SCM plugin for a project (or fall back to "github").
  */
 export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
-  const scmName = config.projects[projectId]?.scm?.plugin || "github";
+  const projectScm = config.projects[projectId]?.scm;
+  const scmName = projectScm?.plugin || "github";
   const plugin = scmPlugins[scmName];
   if (!plugin) {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
   }
-  return plugin.create();
+  return plugin.create(projectScm);
 }
 
 /** Resolve the SCM plugin for a project from the shared registry. */

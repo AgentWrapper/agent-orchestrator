@@ -108,7 +108,7 @@ export function isCanonicalGlobalConfigPath(configPath: string | undefined): boo
 const GlobalRepoIdentitySchema = z.object({
   owner: z.string(),
   name: z.string(),
-  platform: z.enum(["github", "gitlab", "bitbucket"]),
+  platform: z.enum(["github", "gitlab", "forgejo", "bitbucket"]),
   originUrl: z.string(),
 });
 

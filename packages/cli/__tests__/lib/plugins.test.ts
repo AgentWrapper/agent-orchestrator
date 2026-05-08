@@ -1,7 +1,22 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const { githubCreateMock, forgejoCreateMock } = vi.hoisted(() => ({
+  githubCreateMock: vi.fn(() => ({ name: "github" })),
+  forgejoCreateMock: vi.fn(() => ({ name: "forgejo" })),
+}));
+
+vi.mock("@aoagents/ao-plugin-scm-github", () => ({
+  default: { create: githubCreateMock },
+}));
+
+vi.mock("@aoagents/ao-plugin-scm-forgejo", () => ({
+  default: { create: forgejoCreateMock },
+}));
+
 import {
   getAgent,
   getAgentByName,
+  getSCM,
   getAgentByNameFromRegistry,
   getSCMFromRegistry,
 } from "../../src/lib/plugins.js";
@@ -9,7 +24,7 @@ import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@aoagents/a
 
 function makeConfig(
   defaultAgent: string,
-  projects?: Record<string, { agent?: string; scm?: { plugin: string } }>,
+  projects?: Record<string, { agent?: string; scm?: ({ plugin: string } & Record<string, unknown>) | Record<string, unknown> }>,
 ): OrchestratorConfig {
   return {
     configPath: "/tmp/agent-orchestrator.yaml",
@@ -44,6 +59,10 @@ function makeRegistry(entries: {
     loadFromConfig: async () => {},
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("getAgent", () => {
   it("returns claude-code agent by default", () => {
@@ -99,6 +118,38 @@ describe("getAgentByName", () => {
 
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  });
+});
+
+describe("getSCM", () => {
+  it("returns github SCM by default", () => {
+    const config = makeConfig("claude-code", { myapp: {} });
+    const scm = getSCM(config, "myapp");
+
+    expect(scm.name).toBe("github");
+    expect(githubCreateMock).toHaveBeenCalledWith(undefined);
+  });
+
+  it("passes project SCM config to forgejo plugin create", () => {
+    const config = makeConfig("claude-code", {
+      myapp: { scm: { plugin: "forgejo", host: "forgejo.acme.internal" } },
+    });
+
+    const scm = getSCM(config, "myapp");
+
+    expect(scm.name).toBe("forgejo");
+    expect(forgejoCreateMock).toHaveBeenCalledWith({
+      plugin: "forgejo",
+      host: "forgejo.acme.internal",
+    });
+  });
+
+  it("throws on unknown SCM plugin", () => {
+    const config = makeConfig("claude-code", {
+      myapp: { scm: { plugin: "unknown" } },
+    });
+
+    expect(() => getSCM(config, "myapp")).toThrow("Unknown SCM plugin: unknown");
   });
 });
 

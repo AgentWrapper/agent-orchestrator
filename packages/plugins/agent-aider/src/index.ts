@@ -99,21 +99,34 @@ function createAiderAgent(): Agent {
 
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--yes");
+        parts.push("--yes-always");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.systemPromptFile) {
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--system-prompt", shellEscape(config.systemPrompt));
-      }
+      const hasSystemPromptFile = Boolean(config.systemPromptFile);
+      const hasSystemPrompt = Boolean(config.systemPrompt);
+      const hasUserPrompt = Boolean(config.prompt);
 
-      if (config.prompt) {
-        parts.push("--message", shellEscape(config.prompt));
+      if (hasSystemPromptFile) {
+        if (hasUserPrompt) {
+          parts.push(
+            "--message",
+            `"$(cat ${shellEscape(config.systemPromptFile!)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt!)})"`,
+          );
+        } else {
+          parts.push("--message", `"$(cat ${shellEscape(config.systemPromptFile!)})"`);
+        }
+      } else if (hasSystemPrompt) {
+        if (hasUserPrompt) {
+          parts.push("--message", shellEscape(`${config.systemPrompt}\n\n${config.prompt}`));
+        } else {
+          parts.push("--message", shellEscape(config.systemPrompt!));
+        }
+      } else if (hasUserPrompt) {
+        parts.push("--message", shellEscape(config.prompt!));
       }
 
       return parts.join(" ");
@@ -127,7 +140,15 @@ function createAiderAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // PATH and GH_PATH are injected by session-manager for all agents.
+      // PATH and GH_PATH are injected by session-manager for all agents,
+      // but not generic env vars — pass through aider's LiteLLM/OpenAI keys explicitly.
+      const passThroughVars = ["OPENAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL"];
+      for (const key of passThroughVars) {
+        const value = process.env[key];
+        if (typeof value === "string" && value.length > 0) {
+          env[key] = value;
+        }
+      }
 
       return env;
     },

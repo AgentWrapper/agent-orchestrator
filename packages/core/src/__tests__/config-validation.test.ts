@@ -672,6 +672,95 @@ describe("Config Defaults", () => {
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab", host: "gitlab.com" });
     expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab" });
   });
+
+  it("infers Forgejo tracker/scm defaults from configured plugin", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "forgejo",
+            host: "git.rankworld.games",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "forgejo", host: "git.rankworld.games" });
+    expect(validated.projects.proj1.tracker).toEqual({
+      plugin: "forgejo",
+      host: "git.rankworld.games",
+    });
+  });
+
+  it("infers Forgejo scm host from tracker host", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "forgejo",
+            host: "forgejo.company.internal",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker).toEqual({
+      plugin: "forgejo",
+      host: "forgejo.company.internal",
+    });
+    expect(validated.projects.proj1.scm).toEqual({
+      plugin: "forgejo",
+      host: "forgejo.company.internal",
+    });
+  });
+
+  it("keeps explicit github plugin even when host contains forgejo", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "github",
+            host: "forgejo.company.internal",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "github", host: "forgejo.company.internal" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
+  });
+
+  it("prefers GitLab when host is a GitLab domain containing forgejo-like subdomain", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "custom",
+            host: "forgejo.gitlab.com",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ host: "forgejo.gitlab.com", plugin: "custom" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab" });
+  });
 });
 
 describe("Config Validation - External Plugin Schema", () => {

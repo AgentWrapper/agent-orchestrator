@@ -51,7 +51,7 @@ export interface ParsedRepoUrl {
 }
 
 /** Detect which SCM platform a host belongs to */
-export type ScmPlatform = "github" | "gitlab" | "bitbucket" | "unknown";
+export type ScmPlatform = "github" | "gitlab" | "forgejo" | "bitbucket" | "unknown";
 
 /**
  * Check if a string looks like a repo URL (HTTP(S) or SSH git URL).
@@ -110,8 +110,10 @@ export function parseRepoUrl(url: string): ParsedRepoUrl {
  */
 export function detectScmPlatform(host: string): ScmPlatform {
   const lower = host.toLowerCase();
+  const labels = lower.split(".");
   if (lower === "github.com" || lower.endsWith(".github.com")) return "github";
   if (lower === "gitlab.com" || lower.endsWith(".gitlab.com")) return "gitlab";
+  if (labels.includes("forgejo") || labels.includes("gitea")) return "forgejo";
   if (
     lower === "bitbucket.org" ||
     lower.endsWith(".bitbucket.org") ||
@@ -259,12 +261,18 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
   // SCM plugin — always set explicitly so applyProjectDefaults doesn't override.
   // For known platforms, use the matching plugin. For unknown hosts, default to github
   // (best available option since it's the only fully implemented SCM plugin).
-  projectConfig.scm = { plugin: platform !== "unknown" ? platform : "github" };
+  projectConfig.scm =
+    platform === "forgejo"
+      ? { plugin: "forgejo", host: parsed.host }
+      : { plugin: platform !== "unknown" ? platform : "github" };
 
   // Tracker — same platform as SCM for known hosts, github as fallback
-  projectConfig.tracker = {
-    plugin: platform === "github" || platform === "gitlab" ? platform : "github",
-  };
+  projectConfig.tracker =
+    platform === "forgejo"
+      ? { plugin: "forgejo", host: parsed.host }
+      : {
+          plugin: platform === "github" || platform === "gitlab" ? platform : "github",
+        };
 
   // Post-create commands based on detected package manager (JS ecosystem only)
   const JS_PACKAGE_MANAGERS: Record<string, string> = {
