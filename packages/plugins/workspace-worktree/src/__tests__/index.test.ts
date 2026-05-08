@@ -774,14 +774,15 @@ describe("workspace.restore()", () => {
   // -b path that would either fail ("branch already exists") or discard
   // commits. See https://github.com/ComposioHQ/agent-orchestrator/issues/1741.
   //
-  // The recovery sequence:
+  // The recovery sequence (in reattachExistingBranch):
   //   1. `git worktree remove --force <path>` (best-effort: clears registry)
-  //   2. `clearStaleWorktreePath(repoPath, <path>)` which in turn:
-  //        - existsSync(<path>) — bail if dir already gone
-  //        - `git worktree prune`
-  //        - `git worktree list --porcelain` (isRegisteredWorktree)
-  //        - rmSync(<path>) if not still registered
-  //   3. `git worktree add <path> <branch>` retry (no -b/-B)
+  //   2. existsSync(<path>) — bail if dir already gone
+  //   3. `git worktree list --porcelain` (isRegisteredWorktree)
+  //   4. rmSync(<path>) if not still registered (else throw — data safety)
+  //   5. `git worktree add <path> <branch>` retry (no -b/-B)
+  //
+  // The entry-point prune in restore() is sufficient — no second prune in
+  // the recovery path.
 
   it("re-attaches existing local branch when stale registry conflicts", async () => {
     // Path was registered as a worktree but the dir was already cleaned up.
@@ -794,7 +795,7 @@ describe("workspace.restore()", () => {
     mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
     mockGitSuccess(""); // refExists(refs/heads/feat/TEST-1) → true
     mockGitSuccess(""); // worktree remove --force <path>
-    mockExistsSync.mockReturnValueOnce(false); // clearStaleWorktreePath: path gone — early return
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // RETRY: worktree add <path> <branch> succeeds
 
     const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
@@ -837,10 +838,9 @@ describe("workspace.restore()", () => {
     ); // first worktree add fails because dir exists
     mockGitSuccess(""); // refExists → true
     mockGitError("fatal: not a working tree"); // worktree remove --force fails (path not registered)
-    mockExistsSync.mockReturnValueOnce(true); // clearStaleWorktreePath: dir exists
-    mockGitSuccess(""); // worktree prune (inside clearStaleWorktreePath)
+    mockExistsSync.mockReturnValueOnce(true); // dir exists
     mockGitSuccess("worktree /some/other\nbranch refs/heads/main"); // worktree list — no entry for our path
-    // clearStaleWorktreePath now calls rmSync — handled by mockRmSync
+    // rmSync called (mocked) — no second prune
     mockGitSuccess(""); // RETRY: worktree add succeeds
 
     const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
@@ -862,10 +862,10 @@ describe("workspace.restore()", () => {
   });
 
   it("refuses to rmSync a still-registered worktree dir (data safety)", async () => {
-    // If after `worktree remove --force` and `worktree prune` the path is
-    // STILL registered, something is very wrong. clearStaleWorktreePath
-    // throws rather than rmSync a registered worktree (which could destroy
-    // the user's work). The error must propagate, not be swallowed.
+    // If after `worktree remove --force` the path is STILL registered,
+    // something is very wrong. reattachExistingBranch throws rather than
+    // rmSync a registered worktree (which could destroy the user's work).
+    // The error must propagate, not be swallowed.
     const ws = create();
 
     mockGitSuccess(""); // git worktree prune (entry-point)
@@ -874,8 +874,7 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // refExists → true
     mockGitError("fatal: cannot remove"); // worktree remove --force fails
     mockExistsSync.mockReturnValueOnce(true); // dir exists
-    mockGitSuccess(""); // worktree prune
-    // Path is still registered after prune — clearStaleWorktreePath throws
+    // Path is still registered — isRegisteredWorktree returns our path
     mockGitSuccess(
       "worktree /mock-home/.worktrees/myproject/session-1\nbranch refs/heads/feat/TEST-1",
     );
@@ -896,7 +895,7 @@ describe("workspace.restore()", () => {
     mockGitError("fatal: first failure"); // first worktree add fails
     mockGitSuccess(""); // refExists → true
     mockGitSuccess(""); // worktree remove --force
-    mockExistsSync.mockReturnValueOnce(false); // clearStaleWorktreePath: dir already gone
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitError("fatal: persistent failure"); // RETRY also fails
 
     await expect(
@@ -925,7 +924,7 @@ describe("workspace.restore()", () => {
     mockGitError("fatal: registry conflict"); // first worktree add fails
     mockGitSuccess(""); // refExists → true
     mockGitSuccess(""); // worktree remove --force
-    mockExistsSync.mockReturnValueOnce(false); // clearStaleWorktreePath: dir gone
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // RETRY succeeds
 
     await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
@@ -945,7 +944,7 @@ describe("workspace.restore()", () => {
     mockGitError("fatal: first failure"); // first worktree add fails
     mockGitSuccess(""); // refExists → true
     mockGitSuccess(""); // worktree remove --force
-    mockExistsSync.mockReturnValueOnce(false); // clearStaleWorktreePath: dir gone
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // RETRY succeeds
 
     await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
