@@ -113,7 +113,7 @@ describe("humanizeBranch", () => {
 // ---------------------------------------------------------------------------
 
 describe("getSessionTitle", () => {
-  it("returns PR title when available (highest priority)", () => {
+  it("returns PR title when available and no displayName is set", () => {
     const session = makeSession({
       summary: "Agent summary",
       issueTitle: "Issue title",
@@ -195,6 +195,23 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe("Infer Project Id");
   });
 
+  it("prefers displayName above every other signal when set (rename wins)", () => {
+    // displayName doubles as the user-set rename slot. Whatever the user puts
+    // there must beat live PR / issue titles so renames aren't shadowed.
+    const session = makeSession({
+      displayName: "PR 1466 review",
+      issueTitle: "Add user authentication",
+      branch: "feat/auth",
+      pr: {
+        number: 1466,
+        title: "feat: add auth",
+        url: "https://github.com/x/y/pull/1466",
+        state: "open",
+      } as DashboardSession["pr"],
+    });
+    expect(getSessionTitle(session)).toBe("PR 1466 review");
+  });
+
   it("returns displayName when no PR / issue title / user prompt", () => {
     const session = makeSession({
       id: "ao-5",
@@ -218,8 +235,7 @@ describe("getSessionTitle", () => {
       id: "ao-42",
       summary: null,
       issueTitle: null,
-      userPrompt:
-        "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
+      userPrompt: "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
       displayName: "Add rate limiting to /api/upload",
       branch: "session/ao-42",
     });
@@ -239,10 +255,20 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe("Fix the race condition");
   });
 
-  it("prefers issue title over displayName when both are present", () => {
+  it("prefers displayName over issue title when both are present", () => {
+    // displayName is now the user-rename slot, so it beats live tracker titles.
     const session = makeSession({
       issueTitle: "Live issue title",
-      displayName: "Stale captured display name",
+      displayName: "User-chosen label",
+      branch: "feat/auth",
+    });
+    expect(getSessionTitle(session)).toBe("User-chosen label");
+  });
+
+  it("falls through to issue title when displayName is absent", () => {
+    const session = makeSession({
+      issueTitle: "Live issue title",
+      displayName: null,
       branch: "feat/auth",
     });
     expect(getSessionTitle(session)).toBe("Live issue title");

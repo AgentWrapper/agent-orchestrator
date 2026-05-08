@@ -50,15 +50,14 @@ export function humanizeBranch(branch: string, sessionId?: string): string {
  * Compute the best display title for a session card.
  *
  * Fallback chain (ordered by signal quality):
- *   1. PR title          — human-visible deliverable name
- *   2. Issue title       — human-written task description (live from tracker)
- *   3. Display name      — cleaned, single-line, 80-char-truncated task
- *                          context captured at spawn time. Sits above
- *                          `userPrompt` because for prompt-only sessions both
- *                          are populated from the same `spawnConfig.prompt` —
- *                          `displayName` is the cleaned version and should
- *                          win so kanban cards don't show raw multi-line
- *                          prompts.
+ *   1. Display name      — auto-derived at spawn from the best task context
+ *                          (issue title, user prompt, or orchestrator system
+ *                          prompt) and overwritable via the dashboard rename
+ *                          UI. Always wins: when the user renames a session
+ *                          their chosen label must override every other
+ *                          signal, including PR/issue titles.
+ *   2. PR title          — human-visible deliverable name
+ *   3. Issue title       — human-written task description (live from tracker)
  *   4. User prompt       — raw freeform spawn instructions (fallback for
  *                          sessions spawned before `displayName` existed)
  *   5. Humanized branch  — stable task identifier when no explicit title exists
@@ -69,20 +68,16 @@ export function humanizeBranch(branch: string, sessionId?: string): string {
  *   9. Status text       — absolute fallback
  */
 export function getSessionTitle(session: DashboardSession): string {
-  // 1. PR title — always best
+  // 1. Display name — auto-derived at spawn from issue title / user prompt /
+  // orchestrator system prompt, and overwritten by the rename UI. Wins over
+  // PR/issue titles so a user-chosen rename is never shadowed.
+  if (session.displayName) return session.displayName;
+
+  // 2. PR title
   if (session.pr?.title) return session.pr.title;
 
-  // 2. Issue title — human-written task description
+  // 3. Issue title — human-written task description
   if (session.issueTitle) return session.issueTitle;
-
-  // 3. Display name — persisted at spawn time from issue title / user prompt /
-  // orchestrator system prompt. Intentionally ordered ABOVE `userPrompt`
-  // because for prompt-only sessions both are derived from the same
-  // `spawnConfig.prompt`: `displayName` is the single-line, 80-char-truncated
-  // version and `userPrompt` is the raw multi-line original. If `userPrompt`
-  // were checked first, the raw prompt would always shadow the cleaned one on
-  // kanban cards and session tabs.
-  if (session.displayName) return session.displayName;
 
   // 4. User prompt — raw freeform spawn instructions. Only reached when
   // `displayName` is absent (older sessions spawned before this field existed,
