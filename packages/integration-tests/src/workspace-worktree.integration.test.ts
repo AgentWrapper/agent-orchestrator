@@ -217,6 +217,7 @@ describe("workspace-worktree (integration)", () => {
     const isolatedWorktreeBaseDir = await realpath(rawBase);
 
     try {
+      await git(isolatedRepoDir, "switch", "-c", "main");
       const mainSha = await createCommit(isolatedRepoDir, "base.txt", "main\n");
       await git(isolatedRepoDir, "push", "-u", "origin", "main");
 
@@ -279,6 +280,7 @@ describe("workspace-worktree (integration)", () => {
     const isolatedWorktreeBaseDir = await realpath(rawBase);
 
     try {
+      await git(isolatedRepoDir, "switch", "-c", "main");
       const mainSha = await createCommit(isolatedRepoDir, "base.txt", "main\n");
       await git(isolatedRepoDir, "push", "-u", "origin", "main");
 
