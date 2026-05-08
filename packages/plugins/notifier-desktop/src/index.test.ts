@@ -4,6 +4,7 @@ import type { OrchestratorEvent, NotifyAction } from "@aoagents/ao-core";
 // Mock node:child_process
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
+  execFileSync: vi.fn(),
 }));
 
 // Mock node:os
@@ -11,11 +12,12 @@ vi.mock("node:os", () => ({
   platform: vi.fn(() => "darwin"),
 }));
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { platform } from "node:os";
 import { manifest, create, escapeAppleScript } from "./index.js";
 
 const mockExecFile = execFile as unknown as Mock;
+const mockExecFileSync = execFileSync as unknown as Mock;
 const mockPlatform = platform as unknown as Mock;
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
@@ -36,6 +38,10 @@ describe("notifier-desktop", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPlatform.mockReturnValue("darwin");
+    // Default: terminal-notifier not available (osascript fallback)
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
         cb(null);
@@ -265,6 +271,101 @@ describe("notifier-desktop", () => {
       );
       const notifier = create();
       await expect(notifier.notify(makeEvent())).rejects.toThrow("osascript not found");
+    });
+  });
+
+  describe("terminal-notifier on macOS", () => {
+    beforeEach(() => {
+      // terminal-notifier is available
+      mockExecFileSync.mockReturnValue(Buffer.from("/usr/local/bin/terminal-notifier\n"));
+    });
+
+    it("uses terminal-notifier when available", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile).toHaveBeenCalledOnce();
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
+    });
+
+    it("passes -title and -message args", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ sessionId: "s-1", message: "hello" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-title");
+      expect(args).toContain("-message");
+      expect(args[args.indexOf("-message") + 1]).toBe("hello");
+    });
+
+    it("passes -open with dashboardUrl when configured", async () => {
+      const notifier = create({ dashboardUrl: "http://localhost:8080" });
+      await notifier.notify(makeEvent());
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-open");
+      expect(args[args.indexOf("-open") + 1]).toBe("http://localhost:8080");
+    });
+
+    it("does not pass -open when dashboardUrl is not configured", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-open");
+    });
+
+    it("passes -sound default for urgent notifications", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ priority: "urgent" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-sound");
+      expect(args[args.indexOf("-sound") + 1]).toBe("default");
+    });
+
+    it("does not pass -sound for non-urgent notifications", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ priority: "info" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
+    });
+
+    it("respects sound=false config", async () => {
+      const notifier = create({ sound: false });
+      await notifier.notify(makeEvent({ priority: "urgent" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
+    });
+
+    it("falls back to osascript when terminal-notifier is not found", async () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("not found");
+      });
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("osascript");
+    });
+
+    it("does not use terminal-notifier on Linux", async () => {
+      mockPlatform.mockReturnValue("linux");
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("notify-send");
+    });
+
+    it("uses terminal-notifier for notifyWithActions too", async () => {
+      const notifier = create({ dashboardUrl: "http://localhost:3000" });
+      const actions: NotifyAction[] = [{ label: "View", url: "https://example.com" }];
+      await notifier.notifyWithActions!(makeEvent(), actions);
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-open");
     });
   });
 });
