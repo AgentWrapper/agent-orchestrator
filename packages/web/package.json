@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aoagents/ao-core": "workspace:*",
+    "@aoagents/ao-plugin-agent-amp": "workspace:*",
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",

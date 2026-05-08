@@ -163,7 +163,7 @@ describe("plugin manifest & exports", () => {
 describe("getLaunchCommand", () => {
   const agent = create();
 
-  it("generates base command", () => {
+  it("generates base command without --force for default permissions", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("agent");
   });
 
@@ -464,12 +464,27 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
-  it("returns null (cursor does not support session resume)", async () => {
+  it("includes --force flags when permission mode is permissionless", async () => {
+    const result = await agent.getRestoreCommand!(
+      makeSession(),
+      {
+        name: "proj",
+        repo: "o/r",
+        path: "/p",
+        defaultBranch: "main",
+        sessionPrefix: "p",
+        agentConfig: { permissions: "permissionless" },
+      },
+    );
+    expect(result).toBe("agent --force --sandbox disabled --approve-mcps --continue");
+  });
+
+  it("omits --force flags when permission mode is not permissionless", async () => {
     const result = await agent.getRestoreCommand!(
       makeSession(),
       { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
     );
-    expect(result).toBeNull();
+    expect(result).toBe("agent --continue");
   });
 });
 

@@ -58,6 +58,9 @@ importers:
       '@aoagents/ao-plugin-agent-aider':
         specifier: workspace:*
         version: link:../plugins/agent-aider
+      '@aoagents/ao-plugin-agent-amp':
+        specifier: workspace:*
+        version: link:../plugins/agent-amp
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
@@ -262,6 +265,22 @@ importers:
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
   packages/plugins/agent-aider:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/plugins/agent-amp:
     dependencies:
       '@aoagents/ao-core':
         specifier: workspace:*
@@ -643,6 +662,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@aoagents/ao-plugin-agent-amp':
+        specifier: workspace:*
+        version: link:../plugins/agent-amp
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
