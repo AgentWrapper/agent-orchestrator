@@ -188,22 +188,28 @@ export function create(config?: Record<string, unknown>): Workspace {
             cause: err,
           });
         }
-        // Branch already exists — create worktree and check it out
-        await git(repoPath, "worktree", "add", worktreePath, baseRef);
+        // Branch already exists — create worktree on that branch
         try {
-          await git(worktreePath, "checkout", cfg.branch);
-        } catch (checkoutErr: unknown) {
-          // Checkout failed — remove the orphaned worktree before rethrowing
-          try {
-            await git(repoPath, "worktree", "remove", "--force", worktreePath);
-          } catch {
-            // Best-effort cleanup
-          }
-          const checkoutMsg =
-            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
-          throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`, {
-            cause: checkoutErr,
+          await git(repoPath, "worktree", "add", worktreePath, cfg.branch);
+        } catch (addErr: unknown) {
+          const addMsg = addErr instanceof Error ? addErr.message : String(addErr);
+          throw new Error(`Failed to create worktree for existing branch "${cfg.branch}": ${addMsg}`, {
+            cause: addErr,
           });
+        }
+        // Rebase onto latest baseRef so the branch picks up new commits
+        // from the default branch. Without this, a killed-and-respawned
+        // session would get stale code from the old branch pointer.
+        try {
+          await git(worktreePath, "rebase", baseRef);
+        } catch {
+          // Rebase may fail if branch has diverged — abort and continue.
+          // The agent will work with the branch as-is.
+          try {
+            await git(worktreePath, "rebase", "--abort");
+          } catch {
+            // Already aborted or nothing to abort
+          }
         }
       }
 
@@ -267,11 +273,10 @@ export function create(config?: Record<string, unknown>): Workspace {
         const repoPath = resolve(gitCommonDir, "..");
         await git(repoPath, "worktree", "remove", "--force", workspacePath);
 
-        // NOTE: We intentionally do NOT delete the branch here. The worktree
-        // removal is sufficient. Auto-deleting branches risks removing
-        // pre-existing local branches unrelated to this workspace (any branch
-        // containing "/" would have been deleted). Stale branches can be
-        // cleaned up separately via `git branch --merged` or similar.
+        // NOTE: Branch cleanup is intentionally left to the session manager
+        // (kill/cleanup), which has full metadata to determine branch ownership.
+        // The workspace plugin only sees a path and cannot reliably distinguish
+        // AO-created branches from pre-existing user branches.
       } catch {
         // If git commands fail, try to clean up the directory
         if (existsSync(workspacePath)) {
