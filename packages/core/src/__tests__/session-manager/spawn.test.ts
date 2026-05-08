@@ -103,6 +103,91 @@ describe("spawn", () => {
     }
   });
 
+  it("forwards project.env into spawned agent runtime env", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            GH_TOKEN: "ghp_project_scoped",
+            CUSTOM_VAR: "hello",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({
+          GH_TOKEN: "ghp_project_scoped",
+          CUSTOM_VAR: "hello",
+        }),
+      }),
+    );
+  });
+
+  it("AO_* internals override project.env values with the same key", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            AO_SESSION: "should-not-win",
+            AO_PROJECT_ID: "should-not-win",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const call = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.environment?.AO_SESSION).not.toBe("should-not-win");
+    expect(call?.environment?.AO_SESSION).toBe("app-1");
+    expect(call?.environment?.AO_PROJECT_ID).toBe("my-app");
+  });
+
+  it("PATH and GH_PATH override project.env values with the same key", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            PATH: "/should/not/win",
+            GH_PATH: "/should/not/win",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const call = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.environment?.PATH).not.toBe("/should/not/win");
+    // Use platform-aware path so the assertion works on both POSIX and Windows
+    // (where buildAgentPath joins with backslashes via path.join).
+    expect(call?.environment?.PATH).toContain(join(".ao", "bin"));
+    expect(call?.environment?.GH_PATH).not.toBe("/should/not/win");
+    expect(call?.environment?.GH_PATH).toBe("/usr/local/bin/gh");
+  });
+
   it("uses issue ID to derive branch name", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 

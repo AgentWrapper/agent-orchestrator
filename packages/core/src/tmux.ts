@@ -75,47 +75,6 @@ export async function hasSession(sessionName: string): Promise<boolean> {
   }
 }
 
-export interface NewSessionOptions {
-  /** Session name */
-  name: string;
-  /** Working directory */
-  cwd: string;
-  /** Initial command to run */
-  command?: string;
-  /** Environment variables to set */
-  environment?: Record<string, string>;
-  /** Window width/height */
-  width?: number;
-  height?: number;
-}
-
-/** Create a new tmux session (detached). */
-export async function newSession(opts: NewSessionOptions): Promise<void> {
-  const args = ["new-session", "-d", "-s", opts.name, "-c", opts.cwd];
-
-  // Add environment variables
-  if (opts.environment) {
-    for (const [key, value] of Object.entries(opts.environment)) {
-      args.push("-e", `${key}=${value}`);
-    }
-  }
-
-  // Window size
-  if (opts.width) {
-    args.push("-x", String(opts.width));
-  }
-  if (opts.height) {
-    args.push("-y", String(opts.height));
-  }
-
-  await tmux(...args);
-
-  // Send the initial command if provided
-  if (opts.command) {
-    await sendKeys(opts.name, opts.command);
-  }
-}
-
 /**
  * Send keys (text + Enter) to a tmux session.
  * For long/multiline messages, uses load-buffer + paste-buffer with

@@ -83,6 +83,8 @@ describe("runtime.create()", () => {
   it("calls new-session with correct args", async () => {
     const runtime = create();
 
+    // 1: new-session (with launch command as initial), 2: set-option status off
+    mockTmuxSuccess();
     mockTmuxSuccess();
 
     const handle = await runtime.create({
@@ -104,9 +106,33 @@ describe("runtime.create()", () => {
     );
   });
 
+  it("disables the tmux status bar immediately after new-session", async () => {
+    const runtime = create();
+
+    // 1: new-session, 2: set-option status off
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "status-bar-off",
+      workspacePath: "/tmp/ws",
+      launchCommand: "echo hi",
+      environment: {},
+    });
+
+    // Second call must be set-option ... status off, scoped to the session
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      ["set-option", "-t", "status-bar-off", "status", "off"],
+      expectedTmuxOptions,
+    );
+  });
+
   it("includes -e KEY=VALUE flags for environment variables", async () => {
     const runtime = create();
 
+    mockTmuxSuccess();
     mockTmuxSuccess();
 
     await runtime.create({
@@ -129,6 +155,7 @@ describe("runtime.create()", () => {
     const runtime = create();
 
     mockTmuxSuccess();
+    mockTmuxSuccess();
 
     await runtime.create({
       sessionId: "launch-test",
@@ -137,6 +164,7 @@ describe("runtime.create()", () => {
       environment: {},
     });
 
+    // First call: new-session passes the launch command as the pane's initial command
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
       ["new-session", "-d", "-s", "launch-test", "-c", "/tmp/ws", "claude --session abc"],
@@ -148,6 +176,8 @@ describe("runtime.create()", () => {
     const runtime = create();
     const longCommand = "x".repeat(250);
 
+    // 1: new-session (with bash invocation as initial command), 2: set-option
+    mockTmuxSuccess();
     mockTmuxSuccess();
 
     await runtime.create({
@@ -163,7 +193,8 @@ describe("runtime.create()", () => {
       { encoding: "utf-8", mode: 0o700 },
     );
 
-    expect(mockExecFileCustom).toHaveBeenCalledWith(
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      1,
       "tmux",
       [
         "new-session",
@@ -181,6 +212,7 @@ describe("runtime.create()", () => {
   it("surfaces tmux new-session failures", async () => {
     const runtime = create();
 
+    // new-session itself fails — no further tmux calls happen
     mockTmuxError("new-session failed");
 
     await expect(
@@ -193,6 +225,33 @@ describe("runtime.create()", () => {
     ).rejects.toThrow("new-session failed");
 
     expect(mockExecFileCustom).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up session if set-option fails", async () => {
+    const runtime = create();
+
+    // 1: new-session succeeds
+    mockTmuxSuccess();
+    // 2: set-option fails (e.g. tmux command timeout on a slow host)
+    mockTmuxError("set-option timed out");
+    // 3: kill-session (cleanup attempt)
+    mockTmuxSuccess();
+
+    await expect(
+      runtime.create({
+        sessionId: "setopt-fail",
+        workspacePath: "/tmp/ws",
+        launchCommand: "echo hi",
+        environment: {},
+      }),
+    ).rejects.toThrow('Failed to configure or launch session "setopt-fail"');
+
+    // kill-session must run so we don't leave an orphaned tmux session
+    expect(mockExecFileCustom).toHaveBeenCalledWith(
+      "tmux",
+      ["kill-session", "-t", "setopt-fail"],
+      expectedTmuxOptions,
+    );
   });
 
   it("rejects invalid session IDs with special characters", async () => {
@@ -225,6 +284,7 @@ describe("runtime.create()", () => {
     const runtime = create();
 
     mockTmuxSuccess();
+    mockTmuxSuccess();
 
     const handle = await runtime.create({
       sessionId: "valid-session_123",
@@ -239,6 +299,7 @@ describe("runtime.create()", () => {
   it("handles no environment (undefined)", async () => {
     const runtime = create();
 
+    mockTmuxSuccess();
     mockTmuxSuccess();
 
     await runtime.create({

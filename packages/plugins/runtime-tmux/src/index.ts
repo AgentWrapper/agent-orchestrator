@@ -93,6 +93,24 @@ export function create(): Runtime {
         shellCommand,
       );
 
+      // Hide the tmux status bar — sessions are embedded in the web terminal,
+      // and the green bar at the bottom is visual noise (and racy with the
+      // web layer's own set-option call, which only fires on WebSocket connect).
+      // Kill the session if this fails so we don't leave an orphaned tmux process.
+      try {
+        await tmux("set-option", "-t", sessionName, "status", "off");
+      } catch (err: unknown) {
+        try {
+          await tmux("kill-session", "-t", sessionName);
+        } catch {
+          // Best-effort cleanup
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to configure or launch session "${sessionName}": ${msg}`, {
+          cause: err,
+        });
+      }
+
       return {
         id: sessionName,
         runtimeName: "tmux",

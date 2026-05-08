@@ -71,7 +71,7 @@ export interface GhTraceContext {
   cwd?: string;
 }
 
-export interface GhTraceResult {
+interface GhTraceResult {
   ok: boolean;
   stdout: string;
   stderr: string;

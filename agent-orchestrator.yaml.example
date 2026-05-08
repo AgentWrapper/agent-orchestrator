@@ -80,6 +80,12 @@ projects:
     #     deliveryHeader: x-github-delivery
     #     maxBodyBytes: 1048576
 
+    # Per-project environment variables forwarded into worker session runtimes.
+    # Useful for scoping per-project tokens (e.g. pinning gh auth via GH_TOKEN).
+    # AO-internal vars (AO_SESSION, AO_PROJECT_ID, etc.) always take precedence.
+    # env:
+    #   GH_TOKEN: ghp_xxx
+
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]
 

@@ -110,7 +110,6 @@ export {
   isTmuxAvailable,
   listSessions as listTmuxSessions,
   hasSession as hasTmuxSession,
-  newSession as newTmuxSession,
   sendKeys as tmuxSendKeys,
   capturePane as tmuxCapturePane,
   killSession as killTmuxSession,

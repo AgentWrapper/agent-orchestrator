@@ -250,6 +250,7 @@ const ProjectConfigSchema = z.object({
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
   tracker: TrackerConfigSchema.optional(),
   scm: SCMConfigSchema.optional(),
   symlinks: z.array(z.string()).optional(),

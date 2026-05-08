@@ -1504,6 +1504,9 @@ export interface ProjectConfig {
   /** Override default workspace */
   workspace?: string;
 
+  /** Environment variables forwarded into worker session runtimes (AO_* internals always win) */
+  env?: Record<string, string>;
+
   /** Issue tracker configuration */
   tracker?: TrackerConfig;
 

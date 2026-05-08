@@ -1,12 +1,48 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SessionBroadcaster } from "../mux-websocket";
+import { EventEmitter } from "node:events";
+import type { SessionBroadcaster as SessionBroadcasterType } from "../mux-websocket";
+
+// vi.mock factories run before module-level statements. Hoist the mock
+// fns so the factories close over the same instances the tests use.
+const { mockSpawn, mockPtySpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+  mockPtySpawn: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  const spawnFn = (...args: unknown[]) => mockSpawn(...args);
+  return {
+    ...actual,
+    default: { ...(actual.default as object), spawn: spawnFn },
+    spawn: spawnFn,
+  };
+});
+
+vi.mock("node-pty", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => mockPtySpawn(...args),
+  };
+});
+
+// Mock tmux-utils so resolveTmuxSession returns a deterministic session id
+// and we don't shell out to a real tmux binary.
+vi.mock("../tmux-utils.js", () => ({
+  findTmux: () => "/usr/bin/tmux",
+  validateSessionId: () => true,
+  resolveTmuxSession: () => "ao-177",
+}));
+
+const { SessionBroadcaster, TerminalManager } = await import("../mux-websocket");
 
 // Mock global fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 describe("SessionBroadcaster", () => {
-  let broadcaster: SessionBroadcaster;
+  let broadcaster: SessionBroadcasterType;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -223,5 +259,55 @@ describe("SessionBroadcaster", () => {
       // Should only have 1 fetch (initial snapshot)
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("TerminalManager.open — tmux target args (regression for #1714)", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+    mockPtySpawn.mockReset();
+
+    // spawn() returns an object that emits "error" — we just need .on() to work.
+    mockSpawn.mockImplementation(() => new EventEmitter());
+
+    // ptySpawn() returns a minimal IPty-like stub so terminal wiring doesn't crash.
+    mockPtySpawn.mockImplementation(() => ({
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    }));
+  });
+
+  it("invokes set-option mouse on with the bare session id (no = prefix)", () => {
+    const mgr = new TerminalManager("/usr/bin/tmux");
+    mgr.open("ao-177");
+
+    const mouseCall = mockSpawn.mock.calls.find(
+      (call) => Array.isArray(call[1]) && call[1].includes("mouse"),
+    );
+    expect(mouseCall).toBeDefined();
+    expect(mouseCall?.[1]).toEqual(["set-option", "-t", "ao-177", "mouse", "on"]);
+  });
+
+  it("invokes set-option status off with the bare session id (no = prefix)", () => {
+    const mgr = new TerminalManager("/usr/bin/tmux");
+    mgr.open("ao-177");
+
+    const statusCall = mockSpawn.mock.calls.find(
+      (call) => Array.isArray(call[1]) && call[1].includes("status"),
+    );
+    expect(statusCall).toBeDefined();
+    expect(statusCall?.[1]).toEqual(["set-option", "-t", "ao-177", "status", "off"]);
+  });
+
+  it("still uses the = exact-match prefix for attach-session", () => {
+    const mgr = new TerminalManager("/usr/bin/tmux");
+    mgr.open("ao-177");
+
+    expect(mockPtySpawn).toHaveBeenCalledTimes(1);
+    const [, args] = mockPtySpawn.mock.calls[0];
+    expect(args).toEqual(["attach-session", "-t", "=ao-177"]);
   });
 });
