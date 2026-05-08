@@ -75,7 +75,6 @@ import {
   getProjectDir,
   generateSessionName,
 } from "./paths.js";
-import { isWindows } from "./platform.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import {
   getCachedOpenCodeSessionList,
