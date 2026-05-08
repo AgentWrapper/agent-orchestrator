@@ -30,12 +30,8 @@ jobs:
       - run: pnpm lint
 
   typecheck:
-    name: Typecheck (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    name: Typecheck
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
