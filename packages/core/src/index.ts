@@ -138,6 +138,7 @@ export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
 // Shared utilities
 export {
+  greet,
   shellEscape,
   escapeAppleScript,
   validateUrl,

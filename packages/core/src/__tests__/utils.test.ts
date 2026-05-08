@@ -3,12 +3,28 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  greet,
   isGitBranchNameSafe,
   isRetryableHttpStatus,
   normalizeRetryConfig,
   readLastJsonlEntry,
 } from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
+
+describe("greet", () => {
+  it("returns a hello greeting for the provided name", () => {
+    expect(greet("Halcyon")).toBe("Hello, Halcyon!");
+  });
+
+  it("trims surrounding whitespace from the provided name", () => {
+    expect(greet("  Halcyon  ")).toBe("Hello, Halcyon!");
+  });
+
+  it("throws for an empty name", () => {
+    expect(() => greet("")).toThrow("Name must not be empty");
+    expect(() => greet("   ")).toThrow("Name must not be empty");
+  });
+});
 
 describe("readLastJsonlEntry", () => {
   let tmpDir: string;

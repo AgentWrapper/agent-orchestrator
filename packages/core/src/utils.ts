@@ -6,6 +6,17 @@ import { open, stat } from "node:fs/promises";
 import type { OrchestratorConfig } from "./types.js";
 
 /**
+ * Return a stable greeting string for a given name.
+ */
+export function greet(name: string): string {
+  const normalizedName = name.trim();
+  if (!normalizedName) {
+    throw new Error("Name must not be empty");
+  }
+  return `Hello, ${normalizedName}!`;
+}
+
+/**
  * POSIX-safe shell escaping: wraps value in single quotes,
  * escaping any embedded single quotes as '\\'' .
  *
