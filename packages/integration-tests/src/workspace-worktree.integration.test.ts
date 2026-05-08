@@ -206,6 +206,132 @@ describe("workspace-worktree (integration)", () => {
     }
   }, 30_000);
 
+  // Regression for https://github.com/ComposioHQ/agent-orchestrator/issues/1741.
+  // After a clean destroy(), the local session branch is intentionally kept so
+  // the user's commits aren't lost. restore() must re-attach that branch
+  // without recreating it (-b) or force-resetting it (-B), so the session's
+  // HEAD survives.
+  it("restore re-attaches existing session branch and preserves its commits", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-restore-preserve-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+
+    try {
+      const mainSha = await createCommit(isolatedRepoDir, "base.txt", "main\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "main");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const proj: ProjectConfig = {
+        name: "restore-preserve",
+        repo: "test/restore-preserve",
+        path: isolatedRepoDir,
+        defaultBranch: "main",
+        sessionPrefix: "ao",
+      };
+
+      const created = await isolatedWorkspace.create({
+        projectId: "restore-preserve",
+        sessionId: "ao-1",
+        project: proj,
+        branch: "session/ao-1",
+      });
+
+      // Simulate session work with a commit on the session branch.
+      await git(created.path, "config", "user.email", "test@test.com");
+      await git(created.path, "config", "user.name", "Test");
+      const sessionSha = await createCommit(created.path, "session.txt", "session work\n");
+      expect(sessionSha).not.toBe(mainSha);
+
+      // Tear down the worktree the way AO does — branch is preserved.
+      await isolatedWorkspace.destroy(created.path);
+      expect(existsSync(created.path)).toBe(false);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/ao-1")).toBe(sessionSha);
+
+      // Restore — must re-attach session/ao-1 with its existing HEAD intact.
+      const restored = await isolatedWorkspace.restore!(
+        {
+          projectId: "restore-preserve",
+          sessionId: "ao-1",
+          project: proj,
+          branch: "session/ao-1",
+        },
+        created.path,
+      );
+
+      expect(restored.branch).toBe("session/ao-1");
+      expect(await git(restored.path, "rev-parse", "HEAD")).toBe(sessionSha);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/ao-1")).toBe(sessionSha);
+    } finally {
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
+  // Same regression — direct repro of the failure surface in #1741. We force
+  // the first `git worktree add <path> <branch>` to fail by leaving a stale
+  // registered worktree at the same path, then verify restore recovers
+  // without using -b (which would fail with "branch already exists") or -B
+  // (which would discard the session's commits).
+  it("restore recovers when a stale worktree registration conflicts with the path", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-restore-stale-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+
+    try {
+      const mainSha = await createCommit(isolatedRepoDir, "base.txt", "main\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "main");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const proj: ProjectConfig = {
+        name: "restore-stale",
+        repo: "test/restore-stale",
+        path: isolatedRepoDir,
+        defaultBranch: "main",
+        sessionPrefix: "ao",
+      };
+
+      const created = await isolatedWorkspace.create({
+        projectId: "restore-stale",
+        sessionId: "ao-1",
+        project: proj,
+        branch: "session/ao-1",
+      });
+
+      await git(created.path, "config", "user.email", "test@test.com");
+      await git(created.path, "config", "user.name", "Test");
+      const sessionSha = await createCommit(created.path, "session.txt", "session work\n");
+      expect(sessionSha).not.toBe(mainSha);
+
+      // Simulate a dirty teardown: rmSync the dir but leave the worktree
+      // entry registered (this is the failure mode from #1562 that triggers
+      // the buggy fallback path in #1741).
+      await rm(created.path, { recursive: true, force: true });
+      // Worktree registration is still present — branch is still considered
+      // checked out at that (now-missing) path. Restore must handle this.
+
+      const restored = await isolatedWorkspace.restore!(
+        {
+          projectId: "restore-stale",
+          sessionId: "ao-1",
+          project: proj,
+          branch: "session/ao-1",
+        },
+        created.path,
+      );
+
+      expect(restored.branch).toBe("session/ao-1");
+      // Most importantly, the session commit must survive — anything that
+      // touched -B would have reset the branch back to mainSha.
+      expect(await git(restored.path, "rev-parse", "HEAD")).toBe(sessionSha);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/ao-1")).toBe(sessionSha);
+    } finally {
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
   it("resets a stale session branch when origin default branch advances", async () => {
     const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
     const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-stale-origin-"));

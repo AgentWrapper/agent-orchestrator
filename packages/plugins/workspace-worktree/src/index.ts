@@ -457,29 +457,49 @@ export function create(config?: Record<string, unknown>): Workspace {
       try {
         await git(repoPath, "worktree", "add", workspacePath, cfg.branch);
       } catch {
-        const baseRef = await resolveBaseRef(repoPath, cfg.project.defaultBranch, {
-          branch: cfg.branch,
-          hasOrigin,
-        });
-
-        if (!baseRef.startsWith("origin/")) {
-          // No remote available — create from the local default branch
-          await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
-        } else {
-          // Branch might not exist locally — try the remote ref first, then fall back
-          // to the local default branch if the remote ref is unavailable.
+        const branchRef = `refs/heads/${cfg.branch}`;
+        if (await refExists(repoPath, branchRef)) {
+          // Branch exists locally — destroy() intentionally preserves session
+          // branches so commits aren't lost. The first attempt likely failed
+          // due to a stale worktree registry entry at workspacePath. Clear any
+          // such entry and retry; never fall through to -b/-B, which would
+          // either fail ("branch already exists") or discard commits.
           try {
-            await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+            await git(repoPath, "worktree", "remove", "--force", workspacePath);
           } catch {
-            await git(
-              repoPath,
-              "worktree",
-              "add",
-              "-b",
-              cfg.branch,
-              workspacePath,
-              `refs/heads/${cfg.project.defaultBranch}`,
-            );
+            // Best-effort — path may not be a registered worktree
+          }
+          try {
+            await git(repoPath, "worktree", "prune");
+          } catch {
+            // Best-effort
+          }
+          await git(repoPath, "worktree", "add", workspacePath, cfg.branch);
+        } else {
+          const baseRef = await resolveBaseRef(repoPath, cfg.project.defaultBranch, {
+            branch: cfg.branch,
+            hasOrigin,
+          });
+
+          if (!baseRef.startsWith("origin/")) {
+            // No remote available — create from the local default branch
+            await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+          } else {
+            // Branch might not exist locally — try the remote ref first, then fall back
+            // to the local default branch if the remote ref is unavailable.
+            try {
+              await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+            } catch {
+              await git(
+                repoPath,
+                "worktree",
+                "add",
+                "-b",
+                cfg.branch,
+                workspacePath,
+                `refs/heads/${cfg.project.defaultBranch}`,
+              );
+            }
           }
         }
       }

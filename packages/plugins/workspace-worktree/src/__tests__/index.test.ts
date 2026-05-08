@@ -713,6 +713,7 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // git worktree prune
     mockOriginRemote();
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/feat/TEST-1
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath origin/feat/TEST-1
 
@@ -740,6 +741,7 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // git worktree prune
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath refs/heads/main
 
@@ -764,6 +766,155 @@ describe("workspace.restore()", () => {
       sessionId: "session-1",
       projectId: "myproject",
     });
+  });
+
+  // --- Regression coverage for #1741 ---------------------------------------
+  // When the local session branch already exists (destroy() preserves it on
+  // purpose), restore() must re-attach it instead of falling through to the
+  // -b path that would either fail ("branch already exists") or discard
+  // commits. See https://github.com/ComposioHQ/agent-orchestrator/issues/1741.
+
+  it("re-attaches existing local branch instead of recreating with -b", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockOriginRemote();
+    mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
+    mockGitSuccess(""); // refExists(refs/heads/feat/TEST-1) → true
+    mockGitSuccess(""); // worktree remove --force <path> (best-effort cleanup)
+    mockGitSuccess(""); // worktree prune (best-effort cleanup)
+    mockGitSuccess(""); // RETRY: worktree add <path> <branch> succeeds
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    // The recovery call must re-attach the existing branch — no -b, no -B.
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", timeout: 30_000 },
+    );
+
+    // No -b or -B should ever appear when the branch already exists locally.
+    const calls = mockExecFileAsync.mock.calls;
+    for (const [, args] of calls) {
+      if (Array.isArray(args)) {
+        expect(args).not.toContain("-b");
+        expect(args).not.toContain("-B");
+      }
+    }
+
+    expect(info).toEqual({
+      path: "/mock-home/.worktrees/myproject/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
+    });
+  });
+
+  it("tolerates failure of best-effort cleanup before retry", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockOriginRemote();
+    mockGitError("fatal: stale registry"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitError("fatal: not a working tree"); // worktree remove --force fails (no entry registered)
+    mockGitError("fatal: prune failed"); // worktree prune fails too
+    mockGitSuccess(""); // RETRY succeeds anyway
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(info.branch).toBe("feat/TEST-1");
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", timeout: 30_000 },
+    );
+  });
+
+  it("propagates retry error when both attempts fail with existing branch", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockOriginRemote();
+    mockGitError("fatal: first failure"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockGitSuccess(""); // worktree prune
+    mockGitError("fatal: persistent failure"); // RETRY also fails
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow(/persistent failure/);
+
+    // Crucially, the failure surface is the underlying git error — NOT a
+    // misleading "branch already exists" from a -b fallback.
+    const calls = mockExecFileAsync.mock.calls;
+    for (const [, args] of calls) {
+      if (Array.isArray(args)) {
+        expect(args).not.toContain("-b");
+        expect(args).not.toContain("-B");
+      }
+    }
+  });
+
+  it("never force-resets an existing branch (preserves session commits)", async () => {
+    // Defense-in-depth: confirm restore() never uses -B even in the
+    // recovery path. -B would silently discard the user's commits,
+    // which is the opposite of what restore must do.
+    const ws = create();
+
+    mockGitSuccess(""); // prune
+    mockOriginRemote();
+    mockGitError("fatal: registry conflict"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockGitSuccess(""); // prune
+    mockGitSuccess(""); // RETRY succeeds
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    const calls = mockExecFileAsync.mock.calls;
+    const dashBigB = calls.filter(([, args]) => Array.isArray(args) && args.includes("-B"));
+    expect(dashBigB).toHaveLength(0);
+  });
+
+  it("checks branch existence with rev-parse --verify --quiet refs/heads/<branch>", async () => {
+    // Lock in the exact ref form used. If someone later refactors refExists or
+    // forgets the refs/heads/ prefix, this regression test catches it.
+    const ws = create();
+
+    mockGitSuccess(""); // prune
+    mockOriginRemote();
+    mockGitError("fatal: first failure"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockGitSuccess(""); // prune
+    mockGitSuccess(""); // RETRY succeeds
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "refs/heads/feat/TEST-1"],
+      { cwd: "/repo/path", timeout: 30_000 },
+    );
+  });
+
+  it("happy path: restore re-attaches branch when first worktree add already succeeds", async () => {
+    // No catch path — the first attempt works. Confirms we don't accidentally
+    // run the cleanup/retry sequence in the common case.
+    const ws = create();
+
+    mockGitSuccess(""); // prune
+    mockOriginRemote();
+    mockGitSuccess(""); // worktree add <path> <branch> succeeds first try
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(info.branch).toBe("feat/TEST-1");
+    // Total calls: prune + remote get-url + fetch + worktree add = 4
+    expect(mockExecFileAsync).toHaveBeenCalledTimes(4);
   });
 });
 
