@@ -289,6 +289,12 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'gpt-4o'");
   });
 
+  it("strips openai/ provider prefix from model", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "openai/gpt-5.5" }));
+    expect(cmd).toContain("--model 'gpt-5.5'");
+    expect(cmd).not.toContain("openai/gpt-5.5");
+  });
+
   it("appends shell-escaped prompt with -- separator", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix it" }));
     expect(cmd).toContain("-- 'Fix it'");
@@ -386,6 +392,42 @@ describe("getLaunchCommand", () => {
     it("does NOT add reasoning effort when no model specified", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig());
       expect(cmd).not.toContain("model_reasoning_effort");
+    });
+
+    it("applies explicit reasoning effort from launch config", () => {
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({ model: "gpt-5.5", reasoningEffort: "high" }),
+      );
+      expect(cmd).toContain("--model 'gpt-5.5'");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("applies explicit reasoning effort from agent config aliases", () => {
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({
+          model: "gpt-5.3-codex",
+          projectConfig: {
+            name: "my-project",
+            repo: "owner/repo",
+            path: "/workspace/repo",
+            defaultBranch: "main",
+            sessionPrefix: "my",
+            agentConfig: { model_reasoning_effort: "xhigh" },
+          },
+        }),
+      );
+      expect(cmd).toContain("-c model_reasoning_effort=xhigh");
+    });
+
+    it("rejects invalid reasoning effort", () => {
+      expect(() =>
+        agent.getLaunchCommand(
+          makeLaunchConfig({
+            model: "gpt-5.5",
+            reasoningEffort: "huge" as unknown as AgentLaunchConfig["reasoningEffort"],
+          }),
+        ),
+      ).toThrow(/Invalid Codex model reasoning effort/);
     });
   });
 });
@@ -1852,9 +1894,7 @@ describe("shell wrapper content", () => {
 
     it("extracts PR URL from gh pr create output", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain(
-        "grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'",
-      );
+      expect(content).toContain("grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'");
       expect(content).toContain("update_ao_metadata pr");
     });
 

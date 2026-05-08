@@ -1126,7 +1126,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
     }
 
-    const selection = resolveAgentSelection({
+    let selection = resolveAgentSelection({
       role: "worker",
       project,
       defaults: config.defaults,
@@ -1242,6 +1242,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         userPrompt: spawnConfig.prompt,
       });
 
+      selection = resolveAgentSelection({
+        role: "worker",
+        project,
+        defaults: config.defaults,
+        spawnAgentOverride: spawnConfig.agent,
+        prompt: `${systemPrompt}\n${taskPrompt ?? ""}`,
+      });
+
       const baseDir = getProjectDir(spawnConfig.projectId);
       mkdirSync(baseDir, { recursive: true });
       const systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
@@ -1282,6 +1290,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         systemPromptFile,
         permissions: selection.permissions,
         model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
         subagent: spawnConfig.subagent ?? selection.subagent,
       };
 
@@ -1619,6 +1628,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       workspacePath,
       permissions: "permissionless" as const,
       model: selection.model,
+      reasoningEffort: selection.reasoningEffort,
       systemPromptFile,
       subagent: selection.subagent,
     };
@@ -2867,6 +2877,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       issueId: session.issueId ?? undefined,
       permissions: selection.role === "orchestrator" ? "permissionless" : selection.permissions,
       model: selection.model,
+      reasoningEffort: selection.reasoningEffort,
       subagent: selection.subagent,
     };
 

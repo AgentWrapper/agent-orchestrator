@@ -80,7 +80,9 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /switch to (dark|light) mode/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /switch to (dark|light) mode/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders a collapsed empty rail when collapsed with no projects", () => {
@@ -253,6 +255,54 @@ describe("ProjectSidebar", () => {
 
     expect(await screen.findByRole("dialog", { name: "Project settings" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-2");
+  });
+
+  it("creates a GitHub ticket from the project actions menu", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        issue: { id: "123" },
+        session: { id: "project-2-1" },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ProjectSidebar
+        projects={[projects[0], { ...projects[1], trackerPlugin: "github" }]}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Create ticket" }));
+
+    expect(await screen.findByRole("dialog", { name: "Create ticket" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New issue" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Body" } });
+    fireEvent.change(screen.getByLabelText("Assignee"), { target: { value: "ipavlidakis" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create ticket" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/issues",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            projectId: "project-2",
+            title: "New issue",
+            description: "Body",
+            labels: ["ao:auto"],
+            assignee: "ipavlidakis",
+            spawn: true,
+          }),
+        }),
+      );
+    });
+    expect(mockPush).toHaveBeenCalledWith("/projects/project-2/sessions/project-2-1");
   });
 
   it("removes a project from the project actions menu", async () => {
@@ -477,9 +527,7 @@ describe("ProjectSidebar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
 
-    expect(
-      await screen.findByRole("menuitem", { name: "Open orchestrator" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Open orchestrator" })).toBeInTheDocument();
   });
 
   it("omits 'Open orchestrator' from the menu when no orchestrator entry exists for the project", async () => {

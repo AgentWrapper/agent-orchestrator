@@ -227,6 +227,28 @@
       "enum": ["permissionless", "default", "auto-edit", "suggest", "skip"],
       "default": "permissionless"
     },
+    "modelReasoningEffort": {
+      "type": "string",
+      "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]
+    },
+    "roleModelConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "modelReasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "model_reasoning_effort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        }
+      }
+    },
     "agentSpecificConfig": {
       "type": "object",
       "additionalProperties": true,
@@ -242,6 +264,30 @@
         },
         "opencodeSessionId": {
           "type": "string"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "modelReasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "model_reasoning_effort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "roleModels": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "planner": {
+              "$ref": "#/$defs/roleModelConfig"
+            },
+            "worker": {
+              "$ref": "#/$defs/roleModelConfig"
+            },
+            "reviewer": {
+              "$ref": "#/$defs/roleModelConfig"
+            }
+          }
         }
       }
     },
@@ -260,6 +306,15 @@
         },
         "opencodeSessionId": {
           "type": "string"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "modelReasoningEffort": {
+          "$ref": "#/$defs/modelReasoningEffort"
+        },
+        "model_reasoning_effort": {
+          "$ref": "#/$defs/modelReasoningEffort"
         }
       }
     },
@@ -281,6 +336,25 @@
         },
         "agentConfig": {
           "$ref": "#/$defs/roleAgentSpecificConfig"
+        }
+      }
+    },
+    "issueAutomationConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "triggerLabel": {
+          "type": "string"
+        },
+        "spawnedLabel": {
+          "type": "string"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -351,6 +425,9 @@
         },
         "worker": {
           "$ref": "#/$defs/roleAgentConfig"
+        },
+        "issueAutomation": {
+          "$ref": "#/$defs/issueAutomationConfig"
         },
         "reactions": {
           "type": "object",

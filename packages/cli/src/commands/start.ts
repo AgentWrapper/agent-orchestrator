@@ -66,6 +66,7 @@ import {
 } from "../lib/running-state.js";
 import { attachToDaemon, killExistingDaemon } from "../lib/daemon.js";
 import { startProjectSupervisor } from "../lib/project-supervisor.js";
+import { startIssueAutomationWorkers } from "../lib/issue-automation-service.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import {
@@ -923,6 +924,13 @@ async function runStartup(
       spinner.start("Starting project supervisor");
       await startProjectSupervisor();
       spinner.succeed("Lifecycle project supervisor started");
+      const automationProjects = await startIssueAutomationWorkers(config);
+      if (automationProjects.length > 0) {
+        console.log(
+          chalk.cyan("Issue automation:"),
+          `polling ${automationProjects.length} project(s): ${automationProjects.join(", ")}`,
+        );
+      }
     } catch (err) {
       spinner.fail("Project supervisor failed to start");
       if (dashboardProcess) {

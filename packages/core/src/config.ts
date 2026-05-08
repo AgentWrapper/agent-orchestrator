@@ -202,12 +202,33 @@ const AgentPermissionSchema = z
   .default("permissionless")
   .transform((value) => (value === "skip" ? "permissionless" : value));
 
+const ModelReasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+const RoleModelConfigSchema = z
+  .object({
+    model: z.string().optional(),
+    reasoningEffort: ModelReasoningEffortSchema.optional(),
+    modelReasoningEffort: ModelReasoningEffortSchema.optional(),
+    model_reasoning_effort: ModelReasoningEffortSchema.optional(),
+  })
+  .passthrough();
+
 const AgentSpecificConfigSchema = z
   .object({
     permissions: AgentPermissionSchema,
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),
     opencodeSessionId: z.string().optional(),
+    reasoningEffort: ModelReasoningEffortSchema.optional(),
+    modelReasoningEffort: ModelReasoningEffortSchema.optional(),
+    model_reasoning_effort: ModelReasoningEffortSchema.optional(),
+    roleModels: z
+      .object({
+        planner: RoleModelConfigSchema.optional(),
+        worker: RoleModelConfigSchema.optional(),
+        reviewer: RoleModelConfigSchema.optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -219,6 +240,9 @@ const RoleAgentSpecificConfigSchema = z
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),
     opencodeSessionId: z.string().optional(),
+    reasoningEffort: ModelReasoningEffortSchema.optional(),
+    modelReasoningEffort: ModelReasoningEffortSchema.optional(),
+    model_reasoning_effort: ModelReasoningEffortSchema.optional(),
   })
   .passthrough();
 
@@ -232,6 +256,15 @@ const RoleAgentConfigSchema = z
   .object({
     agent: z.string().optional(),
     agentConfig: RoleAgentSpecificConfigSchema.optional(),
+  })
+  .optional();
+
+const IssueAutomationConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    triggerLabel: z.string().optional(),
+    spawnedLabel: z.string().optional(),
+    intervalSeconds: z.number().int().positive().optional(),
   })
   .optional();
 
@@ -257,6 +290,7 @@ const ProjectConfigSchema = z.object({
   agentConfig: AgentSpecificConfigSchema.default({}),
   orchestrator: RoleAgentConfigSchema,
   worker: RoleAgentConfigSchema,
+  issueAutomation: IssueAutomationConfigSchema,
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),

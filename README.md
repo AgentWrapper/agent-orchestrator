@@ -64,6 +64,7 @@ To install from source (for contributors):
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+
 </details>
 
 ### Zsh Completion
@@ -167,6 +168,44 @@ Keep the `$schema` line so editors can autocomplete and validate against [`schem
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
+### Codex role models and issue automation
+
+Codex model IDs may use OpenAI provider prefixes; AO passes `openai/gpt-5.5` to Codex as `gpt-5.5`. Role prompts in worker tasks can select planner/reviewer overrides:
+
+```yaml
+projects:
+  my-app:
+    agent: codex
+    tracker:
+      plugin: github
+    agentConfig:
+      roleModels:
+        planner:
+          model: openai/gpt-5.5
+          reasoningEffort: high
+        worker:
+          model: openai/gpt-5.3-codex
+          reasoningEffort: high
+        reviewer:
+          model: openai/gpt-5.5
+          reasoningEffort: high
+    orchestrator:
+      agentConfig:
+        model: openai/gpt-5.5
+        reasoningEffort: medium
+    worker:
+      agentConfig:
+        model: openai/gpt-5.3-codex
+        reasoningEffort: high
+    issueAutomation:
+      enabled: true
+      triggerLabel: ao:auto
+      spawnedLabel: ao:spawned
+      intervalSeconds: 60
+```
+
+Issue automation only spawns open GitHub issues with the trigger label, skips already spawned issues, and adds the spawned label after a successful session spawn.
+
 ## Remote Access
 
 AO keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
@@ -177,7 +216,7 @@ AO keeps your Mac awake while running, so you can access the dashboard remotely 
 # agent-orchestrator.yaml
 $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 power:
-  preventIdleSleep: true  # Default on macOS, no-op on Linux
+  preventIdleSleep: true # Default on macOS, no-op on Linux
 ```
 
 Set to `false` if you want to allow idle sleep while AO runs.
@@ -188,15 +227,15 @@ Set to `false` if you want to allow idle sleep while AO runs.
 
 Seven plugin slots. Lifecycle stays in core.
 
-| Slot      | Default     | Alternatives             |
-| --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | process                  |
-| Agent     | claude-code | codex, aider, cursor, opencode, kimicode |
-| Workspace | worktree    | clone                    |
-| Tracker   | github      | linear, gitlab           |
-| SCM       | github      | gitlab                   |
+| Slot      | Default     | Alternatives                                |
+| --------- | ----------- | ------------------------------------------- |
+| Runtime   | tmux        | process                                     |
+| Agent     | claude-code | codex, aider, cursor, opencode, kimicode    |
+| Workspace | worktree    | clone                                       |
+| Tracker   | github      | linear, gitlab                              |
+| SCM       | github      | gitlab                                      |
 | Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
-| Terminal  | iterm2      | web                      |
+| Terminal  | iterm2      | web                                         |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 

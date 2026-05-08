@@ -562,6 +562,7 @@ export interface AgentLaunchConfig {
   prompt?: string;
   permissions?: AgentPermissionInput;
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
   /**
    * System prompt to pass to the agent for orchestrator context.
    * - Claude Code: --append-system-prompt
@@ -1465,6 +1466,25 @@ export interface RoleAgentConfig {
   agentConfig?: AgentSpecificConfig;
 }
 
+export type PromptRole = "planner" | "worker" | "reviewer";
+
+export type ModelReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export interface RoleModelConfig {
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
+  modelReasoningEffort?: ModelReasoningEffort;
+  model_reasoning_effort?: ModelReasoningEffort;
+  [key: string]: unknown;
+}
+
+export interface IssueAutomationConfig {
+  enabled?: boolean;
+  triggerLabel?: string;
+  spawnedLabel?: string;
+  intervalSeconds?: number;
+}
+
 export interface ProjectConfig {
   /** Display name */
   name: string;
@@ -1516,6 +1536,8 @@ export interface ProjectConfig {
   orchestrator?: RoleAgentConfig;
 
   worker?: RoleAgentConfig;
+
+  issueAutomation?: IssueAutomationConfig;
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
@@ -1613,6 +1635,10 @@ export interface AgentSpecificConfig {
   permissions?: AgentPermissionMode;
   model?: string;
   orchestratorModel?: string;
+  reasoningEffort?: ModelReasoningEffort;
+  modelReasoningEffort?: ModelReasoningEffort;
+  model_reasoning_effort?: ModelReasoningEffort;
+  roleModels?: Partial<Record<PromptRole, RoleModelConfig>>;
   [key: string]: unknown;
 }
 

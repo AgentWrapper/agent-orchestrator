@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
 import { validateString, validateConfiguredProject } from "@/lib/validation";
 import type { Tracker } from "@aoagents/ao-core";
+import { sessionToDashboard } from "@/lib/serialize";
 
 export const dynamic = "force-dynamic";
 
@@ -49,8 +50,8 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/issues — Create a new issue and optionally add to backlog.
- * Body: { projectId, title, description, addToBacklog?: boolean }
+ * POST /api/issues — Create a new issue and optionally spawn a worker.
+ * Body: { projectId, title, description, labels?, assignee?, spawn? }
  */
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
@@ -62,6 +63,29 @@ export async function POST(request: NextRequest) {
   if (titleErr) {
     return NextResponse.json({ error: titleErr }, { status: 400 });
   }
+  if (body.description !== undefined && body.description !== null) {
+    const descriptionErr = validateString(body.description, "description", 20_000);
+    if (descriptionErr) {
+      return NextResponse.json({ error: descriptionErr }, { status: 400 });
+    }
+  }
+
+  const rawLabels = Array.isArray(body.labels)
+    ? body.labels
+    : body.addToBacklog
+      ? ["agent:backlog"]
+      : [];
+  if (!rawLabels.every((label) => typeof label === "string")) {
+    return NextResponse.json({ error: "labels must be an array of strings" }, { status: 400 });
+  }
+  const labels = rawLabels.map((label) => label.trim()).filter((label) => label.length > 0);
+
+  if (body.assignee !== undefined && body.assignee !== null) {
+    const assigneeErr = validateString(body.assignee, "assignee", 100);
+    if (assigneeErr) {
+      return NextResponse.json({ error: assigneeErr }, { status: 400 });
+    }
+  }
 
   const projectId = body.projectId as string;
   if (!projectId) {
@@ -69,7 +93,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { config, registry } = await getServices();
+    const { config, registry, sessionManager } = await getServices();
     const projectErr = validateConfiguredProject(config.projects, projectId);
     if (projectErr) {
       return NextResponse.json({ error: projectErr }, { status: 404 });
@@ -77,25 +101,45 @@ export async function POST(request: NextRequest) {
     const project = config.projects[projectId];
 
     if (!project.tracker?.plugin) {
-      return NextResponse.json({ error: "No tracker configured for this project" }, { status: 422 });
+      return NextResponse.json(
+        { error: "No tracker configured for this project" },
+        { status: 422 },
+      );
     }
 
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.createIssue) {
-      return NextResponse.json({ error: "Tracker does not support issue creation" }, { status: 422 });
+      return NextResponse.json(
+        { error: "Tracker does not support issue creation" },
+        { status: 422 },
+      );
     }
 
-    const labels = body.addToBacklog ? ["agent:backlog"] : [];
     const issue = await tracker.createIssue(
       {
         title: body.title as string,
         description: (body.description as string) ?? "",
         labels,
+        assignee:
+          typeof body.assignee === "string" && body.assignee.trim()
+            ? body.assignee.trim()
+            : undefined,
       },
       project,
     );
 
-    return NextResponse.json({ issue: { projectId, ...issue } }, { status: 201 });
+    const session =
+      body.spawn === true
+        ? await sessionManager.spawn({ projectId, issueId: issue.id })
+        : undefined;
+
+    return NextResponse.json(
+      {
+        issue: { projectId, ...issue },
+        ...(session ? { session: sessionToDashboard(session) } : {}),
+      },
+      { status: 201 },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to create issue" },

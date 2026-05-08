@@ -173,6 +173,7 @@ function ProjectSidebarInner({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
+  const [createTicketProjectId, setCreateTicketProjectId] = useState<string | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [removedProjectIds, setRemovedProjectIds] = useState<Set<string>>(new Set());
   const [addProjectOpen, setAddProjectOpen] = useState(false);
@@ -658,6 +659,19 @@ function ProjectSidebarInner({
                           Open orchestrator
                         </button>
                       ) : null}
+                      {project.trackerPlugin === "github" ? (
+                        <button
+                          type="button"
+                          className="project-sidebar__proj-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            setProjectMenuOpenId(null);
+                            setCreateTicketProjectId(project.id);
+                          }}
+                        >
+                          Create ticket
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="project-sidebar__proj-menu-item"
@@ -881,6 +895,214 @@ function ProjectSidebarInner({
         projectId={projectSettingsProjectId}
         onClose={() => setProjectSettingsProjectId(null)}
       />
+      <CreateTicketModal
+        open={createTicketProjectId !== null}
+        projectId={createTicketProjectId}
+        projectName={
+          visibleProjects.find((project) => project.id === createTicketProjectId)?.name ?? null
+        }
+        onClose={() => setCreateTicketProjectId(null)}
+        onCreated={(sessionId) => {
+          if (sessionId && createTicketProjectId) {
+            navigate(projectSessionPath(createTicketProjectId, sessionId));
+          } else if ("refresh" in router && typeof router.refresh === "function") {
+            router.refresh();
+          }
+        }}
+      />
     </aside>
+  );
+}
+
+function splitLabels(value: string): string[] {
+  return value
+    .split(",")
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+}
+
+function CreateTicketModal({
+  open,
+  projectId,
+  projectName,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  projectId: string | null;
+  projectName: string | null;
+  onClose: () => void;
+  onCreated: (sessionId?: string) => void;
+}) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [labels, setLabels] = useState("ao:auto");
+  const [assignee, setAssignee] = useState("");
+  const [spawn, setSpawn] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle("");
+    setDescription("");
+    setLabels("ao:auto");
+    setAssignee("");
+    setSpawn(true);
+    setSubmitting(false);
+    setError(null);
+    modalRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
+
+  if (!open || !projectId) return null;
+
+  const submit = async () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("Title is required.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          title: trimmedTitle,
+          description,
+          labels: splitLabels(labels),
+          assignee: assignee.trim() || undefined,
+          spawn,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+        session?: { id?: string };
+      } | null;
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to create ticket.");
+      }
+      onClose();
+      onCreated(body?.session?.id);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Failed to create ticket.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="project-settings-modal-backdrop" onClick={onClose}>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create ticket"
+        className="project-settings-modal"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="project-settings-modal__header">
+          <div>
+            <p className="project-settings-modal__eyebrow">Create ticket</p>
+            <h2 className="project-settings-modal__title">{projectName ?? projectId}</h2>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="project-settings-modal__close"
+          >
+            ×
+          </button>
+        </div>
+        <div className="project-settings-modal__body">
+          <form
+            className="project-settings-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <label className="project-settings-form__field">
+              <span className="project-settings-form__label">Title</span>
+              <input
+                className="project-settings-form__input"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                maxLength={200}
+                autoFocus
+              />
+            </label>
+            <label className="project-settings-form__field">
+              <span className="project-settings-form__label">Description</span>
+              <textarea
+                className="project-settings-form__textarea"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={6}
+              />
+            </label>
+            <div className="project-settings-form__grid">
+              <label className="project-settings-form__field">
+                <span className="project-settings-form__label">Labels</span>
+                <input
+                  className="project-settings-form__input"
+                  value={labels}
+                  onChange={(event) => setLabels(event.target.value)}
+                />
+              </label>
+              <label className="project-settings-form__field">
+                <span className="project-settings-form__label">Assignee</span>
+                <input
+                  className="project-settings-form__input"
+                  value={assignee}
+                  onChange={(event) => setAssignee(event.target.value)}
+                />
+              </label>
+            </div>
+            <label className="project-settings-form__field project-settings-form__checkbox">
+              <input
+                type="checkbox"
+                checked={spawn}
+                onChange={(event) => setSpawn(event.target.checked)}
+              />
+              <span>Spawn after create</span>
+            </label>
+            {error ? (
+              <div
+                role="alert"
+                className="project-settings-form__alert project-settings-form__alert--error"
+              >
+                {error}
+              </div>
+            ) : null}
+            <button
+              type="submit"
+              className="project-settings-form__save"
+              disabled={submitting || title.trim().length === 0}
+            >
+              {submitting ? "Creating..." : "Create ticket"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }

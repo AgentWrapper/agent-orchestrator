@@ -237,6 +237,20 @@ export const LocalProjectConfigSchema = z
           .optional(),
         model: z.string().optional(),
         orchestratorModel: z.string().optional(),
+        reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+        modelReasoningEffort: z
+          .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
+          .optional(),
+        model_reasoning_effort: z
+          .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
+          .optional(),
+        roleModels: z
+          .object({
+            planner: z.object({}).passthrough().optional(),
+            worker: z.object({}).passthrough().optional(),
+            reviewer: z.object({}).passthrough().optional(),
+          })
+          .optional(),
       })
       .passthrough()
       .optional(),
@@ -247,6 +261,14 @@ export const LocalProjectConfigSchema = z
       .object({ agent: z.string().optional(), agentConfig: z.object({}).passthrough().optional() })
       .optional(),
     reactions: z.record(z.object({}).passthrough()).optional(),
+    issueAutomation: z
+      .object({
+        enabled: z.boolean().optional(),
+        triggerLabel: z.string().optional(),
+        spawnedLabel: z.string().optional(),
+        intervalSeconds: z.number().int().positive().optional(),
+      })
+      .optional(),
     agentRules: z.string().optional(),
     agentRulesFile: z.string().optional(),
     orchestratorRules: z.string().optional(),

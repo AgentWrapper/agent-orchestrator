@@ -11,6 +11,7 @@ import {
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type ModelReasoningEffort,
   type ActivityState,
   type ActivityDetection,
   type CostEstimate,
@@ -401,15 +402,60 @@ function appendApprovalFlags(
   }
 }
 
+const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+function normalizeCodexModel(model: string): string {
+  return model.replace(/^openai\//i, "");
+}
+
+function getReasoningEffort(config: {
+  reasoningEffort?: unknown;
+  projectConfig?: { agentConfig?: Record<string, unknown> };
+}): ModelReasoningEffort | undefined {
+  const agentConfig = config.projectConfig?.agentConfig;
+  const value =
+    config.reasoningEffort ??
+    agentConfig?.["reasoningEffort"] ??
+    agentConfig?.["modelReasoningEffort"] ??
+    agentConfig?.["model_reasoning_effort"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !VALID_REASONING_EFFORTS.has(value)) {
+    throw new Error(
+      `Invalid Codex model reasoning effort: ${String(value)}. Expected one of: ${Array.from(
+        VALID_REASONING_EFFORTS,
+      ).join(", ")}`,
+    );
+  }
+  return value as ModelReasoningEffort;
+}
+
 /** Append model and reasoning flags to a command parts array */
-function appendModelFlags(parts: string[], model: string | undefined): void {
-  if (!model) return;
-  parts.push("--model", shellEscape(model));
+function appendModelFlags(
+  parts: string[],
+  model: string | undefined,
+  reasoningEffort: ModelReasoningEffort | undefined,
+): void {
+  const normalizedModel = model ? normalizeCodexModel(model) : undefined;
+  if (normalizedModel) {
+    parts.push("--model", shellEscape(normalizedModel));
+  }
+
+  if (reasoningEffort) {
+    parts.push("-c", `model_reasoning_effort=${reasoningEffort}`);
+    return;
+  }
 
   // Auto-detect o-series models and enable reasoning via config override.
   // Codex does not have a --reasoning flag; reasoning is controlled via
   // the model_reasoning_effort config key.
-  if (/^o[34]/i.test(model)) {
+  if (normalizedModel && /^o[34]/i.test(normalizedModel)) {
     parts.push("-c", "model_reasoning_effort=high");
   }
 }
@@ -457,7 +503,7 @@ function createCodexAgent(): Agent {
       appendNoUpdateCheckFlag(parts);
 
       appendApprovalFlags(parts, config.permissions);
-      appendModelFlags(parts, config.model);
+      appendModelFlags(parts, config.model, getReasoningEffort(config));
 
       if (config.systemPromptFile) {
         // Codex reads developer instructions from a file via config override
@@ -740,7 +786,11 @@ function createCodexAgent(): Agent {
 
       appendApprovalFlags(parts, project.agentConfig?.permissions);
       const effectiveModel = (project.agentConfig?.model ?? model) as string | undefined;
-      appendModelFlags(parts, effectiveModel ?? undefined);
+      appendModelFlags(
+        parts,
+        effectiveModel ?? undefined,
+        getReasoningEffort({ projectConfig: { agentConfig: project.agentConfig } }),
+      );
 
       // Positional threadId goes last, after all flags
       parts.push(shellEscape(threadId));

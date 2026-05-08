@@ -9,6 +9,7 @@ export interface ProjectInfo {
   id: string;
   name: string;
   sessionPrefix?: string;
+  trackerPlugin?: string;
   resolveError?: string;
 }
 
@@ -151,6 +152,7 @@ export const getAllProjects = cache((): ProjectInfo[] => {
         id,
         name: project.name ?? id,
         sessionPrefix: project.sessionPrefix ?? id,
+        trackerPlugin: project.tracker?.plugin,
       })),
       ...Object.entries(config.degradedProjects).map(([id, project]) => ({
         id,

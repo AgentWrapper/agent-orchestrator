@@ -119,6 +119,8 @@ export {
 // Session manager — session CRUD
 export { createSessionManager } from "./session-manager.js";
 export type { SessionManagerDeps } from "./session-manager.js";
+export { detectPromptRole, resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+export type { ResolvedAgentSelection, SessionRole } from "./agent-selection.js";
 
 // Process-scoped async memoization — used by plugins to dedupe shared
 // prerequisite checks (e.g. multiple github plugins checking gh auth).
@@ -131,6 +133,19 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT, BASE_AGENT_PROMPT_NO_REPO } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
+
+export {
+  DEFAULT_ISSUE_AUTOMATION_INTERVAL_SECONDS,
+  DEFAULT_ISSUE_AUTOMATION_SPAWNED_LABEL,
+  DEFAULT_ISSUE_AUTOMATION_TRIGGER_LABEL,
+  getIssueAutomationSettings,
+  pollIssueAutomationProject,
+} from "./issue-automation.js";
+export type {
+  IssueAutomationSettings,
+  PollIssueAutomationInput,
+  PollIssueAutomationResult,
+} from "./issue-automation.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";

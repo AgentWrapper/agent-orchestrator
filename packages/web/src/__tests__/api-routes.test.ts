@@ -10,6 +10,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
+  type Tracker,
 } from "@aoagents/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
@@ -163,9 +164,38 @@ const mockSCM: SCM = {
   })),
 };
 
+const mockTracker: Tracker = {
+  name: "github",
+  getIssue: vi.fn(async () => ({
+    id: "123",
+    title: "Created issue",
+    description: "Body",
+    url: "https://github.com/acme/my-app/issues/123",
+    state: "open",
+    labels: ["ao:auto"],
+  })),
+  isCompleted: vi.fn(async () => false),
+  issueUrl: vi.fn((id: string) => `https://github.com/acme/my-app/issues/${id}`),
+  branchName: vi.fn((id: string) => `feat/issue-${id}`),
+  generatePrompt: vi.fn(async () => "Issue prompt"),
+  listIssues: vi.fn(async () => []),
+  updateIssue: vi.fn(async () => undefined),
+  createIssue: vi.fn(async (input) => ({
+    id: "123",
+    title: input.title,
+    description: input.description,
+    url: "https://github.com/acme/my-app/issues/123",
+    state: "open",
+    labels: input.labels ?? [],
+    assignee: input.assignee,
+  })),
+};
+
 const mockRegistry: PluginRegistry = {
   register: vi.fn(),
-  get: vi.fn(() => mockSCM) as PluginRegistry["get"],
+  get: vi.fn((slot: string) =>
+    slot === "tracker" ? mockTracker : mockSCM,
+  ) as PluginRegistry["get"],
   list: vi.fn(() => []),
   loadBuiltins: vi.fn(async () => {}),
   loadFromConfig: vi.fn(async () => {}),
@@ -184,6 +214,7 @@ const mockConfig: OrchestratorConfig = {
       defaultBranch: "main",
       sessionPrefix: "my-app",
       scm: { plugin: "github" },
+      tracker: { plugin: "github" },
     },
     "docs-app": {
       name: "Docs App",
@@ -192,6 +223,7 @@ const mockConfig: OrchestratorConfig = {
       defaultBranch: "main",
       sessionPrefix: "docs",
       scm: { plugin: "github" },
+      tracker: { plugin: "github" },
     },
   },
   notifiers: {},
@@ -215,6 +247,7 @@ import { GET as sessionsGET } from "@/app/api/sessions/route";
 import { GET as sessionDetailGET } from "@/app/api/sessions/[id]/route";
 import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
+import { POST as issuesPOST } from "@/app/api/issues/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
 import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
@@ -863,6 +896,62 @@ describe("API Routes", () => {
       expect(res.status).toBe(201);
       const data = await res.json();
       expect(data.session.issueId).toBeNull();
+    });
+  });
+
+  describe("POST /api/issues", () => {
+    it("creates a GitHub issue with labels and assignee", async () => {
+      const req = makeRequest("/api/issues", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "my-app",
+          title: "New issue",
+          description: "Body",
+          labels: ["ao:auto"],
+          assignee: "ipavlidakis",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await issuesPOST(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(mockTracker.createIssue).toHaveBeenCalledWith(
+        {
+          title: "New issue",
+          description: "Body",
+          labels: ["ao:auto"],
+          assignee: "ipavlidakis",
+        },
+        mockConfig.projects["my-app"],
+      );
+      expect(data.issue.id).toBe("123");
+      expect(data.session).toBeUndefined();
+    });
+
+    it("spawns a session when requested", async () => {
+      const req = makeRequest("/api/issues", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "my-app",
+          title: "Spawn issue",
+          description: "Body",
+          labels: ["ao:auto"],
+          spawn: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await issuesPOST(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+        projectId: "my-app",
+        issueId: "123",
+      });
+      expect(data.session.issueId).toBe("123");
     });
   });
 

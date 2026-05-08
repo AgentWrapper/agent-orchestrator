@@ -4,6 +4,8 @@ import {
   type AgentPermissionMode,
   type AgentSpecificConfig,
   type DefaultPlugins,
+  type ModelReasoningEffort,
+  type PromptRole,
   type ProjectConfig,
 } from "./types.js";
 
@@ -14,8 +16,26 @@ export interface ResolvedAgentSelection {
   agentName: string;
   agentConfig: AgentSpecificConfig;
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
   permissions?: AgentPermissionMode;
   subagent?: string;
+}
+
+const PROMPT_ROLE_PATTERN = /^\s*Role:\s*(Planner|Worker|Reviewer)\s*$/im;
+
+export function detectPromptRole(prompt: string | undefined): PromptRole | undefined {
+  if (!prompt) return undefined;
+  const match = prompt.match(PROMPT_ROLE_PATTERN);
+  if (!match) return undefined;
+  return match[1].toLowerCase() as PromptRole;
+}
+
+function pickReasoningEffort(
+  config: AgentSpecificConfig | undefined,
+): ModelReasoningEffort | undefined {
+  const value =
+    config?.reasoningEffort ?? config?.modelReasoningEffort ?? config?.model_reasoning_effort;
+  return typeof value === "string" ? (value as ModelReasoningEffort) : undefined;
 }
 
 export function resolveSessionRole(
@@ -35,12 +55,15 @@ export function resolveAgentSelection(params: {
   defaults: DefaultPlugins;
   persistedAgent?: string;
   spawnAgentOverride?: string;
+  prompt?: string;
 }): ResolvedAgentSelection {
-  const { role, project, defaults, persistedAgent, spawnAgentOverride } = params;
+  const { role, project, defaults, persistedAgent, spawnAgentOverride, prompt } = params;
   const roleProjectConfig = role === "orchestrator" ? project.orchestrator : project.worker;
   const roleDefaults = role === "orchestrator" ? defaults.orchestrator : defaults.worker;
   const sharedConfig = project.agentConfig ?? {};
   const roleAgentConfig = roleProjectConfig?.agentConfig ?? {};
+  const promptRole = role === "worker" ? detectPromptRole(prompt) : undefined;
+  const promptRoleConfig = promptRole ? sharedConfig.roleModels?.[promptRole] : undefined;
 
   const agentName = persistedAgent
     ? persistedAgent
@@ -60,6 +83,13 @@ export function resolveAgentSelection(params: {
       agentConfig[key] = value;
     }
   }
+  if (promptRoleConfig) {
+    for (const [key, value] of Object.entries(promptRoleConfig)) {
+      if (value !== undefined) {
+        agentConfig[key] = value;
+      }
+    }
+  }
 
   const model =
     role === "orchestrator"
@@ -67,10 +97,18 @@ export function resolveAgentSelection(params: {
         roleAgentConfig.model ??
         sharedConfig.orchestratorModel ??
         sharedConfig.model)
-      : (roleAgentConfig.model ?? sharedConfig.model);
+      : (promptRoleConfig?.model ?? roleAgentConfig.model ?? sharedConfig.model);
 
   if (model !== undefined) {
     agentConfig.model = model;
+  }
+
+  const reasoningEffort =
+    pickReasoningEffort(promptRoleConfig as AgentSpecificConfig | undefined) ??
+    pickReasoningEffort(roleAgentConfig) ??
+    pickReasoningEffort(sharedConfig);
+  if (reasoningEffort !== undefined) {
+    agentConfig.reasoningEffort = reasoningEffort;
   }
 
   const permissions = normalizeAgentPermissionMode(
@@ -87,6 +125,7 @@ export function resolveAgentSelection(params: {
     agentName,
     agentConfig,
     model,
+    reasoningEffort,
     permissions,
     subagent,
   };
