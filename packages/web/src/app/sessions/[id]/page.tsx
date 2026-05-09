@@ -5,10 +5,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { ACTIVITY_STATE, SESSION_STATUS, isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
-import {
-  ProjectSidebar,
-  type ProjectSidebarOrchestrator,
-} from "@/components/ProjectSidebar";
+import { ProjectSidebar, type ProjectSidebarOrchestrator } from "@/components/ProjectSidebar";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -82,7 +79,7 @@ interface ProjectSessionsBody {
 
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
-const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
+const SESSION_PAGE_REFRESH_INTERVAL_MS = 5000;
 const SESSION_FETCH_TIMEOUT_MS = 8000;
 const PROJECT_SIDEBAR_FETCH_TIMEOUT_MS = 5000;
 const PROJECTS_FETCH_TIMEOUT_MS = 5000;
@@ -551,8 +548,8 @@ export default function SessionPage() {
     projectSessionsFetchControllerRef.current = controller;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
       const body = await fetchJsonWithTimeout<ProjectSessionsBody>(query, {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
@@ -613,7 +610,7 @@ export default function SessionPage() {
       const body = await fetchJsonWithTimeout<{
         sessions?: DashboardSession[];
         orchestrators?: DashboardOrchestratorLink[];
-      } | null>("/api/sessions?fresh=true", {
+      } | null>("/api/sessions", {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
         timeoutMessage: `Sidebar sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,

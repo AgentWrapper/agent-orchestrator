@@ -501,6 +501,7 @@ export function createMockSessionManager(): OpenCodeSessionManager {
       ),
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
+    listStored: vi.fn().mockResolvedValue([]),
     listCached: vi.fn().mockResolvedValue([]),
     invalidateCache: vi.fn(),
     remap: vi.fn().mockResolvedValue("app-1"),

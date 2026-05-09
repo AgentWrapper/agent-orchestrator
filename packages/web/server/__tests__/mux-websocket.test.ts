@@ -116,12 +116,12 @@ describe("SessionBroadcaster", () => {
       broadcaster.subscribe(vi.fn());
       await vi.advanceTimersByTimeAsync(0);
 
-      // 1 snapshot for sub1 + 1 snapshot for sub2 = 2
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // Cold snapshots are coalesced across subscribers.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // After 3 seconds, only one polling fetch happens
       await vi.advanceTimersByTimeAsync(3000);
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
     it("returns an unsubscribe function that stops polling when last subscriber leaves", async () => {

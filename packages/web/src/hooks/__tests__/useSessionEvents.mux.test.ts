@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useSessionEvents } from "../useSessionEvents";
 import type { DashboardSession } from "@/lib/types";
 
@@ -19,6 +19,7 @@ describe("useSessionEvents - mux", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("triggers refresh when mux patch contains unknown id", async () => {
@@ -53,6 +54,83 @@ describe("useSessionEvents - mux", () => {
         expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
       );
     });
+  });
+
+  it("ignores in-flight refreshes from an old project scope", async () => {
+    vi.useFakeTimers();
+    const sOther = {
+      id: "other-1",
+      projectId: "other",
+      lastActivityAt: now,
+    } as unknown as DashboardSession;
+    const staleSession = {
+      id: "stale-old-project",
+      projectId: "proj",
+      lastActivityAt: now,
+    } as unknown as DashboardSession;
+    let resolveOldRefresh: (response: Response) => void = () => {};
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveOldRefresh = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    let project = "proj";
+    let initialSessions = [s1];
+    let muxSessions: Parameters<typeof useSessionEvents>[0]["muxSessions"] = [
+      {
+        id: "s1",
+        status: "working",
+        activity: "active",
+        attentionLevel: "working" as const,
+        lastActivityAt: now,
+      },
+      {
+        id: "s2",
+        status: "working",
+        activity: "active",
+        attentionLevel: "working" as const,
+        lastActivityAt: now,
+      },
+    ];
+
+    const { result, rerender } = renderHook(() =>
+      useSessionEvents({
+        initialSessions,
+        project,
+        muxSessions,
+        attentionZones: "simple",
+      }),
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions?project=proj",
+      expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
+    );
+
+    project = "other";
+    initialSessions = [sOther];
+    muxSessions = undefined;
+    await act(async () => {
+      rerender();
+    });
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["other-1"]);
+
+    await act(async () => {
+      resolveOldRefresh({
+        ok: true,
+        json: async () => ({ sessions: [staleSession] }),
+      } as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["other-1"]);
   });
 
   it("does not warn when an in-flight refresh is aborted on unmount", async () => {

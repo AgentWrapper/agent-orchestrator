@@ -48,6 +48,15 @@ interface SessionPatch {
 }
 
 const SESSION_SNAPSHOT_TIMEOUT_MS = 15_000;
+const SESSION_POLL_INTERVAL_MS = 3_000;
+const SESSION_ERROR_BROADCAST_THRESHOLD = 3;
+
+function isAbortLikeError(err: unknown): boolean {
+  if (err instanceof Error) {
+    return err.name === "AbortError" || err.message.toLowerCase().includes("aborted");
+  }
+  return false;
+}
 
 /**
  * Manages polling of session patches from Next.js /api/sessions/patches.
@@ -57,8 +66,11 @@ const SESSION_SNAPSHOT_TIMEOUT_MS = 15_000;
 export class SessionBroadcaster {
   private subscribers = new Set<(sessions: SessionPatch[]) => void>();
   private errorSubscribers = new Set<(error: string) => void>();
-  private intervalId: ReturnType<typeof setInterval> | null = null;
-  private polling = false;
+  private timerId: ReturnType<typeof setTimeout> | null = null;
+  private inFlight: Promise<{ sessions: SessionPatch[] | null; error: string | null }> | null =
+    null;
+  private lastSnapshot: SessionPatch[] | null = null;
+  private consecutiveErrors = 0;
   private readonly baseUrl: string;
 
   constructor(nextPort: string) {
@@ -77,37 +89,36 @@ export class SessionBroadcaster {
     this.subscribers.add(callback);
     if (onError) this.errorSubscribers.add(onError);
 
-    // Immediately send a one-off snapshot to just this new subscriber
-    void this.fetchSnapshot().then((result) => {
-      if (result.sessions && this.subscribers.has(callback)) {
-        try {
-          callback(result.sessions);
-        } catch {
-          // Isolate subscriber errors so one bad subscriber doesn't break others
-        }
-      } else if (result.error && onError && this.errorSubscribers.has(onError)) {
-        try {
-          onError(result.error);
-        } catch {
-          // Isolate subscriber errors
-        }
+    // Immediately send the last good snapshot to just this new subscriber.
+    // If no snapshot exists yet, coalesce the cold fetch with any other
+    // subscribers that connect during startup.
+    if (this.lastSnapshot) {
+      try {
+        callback(this.lastSnapshot);
+      } catch {
+        // Isolate subscriber errors
       }
-    });
+    } else {
+      void this.refreshSnapshot().then((result) => {
+        if (result.sessions && this.subscribers.has(callback)) {
+          try {
+            callback(result.sessions);
+          } catch {
+            // Isolate subscriber errors so one bad subscriber doesn't break others
+          }
+        } else if (result.error && onError && this.errorSubscribers.has(onError)) {
+          try {
+            onError(result.error);
+          } catch {
+            // Isolate subscriber errors
+          }
+        }
+      });
+    }
 
     // Start polling if this is the first subscriber
     if (wasEmpty) {
-      this.intervalId = setInterval(() => {
-        if (this.polling) return;
-        this.polling = true;
-        void this.fetchSnapshot()
-          .then((result) => {
-            if (result.sessions && this.intervalId !== null) this.broadcast(result.sessions);
-            else if (result.error && this.intervalId !== null) this.broadcastError(result.error);
-          })
-          .finally(() => {
-            this.polling = false;
-          });
-      }, 3000);
+      this.schedulePoll();
     }
 
     return () => {
@@ -117,6 +128,59 @@ export class SessionBroadcaster {
         this.disconnect();
       }
     };
+  }
+
+  private schedulePoll(): void {
+    if (this.timerId !== null || this.subscribers.size === 0) return;
+    this.timerId = setTimeout(() => {
+      this.timerId = null;
+      void this.refreshSnapshot()
+        .then((result) => {
+          if (this.subscribers.size === 0) return;
+          if (result.sessions) {
+            this.broadcast(result.sessions);
+            return;
+          }
+          if (result.error) {
+            this.maybeBroadcastError(result.error);
+          }
+        })
+        .finally(() => {
+          if (this.subscribers.size > 0) {
+            this.schedulePoll();
+          }
+        });
+    }, SESSION_POLL_INTERVAL_MS);
+  }
+
+  private maybeBroadcastError(error: string): void {
+    if (!this.lastSnapshot || this.consecutiveErrors >= SESSION_ERROR_BROADCAST_THRESHOLD) {
+      this.broadcastError(error);
+    }
+  }
+
+  private async refreshSnapshot(): Promise<{
+    sessions: SessionPatch[] | null;
+    error: string | null;
+  }> {
+    if (this.inFlight) return this.inFlight;
+
+    this.inFlight = this.fetchSnapshot()
+      .then((result) => {
+        if (result.sessions) {
+          this.lastSnapshot = result.sessions;
+          this.consecutiveErrors = 0;
+          return result;
+        }
+
+        this.consecutiveErrors += 1;
+        return result;
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+
+    return this.inFlight;
   }
 
   private broadcast(sessions: SessionPatch[]): void {
@@ -161,15 +225,17 @@ export class SessionBroadcaster {
     } catch (err) {
       clearTimeout(timeoutId);
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+      if (!isAbortLikeError(err) || !this.lastSnapshot) {
+        console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+      }
       return { sessions: null, error: msg };
     }
   }
 
   private disconnect(): void {
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+    if (this.timerId !== null) {
+      clearTimeout(this.timerId);
+      this.timerId = null;
     }
   }
 }
@@ -604,9 +670,7 @@ export function handleWindowsPipeMessage(
               try {
                 const status = JSON.parse(payload.toString("utf-8")) as { alive: boolean };
                 if (!status.alive && ws.readyState === WS_OPEN) {
-                  ws.send(
-                    JSON.stringify({ ch: "terminal", id, type: "exited", code: 0, ...echo }),
-                  );
+                  ws.send(JSON.stringify({ ch: "terminal", id, type: "exited", code: 0, ...echo }));
                 }
               } catch {
                 /* ignore parse errors */
@@ -726,7 +790,14 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             if (type === "open") {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; data?: string; cols?: number; rows?: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    data?: string;
+                    cols?: number;
+                    rows?: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
@@ -808,7 +879,13 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; cols: number; rows: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    cols: number;
+                    rows: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
@@ -820,7 +897,14 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             } else if (type === "close") {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; data?: string; cols?: number; rows?: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    data?: string;
+                    cols?: number;
+                    rows?: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
