@@ -248,6 +248,23 @@ async function spawnSession(
     );
     console.log(`  View:     ${chalk.dim(projectSessionUrl(port, projectId, session.id))}`);
 
+    // Warn when running in permissionless mode — Claude Code shows a one-time
+    // confirmation prompt inside the tmux session that silently kills the session
+    // if dismissed. Users need to know to accept it or switch to default mode.
+    const effectivePermissions =
+      config.projects[projectId]?.agentConfig?.permissions ?? "permissionless";
+    if (effectivePermissions === "permissionless") {
+      console.warn(
+        chalk.yellow(
+          `  ⚠ Running in permissionless mode (--dangerously-skip-permissions).\n` +
+            `    Claude Code will show a one-time confirmation prompt in the tmux session.\n` +
+            `    If this is your first time, accept it with: ${chalk.cyan(`tmux attach -t ${session.id}`)}\n` +
+            `    To use interactive mode instead, set in agent-orchestrator.yaml:\n` +
+            `      ${chalk.cyan("agentConfig:\n        permissions: default")}`,
+        ),
+      );
+    }
+
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
     const promptDelivered = session.metadata?.promptDelivered;
     if (promptDelivered === "false") {

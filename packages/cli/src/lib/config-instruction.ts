@@ -66,6 +66,11 @@ projects:
 
     # ── Agent configuration (optional) ────────────────────────────
     agentConfig:
+      # permissions controls whether Claude Code skips tool-use confirmation prompts.
+      # DEFAULT is "permissionless" — passes --dangerously-skip-permissions to Claude Code.
+      # Claude Code will show a one-time confirmation prompt in the tmux session on first run;
+      # if dismissed, the session silently exits. Accept it via: tmux attach -t <session-id>
+      # Use "default" for fully interactive mode where Claude asks before each action.
       permissions: permissionless   # permissionless | default | auto-edit | suggest
       model: claude-sonnet-4-20250514
 
