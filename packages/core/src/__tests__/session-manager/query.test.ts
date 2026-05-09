@@ -62,6 +62,49 @@ describe("list", () => {
     expect(sessions.map((s) => s.id).sort()).toEqual(["app-1", "app-2"]);
   });
 
+  it("returns partial list data when bounded enrichment stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const agentWithStuckState: Agent = {
+        ...mockAgent,
+        getActivityState: vi.fn(() => new Promise<null>(() => {})),
+        getSessionInfo: vi.fn().mockResolvedValue(null),
+      };
+      const registryWithStuckState: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithStuckState;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/w1",
+        branch: "feat/a",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-1"),
+      });
+
+      const sm = createSessionManager({ config, registry: registryWithStuckState });
+      const sessionsPromise = sm.list();
+      await vi.advanceTimersByTimeAsync(12_000);
+      const sessions = await sessionsPromise;
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]!.id).toBe("app-1");
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(1);
+
+      const secondSessions = await sm.list();
+
+      expect(secondSessions).toHaveLength(1);
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not backfill role onto foreign bare-id orchestrator records (issue #1048)", async () => {
     // Regression guard for PR #1075 review comment: a legacy record whose id
     // is `{projectId}-orchestrator` (pre-numbered scheme, wrong prefix) must
@@ -545,6 +588,230 @@ describe("get", () => {
     expect(agentWithState.getActivityState).toHaveBeenCalled();
     // Verify activity state was set
     expect(session!.activity).toBe("idle");
+  });
+
+  it("returns partial session data when bounded enrichment stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const agentWithStuckState: Agent = {
+        ...mockAgent,
+        getActivityState: vi.fn(() => new Promise<null>(() => {})),
+        getSessionInfo: vi.fn().mockResolvedValue(null),
+      };
+      const registryWithStuckState: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithStuckState;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-1"),
+      });
+
+      const sm = createSessionManager({ config, registry: registryWithStuckState });
+      const sessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+
+      await vi.advanceTimersByTimeAsync(100);
+      const session = await sessionPromise;
+
+      expect(session).not.toBeNull();
+      expect(session!.id).toBe("app-1");
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalled();
+      expect(agentWithStuckState.getSessionInfo).not.toHaveBeenCalled();
+
+      const secondSessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      const secondSession = await secondSessionPromise;
+
+      expect(secondSession).not.toBeNull();
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(vi.getTimerCount()).toBe(0);
+      const retrySessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      const retrySession = await retrySessionPromise;
+
+      expect(retrySession).not.toBeNull();
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies shared bounded enrichment to concurrent get callers", async () => {
+    let resolveActivity: (value: { state: "idle" }) => void = () => {};
+    let resolveActivityRequested: () => void = () => {};
+    const activityRequested = new Promise<void>((resolve) => {
+      resolveActivityRequested = resolve;
+    });
+    const agentWithDeferredState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn(
+        () => {
+          resolveActivityRequested();
+          return new Promise<{ state: "idle" }>((resolve) => {
+            resolveActivity = resolve;
+          });
+        },
+      ),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "working on the fix",
+        agentSessionId: "agent-session-1",
+      }),
+    };
+    const registryWithDeferredState: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithDeferredState;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeferredState });
+    const first = sm.get("app-1", { enrichTimeoutMs: 1_000 });
+    const second = sm.get("app-1", { enrichTimeoutMs: 1_000 });
+
+    await activityRequested;
+    resolveActivity({ state: "idle" });
+    const [firstSession, secondSession] = await Promise.all([first, second]);
+
+    expect(agentWithDeferredState.getActivityState).toHaveBeenCalledTimes(1);
+    expect(firstSession?.activity).toBe("idle");
+    expect(secondSession?.activity).toBe("idle");
+    expect(firstSession?.agentInfo?.summary).toBe("working on the fix");
+    expect(secondSession?.agentInfo?.summary).toBe("working on the fix");
+  });
+
+  it("does not immediately retry when bounded session info enrichment stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const agentWithStuckInfo: Agent = {
+        ...mockAgent,
+        getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+        getSessionInfo: vi.fn(() => new Promise<null>(() => {})),
+      };
+      const registryWithStuckInfo: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithStuckInfo;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-1"),
+      });
+
+      const sm = createSessionManager({ config, registry: registryWithStuckInfo });
+      const sessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      const session = await sessionPromise;
+
+      expect(session).not.toBeNull();
+      expect(session!.activity).toBe("idle");
+      expect(agentWithStuckInfo.getActivityState).toHaveBeenCalledTimes(1);
+      expect(agentWithStuckInfo.getSessionInfo).toHaveBeenCalledTimes(1);
+
+      const secondSessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      const secondSession = await secondSessionPromise;
+
+      expect(secondSession).not.toBeNull();
+      expect(agentWithStuckInfo.getActivityState).toHaveBeenCalledTimes(1);
+      expect(agentWithStuckInfo.getSessionInfo).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps fresher caller metadata when applying shared bounded enrichment", async () => {
+    let resolveActivity: (value: { state: "idle" }) => void = () => {};
+    let resolveActivityRequested: () => void = () => {};
+    const activityRequested = new Promise<void>((resolve) => {
+      resolveActivityRequested = resolve;
+    });
+    const agentWithDeferredState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn(
+        () => {
+          resolveActivityRequested();
+          return new Promise<{ state: "idle" }>((resolve) => {
+            resolveActivity = resolve;
+          });
+        },
+      ),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "shared enrichment",
+        agentSessionId: "agent-session-1",
+      }),
+    };
+    const registryWithDeferredState: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithDeferredState;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeferredState });
+    const first = sm.get("app-1", { enrichTimeoutMs: 1_000 });
+
+    await activityRequested;
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/newer",
+      branch: "feat/newer",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/99",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    const second = sm.get("app-1", { enrichTimeoutMs: 1_000 });
+
+    resolveActivity({ state: "idle" });
+    const [firstSession, secondSession] = await Promise.all([first, second]);
+
+    expect(agentWithDeferredState.getActivityState).toHaveBeenCalledTimes(1);
+    expect(firstSession?.branch).toBe("main");
+    expect(secondSession?.branch).toBe("feat/newer");
+    expect(secondSession?.workspacePath).toBe("/tmp/newer");
+    expect(secondSession?.status).toBe("pr_open");
+    expect(secondSession?.pr?.number).toBe(99);
+    expect(secondSession?.metadata["branch"]).toBe("feat/newer");
+    expect(secondSession?.metadata["worktree"]).toBe("/tmp/newer");
+    expect(secondSession?.metadata["status"]).toBe("pr_open");
+    expect(secondSession?.activity).toBe("idle");
+    expect(secondSession?.agentInfo?.summary).toBe("shared enrichment");
   });
 
   it("returns null for nonexistent session", async () => {

@@ -11,6 +11,7 @@ import { settlesWithin } from "@/lib/async-utils";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 
 const AGENT_REPORT_AUDIT_TIMEOUT_MS = 1000;
+const SESSION_GET_ENRICH_TIMEOUT_MS = 3000;
 const METADATA_ENRICH_TIMEOUT_MS = 3000;
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +21,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const { id } = await params;
     const { config, registry, sessionManager } = await getServices();
 
-    const coreSession = await sessionManager.get(id);
+    const coreSession = await sessionManager.get(id, {
+      enrichTimeoutMs: SESSION_GET_ENRICH_TIMEOUT_MS,
+    });
     if (!coreSession) {
       return jsonWithCorrelation({ error: "Session not found" }, { status: 404 }, correlationId);
     }
@@ -65,7 +68,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       config: undefined,
       sessionManager: undefined,
     }));
-    const session = sessionManager ? await sessionManager.get(id).catch(() => null) : null;
+    const session = sessionManager
+      ? await sessionManager
+          .get(id, { enrichTimeoutMs: SESSION_GET_ENRICH_TIMEOUT_MS })
+          .catch(() => null)
+      : null;
     if (config) {
       recordApiObservation({
         config,

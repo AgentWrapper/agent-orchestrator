@@ -1798,6 +1798,14 @@ export interface KillOptions {
   reason?: LifecycleKillReason;
 }
 
+export interface SessionGetOptions {
+  /**
+   * Bound live runtime/agent enrichment. When this expires, get() returns the
+   * metadata-backed session with any enrichment that completed in time.
+   */
+  enrichTimeoutMs?: number;
+}
+
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
@@ -1805,7 +1813,7 @@ export interface SessionManager {
   ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
-  get(sessionId: SessionId): Promise<Session | null>;
+  get(sessionId: SessionId, options?: SessionGetOptions): Promise<Session | null>;
   kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
   cleanup(
     projectId?: string,

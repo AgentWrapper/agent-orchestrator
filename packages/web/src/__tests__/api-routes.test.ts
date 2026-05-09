@@ -711,10 +711,32 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       expect(data.id).toBe("backend-7");
       expect(data.projectId).toBe("my-app");
+      expect(mockSessionManager.get).toHaveBeenCalledWith("backend-7", { enrichTimeoutMs: 3000 });
 
       metadataSpy.mockRestore();
       prSpy.mockRestore();
     }, 10_000);
+
+    it("uses bounded session lookup while recording failures", async () => {
+      (mockSessionManager.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error("detail boom"))
+        .mockResolvedValueOnce(testSessions[1]);
+
+      const res = await sessionDetailGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-3"),
+        { params: Promise.resolve({ id: "backend-3" }) },
+      );
+      const data = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(data.error).toBe("Internal server error");
+      expect(mockSessionManager.get).toHaveBeenNthCalledWith(1, "backend-3", {
+        enrichTimeoutMs: 3000,
+      });
+      expect(mockSessionManager.get).toHaveBeenNthCalledWith(2, "backend-3", {
+        enrichTimeoutMs: 3000,
+      });
+    });
   });
 
   describe("GET /api/runtime/terminal", () => {
