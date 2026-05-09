@@ -5,9 +5,7 @@ import { Command } from "commander";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  mockRunRepoScript,
-} = vi.hoisted(() => ({
+const { mockRunRepoScript } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
 }));
 
@@ -83,9 +81,14 @@ function makeNpmUpdateInfo(overrides = {}) {
   };
 }
 
-function createMockChild(exitCode: number | null, signal?: NodeJS.Signals) {
+function createMockChild(exitCode: number | null, signal?: NodeJS.Signals, stdout = "") {
   const child = new EventEmitter();
-  setTimeout(() => child.emit("exit", exitCode, signal ?? null), 0);
+  const stdoutEmitter = new EventEmitter();
+  Object.assign(child, { stdout: stdoutEmitter });
+  setTimeout(() => {
+    if (stdout) stdoutEmitter.emit("data", Buffer.from(stdout));
+    child.emit("exit", exitCode, signal ?? null);
+  }, 0);
   return child;
 }
 
@@ -93,6 +96,8 @@ describe("update command", () => {
   let program: Command;
   let origStdinTTY: boolean | undefined;
   let origStdoutTTY: boolean | undefined;
+  let origPlatform: NodeJS.Platform;
+  let origComSpec: string | undefined;
 
   beforeEach(() => {
     program = new Command();
@@ -102,13 +107,17 @@ describe("update command", () => {
     mockRunRepoScript.mockResolvedValue(0);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
-    mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
+    mockCheckForUpdate.mockResolvedValue(
+      makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }),
+    );
     mockInvalidateCache.mockReset();
     mockPromptConfirm.mockReset();
     mockPromptConfirm.mockResolvedValue(false);
     mockSpawn.mockReset();
     origStdinTTY = process.stdin.isTTY;
     origStdoutTTY = process.stdout.isTTY;
+    origPlatform = process.platform;
+    origComSpec = process.env.ComSpec;
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -120,6 +129,12 @@ describe("update command", () => {
     vi.restoreAllMocks();
     Object.defineProperty(process.stdin, "isTTY", { value: origStdinTTY, configurable: true });
     Object.defineProperty(process.stdout, "isTTY", { value: origStdoutTTY, configurable: true });
+    Object.defineProperty(process, "platform", { value: origPlatform, configurable: true });
+    if (origComSpec === undefined) {
+      delete process.env.ComSpec;
+    } else {
+      process.env.ComSpec = origComSpec;
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -187,9 +202,9 @@ describe("update command", () => {
         new Error("Script not found: ao-update.sh. Expected at: /tmp/ao-update.sh"),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(mockSpawn).not.toHaveBeenCalled();
       expect(mockCheckForUpdate).not.toHaveBeenCalled();
@@ -234,7 +249,9 @@ describe("update command", () => {
     });
 
     it("prints already up to date when not outdated", async () => {
-      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }));
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }),
+      );
 
       const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update"]);
@@ -246,9 +263,9 @@ describe("update command", () => {
         makeNpmUpdateInfo({ latestVersion: null, isOutdated: false }),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(vi.mocked(console.error)).toHaveBeenCalledWith(
         expect.stringContaining("Could not reach npm registry"),
       );
@@ -285,12 +302,71 @@ describe("update command", () => {
       Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
       Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
       mockPromptConfirm.mockResolvedValue(true);
-      mockSpawn.mockReturnValue(createMockChild(0));
+      mockSpawn
+        .mockReturnValueOnce(createMockChild(0))
+        .mockReturnValueOnce(createMockChild(0, undefined, "/usr/local/bin/ao\n"))
+        .mockReturnValueOnce(createMockChild(0, undefined, "@aoagents/ao 0.3.0\n"));
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(mockSpawn).toHaveBeenCalledWith("npm", expect.arrayContaining(["install"]), expect.anything());
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "npm",
+        expect.arrayContaining(["install"]),
+        expect.anything(),
+      );
+      expect(mockSpawn).toHaveBeenCalledWith("sh", ["-lc", "command -v ao"], expect.anything());
+      expect(mockSpawn).toHaveBeenCalledWith("sh", ["-lc", "ao --version"], expect.anything());
       expect(mockInvalidateCache).toHaveBeenCalled();
+    });
+
+    it("verifies the runnable ao binary through cmd.exe on Windows", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+      process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn
+        .mockReturnValueOnce(createMockChild(0))
+        .mockReturnValueOnce(
+          createMockChild(0, undefined, "C:\\Users\\test\\AppData\\Roaming\\npm\\ao.cmd\n"),
+        )
+        .mockReturnValueOnce(createMockChild(0, undefined, "0.3.0\n"));
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "C:\\Windows\\System32\\cmd.exe",
+        ["/d", "/s", "/c", "where ao"],
+        expect.anything(),
+      );
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "C:\\Windows\\System32\\cmd.exe",
+        ["/d", "/s", "/c", "ao --version"],
+        expect.anything(),
+      );
+      expect(mockInvalidateCache).toHaveBeenCalled();
+    });
+
+    it("exits non-zero when npm install succeeds but runnable ao remains old", async () => {
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      mockPromptConfirm.mockResolvedValue(true);
+      mockSpawn
+        .mockReturnValueOnce(createMockChild(0))
+        .mockReturnValueOnce(createMockChild(0, undefined, "/opt/homebrew/bin/ao\n"))
+        .mockReturnValueOnce(createMockChild(0, undefined, "0.2.2\n"));
+
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+        expect.stringContaining("runnable `ao` binary did not update"),
+      );
+      expect(vi.mocked(console.error)).toHaveBeenCalledWith(
+        expect.stringContaining("/opt/homebrew/bin/ao"),
+      );
     });
 
     it("exits non-zero when npm install fails", async () => {
@@ -299,9 +375,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(1));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
 
@@ -327,9 +403,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(null, "SIGTERM"));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(vi.mocked(console.error)).not.toHaveBeenCalledWith(
         expect.stringContaining("exited with code null"),
@@ -346,9 +422,7 @@ describe("update command", () => {
       mockSpawn.mockReturnValue(child);
       setTimeout(() => child.emit("error", new Error("ENOENT: npm not found")), 0);
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("ENOENT");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow("ENOENT");
     });
 
     it("does nothing when user declines prompt", async () => {
@@ -378,7 +452,9 @@ describe("update command", () => {
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Could not detect install method"));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Could not detect install method"),
+      );
       expect(mockRunRepoScript).not.toHaveBeenCalled();
     });
 

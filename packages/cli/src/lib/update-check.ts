@@ -8,6 +8,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFile as execFileCb } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -33,6 +34,7 @@ interface CacheData {
   latestVersion: string;
   checkedAt: string;
   currentVersionAtCheck: string;
+  installMethod?: InstallMethod;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,8 @@ interface CacheData {
 const REGISTRY_URL = "https://registry.npmjs.org/@aoagents%2Fao/latest";
 const FETCH_TIMEOUT_MS = 3000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const GIT_TIMEOUT_MS = 3000;
+const SOURCE_PACKAGE_JSON = "packages/ao/package.json";
 
 // ---------------------------------------------------------------------------
 // Install detection
@@ -95,16 +99,14 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
     // Note: /.pnpm/ alone is NOT a global signal — pnpm creates node_modules/.pnpm/
     // for local installs too. Only pnpm/global paths indicate a global install.
     const isPnpmGlobal =
-      resolvedPath.includes("/pnpm/global/") ||
-      resolvedPath.includes("\\pnpm\\global\\");
+      resolvedPath.includes("/pnpm/global/") || resolvedPath.includes("\\pnpm\\global\\");
 
     if (isPnpmGlobal) {
       return "pnpm-global";
     }
 
     const isNpmGlobal =
-      resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\");
+      resolvedPath.includes("/lib/node_modules/") || resolvedPath.includes("\\lib\\node_modules\\");
 
     if (isNpmGlobal) {
       return "npm-global";
@@ -127,6 +129,45 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
 /** Detect how the running `ao` binary was installed based on its file location. */
 export function detectInstallMethod(): InstallMethod {
   return classifyInstallPath(fileURLToPath(import.meta.url));
+}
+
+function getSourceRepoRoot(): string | null {
+  const resolvedPath = fileURLToPath(import.meta.url);
+  const repoRoot = resolve(dirname(resolvedPath), "../../../../");
+  return isAgentOrchestratorRepoRoot(repoRoot) ? repoRoot : null;
+}
+
+function getGitUpdateBranch(): string {
+  return process.env["AO_UPDATE_BRANCH"] || "main";
+}
+
+async function git(args: string[], cwd: string): Promise<string | null> {
+  return new Promise((resolveOutput) => {
+    execFileCb(
+      "git",
+      args,
+      {
+        cwd,
+        timeout: GIT_TIMEOUT_MS,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+        },
+      },
+      (error, stdout) => {
+        if (error) {
+          resolveOutput(null);
+          return;
+        }
+        resolveOutput(stdout.trim());
+      },
+    );
+  });
+}
+
+async function resolveUpdateRemote(repoRoot: string): Promise<string> {
+  const upstream = await git(["remote", "get-url", "upstream"], repoRoot);
+  return upstream ? "upstream" : "origin";
 }
 
 // ---------------------------------------------------------------------------
@@ -187,8 +228,15 @@ export function readCachedUpdateInfo(): CacheData | null {
 
     if (!data.latestVersion || !data.checkedAt) return null;
 
-    // Cache is stale if user upgraded since the check
+    // Cache is stale if user upgraded since the check, or if it was produced
+    // by another install type. Legacy cache entries have no install method, so
+    // reject them to avoid carrying old update-source assumptions forward.
     const currentVersion = getCurrentVersion();
+    const installMethod = detectInstallMethod();
+    if (!data.installMethod || data.installMethod !== installMethod) {
+      return null;
+    }
+
     if (data.currentVersionAtCheck && data.currentVersionAtCheck !== currentVersion) {
       return null;
     }
@@ -240,6 +288,30 @@ export async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
+/** Fetch the package version reachable by `ao update` for source installs. */
+export async function fetchLatestGitVersion(): Promise<string | null> {
+  const repoRoot = getSourceRepoRoot();
+  if (!repoRoot) return null;
+
+  const remote = await resolveUpdateRemote(repoRoot);
+  const branch = getGitUpdateBranch();
+  const ref = `${remote}/${branch}`;
+
+  const fetchSucceeded = (await git(["fetch", "--quiet", remote, branch], repoRoot)) !== null;
+
+  const packageJson =
+    (fetchSucceeded ? await git(["show", `FETCH_HEAD:${SOURCE_PACKAGE_JSON}`], repoRoot) : null) ??
+    (await git(["show", `${ref}:${SOURCE_PACKAGE_JSON}`], repoRoot));
+  if (!packageJson) return null;
+
+  try {
+    const parsed = JSON.parse(packageJson) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -265,8 +337,9 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
     }
   }
 
-  // Fetch from registry
-  const latestVersion = await fetchLatestVersion();
+  // Source installs update from the configured git branch, not npm latest.
+  const latestVersion =
+    installMethod === "git" ? await fetchLatestGitVersion() : await fetchLatestVersion();
   const now = new Date().toISOString();
 
   if (latestVersion) {
@@ -274,6 +347,7 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
       latestVersion,
       checkedAt: now,
       currentVersionAtCheck: currentVersion,
+      installMethod,
     });
   }
 
