@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -250,6 +251,150 @@ exit 0`,
     expect(result.stdout).toContain("FIXED");
     expect(repairedLauncherIsExecutable).toBe(true);
     expect(npmCommands).toContain("link --force");
+  });
+
+  it("warns about a non-executable node-pty spawn-helper", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-spawn-helper-warn-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+
+    const helperDir = join(
+      fakeRepo,
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+    );
+    mkdirSync(helperDir, { recursive: true });
+    const helperPath = join(helperDir, "spawn-helper");
+    writeFileSync(helperPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(helperPath, 0o644);
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const dataDir = join(tempRoot, "data");
+    const worktreeDir = join(tempRoot, "worktrees");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    const helperModeAfter = statSync(helperPath).mode & 0o777;
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WARN");
+    expect(result.stdout).toContain("spawn-helper is not executable");
+    expect(result.stdout).toContain(helperPath);
+    expect(helperModeAfter).toBe(0o644);
+  });
+
+  it("repairs a non-executable node-pty spawn-helper in --fix mode", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-spawn-helper-fix-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+
+    const helperDir = join(
+      fakeRepo,
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+    );
+    mkdirSync(helperDir, { recursive: true });
+    const helperPath = join(helperDir, "spawn-helper");
+    writeFileSync(helperPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(helperPath, 0o644);
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const dataDir = join(tempRoot, "data");
+    const worktreeDir = join(tempRoot, "worktrees");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath, "--fix"], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    const helperModeAfter = statSync(helperPath).mode & 0o777;
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("FIXED");
+    expect(result.stdout).toContain("spawn-helper made executable");
+    expect(helperModeAfter & 0o111).not.toBe(0);
+  });
+
+  it("passes when node-pty spawn-helper is already executable", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-spawn-helper-pass-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+
+    const helperDir = join(
+      fakeRepo,
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+    );
+    mkdirSync(helperDir, { recursive: true });
+    const helperPath = join(helperDir, "spawn-helper");
+    writeFileSync(helperPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(helperPath, 0o755);
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const dataDir = join(tempRoot, "data");
+    const worktreeDir = join(tempRoot, "worktrees");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("spawn-helper is executable");
+    expect(result.stdout).not.toContain("WARN node-pty");
+    expect(result.stdout).not.toContain("FAIL node-pty");
   });
 
   it("reports a healthy packaged install without source-checkout failures", () => {
