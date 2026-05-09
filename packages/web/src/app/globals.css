@@ -5068,8 +5068,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 8px;
   width: 100%;
   min-width: 0;
-  height: calc(100vh - 240px);
-  height: calc(100dvh - 240px);
+  min-height: 0;
+  height: 100%;
   overflow-x: auto;
   padding-bottom: 8px;
 }
