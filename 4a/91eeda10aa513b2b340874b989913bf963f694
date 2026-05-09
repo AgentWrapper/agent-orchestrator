@@ -1,0 +1,23 @@
+docs/canvases-feature.html
+  s_716542aec5f41c::t_b0b0f809f5ed88 211
+  s_716542aec5f41c::t_85fd46b6711812 635-637
+  s_716542aec5f41c::t_cdda90f0958271 503-516
+docs/canvases-launch.html
+  s_716542aec5f41c::t_23a359afbac930 358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "4a91eeda10aa513b2b340874b989913bf963f694",
+  "prompts": {},
+  "sessions": {
+    "s_716542aec5f41c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
