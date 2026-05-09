@@ -59,6 +59,12 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   - Create incoming webhook: https://api.slack.com/messaging/webhooks
   - Set environment variable: `export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."`
 
+- **Public dashboard URL** - If running AO behind a reverse proxy (e.g. inside a remote dev container, on a VPS fronted by Caddy/nginx)
+  - Set `AO_PUBLIC_URL` to the externally-reachable URL of the dashboard
+  - All console output, `ao open` browser launches, and orchestrator-prompt session links use this URL instead of `http://localhost:<port>`
+  - Example: `export AO_PUBLIC_URL="https://ao.example.com"`
+  - Note: terminal WebSocket ports (`terminalPort`, `directTerminalPort`) must also be reachable on that hostname for terminal panes to work
+
 ## Installation
 
 ### Install via npm (recommended)

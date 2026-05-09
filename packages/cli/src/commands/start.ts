@@ -78,6 +78,7 @@ import {
   type DetectedAgent,
 } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
+import { dashboardUrl } from "../lib/dashboard-url.js";
 import { promptConfirm, promptSelect, promptText } from "../lib/prompts.js";
 import { extractOwnerRepo, isValidRepoString } from "../lib/repo-utils.js";
 import {
@@ -883,7 +884,7 @@ async function runStartup(
       config.directTerminalPort,
       opts?.dev,
     );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+    spinner.succeed(`Dashboard starting on ${dashboardUrl(port)}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
   }
 
@@ -1063,7 +1064,7 @@ async function runStartup(
   console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
   if (opts?.dashboard !== false) {
-    console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
+    console.log(chalk.cyan("Dashboard:"), dashboardUrl(port));
   }
 
   if (shouldStartLifecycle) {
@@ -1097,7 +1098,7 @@ async function runStartup(
     openAbort = new AbortController();
     const orchestratorUrl = selectedOrchestratorId
       ? projectSessionUrl(port, projectId, selectedOrchestratorId)
-      : `http://localhost:${port}`;
+      : dashboardUrl(port);
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
@@ -1264,10 +1265,10 @@ async function attachAndSpawnOrchestrator(opts: {
   }
 
   if (isHumanCaller()) {
-    console.log(chalk.dim(`  Opening dashboard: http://localhost:${daemon.port}\n`));
-    openUrl(`http://localhost:${daemon.port}`);
+    console.log(chalk.dim(`  Opening dashboard: ${dashboardUrl(daemon.port)}\n`));
+    openUrl(dashboardUrl(daemon.port));
   } else {
-    console.log(`Dashboard: http://localhost:${daemon.port}`);
+    console.log(`Dashboard: ${dashboardUrl(daemon.port)}`);
   }
 }
 
@@ -1331,7 +1332,7 @@ export function registerStart(program: Command): void {
               // exit. Project-id args fall through to attach+spawn so
               // automation can `ao start <id>` against a live daemon.
               console.log(`AO is already running.`);
-              console.log(`Dashboard: http://localhost:${running.port}`);
+              console.log(`Dashboard: ${dashboardUrl(running.port)}`);
               console.log(`PID: ${running.pid}`);
               console.log(`Projects: ${running.projects.join(", ")}`);
               console.log(`To restart: ao stop && ao start`);
@@ -1341,7 +1342,7 @@ export function registerStart(program: Command): void {
 
             if (isHumanCaller() && !projectArg) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));
-              console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
+              console.log(`  Dashboard: ${chalk.cyan(dashboardUrl(running.port))}`);
               console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
               console.log(`  Projects: ${running.projects.join(", ")}\n`);
 
@@ -1388,7 +1389,7 @@ export function registerStart(program: Command): void {
               );
 
               if (choice === "open") {
-                openUrl(`http://localhost:${running.port}`);
+                openUrl(dashboardUrl(running.port));
                 unlockStartup();
                 process.exit(0);
               } else if (choice === "quit") {
@@ -1420,7 +1421,7 @@ export function registerStart(program: Command): void {
                     ),
                   );
                 }
-                openUrl(`http://localhost:${running.port}`);
+                openUrl(dashboardUrl(running.port));
                 unlockStartup();
                 process.exit(0);
               } else if (choice === "new") {
@@ -1499,9 +1500,9 @@ export function registerStart(program: Command): void {
               running.projects.includes(projectId)
             ) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));
-              console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
+              console.log(`  Dashboard: ${chalk.cyan(dashboardUrl(running.port))}`);
               console.log(`  Project "${projectId}" is already registered and running.\n`);
-              openUrl(`http://localhost:${running.port}`);
+              openUrl(dashboardUrl(running.port));
               unlockStartup();
               process.exit(0);
             }
