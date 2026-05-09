@@ -316,6 +316,37 @@ describe("ProjectSidebar", () => {
     expect(screen.queryByRole("link", { name: "Open feat/test" })).not.toBeInTheDocument();
   });
 
+  it("renders long session titles without sharing a row with the status label", () => {
+    const longSessionTitle =
+      "Investigate why unusually long session titles in the sidebar collide with the status badge";
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[
+          makeSession({
+            id: "worker-1",
+            projectId: "project-1",
+            summary: longSessionTitle,
+            branch: null,
+            status: "working",
+            activity: "active",
+          }),
+        ]}
+        activeProjectId="project-1"
+        activeSessionId="worker-1"
+      />,
+    );
+
+    const sessionLink = screen.getByRole("link", { name: `Open ${longSessionTitle}` });
+    expect(sessionLink.querySelector(".project-sidebar__sess-content")).not.toBeNull();
+    expect(sessionLink.querySelector(".project-sidebar__sess-meta")).not.toBeNull();
+    expect(sessionLink.querySelector(".project-sidebar__sess-status")?.textContent).toBe(
+      "working",
+    );
+    expect(sessionLink.querySelector(".project-sidebar__sess-status--inline")).toBeNull();
+  });
+
   it("keeps killed sessions visible when they still need attention", () => {
     const lastActivityAt = new Date().toISOString();
 

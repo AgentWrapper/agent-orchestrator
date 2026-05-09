@@ -726,7 +726,7 @@ function ProjectSidebarInner({
                           aria-label={`Open ${title}`}
                         >
                           <SessionDot level={level} />
-                          <div className="flex-1 min-w-0">
+                          <div className="project-sidebar__sess-content">
                             <span
                               className={cn(
                                 "project-sidebar__sess-label",
@@ -735,20 +735,15 @@ function ProjectSidebarInner({
                             >
                               {title}
                             </span>
-                            {showSessionId ? (
-                              <div className="project-sidebar__sess-meta">
+                            <div className="project-sidebar__sess-meta">
+                              {showSessionId ? (
                                 <span className="project-sidebar__sess-id">{session.id}</span>
-                                <span className="project-sidebar__sess-status">
-                                  {LEVEL_LABELS[level]}
-                                </span>
-                              </div>
-                            ) : null}
+                              ) : null}
+                              <span className="project-sidebar__sess-status">
+                                {LEVEL_LABELS[level]}
+                              </span>
+                            </div>
                           </div>
-                          {!showSessionId ? (
-                            <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
-                              {LEVEL_LABELS[level]}
-                            </span>
-                          ) : null}
                         </a>
                       );
                     })

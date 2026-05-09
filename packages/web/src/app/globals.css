@@ -4486,8 +4486,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 /* Session label */
-.project-sidebar__sess-label {
+.project-sidebar__sess-content {
   flex: 1;
+  min-width: 0;
+}
+
+.project-sidebar__sess-label {
+  display: block;
   font-size: 11.5px;
   color: var(--color-text-secondary);
   min-width: 0;
@@ -4506,7 +4511,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: -4px;
+  margin-top: 3px;
+  min-width: 0;
 }
 
 .project-sidebar__sess-id {
@@ -4527,13 +4533,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-text-muted);
   flex-shrink: 0;
   white-space: nowrap;
-}
-
-/* Inline status (compact variant — name + status on one line) */
-.project-sidebar__sess-status--inline {
-  font-size: 10px;
-  margin-left: 6px;
-  text-transform: lowercase;
 }
 
 /* Sidebar settings popover */
