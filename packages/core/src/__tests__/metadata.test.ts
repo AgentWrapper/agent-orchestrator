@@ -150,6 +150,39 @@ describe("writeMetadata + readMetadata", () => {
     const meta = readMetadata(dataDir, "app-6");
     expect(meta?.displayName).toBe("Refactor session manager");
   });
+
+  it("serializes and reads back displayNameUserSet flag", () => {
+    writeMetadata(dataDir, "app-7", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "working",
+      displayName: "PR 1466 review",
+      displayNameUserSet: true,
+    });
+
+    const content = readFileSync(join(dataDir, "app-7.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.displayNameUserSet).toBe(true);
+
+    const meta = readMetadata(dataDir, "app-7");
+    expect(meta?.displayNameUserSet).toBe(true);
+  });
+
+  it("omits displayNameUserSet when undefined and does not flag auto-derived sessions", () => {
+    writeMetadata(dataDir, "app-8", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "working",
+      displayName: "Auto-derived at spawn",
+    });
+
+    const content = readFileSync(join(dataDir, "app-8.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.displayNameUserSet).toBeUndefined();
+
+    const meta = readMetadata(dataDir, "app-8");
+    expect(meta?.displayNameUserSet).toBeUndefined();
+  });
 });
 
 describe("readMetadataRaw", () => {

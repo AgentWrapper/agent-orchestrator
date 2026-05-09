@@ -1780,10 +1780,19 @@ export interface SessionMetadata {
    * overwritten later via the dashboard rename UI — the session ID (`ao-N`)
    * remains the canonical identifier; only display surfaces are affected.
    *
-   * In the dashboard fallback chain this field wins over PR/issue titles so a
-   * user-chosen label is never shadowed by other signals.
+   * Whether this value should beat PR/issue titles in the dashboard depends
+   * on `displayNameUserSet` — auto-derived values stay below live tracker
+   * signals, user-set values win over them.
    */
   displayName?: string;
+  /**
+   * Set to `true` when the user explicitly renamed the session via the
+   * dashboard. The dashboard fallback chain promotes `displayName` above
+   * PR/issue titles only when this flag is true, so an auto-derived spawn-time
+   * `displayName` doesn't shadow a live PR title for sessions the user never
+   * touched.
+   */
+  displayNameUserSet?: boolean;
 }
 
 // =============================================================================

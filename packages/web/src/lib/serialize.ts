@@ -181,6 +181,9 @@ export function sessionToDashboard(session: Session): DashboardSession {
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
     displayName: session.metadata["displayName"] ?? null,
+    displayNameUserSet:
+      session.metadata["displayNameUserSet"] === "true" ||
+      session.metadata["displayNameUserSet"] === "on",
     summary,
     summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),

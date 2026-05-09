@@ -158,8 +158,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     const sessionsDir = getProjectSessionsDir(coreSession.projectId);
-    // Empty string in updateMetadata removes the key — exactly the "revert to default" semantic.
-    updateMetadata(sessionsDir, id, { displayName: cleaned });
+    // Empty string in updateMetadata removes the key — exactly the "revert to
+    // default" semantic. The user-set flag tracks provenance: we set it when
+    // the user types a name, clear it when they revert, so the dashboard's
+    // fallback chain knows whether to promote `displayName` over PR/issue
+    // titles or treat it as an auto-derived spawn artifact.
+    updateMetadata(sessionsDir, id, {
+      displayName: cleaned,
+      displayNameUserSet: cleaned === "" ? "" : "true",
+    });
 
     if (isOpenCodeSessionManager(sessionManager)) {
       sessionManager.invalidateCache();

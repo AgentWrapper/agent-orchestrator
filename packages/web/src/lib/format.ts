@@ -50,28 +50,30 @@ export function humanizeBranch(branch: string, sessionId?: string): string {
  * Compute the best display title for a session card.
  *
  * Fallback chain (ordered by signal quality):
- *   1. Display name      — auto-derived at spawn from the best task context
- *                          (issue title, user prompt, or orchestrator system
- *                          prompt) and overwritable via the dashboard rename
- *                          UI. Always wins: when the user renames a session
- *                          their chosen label must override every other
- *                          signal, including PR/issue titles.
- *   2. PR title          — human-visible deliverable name
- *   3. Issue title       — human-written task description (live from tracker)
- *   4. User prompt       — raw freeform spawn instructions (fallback for
- *                          sessions spawned before `displayName` existed)
- *   5. Humanized branch  — stable task identifier when no explicit title exists
- *                          (skipped when it collapses to just the session ID)
- *   6. Pinned summary    — first quality summary, stable across agent updates
- *   7. Quality summary   — live summary, but can drift as the session evolves
- *   8. Any summary       — even a fallback excerpt is better than nothing
- *   9. Status text       — absolute fallback
+ *   1. User-set display name — only when `displayNameUserSet` is true.
+ *                              An explicit rename always wins so the user's
+ *                              chosen label isn't shadowed by tracker signals.
+ *   2. PR title              — human-visible deliverable name
+ *   3. Issue title           — human-written task description (live from tracker)
+ *   4. Auto-derived display  — captured at spawn from issue title / user prompt /
+ *      name                    orchestrator system prompt. Stays BELOW PR/issue
+ *                              titles so a stale spawn-time value doesn't
+ *                              shadow the live deliverable name.
+ *   5. User prompt           — raw freeform spawn instructions (fallback for
+ *                              sessions spawned before `displayName` existed)
+ *   6. Humanized branch      — stable task identifier when no explicit title
+ *                              exists (skipped when it collapses to just the
+ *                              session ID)
+ *   7. Pinned summary        — first quality summary, stable across agent updates
+ *   8. Quality summary       — live summary, but can drift as the session evolves
+ *   9. Any summary           — even a fallback excerpt is better than nothing
+ *  10. Status text           — absolute fallback
  */
 export function getSessionTitle(session: DashboardSession): string {
-  // 1. Display name — auto-derived at spawn from issue title / user prompt /
-  // orchestrator system prompt, and overwritten by the rename UI. Wins over
-  // PR/issue titles so a user-chosen rename is never shadowed.
-  if (session.displayName) return session.displayName;
+  // 1. User-set rename — wins over everything when explicitly flagged.
+  if (session.displayName && session.displayNameUserSet) {
+    return session.displayName;
+  }
 
   // 2. PR title
   if (session.pr?.title) return session.pr.title;
@@ -79,7 +81,14 @@ export function getSessionTitle(session: DashboardSession): string {
   // 3. Issue title — human-written task description
   if (session.issueTitle) return session.issueTitle;
 
-  // 4. User prompt — raw freeform spawn instructions. Only reached when
+  // 4. Auto-derived displayName — captured at spawn time. Sits below PR/issue
+  // but above userPrompt: for prompt-only sessions both are populated from the
+  // same `spawnConfig.prompt`; `displayName` is the cleaned single-line,
+  // 80-char-truncated version and should win so kanban cards don't show raw
+  // multi-line prompts.
+  if (session.displayName) return session.displayName;
+
+  // 5. User prompt — raw freeform spawn instructions. Only reached when
   // `displayName` is absent (older sessions spawned before this field existed,
   // or sessions where derivation failed).
   if (session.userPrompt) return session.userPrompt;

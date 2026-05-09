@@ -553,6 +553,8 @@ describe("ProjectSidebar", () => {
 
   describe("session rename", () => {
     function renderWithSession(displayName: string | null = null) {
+      // When a displayName is supplied, treat it as a user-set rename so the
+      // sidebar renders it as the row label (auto-derived names are gated).
       return render(
         <ProjectSidebar
           projects={projects}
@@ -562,6 +564,7 @@ describe("ProjectSidebar", () => {
               projectId: "project-1",
               summary: "Review API changes",
               displayName,
+              displayNameUserSet: displayName !== null,
               branch: null,
               status: "needs_input",
               activity: "waiting_input",
@@ -650,6 +653,29 @@ describe("ProjectSidebar", () => {
       // Input is gone; original name is back.
       expect(screen.queryByRole("textbox", { name: /rename worker-1/i })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "Open Existing rename" })).toBeInTheDocument();
+    });
+
+    it("does not fire a duplicate PATCH if Enter and onBlur both trigger", async () => {
+      // Some browsers fire blur during input unmount after the Enter handler
+      // already cleared editing state. The submitRename guard should swallow
+      // the second call.
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "worker-1", displayName: "Renamed" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession();
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "Renamed" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      // Simulate the post-unmount blur cascade.
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("rolls back the optimistic name when the PATCH fails", async () => {

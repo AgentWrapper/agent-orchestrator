@@ -762,7 +762,7 @@ describe("API Routes", () => {
       vi.mocked(updateMetadata).mockReset();
     });
 
-    it("persists a sanitized displayName and invalidates session cache", async () => {
+    it("persists a sanitized displayName and sets the user-set flag", async () => {
       const res = await sessionDetailPATCH(
         patchRequest("backend-7", { displayName: "  PR 432 review  " }),
         {
@@ -774,12 +774,13 @@ describe("API Routes", () => {
       expect(vi.mocked(updateMetadata)).toHaveBeenCalledTimes(1);
       const [, sessionId, updates] = vi.mocked(updateMetadata).mock.calls[0];
       expect(sessionId).toBe("backend-7");
-      // Whitespace is collapsed and trimmed before persist.
-      expect(updates).toEqual({ displayName: "PR 432 review" });
+      // Whitespace is collapsed and trimmed before persist; flag is set so the
+      // dashboard knows to promote this name above PR/issue titles.
+      expect(updates).toEqual({ displayName: "PR 432 review", displayNameUserSet: "true" });
       expect(mockSessionManager.invalidateCache).toHaveBeenCalled();
     });
 
-    it("treats null displayName as a clear (revert to default)", async () => {
+    it("treats null displayName as a clear and unsets the user-set flag", async () => {
       const res = await sessionDetailPATCH(patchRequest("backend-7", { displayName: null }), {
         params: Promise.resolve({ id: "backend-7" }),
       });
@@ -787,6 +788,7 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       expect(vi.mocked(updateMetadata)).toHaveBeenCalledWith(expect.any(String), "backend-7", {
         displayName: "",
+        displayNameUserSet: "",
       });
     });
 
@@ -797,6 +799,7 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       expect(vi.mocked(updateMetadata)).toHaveBeenCalledWith(expect.any(String), "backend-7", {
         displayName: "FooBar",
+        displayNameUserSet: "true",
       });
     });
 

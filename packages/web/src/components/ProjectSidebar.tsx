@@ -314,8 +314,16 @@ function ProjectSidebarInner({
   }, [sessions, pendingRenames]);
 
   const startRename = (session: DashboardSession, currentTitle: string) => {
+    // Prefer the in-flight optimistic value over the prop — if the user opens
+    // rename while a previous PATCH is still propagating, the prop still shows
+    // the pre-rename value but we want the input to start from the latest.
+    // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
+    // from the live title so the user types over the visible label.
+    const pending = pendingRenames.get(session.id);
+    const initial =
+      pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "") ?? currentTitle;
     setEditingSessionId(session.id);
-    setEditingValue(session.displayName ?? currentTitle);
+    setEditingValue(initial || currentTitle);
   };
 
   const cancelRename = () => {
@@ -324,6 +332,10 @@ function ProjectSidebarInner({
   };
 
   const submitRename = async (sessionId: string) => {
+    // Guard against double-submit. submitRename is wired to both Enter (which
+    // unmounts the input) and onBlur (which can fire during that unmount in
+    // some browsers); without this, both paths would fire a PATCH.
+    if (editingSessionId !== sessionId) return;
     // Trim, but allow empty — empty means "revert to default" on the server.
     const next = editingValue.trim();
     setEditingSessionId(null);

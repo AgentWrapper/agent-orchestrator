@@ -29,6 +29,7 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
     issueTitle: null,
     userPrompt: null,
     displayName: null,
+    displayNameUserSet: false,
     summary: null,
     summaryIsFallback: false,
     createdAt: new Date().toISOString(),
@@ -195,11 +196,12 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe("Infer Project Id");
   });
 
-  it("prefers displayName above every other signal when set (rename wins)", () => {
-    // displayName doubles as the user-set rename slot. Whatever the user puts
-    // there must beat live PR / issue titles so renames aren't shadowed.
+  it("prefers user-set displayName above every other signal (rename wins)", () => {
+    // When displayNameUserSet is true, the user has explicitly renamed this
+    // session and their label must beat live PR / issue titles.
     const session = makeSession({
       displayName: "PR 1466 review",
+      displayNameUserSet: true,
       issueTitle: "Add user authentication",
       branch: "feat/auth",
       pr: {
@@ -210,6 +212,34 @@ describe("getSessionTitle", () => {
       } as DashboardSession["pr"],
     });
     expect(getSessionTitle(session)).toBe("PR 1466 review");
+  });
+
+  it("does NOT promote auto-derived displayName above PR title", () => {
+    // Spawn-time auto-derived displayName must not shadow a live PR title —
+    // a stale spawn label would make sessions hard to identify days later.
+    const session = makeSession({
+      displayName: "Auto-derived at spawn",
+      displayNameUserSet: false,
+      issueTitle: "Add user authentication",
+      branch: "feat/auth",
+      pr: {
+        number: 1466,
+        title: "feat: add auth",
+        url: "https://github.com/x/y/pull/1466",
+        state: "open",
+      } as DashboardSession["pr"],
+    });
+    expect(getSessionTitle(session)).toBe("feat: add auth");
+  });
+
+  it("does NOT promote auto-derived displayName above issue title", () => {
+    const session = makeSession({
+      displayName: "Auto-derived at spawn",
+      displayNameUserSet: false,
+      issueTitle: "Add user authentication",
+      branch: "feat/auth",
+    });
+    expect(getSessionTitle(session)).toBe("Add user authentication");
   });
 
   it("returns displayName when no PR / issue title / user prompt", () => {
@@ -255,20 +285,13 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe("Fix the race condition");
   });
 
-  it("prefers displayName over issue title when both are present", () => {
-    // displayName is now the user-rename slot, so it beats live tracker titles.
+  it("prefers issue title over auto-derived displayName when both are present", () => {
+    // Auto-derived displayName must stay below live tracker titles so a stale
+    // spawn-time value doesn't shadow the current issue title.
     const session = makeSession({
       issueTitle: "Live issue title",
-      displayName: "User-chosen label",
-      branch: "feat/auth",
-    });
-    expect(getSessionTitle(session)).toBe("User-chosen label");
-  });
-
-  it("falls through to issue title when displayName is absent", () => {
-    const session = makeSession({
-      issueTitle: "Live issue title",
-      displayName: null,
+      displayName: "Stale captured display name",
+      displayNameUserSet: false,
       branch: "feat/auth",
     });
     expect(getSessionTitle(session)).toBe("Live issue title");
