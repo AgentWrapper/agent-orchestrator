@@ -364,7 +364,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ state: "closed" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--state", "closed"]),
         expect.any(Object),
       );
@@ -374,7 +374,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ state: "all" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--state", "all"]),
         expect.any(Object),
       );
@@ -384,7 +384,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({}, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--state", "open"]),
         expect.any(Object),
       );
@@ -394,7 +394,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ labels: ["bug", "urgent"] }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--label", "bug,urgent"]),
         expect.any(Object),
       );
@@ -404,7 +404,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ assignee: "alice" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--assignee", "alice"]),
         expect.any(Object),
       );
@@ -414,7 +414,7 @@ describe("tracker-github plugin", () => {
       mockGh([]);
       await tracker.listIssues!({ limit: 5 }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--limit", "5"]),
         expect.any(Object),
       );
@@ -455,7 +455,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { state: "closed" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["issue", "close", "123", "--repo", "acme/repo"],
         expect.any(Object),
       );
@@ -465,7 +465,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { state: "open" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["issue", "reopen", "123", "--repo", "acme/repo"],
         expect.any(Object),
       );
@@ -475,7 +475,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { labels: ["bug", "urgent"] }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["issue", "edit", "123", "--repo", "acme/repo", "--add-label", "bug,urgent"],
         expect.any(Object),
       );
@@ -485,7 +485,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { assignee: "bob" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["issue", "edit", "123", "--repo", "acme/repo", "--add-assignee", "bob"],
         expect.any(Object),
       );
@@ -495,7 +495,7 @@ describe("tracker-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await tracker.updateIssue!("123", { comment: "Working on this" }, project);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["issue", "comment", "123", "--repo", "acme/repo", "--body", "Working on this"],
         expect.any(Object),
       );
@@ -556,7 +556,7 @@ describe("tracker-github plugin", () => {
         project,
       );
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["issue", "create", "--label", "bug", "--assignee", "alice"]),
         expect.any(Object),
       );

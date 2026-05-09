@@ -22,7 +22,7 @@ Every abstraction is a swappable plugin. All interfaces are defined in [`package
 
 | Slot      | Interface   | Default       | Alternatives                             |
 | --------- | ----------- | ------------- | ---------------------------------------- |
-| Runtime   | `Runtime`   | `tmux`        | `process`, `docker`, `k8s`, `ssh`, `e2b` |
+| Runtime   | `Runtime`   | `tmux` (Unix) / `process` (Windows; ConPTY via node-pty) | `process`, `docker`, `k8s`, `ssh`, `e2b` |
 | Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `cursor`, `kimicode`, `opencode` |
 | Workspace | `Workspace` | `worktree`    | `clone`                                  |
 | Tracker   | `Tracker`   | `github`      | `linear`                                 |
@@ -44,7 +44,7 @@ const dataDir = `~/.agent-orchestrator/${instanceId}`;
 This means:
 
 - Multiple orchestrator checkouts on the same machine never collide
-- Session names are globally unique in tmux: `{hash}-{prefix}-{num}`
+- Runtime handles are globally unique: `{hash}-{prefix}-{num}` (tmux session name on Unix; suffix of the named pipe `\\.\pipe\ao-pty-{sessionId}` on Windows)
 - User-facing names stay clean: `ao-1`, `myapp-2`
 
 ### Session Lifecycle
@@ -388,8 +388,11 @@ cat ~/.agent-orchestrator/{hash}-{project}/sessions/{session-id}
 # Check API state
 curl http://localhost:3000/api/sessions/{session-id}
 
-# Attach to tmux session directly
+# Attach to the runtime session directly
+# Unix:
 tmux attach -t {hash}-{prefix}-{num}
+# Windows: there's no tmux. Use the AO command, which connects to \\.\pipe\ao-pty-<sessionId>:
+ao session attach <sessionId>
 
 # Enable verbose logging
 AO_LOG_LEVEL=debug ao start
@@ -469,10 +472,10 @@ Debuggability: `cat ~/.agent-orchestrator/a3b4-myapp/sessions/ao-1` shows full s
 Simpler local setup (no ngrok), survives orchestrator restarts, works offline. CI/review state is fetched, not pushed.
 
 **Why plugin slots?**
-Swappability: use tmux locally, Docker in CI, Kubernetes in prod — without changing application code. Testability: mock any plugin in unit tests. Extensibility: users add company-specific plugins without forking.
+Swappability: use `process` (ConPTY) on Windows, tmux on Linux/macOS, Docker in CI, Kubernetes in prod — without changing application code. The `Runtime` interface is the layer that lets the same agent/workspace/tracker stack run across all of them. Testability: mock any plugin in unit tests. Extensibility: users add company-specific plugins without forking.
 
 **Why hash-based namespacing?**
-Multiple orchestrator checkouts on the same machine don't collide in tmux or on disk. Different checkouts get different hashes; projects within the same config share a hash.
+Multiple orchestrator checkouts on the same machine don't collide at the runtime layer (tmux session names on Unix, named-pipe paths on Windows) or on disk. Different checkouts get different hashes; projects within the same config share a hash.
 
 **Why ESM with `.js` extensions?**
 Node.js ESM requires explicit extensions on local imports. All packages use `"type": "module"`. Missing extensions cause runtime errors.

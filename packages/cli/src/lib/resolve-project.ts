@@ -14,8 +14,9 @@
  * would generate.
  */
 
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathsEqual } from "./path-equality.js";
 import { cwd } from "node:process";
 import {
   ConfigNotFoundError,
@@ -124,24 +125,16 @@ export interface ResolveOptions {
 
 /**
  * Decide whether `arg` looks like a path (rather than a project id).
- * Matches start.ts's `isLocalPath`.
+ * Matches start.ts's `isLocalPath` — including Windows drive-letter and
+ * UNC patterns so e.g. `ao start C:\path\to\repo` is correctly classified.
  */
 function isLocalPath(arg: string): boolean {
-  return arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..");
-}
-
-/**
- * Resolve symlink chains for canonical path comparison. Falls back to the
- * input on any filesystem error so the caller can compare unreadable paths
- * literally rather than crash. Mirrors the canonical-compare pattern used
- * elsewhere in the CLI for global-registry dedup.
- */
-function canonicalize(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
+  if (arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..")) {
+    return true;
   }
+  if (/^[A-Za-z]:[\\/]/.test(arg)) return true;
+  if (arg.startsWith("\\\\") || arg.startsWith(".\\") || arg.startsWith("..\\")) return true;
+  return false;
 }
 
 /**
@@ -253,9 +246,7 @@ async function fromUrlIntoGlobal(arg: string, deps: ResolveDeps): Promise<Resolv
   const refreshedConfig = loadConfig(globalConfigPath);
   const project = refreshedConfig.projects[registeredId];
   if (!project) {
-    throw new Error(
-      `Failed to register "${registeredId}" in the global config — aborting.`,
-    );
+    throw new Error(`Failed to register "${registeredId}" in the global config — aborting.`);
   }
   return {
     config: refreshedConfig,
@@ -352,16 +343,15 @@ async function fromPath(arg: string, deps: ResolveDeps, opts: ResolveOptions): P
   if (opts.targetGlobalRegistry) {
     const globalPath = getGlobalConfigPath();
     const globalConfig = existsSync(globalPath) ? loadConfig(globalPath) : loadConfig();
-    // Canonicalize via realpathSync so symlinked paths (e.g. macOS
-    // /tmp -> /private/tmp) match an entry stored under the resolved
-    // target. Without this, `ao start /tmp/foo` against a daemon whose
-    // global config has /private/tmp/foo would fail to dedupe and
-    // double-register the project.
-    const canonicalTarget = canonicalize(resolvedPath);
-    const existingEntry = Object.entries(globalConfig.projects).find(([, p]) => {
-      const expanded = resolve(p.path.replace(/^~/, process.env["HOME"] || ""));
-      return canonicalize(expanded) === canonicalTarget;
-    });
+    // pathsEqual canonicalizes via realpathSync so symlinked paths (e.g.
+    // macOS /tmp -> /private/tmp) match an entry stored under the
+    // resolved target, and lowercases on Windows so drive-letter / 8.3
+    // case mismatches don't slip through. Without this, `ao start
+    // /tmp/foo` against a daemon whose global config has /private/tmp/foo
+    // would fail to dedupe and double-register the project.
+    const existingEntry = Object.entries(globalConfig.projects).find(([, p]) =>
+      pathsEqual(p.path, resolvedPath),
+    );
     if (existingEntry) {
       return {
         config: globalConfig,
@@ -375,9 +365,7 @@ async function fromPath(arg: string, deps: ResolveDeps, opts: ResolveOptions): P
     const reloaded = loadConfig(globalConfig.configPath);
     const project = reloaded.projects[addedId];
     if (!project) {
-      throw new Error(
-        `Failed to register "${addedId}" in the global config — aborting.`,
-      );
+      throw new Error(`Failed to register "${addedId}" in the global config — aborting.`);
     }
     return {
       config: reloaded,
@@ -411,8 +399,8 @@ async function fromPath(arg: string, deps: ResolveDeps, opts: ResolveOptions): P
 
   // Config exists — check if the path is already registered.
   const config = loadConfig(configPath);
-  const existingEntry = Object.entries(config.projects).find(
-    ([, p]) => resolve(p.path.replace(/^~/, process.env["HOME"] || "")) === resolvedPath,
+  const existingEntry = Object.entries(config.projects).find(([, p]) =>
+    pathsEqual(p.path, resolvedPath),
   );
 
   if (existingEntry) {

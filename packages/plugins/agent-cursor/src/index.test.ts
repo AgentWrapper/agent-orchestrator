@@ -204,9 +204,11 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("agent --force --sandbox disabled --approve-mcps --model 'sonnet' -- 'Go'");
   });
 
-  it("escapes single quotes in prompt (POSIX shell escaping)", () => {
+  it("escapes single quotes in prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("'it'\\''s broken'");
+    // shellEscape picks POSIX ('\'') on Unix, PowerShell ('') on Windows.
+    const expected = process.platform === "win32" ? "'it''s broken'" : "'it'\\''s broken'";
+    expect(cmd).toContain(expected);
   });
 
   it("omits optional flags when not provided", () => {
@@ -618,7 +620,14 @@ describe("detect()", () => {
   it("returns true when agent --help contains 'Cursor Agent'", () => {
     mockExecFileSync.mockReturnValueOnce("Usage: agent [options]\n\nStart the Cursor Agent\n");
     expect(detect()).toBe(true);
-    expect(mockExecFileSync).toHaveBeenCalledWith("agent", ["--help"], { encoding: "utf-8" });
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      "agent",
+      ["--help"],
+      expect.objectContaining({
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    );
   });
 
   it("returns true when agent --help contains Cursor-specific flags (fallback)", () => {

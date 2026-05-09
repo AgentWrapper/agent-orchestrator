@@ -102,25 +102,25 @@ interface SpawnClaimOptions {
 /**
  * Lifecycle polling runs in-process inside the long-lived `ao start` process.
  * `ao spawn` is a one-shot CLI — it can't start polling in its own process
- * (the interval would keep the CLI alive forever and duplicate work). Warn
- * when no `ao start` is running, or when the running instance isn't covering
- * this project (e.g. `ao start A` then `ao spawn` in B).
+ * (the interval would keep the CLI alive forever and duplicate work).
+ *
+ * Refuse to spawn if no `ao start` is running, or if the running instance is
+ * not polling this project. Without an active daemon, sessions get worktrees
+ * and tmux panes but no lifecycle reactions (CI-failure routing, review
+ * comments, revive transitions, event log). That silent blackout is a
+ * worse failure mode than creating no session at all — so fail fast with
+ * an actionable error.
  */
-async function warnIfAONotRunning(projectId: string): Promise<void> {
+async function ensureAOPollingProject(projectId: string): Promise<void> {
   const running = await getRunning();
   if (!running) {
-    console.log(
-      chalk.yellow(
-        "⚠ AO is not running — lifecycle polling is inactive. Run `ao start` so the new session is tracked.",
-      ),
+    throw new Error(
+      `AO is not running — lifecycle polling is inactive. Run \`ao start\` before spawning sessions so they get CI/review routing and state advancement.`,
     );
-    return;
   }
   if (!running.projects.includes(projectId)) {
-    console.log(
-      chalk.yellow(
-        `⚠ The running AO instance (pid ${running.pid}) is not polling project "${projectId}" yet. Lifecycle polling will attach within ~60s.`,
-      ),
+    throw new Error(
+      `The running AO instance (pid ${running.pid}) is not polling project "${projectId}". Run \`ao start ${projectId}\` before spawning so sessions get tracked.`,
     );
   }
 }
@@ -352,7 +352,7 @@ export function registerSpawn(program: Command): void {
 
         try {
           await runSpawnPreflight(config, projectId, claimOptions);
-          await warnIfAONotRunning(projectId);
+          await ensureAOPollingProject(projectId);
 
           await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
         } catch (err) {
@@ -429,7 +429,7 @@ export function registerBatchSpawn(program: Command): void {
         // Pre-flight once per project group so a missing prerequisite fails fast.
         try {
           await runSpawnPreflight(config, groupProjectId);
-          await warnIfAONotRunning(groupProjectId);
+          await ensureAOPollingProject(groupProjectId);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);

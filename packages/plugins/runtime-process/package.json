@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-runtime-process",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Runtime plugin: child processes",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aoagents/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*",
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

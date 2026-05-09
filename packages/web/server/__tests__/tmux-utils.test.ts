@@ -5,8 +5,8 @@
  * verifying the logic handles all edge cases correctly.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { findTmux, resolveTmuxSession, validateSessionId, SESSION_ID_PATTERN } from "../tmux-utils.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { findTmux, resolveTmuxSession, resolvePipePath, validateSessionId, SESSION_ID_PATTERN } from "../tmux-utils.js";
 
 // Default fs adapter for resolveTmuxSession tests — empty AO base directory
 // so the on-disk storageKey lookup always misses and we exercise the
@@ -244,7 +244,14 @@ describe("validateSessionId", () => {
 // =============================================================================
 
 describe("findTmux", () => {
-  it("returns first candidate that succeeds", () => {
+  it.runIf(process.platform === "win32")("returns null on Windows without calling execFn", () => {
+    const mockExec = vi.fn();
+    const result = findTmux(mockExec);
+    expect(result).toBeNull();
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it.runIf(process.platform !== "win32")("returns first candidate that succeeds", () => {
     const mockExec = vi.fn()
       .mockImplementationOnce(() => { throw new Error("not found"); }) // /opt/homebrew/bin/tmux
       .mockImplementationOnce(() => "tmux 3.4") // /usr/local/bin/tmux succeeds
@@ -256,7 +263,7 @@ describe("findTmux", () => {
     expect(mockExec).toHaveBeenCalledTimes(2);
   });
 
-  it("returns /opt/homebrew/bin/tmux on macOS ARM (first candidate)", () => {
+  it.runIf(process.platform !== "win32")("returns /opt/homebrew/bin/tmux on macOS ARM (first candidate)", () => {
     const mockExec = vi.fn().mockReturnValue("tmux 3.4");
 
     const result = findTmux(mockExec);
@@ -265,7 +272,7 @@ describe("findTmux", () => {
     expect(mockExec).toHaveBeenCalledTimes(1);
   });
 
-  it("returns /usr/bin/tmux on Linux (third candidate)", () => {
+  it.runIf(process.platform !== "win32")("returns /usr/bin/tmux on Linux (third candidate)", () => {
     const mockExec = vi.fn()
       .mockImplementationOnce(() => { throw new Error("not found"); }) // /opt/homebrew/bin/tmux
       .mockImplementationOnce(() => { throw new Error("not found"); }) // /usr/local/bin/tmux
@@ -277,7 +284,7 @@ describe("findTmux", () => {
     expect(mockExec).toHaveBeenCalledTimes(3);
   });
 
-  it("falls back to bare 'tmux' when no candidates found", () => {
+  it.runIf(process.platform !== "win32")("falls back to bare 'tmux' when no candidates found", () => {
     const mockExec = vi.fn().mockImplementation(() => {
       throw new Error("not found");
     });
@@ -288,7 +295,7 @@ describe("findTmux", () => {
     expect(mockExec).toHaveBeenCalledTimes(3);
   });
 
-  it("checks all three standard locations in order", () => {
+  it.runIf(process.platform !== "win32")("checks all three standard locations in order", () => {
     const mockExec = vi.fn().mockImplementation(() => {
       throw new Error("not found");
     });
@@ -300,7 +307,7 @@ describe("findTmux", () => {
     expect(mockExec).toHaveBeenNthCalledWith(3, "/usr/bin/tmux", ["-V"], { timeout: 5000 });
   });
 
-  it("handles timeout errors from execFileSync", () => {
+  it.runIf(process.platform !== "win32")("handles timeout errors from execFileSync", () => {
     const mockExec = vi.fn()
       .mockImplementationOnce(() => { throw Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" }); })
       .mockImplementationOnce(() => "tmux 3.4");
@@ -310,7 +317,7 @@ describe("findTmux", () => {
     expect(result).toBe("/usr/local/bin/tmux");
   });
 
-  it("handles permission denied errors", () => {
+  it.runIf(process.platform !== "win32")("handles permission denied errors", () => {
     const mockExec = vi.fn()
       .mockImplementationOnce(() => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); })
       .mockImplementationOnce(() => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); })
@@ -321,7 +328,7 @@ describe("findTmux", () => {
     expect(result).toBe("/usr/bin/tmux");
   });
 
-  it("handles ENOENT (file not found) errors", () => {
+  it.runIf(process.platform !== "win32")("handles ENOENT (file not found) errors", () => {
     const mockExec = vi.fn()
       .mockImplementationOnce(() => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); })
       .mockImplementationOnce(() => "tmux 3.4");
@@ -331,7 +338,7 @@ describe("findTmux", () => {
     expect(result).toBe("/usr/local/bin/tmux");
   });
 
-  it("passes -V flag and 5000ms timeout to each candidate", () => {
+  it.runIf(process.platform !== "win32")("passes -V flag and 5000ms timeout to each candidate", () => {
     const mockExec = vi.fn().mockReturnValue("tmux 3.4");
 
     findTmux(mockExec);
@@ -341,7 +348,7 @@ describe("findTmux", () => {
     expect(options).toEqual({ timeout: 5000 });
   });
 
-  it("stops checking after first success (short-circuit)", () => {
+  it.runIf(process.platform !== "win32")("stops checking after first success (short-circuit)", () => {
     const mockExec = vi.fn().mockReturnValue("tmux 3.4");
 
     findTmux(mockExec);
@@ -616,7 +623,7 @@ describe("resolveTmuxSession", () => {
       // and then ask tmux whether the full `{storageKey}-{sessionId}` exists.
       const fs = {
         readdir: () => ["361287ebbad1-smx-foundation", "other-unrelated-dir"],
-        exists: (p: string) => p.endsWith("/361287ebbad1-smx-foundation/sessions/sf-orchestrator-1"),
+        exists: (p: string) => p.replace(/\\/g, "/").endsWith("/361287ebbad1-smx-foundation/sessions/sf-orchestrator-1"),
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -642,7 +649,7 @@ describe("resolveTmuxSession", () => {
     it("resolves bare-hash session via on-disk lookup", () => {
       const fs = {
         readdir: () => ["aabbccddeef0"],
-        exists: (p: string) => p.endsWith("/aabbccddeef0/sessions/ao-15"),
+        exists: (p: string) => p.replace(/\\/g, "/").endsWith("/aabbccddeef0/sessions/ao-15"),
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -665,7 +672,7 @@ describe("resolveTmuxSession", () => {
       const fs = {
         readdir: () => ["aabbccddeef0"],
         // Only my-app-1 exists on disk, app-1 does not.
-        exists: (p: string) => p.endsWith("/aabbccddeef0/sessions/my-app-1"),
+        exists: (p: string) => p.replace(/\\/g, "/").endsWith("/aabbccddeef0/sessions/my-app-1"),
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -688,7 +695,7 @@ describe("resolveTmuxSession", () => {
       const fs = {
         readdir: () => ["aabbccddeef0-other-project", "112233445566-my-project"],
         exists: (p: string) =>
-          p.endsWith("/112233445566-my-project/sessions/app-1"),
+          p.replace(/\\/g, "/").endsWith("/112233445566-my-project/sessions/app-1"),
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -742,9 +749,13 @@ describe("resolveTmuxSession", () => {
           "aaaaaaaaaaaa-stale-project",
           "bbbbbbbbbbbb-live-project",
         ],
-        exists: (p: string) =>
-          p.endsWith("/aaaaaaaaaaaa-stale-project/sessions/app-1") ||
-          p.endsWith("/bbbbbbbbbbbb-live-project/sessions/app-1"),
+        exists: (p: string) => {
+          const n = p.replace(/\\/g, "/");
+          return (
+            n.endsWith("/aaaaaaaaaaaa-stale-project/sessions/app-1") ||
+            n.endsWith("/bbbbbbbbbbbb-live-project/sessions/app-1")
+          );
+        },
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -781,9 +792,13 @@ describe("resolveTmuxSession", () => {
           "aaaaaaaaaaaa-alpha",
           "bbbbbbbbbbbb-beta",
         ],
-        exists: (p: string) =>
-          p.endsWith("/aaaaaaaaaaaa-alpha/sessions/app-1") ||
-          p.endsWith("/bbbbbbbbbbbb-beta/sessions/app-1"),
+        exists: (p: string) => {
+          const u = p.replace(/\\/g, "/");
+          return (
+            u.endsWith("/aaaaaaaaaaaa-alpha/sessions/app-1") ||
+            u.endsWith("/bbbbbbbbbbbb-beta/sessions/app-1")
+          );
+        },
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -811,9 +826,13 @@ describe("resolveTmuxSession", () => {
           "aaaaaaaaaaaa-my-app",
           "bbbbbbbbbbbb-app",
         ],
-        exists: (p: string) =>
-          p.endsWith("/aaaaaaaaaaaa-my-app/sessions/app-1") ||
-          p.endsWith("/bbbbbbbbbbbb-app/sessions/app-1"),
+        exists: (p: string) => {
+          const u = p.replace(/\\/g, "/");
+          return (
+            u.endsWith("/aaaaaaaaaaaa-my-app/sessions/app-1") ||
+            u.endsWith("/bbbbbbbbbbbb-app/sessions/app-1")
+          );
+        },
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -841,7 +860,7 @@ describe("resolveTmuxSession", () => {
       // strand these projects the same way the bare-hash-only regex did.
       const fs = {
         readdir: () => ["aabbccddeef0-My App (v2)"],
-        exists: (p: string) => p.endsWith("/aabbccddeef0-My App (v2)/sessions/ao-15"),
+        exists: (p: string) => p.replace(/\\/g, "/").endsWith("/aabbccddeef0-My App (v2)/sessions/ao-15"),
         homedir: () => "/home/user",
       };
       const mockExec = vi.fn()
@@ -865,7 +884,7 @@ describe("resolveTmuxSession", () => {
         readdir: () => [".DS_Store", "portfolio", "aabbccddeef0-observability", "aabbccddeef0"],
         exists: (p: string) => {
           probed.push(p);
-          return p.endsWith("/aabbccddeef0/sessions/ao-15");
+          return p.replace(/\\/g, "/").endsWith("/aabbccddeef0/sessions/ao-15");
         },
         homedir: () => "/home/user",
       };
@@ -1080,5 +1099,154 @@ describe("resolveTmuxSession", () => {
         expect(mockExec).toHaveBeenCalledWith(tmuxPath, ["has-session", "-t", "=ao-15"], { timeout: 5000 });
       }
     });
+  });
+});
+
+// =============================================================================
+// resolvePipePath
+// =============================================================================
+
+describe("resolvePipePath", () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  });
+
+  const PIPE = "\\\\.\\pipe\\ao-pty-aabbccddeef0-ao-1";
+  const sessionFileContent =
+    "worktree=C:\\Users\\u\\.worktrees\\proj\\ao-1\n" +
+    "branch=session/ao-1\n" +
+    "status=spawning\n" +
+    `runtimeHandle={"id":"aabbccddeef0-ao-1","runtimeName":"process","data":{"pid":1234,"ptyHostPid":5678,"pipePath":"${PIPE.replace(/\\/g, "\\\\")}","createdAt":1}}\n`;
+
+  it("returns null on non-Windows platforms", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    expect(resolvePipePath("ao-1")).toBeNull();
+  });
+
+  it("reads pipePath from session metadata when storageKey is bare hash", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: () => ["aabbccddeef0"],
+      exists: (p: string) => p.replace(/\\/g, "/").endsWith("/aabbccddeef0/sessions/ao-1"),
+      homedir: () => "/home/u",
+      readFile: () => sessionFileContent,
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBe(PIPE);
+  });
+
+  it("reads pipePath from session metadata when storageKey is wrapped {hash}-{projectName}", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: () => ["aabbccddeef0-test-repo"],
+      exists: (p: string) => p.replace(/\\/g, "/").endsWith("/aabbccddeef0-test-repo/sessions/ao-1"),
+      homedir: () => "/home/u",
+      readFile: () => sessionFileContent,
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBe(PIPE);
+  });
+
+  it("returns null when no storageKey owns the sessionId", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: () => ["aabbccddeef0"],
+      exists: () => false,
+      homedir: () => "/home/u",
+      readFile: () => sessionFileContent,
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBeNull();
+  });
+
+  it("returns null when metadata is missing runtimeHandle line", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: () => ["aabbccddeef0"],
+      exists: () => true,
+      homedir: () => "/home/u",
+      readFile: () => "status=spawning\nbranch=foo\n",
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBeNull();
+  });
+
+  it("reads V2 JSON metadata under projects/{projectId}/sessions/{sessionId}.json", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const PIPE2 = "\\\\.\\pipe\\ao-pty-ao-1";
+    const v2Json = JSON.stringify({
+      runtimeHandle: { id: "ao-1", runtimeName: "process", data: { pipePath: PIPE2 } },
+    });
+    const fs = {
+      readdir: (p: string) =>
+        p.replace(/\\/g, "/").endsWith("/.agent-orchestrator/projects") ? ["my-app"] : [],
+      exists: (p: string) => {
+        const u = p.replace(/\\/g, "/");
+        return (
+          u.endsWith("/projects") || u.endsWith("/projects/my-app/sessions/ao-1.json")
+        );
+      },
+      homedir: () => "/home/u",
+      readFile: () => v2Json,
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBe(PIPE2);
+  });
+
+  it("falls back to V1 layout when V2 has no matching session", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: (p: string) => {
+        const u = p.replace(/\\/g, "/");
+        if (u.endsWith("/.agent-orchestrator/projects")) return ["my-app"];
+        if (u.endsWith("/.agent-orchestrator")) return ["aabbccddeef0", "projects"];
+        return [];
+      },
+      exists: (p: string) => {
+        const u = p.replace(/\\/g, "/");
+        // V2 projects dir exists but its sessions dir doesn't have ao-1.json.
+        if (u.endsWith("/projects")) return true;
+        if (u.endsWith("/projects/my-app/sessions/ao-1.json")) return false;
+        // V1 location does have the session file.
+        return u.endsWith("/aabbccddeef0/sessions/ao-1");
+      },
+      homedir: () => "/home/u",
+      readFile: () => sessionFileContent,
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBe(PIPE);
+  });
+
+  it("walks multiple candidate storageKeys and returns first with parseable pipePath", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const fs = {
+      readdir: () => ["aabbccddeef0-stale", "aabbccddeef0-live"],
+      exists: () => true,
+      homedir: () => "/home/u",
+      readFile: (p: string) => (p.includes("stale") ? "broken" : sessionFileContent),
+    };
+    expect(resolvePipePath("ao-1", undefined, fs)).toBe(PIPE);
+  });
+
+  it("uses projectId to disambiguate when two projects share a sessionId", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const PIPE_A = "\\\\.\\pipe\\ao-pty-projA-ao-1";
+    const PIPE_B = "\\\\.\\pipe\\ao-pty-projB-ao-1";
+    const metaFor = (pipe: string) =>
+      JSON.stringify({
+        runtimeHandle: { id: "ao-1", runtimeName: "process", data: { pipePath: pipe } },
+      });
+    const fs = {
+      readdir: () => ["projA", "projB"],
+      exists: (p: string) => {
+        const u = p.replace(/\\/g, "/");
+        return (
+          u.endsWith("/projects") ||
+          u.endsWith("/projects/projA/sessions/ao-1.json") ||
+          u.endsWith("/projects/projB/sessions/ao-1.json")
+        );
+      },
+      homedir: () => "/home/u",
+      readFile: (p: string) =>
+        p.replace(/\\/g, "/").includes("/projects/projA/") ? metaFor(PIPE_A) : metaFor(PIPE_B),
+    };
+    expect(resolvePipePath("ao-1", "projA", fs)).toBe(PIPE_A);
+    expect(resolvePipePath("ao-1", "projB", fs)).toBe(PIPE_B);
   });
 });

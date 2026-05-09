@@ -31,8 +31,9 @@ port: 3000
 #                                   # that is still active at merge time. Default 5 min.
 
 # Default plugins (these are the defaults — you can omit this section)
+# runtime defaults to 'tmux' on Linux/macOS, 'process' on Windows
 defaults:
-  runtime: tmux           # tmux | process
+  # runtime: tmux         # tmux (Linux/macOS default) | process (Windows default)
   agent: claude-code      # claude-code | codex | aider | opencode | cursor | kimicode
   # orchestrator:
   #   agent: claude-code
@@ -78,6 +79,12 @@ projects:
     #     eventHeader: x-github-event
     #     deliveryHeader: x-github-delivery
     #     maxBodyBytes: 1048576
+
+    # Per-project environment variables forwarded into worker session runtimes.
+    # Useful for scoping per-project tokens (e.g. pinning gh auth via GH_TOKEN).
+    # AO-internal vars (AO_SESSION, AO_PROJECT_ID, etc.) always take precedence.
+    # env:
+    #   GH_TOKEN: ghp_xxx
 
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]

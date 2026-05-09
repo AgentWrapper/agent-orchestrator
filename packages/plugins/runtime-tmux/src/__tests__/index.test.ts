@@ -83,7 +83,7 @@ describe("runtime.create()", () => {
   it("calls new-session with correct args", async () => {
     const runtime = create();
 
-    // 1: new-session, 2: send-keys (launch command)
+    // 1: new-session (with launch command as initial), 2: set-option status off
     mockTmuxSuccess();
     mockTmuxSuccess();
 
@@ -101,7 +101,30 @@ describe("runtime.create()", () => {
     // First call: new-session
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["new-session", "-d", "-s", "test-session", "-c", "/tmp/workspace"],
+      ["new-session", "-d", "-s", "test-session", "-c", "/tmp/workspace", "echo hello"],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("disables the tmux status bar immediately after new-session", async () => {
+    const runtime = create();
+
+    // 1: new-session, 2: set-option status off
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "status-bar-off",
+      workspacePath: "/tmp/ws",
+      launchCommand: "echo hi",
+      environment: {},
+    });
+
+    // Second call must be set-option ... status off, scoped to the session
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      ["set-option", "-t", "status-bar-off", "status", "off"],
       expectedTmuxOptions,
     );
   });
@@ -125,9 +148,10 @@ describe("runtime.create()", () => {
     expect(args).toContain("-e");
     expect(args).toContain("AO_SESSION=env-session");
     expect(args).toContain("FOO=bar");
+    expect(args.at(-1)).toBe("bash");
   });
 
-  it("sends launch command via send-keys", async () => {
+  it("starts the launch command as the initial tmux pane command", async () => {
     const runtime = create();
 
     mockTmuxSuccess();
@@ -140,10 +164,10 @@ describe("runtime.create()", () => {
       environment: {},
     });
 
-    // Second call: send-keys with the launch command
+    // First call: new-session passes the launch command as the pane's initial command
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["send-keys", "-t", "launch-test", "claude --session abc", "Enter"],
+      ["new-session", "-d", "-s", "launch-test", "-c", "/tmp/ws", "claude --session abc"],
       expectedTmuxOptions,
     );
   });
@@ -152,7 +176,7 @@ describe("runtime.create()", () => {
     const runtime = create();
     const longCommand = "x".repeat(250);
 
-    mockTmuxSuccess();
+    // 1: new-session (with bash invocation as initial command), 2: set-option
     mockTmuxSuccess();
     mockTmuxSuccess();
 
@@ -170,35 +194,26 @@ describe("runtime.create()", () => {
     );
 
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
+      1,
       "tmux",
       [
-        "send-keys",
-        "-t",
+        "new-session",
+        "-d",
+        "-s",
         "launch-long",
-        "-l",
+        "-c",
+        "/tmp/ws",
         expect.stringContaining("bash "),
       ],
       expectedTmuxOptions,
     );
-
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      3,
-      "tmux",
-      ["send-keys", "-t", "launch-long", "Enter"],
-      expectedTmuxOptions,
-    );
   });
 
-  it("cleans up session if send-keys fails", async () => {
+  it("surfaces tmux new-session failures", async () => {
     const runtime = create();
 
-    // 1: new-session succeeds
-    mockTmuxSuccess();
-    // 2: send-keys fails
-    mockTmuxError("send-keys failed");
-    // 3: kill-session (cleanup attempt)
-    mockTmuxSuccess();
+    // new-session itself fails — no further tmux calls happen
+    mockTmuxError("new-session failed");
 
     await expect(
       runtime.create({
@@ -207,12 +222,34 @@ describe("runtime.create()", () => {
         launchCommand: "bad-command",
         environment: {},
       }),
-    ).rejects.toThrow('Failed to send launch command to session "fail-session"');
+    ).rejects.toThrow("new-session failed");
 
-    // Verify kill-session was called for cleanup
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up session if set-option fails", async () => {
+    const runtime = create();
+
+    // 1: new-session succeeds
+    mockTmuxSuccess();
+    // 2: set-option fails (e.g. tmux command timeout on a slow host)
+    mockTmuxError("set-option timed out");
+    // 3: kill-session (cleanup attempt)
+    mockTmuxSuccess();
+
+    await expect(
+      runtime.create({
+        sessionId: "setopt-fail",
+        workspacePath: "/tmp/ws",
+        launchCommand: "echo hi",
+        environment: {},
+      }),
+    ).rejects.toThrow('Failed to configure or launch session "setopt-fail"');
+
+    // kill-session must run so we don't leave an orphaned tmux session
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["kill-session", "-t", "fail-session"],
+      ["kill-session", "-t", "setopt-fail"],
       expectedTmuxOptions,
     );
   });
@@ -273,7 +310,15 @@ describe("runtime.create()", () => {
 
     // First call should not contain -e flags
     const firstCallArgs = mockExecFileCustom.mock.calls[0][1] as string[];
-    expect(firstCallArgs).toEqual(["new-session", "-d", "-s", "no-env", "-c", "/tmp/ws"]);
+    expect(firstCallArgs).toEqual([
+      "new-session",
+      "-d",
+      "-s",
+      "no-env",
+      "-c",
+      "/tmp/ws",
+      "echo hi",
+    ]);
   });
 });
 

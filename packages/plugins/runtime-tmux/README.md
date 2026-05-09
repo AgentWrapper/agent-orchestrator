@@ -149,8 +149,7 @@ tmux sessions keep running even if the orchestrator dies. Use `tmux list-session
 
 ## Limitations
 
-- **macOS/Linux only** — tmux is not available on Windows (use WSL)
-- **No Windows native support** — use runtime-process instead on Windows
+- **macOS/Linux only** — tmux is not available natively on Windows. On Windows, use the `runtime-process` plugin (the default there); it provides native PTY support via ConPTY and `node-pty`. WSL is not required.
 - **Terminal buffer size** — `getOutput()` limited by tmux buffer size (default 2000 lines)
 - **No resource limits** — agents can consume unlimited CPU/memory (use docker/k8s runtimes for isolation)
 

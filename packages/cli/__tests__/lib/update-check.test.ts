@@ -255,7 +255,7 @@ describe("update-check", () => {
       process.env["XDG_CACHE_HOME"] = "/custom/cache";
 
       const dir = getCacheDir();
-      expect(dir).toBe("/custom/cache/ao");
+      expect(dir).toMatch(/^[\\/]custom[\\/]cache[\\/]ao$/);
 
       if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
       else delete process.env["XDG_CACHE_HOME"];
@@ -267,7 +267,7 @@ describe("update-check", () => {
 
       const dir = getCacheDir();
       expect(dir).toContain(".cache");
-      expect(dir).toMatch(/\/ao$/);
+      expect(dir).toMatch(/[\\/]ao$/);
 
       if (origXdg !== undefined) process.env["XDG_CACHE_HOME"] = origXdg;
     });

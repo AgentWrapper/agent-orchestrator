@@ -19,7 +19,7 @@ import type {
   Session,
 } from "../../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
-import { installMockOpencode } from "./opencode-helpers.js";
+import { installMockOpencode, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -578,7 +578,7 @@ describe("get", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -612,7 +612,7 @@ describe("get", () => {
       0,
       listLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",

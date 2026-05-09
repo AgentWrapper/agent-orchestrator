@@ -1,5 +1,6 @@
 import {
   shellEscape,
+  isWindows,
   normalizeAgentPermissionMode,
   readLastActivityEntry,
   checkActivityLogState,
@@ -398,7 +399,13 @@ export function detect(): boolean {
     // with other binaries named "agent" (SSH agents, monitoring agents, etc.)
     // Note: --version only outputs a date/hash (e.g., "2026.04.08-a41fba1") with no
     // "cursor" marker, so we check --help output instead.
-    const helpOutput = execFileSync("agent", ["--help"], { encoding: "utf-8" });
+    const helpOutput = execFileSync("agent", ["--help"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: isWindows(),
+      windowsHide: true,
+      timeout: 5_000,
+    });
     // Use multiple indicators for robustness - if Cursor changes one, others still work
     const hasCursorAgent = helpOutput.includes("Cursor Agent");
     const hasCursorFlags =

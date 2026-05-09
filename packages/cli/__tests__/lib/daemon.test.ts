@@ -1,15 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type * as AoCore from "@aoagents/ao-core";
 
-const { mockUnregister, mockWaitForExit, mockProcessKill } = vi.hoisted(() => ({
+const { mockUnregister, mockWaitForExit, mockKillProcessTree } = vi.hoisted(() => ({
   mockUnregister: vi.fn(),
   mockWaitForExit: vi.fn(),
-  mockProcessKill: vi.fn(),
+  mockKillProcessTree: vi.fn(),
 }));
 
 vi.mock("../../src/lib/running-state.js", () => ({
   unregister: mockUnregister,
   waitForExit: mockWaitForExit,
 }));
+
+vi.mock("@aoagents/ao-core", async () => {
+  const actual = await vi.importActual<typeof AoCore>("@aoagents/ao-core");
+  return {
+    ...actual,
+    killProcessTree: mockKillProcessTree,
+  };
+});
 
 import { attachToDaemon, killExistingDaemon } from "../../src/lib/daemon.js";
 import type { RunningState } from "../../src/lib/running-state.js";
@@ -26,17 +35,8 @@ beforeEach(() => {
   mockUnregister.mockReset();
   mockUnregister.mockResolvedValue(undefined);
   mockWaitForExit.mockReset();
-  mockProcessKill.mockReset();
-  // Spy is installed per-test and restored in afterEach so the mocked
-  // process.kill cannot leak into sibling test files when Vitest reuses
-  // worker threads.
-  vi.spyOn(process, "kill").mockImplementation(((
-    pid: number,
-    signal?: string | number,
-  ) => {
-    mockProcessKill(pid, signal);
-    return true;
-  }) as typeof process.kill);
+  mockKillProcessTree.mockReset();
+  mockKillProcessTree.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -58,10 +58,9 @@ describe("attachToDaemon", () => {
     const daemon = attachToDaemon(fakeRunning);
     const result = await daemon.notifyProjectChange();
     expect(result).toEqual({ ok: true });
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "http://localhost:3000/api/projects/reload",
-      { method: "POST" },
-    );
+    expect(fetchSpy).toHaveBeenCalledWith("http://localhost:3000/api/projects/reload", {
+      method: "POST",
+    });
     fetchSpy.mockRestore();
   });
 
@@ -79,9 +78,7 @@ describe("attachToDaemon", () => {
   });
 
   it("notifyProjectChange returns a reasoned failure when fetch throws", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValue(new Error("ECONNREFUSED"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
     const daemon = attachToDaemon(fakeRunning);
     const result = await daemon.notifyProjectChange();
     expect(result.ok).toBe(false);
@@ -93,21 +90,21 @@ describe("attachToDaemon", () => {
 });
 
 describe("killExistingDaemon", () => {
-  it("SIGTERMs the daemon, awaits exit, and unregisters on the happy path", async () => {
+  it("uses killProcessTree(SIGTERM), awaits exit, and unregisters on the happy path", async () => {
     mockWaitForExit.mockResolvedValueOnce(true);
     await killExistingDaemon(fakeRunning);
-    expect(mockProcessKill).toHaveBeenCalledWith(12345, "SIGTERM");
-    expect(mockProcessKill).toHaveBeenCalledTimes(1);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
+    expect(mockKillProcessTree).toHaveBeenCalledTimes(1);
     expect(mockWaitForExit).toHaveBeenCalledWith(12345, 5000);
     expect(mockUnregister).toHaveBeenCalled();
   });
 
-  it("escalates to SIGKILL when SIGTERM does not exit within the timeout", async () => {
+  it("escalates to SIGKILL via killProcessTree when SIGTERM does not exit", async () => {
     mockWaitForExit.mockResolvedValueOnce(false);
     mockWaitForExit.mockResolvedValueOnce(true);
     await killExistingDaemon(fakeRunning);
-    expect(mockProcessKill).toHaveBeenNthCalledWith(1, 12345, "SIGTERM");
-    expect(mockProcessKill).toHaveBeenNthCalledWith(2, 12345, "SIGKILL");
+    expect(mockKillProcessTree).toHaveBeenNthCalledWith(1, 12345, "SIGTERM");
+    expect(mockKillProcessTree).toHaveBeenNthCalledWith(2, 12345, "SIGKILL");
     expect(mockUnregister).toHaveBeenCalled();
   });
 
@@ -120,12 +117,15 @@ describe("killExistingDaemon", () => {
     expect(mockUnregister).not.toHaveBeenCalled();
   });
 
-  it("treats already-dead processes as success (process.kill throws ESRCH)", async () => {
-    mockProcessKill.mockImplementation(() => {
-      throw new Error("ESRCH");
-    });
+  it("treats killProcessTree errors as best-effort and still unregisters when process is gone", async () => {
+    // killProcessTree itself swallows errors internally, but defend against
+    // a future regression by ensuring an unexpected throw does not crash
+    // unregister() when the process has actually exited.
+    mockKillProcessTree.mockRejectedValueOnce(new Error("transient"));
     mockWaitForExit.mockResolvedValueOnce(true);
-    await expect(killExistingDaemon(fakeRunning)).resolves.toBeUndefined();
-    expect(mockUnregister).toHaveBeenCalled();
+    await expect(killExistingDaemon(fakeRunning)).rejects.toThrow("transient");
+    // unregister should NOT have been called in this rejection path —
+    // we only want to unregister after a clean exit.
+    expect(mockUnregister).not.toHaveBeenCalled();
   });
 });

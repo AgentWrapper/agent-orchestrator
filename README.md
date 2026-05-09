@@ -23,7 +23,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
-**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
+**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, ConPTY/process, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
 <div align="center">
 
@@ -45,7 +45,9 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [`gh` CLI](https://cli.github.com), and:
+> - **macOS / Linux:** [tmux](https://github.com/tmux/tmux/wiki/Installing) — install via `brew install tmux` or `sudo apt install tmux`.
+> - **Windows:** PowerShell 7+ recommended. tmux is **not** required — AO uses native ConPTY via the `runtime-process` plugin (the default on Windows). Set `AO_SHELL=bash` if you have Git Bash and prefer it.
 
 ### Install
 
@@ -135,7 +137,7 @@ $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/sc
 port: 3000
 
 defaults:
-  runtime: tmux
+  runtime: tmux       # default on macOS / Linux; on Windows the default is `process` (ConPTY)
   agent: claude-code
   workspace: worktree
   notifiers: [desktop]
@@ -177,12 +179,14 @@ AO keeps your Mac awake while running, so you can access the dashboard remotely 
 # agent-orchestrator.yaml
 $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 power:
-  preventIdleSleep: true  # Default on macOS, no-op on Linux
+  preventIdleSleep: true  # Default on macOS; no-op on Linux and Windows
 ```
 
 Set to `false` if you want to allow idle sleep while AO runs.
 
 **Lid-close limitation:** macOS enforces lid-close sleep at the hardware level — no userspace assertion can override it. If you need remote access while traveling with the lid closed, use [clamshell mode](https://support.apple.com/en-us/102505) (external power + display + input device).
+
+**Linux / Windows:** AO does not currently hold a wake assertion on these platforms. On Linux, idle-sleep behaviour is governed by your desktop environment / `systemd-logind`; configure that directly. On Windows, set the OS power plan if remote access matters while idle.
 
 ## Plugin Architecture
 
@@ -190,7 +194,7 @@ Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | process                  |
+| Runtime   | tmux (macOS/Linux) / process (Windows) | process, docker |
 | Agent     | claude-code | codex, aider, cursor, opencode, kimicode |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear, gitlab           |

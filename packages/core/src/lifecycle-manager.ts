@@ -627,6 +627,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           level: "warn",
           data: { plugin: pluginKey, prCount: pluginPRs.length },
         });
+        recordActivityEvent({
+          // Tag with scopedProjectId when the lifecycle worker is project-scoped
+          // so `ao events list --project <id>` surfaces this failure. Unscoped
+          // (multi-project) supervisors leave projectId null because the batch
+          // crosses project boundaries — RCA there should query without --project.
+          projectId: scopedProjectId,
+          source: "scm",
+          kind: "scm.batch_enrich_failed",
+          level: "warn",
+          summary: `batch_enrich failed for ${pluginPRs.length} PR(s)`,
+          data: {
+            plugin: pluginKey,
+            prCount: pluginPRs.length,
+            errorMessage: errorMsg,
+          },
+        });
       }
     }
 
@@ -660,8 +676,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           session.pr = detectedPR;
           const sessionsDir = getProjectSessionsDir(session.projectId);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          recordActivityEvent({
+            projectId: session.projectId,
+            sessionId: session.id,
+            source: "scm",
+            kind: "scm.detect_pr_succeeded",
+            summary: `PR #${detectedPR.number} detected`,
+            data: {
+              plugin: project.scm.plugin,
+              prNumber: detectedPR.number,
+              prUrl: detectedPR.url,
+              prOwner: detectedPR.owner,
+              prRepo: detectedPR.repo,
+            },
+          });
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
         observer?.recordOperation?.({
           metric: "lifecycle_poll",
           operation: "scm.detect_pr",
@@ -669,8 +700,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           correlationId: createCorrelationId("detect-pr"),
           projectId: session.projectId,
           sessionId: session.id,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: errorMsg,
           level: "warn",
+        });
+        recordActivityEvent({
+          projectId: session.projectId,
+          sessionId: session.id,
+          source: "scm",
+          kind: "scm.detect_pr_failed",
+          level: "warn",
+          summary: `detect_pr failed for ${session.id}`,
+          data: {
+            plugin: project.scm.plugin,
+            errorMessage: errorMsg,
+          },
         });
       }
     }
@@ -897,11 +940,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             lifecycle.runtime.reason =
               session.runtimeHandle.runtimeName === "tmux" ? "tmux_missing" : "process_missing";
           }
-        } catch {
+        } catch (err) {
           lifecycle.runtime.state = "probe_failed";
           lifecycle.runtime.reason = "probe_error";
           lifecycle.runtime.lastObservedAt = nowIso;
           runtimeProbe = { state: "unknown", failed: true };
+          recordActivityEvent({
+            projectId: session.projectId,
+            sessionId: session.id,
+            source: "runtime",
+            kind: "runtime.probe_failed",
+            level: "warn",
+            summary: `runtime.isAlive probe failed for ${session.id}`,
+            data: {
+              runtimeName: session.runtimeHandle.runtimeName,
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
         }
       }
     }
@@ -1013,17 +1068,42 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 lifecycle.runtime.reason = "process_missing";
                 lifecycle.runtime.lastObservedAt = nowIso;
               }
-            } catch {
+            } catch (err) {
               processProbe = { state: "unknown", failed: true };
+              recordActivityEvent({
+                projectId: session.projectId,
+                sessionId: session.id,
+                source: "agent",
+                kind: "agent.process_probe_failed",
+                level: "warn",
+                summary: `agent.isProcessRunning failed for ${session.id}`,
+                data: {
+                  agentName,
+                  where: "fallback",
+                  errorMessage: err instanceof Error ? err.message : String(err),
+                },
+              });
             }
           }
         } else {
           activitySignal = createActivitySignal("null", { source: "native" });
           activityEvidence = formatActivitySignalEvidence(activitySignal);
         }
-      } catch {
+      } catch (err) {
         activitySignal = createActivitySignal("probe_failure", { source: "native" });
         activityEvidence = formatActivitySignalEvidence(activitySignal);
+        recordActivityEvent({
+          projectId: session.projectId,
+          sessionId: session.id,
+          source: "agent",
+          kind: "agent.activity_probe_failed",
+          level: "warn",
+          summary: `activity probing failed for ${session.id}`,
+          data: {
+            agentName,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
         if (
           lifecycle.session.state === "stuck" ||
           lifecycle.session.state === "needs_input" ||
@@ -1061,8 +1141,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           lifecycle.runtime.reason = "process_missing";
           lifecycle.runtime.lastObservedAt = nowIso;
         }
-      } catch {
+      } catch (err) {
         processProbe = { state: "unknown", failed: true };
+        recordActivityEvent({
+          projectId: session.projectId,
+          sessionId: session.id,
+          source: "agent",
+          kind: "agent.process_probe_failed",
+          level: "warn",
+          summary: `agent.isProcessRunning failed for ${session.id}`,
+          data: {
+            agentName,
+            where: "standalone",
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     }
 
@@ -1131,8 +1224,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               }),
             );
           }
-        } catch {
-          // Best-effort — batch will retry next cycle
+        } catch (err) {
+          // Best-effort — batch will retry next cycle. Record AE evidence so
+          // RCA can answer "why didn't AO transition to merged/closed in time?"
+          recordActivityEvent({
+            projectId: session.projectId,
+            sessionId: session.id,
+            source: "scm",
+            kind: "scm.poll_pr_failed",
+            level: "warn",
+            summary: `getPRState failed for PR #${session.pr.number}`,
+            data: {
+              plugin: project.scm?.plugin,
+              prNumber: session.pr.number,
+              prUrl: session.pr.url,
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
         }
       } catch (error) {
         observer?.recordOperation?.({
@@ -1294,6 +1402,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     if (shouldEscalate) {
+      // Mirror the trigger checks above so the cause matches the gate that
+      // actually fired. Numeric escalateAfter is an attempt-count gate, not a
+      // duration; without this distinction it gets misattributed to max_duration.
+      const escalationCause: "max_retries" | "max_attempts" | "max_duration" =
+        tracker.attempts > maxRetries
+          ? "max_retries"
+          : typeof escalateAfter === "number" && tracker.attempts > escalateAfter
+            ? "max_attempts"
+            : "max_duration";
+      recordActivityEvent({
+        projectId,
+        sessionId,
+        source: "reaction",
+        kind: "reaction.escalated",
+        level: "warn",
+        summary: `reaction ${reactionKey} escalated after ${tracker.attempts} attempts`,
+        data: {
+          reactionKey,
+          attempts: tracker.attempts,
+          durationSinceFirstMs: Date.now() - tracker.firstTriggered.getTime(),
+          escalationCause,
+        },
+      });
       // Escalate to human
       const context = buildEventContext(session, prEnrichmentCache);
       const event = createEvent("reaction.escalated", {
@@ -1324,7 +1455,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reactionConfig.message) {
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
-
+            recordActivityEvent({
+              projectId,
+              sessionId,
+              source: "reaction",
+              kind: "reaction.action_succeeded",
+              summary: `send-to-agent ${reactionKey}`,
+              data: { reactionKey, action: "send-to-agent", attempts: tracker.attempts },
+            });
             return {
               reactionType: reactionKey,
               success: true,
@@ -1332,8 +1470,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               message: reactionConfig.message,
               escalated: false,
             };
-          } catch {
+          } catch (err) {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            recordActivityEvent({
+              projectId,
+              sessionId,
+              source: "reaction",
+              kind: "reaction.send_to_agent_failed",
+              level: "warn",
+              summary: `send-to-agent failed for ${sessionId}`,
+              data: {
+                reactionKey,
+                attempts: tracker.attempts,
+                errorMessage: err instanceof Error ? err.message : String(err),
+              },
+            });
             return {
               reactionType: reactionKey,
               success: false,
@@ -1354,6 +1505,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey, context, schemaVersion: 2 },
         });
         await notifyHuman(event, reactionConfig.priority ?? "info");
+        recordActivityEvent({
+          projectId,
+          sessionId,
+          source: "reaction",
+          kind: "reaction.action_succeeded",
+          summary: `notify ${reactionKey}`,
+          data: { reactionKey, action: "notify", attempts: tracker.attempts },
+        });
         return {
           reactionType: reactionKey,
           success: true,
@@ -1373,6 +1532,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey, context, schemaVersion: 2 },
         });
         await notifyHuman(event, "action");
+        recordActivityEvent({
+          projectId,
+          sessionId,
+          source: "reaction",
+          kind: "reaction.action_succeeded",
+          summary: `auto-merge ${reactionKey}`,
+          data: { reactionKey, action: "auto-merge", attempts: tracker.attempts },
+        });
         return {
           reactionType: reactionKey,
           success: true,
@@ -1498,8 +1665,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Fallback for SCM plugins that don't implement getReviewThreads yet
         allThreads = await scm.getPendingComments(session.pr);
       }
-    } catch {
-      // Failed to fetch — preserve existing metadata.
+    } catch (err) {
+      // Failed to fetch — preserve existing metadata; record AE evidence so
+      // RCA can answer "why aren't review comments being dispatched?"
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "scm",
+        kind: "scm.review_fetch_failed",
+        level: "warn",
+        summary: `review fetch failed for PR #${session.pr.number}`,
+        data: {
+          plugin: project.scm?.plugin,
+          prNumber: session.pr.number,
+          prUrl: session.pr.url,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       // Don't update the throttle timestamp so the next poll retries immediately
       // instead of being blocked for 2 minutes with the agent left on a bare notification.
       return;
@@ -2016,6 +2198,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         data: { activity, pendingSince, graceMs },
         level: "info",
       });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.auto_cleanup_deferred",
+        summary: `auto-cleanup deferred for ${session.id}`,
+        data: {
+          activity,
+          // Elapsed wall-time since cleanup was first deferred. NOT a Unix
+          // timestamp — naming it `pendingSinceMs` was misleading (Greptile).
+          pendingElapsedMs: Number.isFinite(pendingSinceMs)
+            ? Date.now() - pendingSinceMs
+            : null,
+          graceMs,
+        },
+      });
       return;
     }
 
@@ -2041,6 +2239,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         },
         level: "info",
       });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.auto_cleanup_completed",
+        summary: `auto-cleanup completed for ${session.id}`,
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceElapsed,
+          activity,
+        },
+      });
       states.delete(session.id);
     } catch (err) {
       // Leave `merged` status in place so the next poll retries. Preserve the
@@ -2048,6 +2259,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!session.metadata["mergedPendingCleanupSince"]) {
         updateSessionMetadata(session, { mergedPendingCleanupSince: nowIso });
       }
+      const errorMsg = err instanceof Error ? err.message : String(err);
       observer.recordOperation({
         metric: "lifecycle_poll",
         operation: "lifecycle.merge_cleanup.failed",
@@ -2055,8 +2267,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         correlationId,
         projectId: session.projectId,
         sessionId: session.id,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: errorMsg,
         level: "warn",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.auto_cleanup_failed",
+        level: "error",
+        summary: `auto-cleanup failed for ${session.id}`,
+        data: { errorMessage: errorMsg },
       });
     }
   }
@@ -2089,6 +2310,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const nextDetectingEscalatedAt = isDetectingEscalated
       ? session.metadata["detectingEscalatedAt"] || new Date().toISOString()
       : "";
+
+    // Emit ONCE per escalation — guarded by detectingEscalatedAt being empty.
+    // Subsequent polls while session stays stuck have detectingEscalatedAt set
+    // and won't re-fire (per invariant: don't repeat escalation events).
+    if (isDetectingEscalated && !session.metadata["detectingEscalatedAt"]) {
+      const cause: "max_attempts" | "max_duration" =
+        assessment.detectingAttempts > DETECTING_MAX_ATTEMPTS ? "max_attempts" : "max_duration";
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "detecting.escalated",
+        level: "warn",
+        summary: `detecting → stuck via ${cause}`,
+        data: {
+          attempts: assessment.detectingAttempts,
+          cause,
+          startedAt: nextDetectingStartedAt,
+        },
+      });
+    }
 
     const metadataUpdates: Record<string, string> = {};
     if (session.metadata["lifecycleEvidence"] !== nextLifecycleEvidence) {
@@ -2411,6 +2653,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       },
       level: "warn",
     });
+    // Emit ONCE per trigger activation (matches the detecting.escalated guard
+    // pattern). Without this guard the audit would fire every poll cycle while
+    // a trigger stays active, producing hundreds of identical events. The
+    // observer.recordOperation above is unguarded by design (it's a metric);
+    // the activity-event trail is for actionable evidence, not heartbeat.
+    if (isNewTrigger) {
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "report-watcher",
+        kind: "report_watcher.triggered",
+        level: "warn",
+        // Trigger is a bounded enum (no_acknowledge | stale_report |
+        // agent_needs_input); auditResult.message includes free-form
+        // report.note text from `ao report` and must not land in summary,
+        // which is FTS-indexed and only truncated by sanitizeSummary.
+        // Full message stays in `data.message` where sanitizeData redacts
+        // credential URLs.
+        summary: `${auditResult.trigger} triggered`,
+        data: {
+          trigger: auditResult.trigger,
+          message: auditResult.message,
+          timeSinceSpawnMs: auditResult.timeSinceSpawnMs,
+          timeSinceReportMs: auditResult.timeSinceReportMs,
+          reportState: auditResult.report?.state,
+        },
+      });
+    }
 
     // Execute reaction if configured
     if (isNewTrigger && reactionConfig && reactionConfig.auto !== false) {
@@ -2538,6 +2808,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         durationMs: Date.now() - startedAt,
         reason: errorReason,
         level: "error",
+      });
+      recordActivityEvent({
+        projectId: scopedProjectId,
+        source: "lifecycle",
+        kind: "lifecycle.poll_failed",
+        level: "error",
+        // Keep summary generic — sanitizeSummary only truncates, but the FTS
+        // index covers it. Error text (which can contain credential URLs from
+        // git/gh subprocess output) is routed through `data` where sanitizeData
+        // redacts credentials.
+        summary: "poll cycle failed",
+        data: {
+          errorMessage: errorReason,
+          durationMs: Date.now() - startedAt,
+          projectScope: scopedProjectId ?? "all",
+        },
       });
       observer.setHealth({
         surface: "lifecycle.worker",

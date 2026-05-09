@@ -479,6 +479,16 @@ a:hover {
 
 /* ── xterm.js terminal viewport scrollbar — macOS-style auto-hide ──── */
 
+/* Reset body's -0.011em letter-spacing inside the terminal subtree.
+   xterm's DOM renderer measures cell width with the inherited spacing
+   applied, but renders rows with an inline override that effectively
+   cancels it. The mismatch causes glyphs to paint ~0.17px wider than
+   the allocated cell, which accumulates over many cols and clips the
+   rightmost chars under .xterm-rows > div { overflow: hidden }. */
+.xterm {
+  letter-spacing: 0;
+}
+
 .xterm .xterm-viewport {
   overflow-y: overlay !important;
 }

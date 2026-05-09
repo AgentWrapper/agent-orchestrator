@@ -10,6 +10,7 @@ import { withFileLockSync } from "./file-lock.js";
 import { ProjectResolveError } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
+import { getDefaultRuntime } from "./platform.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -163,7 +164,7 @@ export const GlobalConfigSchema = z
     /** Cross-project defaults — projects inherit when fields are omitted. */
     defaults: z
       .object({
-        runtime: z.string().default("tmux"),
+        runtime: z.string().default(() => getDefaultRuntime()),
         agent: z.string().default("claude-code"),
         workspace: z.string().default("worktree"),
         notifiers: z.array(z.string()).default(["composio", "desktop"]),
@@ -1023,7 +1024,7 @@ function makeEmptyGlobalConfig(): GlobalConfig {
     port: 3000,
     readyThresholdMs: 300_000,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
       notifiers: ["composio", "desktop"],

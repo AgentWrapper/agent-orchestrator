@@ -97,7 +97,7 @@ These are the areas where Copilot review adds the most value: issues CI cannot c
 - Core utilities exported from `@aoagents/ao-core`
 
 **7. Resource cleanup.** Check that:
-- File handles, subprocesses, and tmux sessions are cleaned up on all exit paths: success, error, and early return
+- File handles, subprocesses, and runtime sessions (tmux on Unix, ConPTY pty-host processes on Windows) are cleaned up on all exit paths: success, error, and early return
 - `destroy()` methods exist and use best-effort semantics
 - There are no resource leaks in error paths
 
@@ -124,7 +124,7 @@ These files have a wide blast radius and deserve extra scrutiny:
 | `packages/core/src/lifecycle-manager.ts` | State machine and polling loop with subtle state dependencies. |
 | `packages/core/src/session-manager.ts` | Session CRUD + stale runtime reconciliation. `list()` persists `runtime_lost` to disk when enrichment detects dead runtimes. Invariant violations can cause phantom `killed` or `exited` sessions. |
 | `packages/core/src/lifecycle-state.ts` | Canonical lifecycle → legacy status mapping. New terminal reasons (e.g. `runtime_lost`) must be added to `deriveLegacyStatus()`. |
-| `packages/cli/src/commands/start.ts` | ao start/stop + Ctrl+C shutdown. Cross-project scoping logic is subtle — `ao stop <project>` must not kill parent process. |
+| `packages/cli/src/commands/start.ts` | ao start/stop + Ctrl+C shutdown. Cross-project scoping logic is subtle — `ao stop <project>` must not kill parent process. On Windows, also calls `sweepWindowsPtyHosts()` to gracefully tear down detached ConPTY pty-host processes that `taskkill /T` cannot reach. |
 | `packages/core/src/config.ts` | Zod validation schema. Changes affect every `ao` command. |
 | `packages/core/src/index.ts` | Stable public API. Do not break it without deprecation. |
 | `packages/web/src/app/globals.css` | Design tokens used by 50+ components. Renaming tokens breaks the UI. |

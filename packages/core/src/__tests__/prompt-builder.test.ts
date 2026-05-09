@@ -60,7 +60,7 @@ describe("buildPrompt split output", () => {
     expect(systemPrompt).not.toContain("## Additional Instructions");
 
     expect(taskPrompt).toContain("Focus on the API layer only.");
-    expect(taskPrompt).not.toContain("Work on issue: INT-1343");
+    expect(taskPrompt).not.toContain("Work on issue #INT-1343");
     expect(taskPrompt).not.toContain("Layered Prompt System");
   });
 
@@ -83,15 +83,16 @@ describe("buildPrompt", () => {
     expect(taskPrompt).toBeUndefined();
   });
 
-  it("includes base prompt when issue is provided", () => {
+  it("includes base prompt when issue is provided without context", () => {
     const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
       issueId: "INT-1343",
     });
     expect(systemPrompt).toContain(BASE_AGENT_PROMPT);
-    expect(systemPrompt).toContain("Work on issue: INT-1343");
-    expect(taskPrompt).toBe("Work on issue: INT-1343");
+    expect(systemPrompt).toContain("Work on issue #INT-1343");
+    expect(taskPrompt).toContain("Work on issue #INT-1343");
+    expect(taskPrompt).toContain("Issue details were not pre-fetched");
   });
 
   it("includes project context", () => {
@@ -115,18 +116,20 @@ describe("buildPrompt", () => {
     expect(systemPrompt).not.toContain("Repository:");
   });
 
-  it("includes issue ID in task section", () => {
+  it("tells agent to fetch issue when context is missing", () => {
     const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
       issueId: "INT-1343",
     });
-    expect(systemPrompt).toContain("Work on issue: INT-1343");
+    expect(systemPrompt).toContain("Work on issue #INT-1343");
     expect(systemPrompt).toContain("feat/INT-1343");
-    expect(taskPrompt).toBe("Work on issue: INT-1343");
+    expect(taskPrompt).toContain("Work on issue #INT-1343");
+    expect(taskPrompt).toContain("Issue details were not pre-fetched");
+    expect(taskPrompt).toContain("gh issue view INT-1343");
   });
 
-  it("includes issue context when provided", () => {
+  it("tells agent details are pre-fetched when context is provided", () => {
     const { systemPrompt, taskPrompt } = buildPrompt({
       project,
       projectId: "test-app",
@@ -136,8 +139,21 @@ describe("buildPrompt", () => {
     expect(systemPrompt).toContain("## Issue Details");
     expect(systemPrompt).toContain("Layered Prompt System");
     expect(systemPrompt).toContain("Priority: High");
-    expect(taskPrompt).toBe("Work on issue: INT-1343");
+    expect(taskPrompt).toContain("Work on issue #INT-1343");
+    expect(taskPrompt).toContain("start implementing without re-fetching the issue");
     expect(taskPrompt).not.toContain("Layered Prompt System");
+  });
+
+  it("normalizes issue ID with leading # to avoid double-hash", () => {
+    const { systemPrompt, taskPrompt } = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "#42",
+    });
+    expect(systemPrompt).toContain("Work on issue #42");
+    expect(systemPrompt).not.toContain("##42");
+    expect(taskPrompt).toContain("Work on issue #42");
+    expect(taskPrompt).not.toContain("##42");
   });
 
   it("includes inline agentRules", () => {

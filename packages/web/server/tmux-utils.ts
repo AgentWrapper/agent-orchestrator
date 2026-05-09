@@ -6,9 +6,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isWindows } from "@aoagents/ao-core";
 
 /** Session ID validation regex — alphanumeric, hyphens, underscores only */
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -109,7 +110,8 @@ export function validateSessionId(sessionId: string): boolean {
  */
 export function findTmux(
   execFn: typeof execFileSync = execFileSync,
-): string {
+): string | null {
+  if (isWindows()) return null;
   const candidates = [
     "/opt/homebrew/bin/tmux", // macOS ARM (Homebrew)
     "/usr/local/bin/tmux", // macOS Intel (Homebrew)
@@ -153,11 +155,12 @@ export function findTmux(
  */
 export function resolveTmuxSession(
   sessionId: string,
-  tmuxPath: string,
+  tmuxPath: string | null,
   execFn: typeof execFileSync = execFileSync,
   fs: FsAdapter = defaultFs,
   projectId?: string,
 ): string | null {
+  if (!tmuxPath) return null;
   // Try exact match first using = prefix for exact matching (e.g., "ao-orchestrator")
   // Without =, tmux uses prefix matching: "ao-1" would match "ao-15"
   try {
@@ -201,6 +204,95 @@ export function resolveTmuxSession(
     }
   } catch {
     // tmux not running or no sessions
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a user-facing session ID to its Windows named pipe path.
+ *
+ * V2 layout (current): JSON metadata at
+ *   `~/.agent-orchestrator/projects/{projectId}/sessions/{sessionId}.json`
+ *   with `runtimeHandle.data.pipePath` as a top-level field.
+ *
+ * V1 layout (legacy fallback): line-delimited key=value at
+ *   `~/.agent-orchestrator/{storageKey}/sessions/{sessionId}` where
+ *   storageKey is bare 12-hex or `{hash}-{projectName}`. Kept so users
+ *   who haven't run `ao migrate-storage` still see live sessions.
+ *
+ * When `projectId` is provided, only that project's metadata file is read.
+ * Without it (legacy callers), walks all projects and returns the first
+ * matching pipePath — which can collide when two projects share a sessionId.
+ *
+ * @returns Full pipe path (e.g., "\\\\.\\pipe\\ao-pty-win1-orchestrator"), or null
+ */
+export function resolvePipePath(
+  sessionId: string,
+  projectId?: string,
+  fs: Pick<FsAdapter, "readdir" | "exists" | "homedir"> & {
+    readFile?: (path: string) => string;
+  } = defaultFs,
+): string | null {
+  if (!isWindows()) return null;
+
+  const readFile = fs.readFile ?? ((p: string) => readFileSync(p, "utf8"));
+  const aoBase = join(fs.homedir(), ".agent-orchestrator");
+
+  const readPipeFromV2 = (project: string): string | null => {
+    const sessionFile = join(aoBase, "projects", project, "sessions", `${sessionId}.json`);
+    if (!fs.exists(sessionFile)) return null;
+    try {
+      const meta = JSON.parse(readFile(sessionFile)) as {
+        runtimeHandle?: { data?: { pipePath?: string } };
+      };
+      const pipePath = meta.runtimeHandle?.data?.pipePath;
+      return typeof pipePath === "string" && pipePath.length > 0 ? pipePath : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // V2: prefer the caller's projectId when provided; otherwise walk all projects
+  const projectsDir = join(aoBase, "projects");
+  if (projectId) {
+    const pipe = readPipeFromV2(projectId);
+    if (pipe) return pipe;
+  } else if (fs.exists(projectsDir)) {
+    let projects: string[];
+    try {
+      projects = fs.readdir(projectsDir);
+    } catch {
+      projects = [];
+    }
+    for (const project of projects) {
+      const pipe = readPipeFromV2(project);
+      if (pipe) return pipe;
+    }
+  }
+
+  // V1 fallback: line-delimited key=value under {storageKey}/sessions/{sessionId}
+  for (const storageKey of findStorageKeysForSession(sessionId, {
+    readdir: fs.readdir,
+    exists: fs.exists,
+    homedir: fs.homedir,
+  })) {
+    const sessionFile = join(aoBase, storageKey, "sessions", sessionId);
+    let content: string;
+    try {
+      content = readFile(sessionFile);
+    } catch {
+      continue;
+    }
+    const match = content.match(/^runtimeHandle=(.+)$/m);
+    if (!match) continue;
+    try {
+      const handle = JSON.parse(match[1]) as { data?: { pipePath?: string } };
+      const pipePath = handle.data?.pipePath;
+      if (pipePath && pipePath.length > 0) return pipePath;
+    } catch {
+      continue;
+    }
   }
 
   return null;
