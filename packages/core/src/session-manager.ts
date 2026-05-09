@@ -1055,6 +1055,40 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       : null;
   }
 
+  function changedMetadataUpdates(
+    current: Record<string, string>,
+    updates: Partial<Record<string, string>>,
+  ): Partial<Record<string, string>> {
+    const changed: Partial<Record<string, string>> = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) continue;
+      if (value === "") {
+        if (current[key] !== undefined) changed[key] = value;
+        continue;
+      }
+      if (current[key] !== value) changed[key] = value;
+    }
+    return changed;
+  }
+
+  function cachedAgentInfoFromMetadata(agentName: string, session: Session): Session["agentInfo"] {
+    if (agentName !== "codex") return null;
+
+    const model = session.metadata["codexModel"]?.trim();
+    const threadId = session.metadata["codexThreadId"]?.trim();
+    if (!model) return null;
+
+    return {
+      summary: model ? `Codex session (${model})` : null,
+      summaryIsFallback: true,
+      agentSessionId: threadId || session.id,
+      metadata: {
+        ...(threadId ? { codexThreadId: threadId } : {}),
+        ...(model ? { codexModel: model } : {}),
+      },
+    };
+  }
+
   function cloneActivitySignalForEnrichment(
     signal: Session["activitySignal"],
   ): Session["activitySignal"] {
@@ -1119,7 +1153,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     effectiveAgentName: string,
     plugins: ReturnType<typeof resolvePlugins>,
     sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
-    options?: { deadlineMs?: number; metadataUpdates?: Partial<Record<string, string>> },
+    options?: {
+      deadlineMs?: number;
+      metadataUpdates?: Partial<Record<string, string>>;
+      preferCachedAgentInfo?: boolean;
+    },
   ): Promise<boolean> {
     const mappingTimeoutMs = remainingEnrichmentMs(options?.deadlineMs);
     if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
@@ -1171,7 +1209,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     plugins: ReturnType<typeof resolvePlugins>,
     timeoutMs: number,
     sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
-    options?: { dedupeKey?: string },
+    options?: { dedupeKey?: string; preferCachedAgentInfo?: boolean },
   ): Promise<void> {
     const dedupeKey = options?.dedupeKey;
     pruneExpiredBoundedEnrichmentCooldowns();
@@ -1203,7 +1241,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         effectiveAgentName,
         plugins,
         sessionListPromise,
-        { deadlineMs, metadataUpdates },
+        { deadlineMs, metadataUpdates, preferCachedAgentInfo: options?.preferCachedAgentInfo },
       )
         .then((timedOut) => ({ session: enrichmentSession, timedOut, metadataUpdates }))
         .catch(
@@ -1295,7 +1333,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
     sessionsDir: string,
-    options?: { deadlineMs?: number; metadataUpdates?: Partial<Record<string, string>> },
+    options?: {
+      deadlineMs?: number;
+      metadataUpdates?: Partial<Record<string, string>>;
+      preferCachedAgentInfo?: boolean;
+    },
   ): Promise<boolean> {
     // Check runtime liveness first — for all statuses except "spawning".
     // Skip spawning sessions because tmux may not be fully initialized yet,
@@ -1398,6 +1440,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         session.activitySignal = createActivitySignal("probe_failure", { source: "native" });
       }
 
+      if (options?.preferCachedAgentInfo) {
+        const cachedInfo = cachedAgentInfoFromMetadata(plugins.agent.name, session);
+        if (cachedInfo) {
+          session.agentInfo = cachedInfo;
+          return false;
+        }
+      }
+
       // Enrich with live agent session info (summary, cost).
       let info: Awaited<ReturnType<Agent["getSessionInfo"]>>;
       try {
@@ -1417,7 +1467,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       if (info) {
         session.agentInfo = info;
-        const metadataUpdates = info.metadata ?? {};
+        const metadataUpdates = changedMetadataUpdates(session.metadata, info.metadata ?? {});
         if (Object.keys(metadataUpdates).length > 0) {
           try {
             if (options?.metadataUpdates) {
@@ -2204,7 +2254,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return loadStoredSessions(projectId);
   }
 
-  async function list(projectId?: string): Promise<Session[]> {
+  async function list(
+    projectId?: string,
+    options?: { preferCachedAgentInfo?: boolean },
+  ): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
       return loadActiveSessionRecords(entryProjectId, project).map((record) => ({
@@ -2249,7 +2302,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           plugins,
           OPENCODE_DISCOVERY_TIMEOUT_MS + 2_000,
           sessionListPromise,
-          { dedupeKey: `list:${sessionsDir}\0${sessionName}` },
+          {
+            dedupeKey: `list:${options?.preferCachedAgentInfo ? "cached" : "fresh"}:${sessionsDir}\0${sessionName}`,
+            preferCachedAgentInfo: options?.preferCachedAgentInfo,
+          },
         );
 
         // Persist lifecycle to disk when enrichment detected a dead runtime.
@@ -2299,7 +2355,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   function refreshSessionCache(): Promise<Session[]> {
     if (sessionCacheRefreshPromise) return sessionCacheRefreshPromise;
     const generation = sessionCacheGeneration;
-    sessionCacheRefreshPromise = list()
+    sessionCacheRefreshPromise = list(undefined, { preferCachedAgentInfo: true })
       .then((sessions) => {
         if (sessionCacheGeneration === generation) {
           sessionCache = {

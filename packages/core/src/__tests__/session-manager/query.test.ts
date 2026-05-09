@@ -1,14 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  readFileSync,
-  utimesSync,
-} from "node:fs";
+import { readFileSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
-import {
-  writeMetadata,
-  readMetadataRaw,
-} from "../../metadata.js";
+import { writeMetadata, readMetadataRaw, updateMetadata } from "../../metadata.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -18,7 +12,12 @@ import type {
   RuntimeHandle,
   Session,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -33,7 +32,16 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({
+    tmpDir,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  } = ctx);
 });
 
 afterEach(() => {
@@ -654,14 +662,12 @@ describe("get", () => {
     });
     const agentWithDeferredState: Agent = {
       ...mockAgent,
-      getActivityState: vi.fn(
-        () => {
-          resolveActivityRequested();
-          return new Promise<{ state: "idle" }>((resolve) => {
-            resolveActivity = resolve;
-          });
-        },
-      ),
+      getActivityState: vi.fn(() => {
+        resolveActivityRequested();
+        return new Promise<{ state: "idle" }>((resolve) => {
+          resolveActivity = resolve;
+        });
+      }),
       getSessionInfo: vi.fn().mockResolvedValue({
         summary: "working on the fix",
         agentSessionId: "agent-session-1",
@@ -746,6 +752,188 @@ describe("get", () => {
     }
   });
 
+  it("keeps list enrichment fresh even when Codex metadata is cached", async () => {
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "fresh codex summary",
+        summaryIsFallback: false,
+        agentSessionId: "thread-123",
+        metadata: { codexThreadId: "thread-123", codexModel: "gpt-5.5" },
+      }),
+    };
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return codexAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      codexThreadId: "thread-123",
+      codexModel: "gpt-5.5",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithCodex });
+    const sessions = await sm.list("my-app");
+
+    expect(codexAgent.getActivityState).toHaveBeenCalledTimes(1);
+    expect(codexAgent.getSessionInfo).toHaveBeenCalledTimes(1);
+    expect(sessions[0]?.agentInfo).toMatchObject({
+      summary: "fresh codex summary",
+      summaryIsFallback: false,
+      agentSessionId: "thread-123",
+    });
+  });
+
+  it("uses cached Codex metadata during cache refresh enrichment", async () => {
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+      getSessionInfo: vi.fn().mockRejectedValue(new Error("JSONL stream should not run")),
+    };
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return codexAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      codexThreadId: "thread-123",
+      codexModel: "gpt-5.5",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithCodex });
+    await sm.listCached("my-app");
+
+    await vi.waitFor(async () => {
+      const sessions = await sm.listCached("my-app");
+      expect(sessions[0]?.agentInfo).toMatchObject({
+        summary: "Codex session (gpt-5.5)",
+        summaryIsFallback: true,
+        agentSessionId: "thread-123",
+      });
+    });
+    expect(codexAgent.getActivityState).toHaveBeenCalledTimes(1);
+    expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+  });
+
+  it("does not let cached refresh dedupe downgrade fresh list enrichment", async () => {
+    const activityResolvers: Array<(value: { state: "idle" }) => void> = [];
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getActivityState: vi.fn(
+        () =>
+          new Promise<{ state: "idle" }>((resolve) => {
+            activityResolvers.push(resolve);
+          }),
+      ),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "fresh codex summary",
+        summaryIsFallback: false,
+        agentSessionId: "thread-123",
+        metadata: { codexThreadId: "thread-123", codexModel: "gpt-5.5" },
+      }),
+    };
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return codexAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      codexThreadId: "thread-123",
+      codexModel: "gpt-5.5",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithCodex });
+    await sm.listCached("my-app");
+    await vi.waitFor(() => expect(codexAgent.getActivityState).toHaveBeenCalledTimes(1));
+
+    const freshList = sm.list("my-app");
+    await vi.waitFor(() => expect(codexAgent.getActivityState).toHaveBeenCalledTimes(2));
+
+    for (const resolve of activityResolvers) {
+      resolve({ state: "idle" });
+    }
+
+    const sessions = await freshList;
+    expect(codexAgent.getSessionInfo).toHaveBeenCalledTimes(1);
+    expect(sessions[0]?.agentInfo?.summary).toBe("fresh codex summary");
+  });
+
+  it("does not rewrite metadata when agent session metadata is unchanged", async () => {
+    const agentWithSameMetadata: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "same metadata",
+        agentSessionId: "agent-session-1",
+        metadata: { codexThreadId: "thread-123" },
+      }),
+    };
+    const registryWithSameMetadata: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithSameMetadata;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", { codexThreadId: "thread-123" });
+    const metaPath = join(sessionsDir, "app-1.json");
+    const oldTime = new Date("2026-01-01T00:00:00.000Z");
+    utimesSync(metaPath, oldTime, oldTime);
+
+    const sm = createSessionManager({ config, registry: registryWithSameMetadata });
+    const session = await sm.get("app-1", { enrichTimeoutMs: 1_000 });
+
+    expect(session?.agentInfo?.summary).toBe("same metadata");
+    expect(agentWithSameMetadata.getSessionInfo).toHaveBeenCalledTimes(1);
+    expect(statSync(metaPath).mtimeMs).toBe(oldTime.getTime());
+  });
+
   it("keeps fresher caller metadata when applying shared bounded enrichment", async () => {
     let resolveActivity: (value: { state: "idle" }) => void = () => {};
     let resolveActivityRequested: () => void = () => {};
@@ -754,14 +942,12 @@ describe("get", () => {
     });
     const agentWithDeferredState: Agent = {
       ...mockAgent,
-      getActivityState: vi.fn(
-        () => {
-          resolveActivityRequested();
-          return new Promise<{ state: "idle" }>((resolve) => {
-            resolveActivity = resolve;
-          });
-        },
-      ),
+      getActivityState: vi.fn(() => {
+        resolveActivityRequested();
+        return new Promise<{ state: "idle" }>((resolve) => {
+          resolveActivity = resolve;
+        });
+      }),
       getSessionInfo: vi.fn().mockResolvedValue({
         summary: "shared enrichment",
         agentSessionId: "agent-session-1",

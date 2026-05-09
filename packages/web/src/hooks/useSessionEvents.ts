@@ -16,7 +16,7 @@ import { fetchJsonWithTimeout } from "@/lib/client-fetch";
 /** Debounce before fetching full session list after membership change. */
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
 /** Re-fetch full session list if no refresh has happened in this interval. */
-const STALE_REFRESH_INTERVAL_MS = 15000;
+const STALE_REFRESH_INTERVAL_MS = 60_000;
 const LIVE_REFRESH_TIMEOUT_MS = 6000;
 
 function isAbortLikeError(error: unknown): boolean {
@@ -147,8 +147,7 @@ function preserveEnrichedPRDetails(
   const incomingCIFailed =
     incoming.lifecycle?.prReason === "ci_failing" || incoming.status === "ci_failed";
   const incomingChangesRequested =
-    incoming.lifecycle?.prReason === "changes_requested" ||
-    incoming.status === "changes_requested";
+    incoming.lifecycle?.prReason === "changes_requested" || incoming.status === "changes_requested";
   const incomingReviewPending =
     incoming.lifecycle?.prReason === "review_pending" || incoming.status === "review_pending";
   const ciStatus = incomingMergeReady

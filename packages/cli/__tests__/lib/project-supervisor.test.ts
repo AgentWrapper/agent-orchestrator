@@ -32,9 +32,8 @@ vi.mock("@aoagents/ao-core", () => ({
       );
     }
     return (
-      ["done", "killed", "terminated", "errored", "merged", "cleanup"].includes(
-        session.status,
-      ) || session.activity === "exited"
+      ["done", "killed", "terminated", "errored", "merged", "cleanup"].includes(session.status) ||
+      session.activity === "exited"
     );
   },
 }));
@@ -93,7 +92,10 @@ describe("project-supervisor", () => {
     mockSetHealth.mockReset();
     mockLoadConfig.mockReturnValue(makeConfig(["app"]));
     mockGetSessionManager.mockResolvedValue({
-      list: async (projectId: string) => sessionsByProject.get(projectId) ?? [],
+      list: vi.fn(async () => {
+        throw new Error("live enrichment should not run");
+      }),
+      listStored: vi.fn(async (projectId: string) => sessionsByProject.get(projectId) ?? []),
     });
     mockEnsureLifecycleWorker.mockResolvedValue({ running: true, started: true });
   });
@@ -103,6 +105,9 @@ describe("project-supervisor", () => {
 
     await reconcileProjectSupervisor();
 
+    const sessionManager = await mockGetSessionManager.mock.results[0]!.value;
+    expect(sessionManager.listStored).toHaveBeenCalledWith("app");
+    expect(sessionManager.list).not.toHaveBeenCalled();
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: "/tmp/global-config.yaml" }),
       "app",
@@ -177,7 +182,7 @@ describe("project-supervisor", () => {
     mockLoadConfig.mockReturnValue(makeConfig(["broken", "healthy"]));
     sessionsByProject.set("healthy", [makeSession("healthy")]);
     mockGetSessionManager.mockResolvedValue({
-      list: async (projectId: string) => {
+      listStored: async (projectId: string) => {
         if (projectId === "broken") throw new Error("boom");
         return sessionsByProject.get(projectId) ?? [];
       },
@@ -185,11 +190,7 @@ describe("project-supervisor", () => {
 
     await reconcileProjectSupervisor();
 
-    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.anything(),
-      "healthy",
-      undefined,
-    );
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(expect.anything(), "healthy", undefined);
     expect(mockSetHealth).toHaveBeenCalledWith(
       expect.objectContaining({
         surface: "project-supervisor.reconcile",
@@ -215,7 +216,7 @@ describe("project-supervisor", () => {
   it("returns its handle even if stopped during the initial reconcile", async () => {
     let releaseList: (() => void) | undefined;
     mockGetSessionManager.mockResolvedValue({
-      list: async () => {
+      listStored: async () => {
         await new Promise<void>((resolve) => {
           releaseList = resolve;
         });
@@ -285,7 +286,7 @@ describe("project-supervisor", () => {
     let secondRelease: (() => void) | undefined;
     let listCalls = 0;
     mockGetSessionManager.mockResolvedValue({
-      list: async () => {
+      listStored: async () => {
         listCalls++;
         if (listCalls === 1) {
           await new Promise<void>((resolve) => {

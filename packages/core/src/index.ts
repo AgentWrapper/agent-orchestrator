@@ -164,10 +164,7 @@ export {
   resetOpenCodeSessionListCache,
 } from "./opencode-shared.js";
 export type { OpenCodeSessionListEntry } from "./opencode-shared.js";
-export {
-  getWorkspaceAgentsMdPath,
-  writeWorkspaceOpenCodeAgentsMd,
-} from "./opencode-agents-md.js";
+export { getWorkspaceAgentsMdPath, writeWorkspaceOpenCodeAgentsMd } from "./opencode-agents-md.js";
 export { writeOpenCodeConfig } from "./opencode-config.js";
 export {
   getOrchestratorSessionId,

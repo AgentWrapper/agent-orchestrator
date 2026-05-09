@@ -30,6 +30,20 @@ describe("platform adapter", () => {
     });
   });
 
+  describe("isMac", () => {
+    it("detects macOS", async () => {
+      setPlatform("darwin");
+      const mod = await import("../platform.js");
+      expect(mod.isMac()).toBe(true);
+    });
+
+    it("returns false on Linux", async () => {
+      setPlatform("linux");
+      const mod = await import("../platform.js");
+      expect(mod.isMac()).toBe(false);
+    });
+  });
+
   describe("getDefaultRuntime", () => {
     it("returns 'process' on win32", async () => {
       setPlatform("win32");

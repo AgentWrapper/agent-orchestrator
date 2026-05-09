@@ -239,6 +239,17 @@ describe("sessionToDashboard", () => {
     expect(dashboard.summaryIsFallback).toBe(false);
   });
 
+  it("should derive Codex fallback summary from persisted model metadata", () => {
+    const coreSession = createCoreSession({
+      agentInfo: null,
+      metadata: { codexModel: "gpt-5.5" },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.summary).toBe("Codex session (gpt-5.5)");
+    expect(dashboard.summaryIsFallback).toBe(true);
+  });
+
   it("should set summaryIsFallback false when no summary exists", () => {
     const coreSession = createCoreSession({
       agentInfo: null,
@@ -432,7 +443,12 @@ describe("enrichSessionPR", () => {
         prReviewComments: createReviewCommentsMetadata({
           unresolvedThreads: 2,
           unresolvedComments: [
-            { url: "https://example.com", path: "src/app.ts", author: "reviewer", body: "Fix this" },
+            {
+              url: "https://example.com",
+              path: "src/app.ts",
+              author: "reviewer",
+              body: "Fix this",
+            },
           ],
         }),
       },
@@ -1108,6 +1124,24 @@ describe("enrichSessionsMetadata", () => {
 
     expect(agent.getSessionInfo).not.toHaveBeenCalled();
     expect(dashboard.summary).toBe("Existing summary");
+  });
+
+  it("should skip summary enrichment when Codex model metadata provides the fallback summary", async () => {
+    const tracker = mockTracker();
+    const agent = mockAgent();
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({
+      agentInfo: null,
+      metadata: { codexModel: "gpt-5.5" },
+    });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(agent.getSessionInfo).not.toHaveBeenCalled();
+    expect(dashboard.summary).toBe("Codex session (gpt-5.5)");
+    expect(dashboard.summaryIsFallback).toBe(true);
   });
 
   it("should handle missing tracker plugin gracefully", async () => {
