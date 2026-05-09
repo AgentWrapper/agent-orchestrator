@@ -257,8 +257,7 @@ async function spawnSession(
       console.warn(
         chalk.yellow(
           `  ⚠ Running in permissionless mode (--dangerously-skip-permissions).\n` +
-            `    Claude Code will show a one-time confirmation prompt in the tmux session.\n` +
-            `    If this is your first time, accept it with: ${chalk.cyan(`tmux attach -t ${session.id}`)}\n` +
+            `    Claude Code will show a one-time confirmation prompt — accept it in the dashboard terminal.\n` +
             `    To use interactive mode instead, set in agent-orchestrator.yaml:\n` +
             `      ${chalk.cyan("agentConfig:\n        permissions: default")}`,
         ),
