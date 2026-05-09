@@ -46,7 +46,7 @@ function serializeMetadata(data: Record<string, unknown>): string {
 
 /** Parse metadata file content. Returns null on invalid content.
  *  Supports JSON format (current) and legacy key=value format.
- *  If content starts with '{' but fails JSON parse, it's corrupt — return null.
+ *  If content starts with '{' or '[' but fails JSON parse, it's corrupt — return null.
  *  Otherwise, fall back to key=value parsing for legacy metadata files.
  */
 function parseMetadataContent(content: string): Record<string, unknown> | null {
