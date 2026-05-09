@@ -1,0 +1,20 @@
+packages/core/src/canvas-log.ts
+  s_716542aec5f41c::t_de65f9592296aa 6,14-16
+  s_716542aec5f41c::t_b189d40d70f5c5 184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "7dd695036058551b38052326e2b7b518f16a6463",
+  "prompts": {},
+  "sessions": {
+    "s_716542aec5f41c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
