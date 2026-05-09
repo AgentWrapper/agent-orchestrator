@@ -160,6 +160,8 @@ const MAX_CONCURRENT_AGENTS = 5; // Max active agent sessions across all project
 const globalForBacklog = globalThis as typeof globalThis & {
   _aoBacklogStarted?: boolean;
   _aoBacklogTimer?: ReturnType<typeof setInterval>;
+  _aoBacklogPollInFlight?: Promise<void>;
+  _aoBacklogClaimingIssues?: Set<string>;
 };
 
 /** Start the backlog auto-claim loop. Idempotent — safe to call multiple times. */
@@ -170,6 +172,13 @@ export function startBacklogPoller(): void {
   // Run immediately, then on interval
   void pollBacklog();
   globalForBacklog._aoBacklogTimer = setInterval(() => void pollBacklog(), BACKLOG_POLL_INTERVAL);
+}
+
+function getBacklogClaimingIssues(): Set<string> {
+  if (!globalForBacklog._aoBacklogClaimingIssues) {
+    globalForBacklog._aoBacklogClaimingIssues = new Set();
+  }
+  return globalForBacklog._aoBacklogClaimingIssues;
 }
 
 // Track which issues we've already processed to avoid repeated API calls
@@ -267,7 +276,22 @@ async function relabelReopenedIssues(
   }
 }
 
-export async function pollBacklog(): Promise<void> {
+export function pollBacklog(): Promise<void> {
+  if (globalForBacklog._aoBacklogPollInFlight) {
+    return globalForBacklog._aoBacklogPollInFlight;
+  }
+
+  const pollPromise = pollBacklogOnce().finally(() => {
+    if (globalForBacklog._aoBacklogPollInFlight === pollPromise) {
+      globalForBacklog._aoBacklogPollInFlight = undefined;
+    }
+  });
+
+  globalForBacklog._aoBacklogPollInFlight = pollPromise;
+  return pollPromise;
+}
+
+async function pollBacklogOnce(): Promise<void> {
   try {
     const { config, registry, sessionManager } = await getServices();
 
@@ -295,6 +319,7 @@ export async function pollBacklog(): Promise<void> {
         .map((session) => session.issueId?.toLowerCase())
         .filter((issueId): issueId is string => Boolean(issueId)),
     );
+    const claimingIssueIds = getBacklogClaimingIssues();
 
     // Auto-scaling: respect max concurrent agents
     let availableSlots = MAX_CONCURRENT_AGENTS - workerSessions.length;
@@ -320,14 +345,17 @@ export async function pollBacklog(): Promise<void> {
       for (const issue of backlogIssues) {
         if (availableSlots <= 0) break;
 
-        // Skip if already being worked on
-        if (activeIssueIds.has(issue.id.toLowerCase())) continue;
+        const issueKey = issue.id.toLowerCase();
 
+        // Skip if already being worked on or claimed by an in-flight spawn.
+        if (activeIssueIds.has(issueKey) || claimingIssueIds.has(issueKey)) continue;
+
+        claimingIssueIds.add(issueKey);
         try {
           await sessionManager.spawn({ projectId, issueId: issue.id });
           availableSlots--;
 
-          activeIssueIds.add(issue.id.toLowerCase());
+          activeIssueIds.add(issueKey);
 
           // Mark as claimed on the tracker
           if (tracker.updateIssue) {
@@ -343,6 +371,8 @@ export async function pollBacklog(): Promise<void> {
           }
         } catch (err) {
           console.error(`[backlog] Failed to spawn session for issue ${issue.id}:`, err);
+        } finally {
+          claimingIssueIds.delete(issueKey);
         }
       }
     }
