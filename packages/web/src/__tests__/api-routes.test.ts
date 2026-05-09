@@ -1356,6 +1356,8 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
       expect(data.sessions.length).toBe(testSessions.length);
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith(undefined);
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
     it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
@@ -1377,6 +1379,8 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
     it("returns 500 when getServices throws", async () => {

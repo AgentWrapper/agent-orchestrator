@@ -47,6 +47,8 @@ interface SessionPatch {
   lastActivityAt: string;
 }
 
+const SESSION_SNAPSHOT_TIMEOUT_MS = 15_000;
+
 /**
  * Manages polling of session patches from Next.js /api/sessions/patches.
  * Broadcasts to all subscribed callbacks.
@@ -143,7 +145,7 @@ export class SessionBroadcaster {
     error: string | null;
   }> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const timeoutId = setTimeout(() => controller.abort(), SESSION_SNAPSHOT_TIMEOUT_MS);
     try {
       const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
         signal: controller.signal,

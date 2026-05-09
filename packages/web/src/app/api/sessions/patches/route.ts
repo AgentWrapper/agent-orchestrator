@@ -16,7 +16,9 @@ export async function GET(request: Request) {
         ? projectFilter
         : undefined;
 
-    const coreSessions = await sessionManager.list(requestedProjectId);
+    // This endpoint is polled by the direct-terminal mux; stay on the
+    // SessionManager cache so each poll does not force fresh enrichment.
+    const coreSessions = await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterWorkerSessions(coreSessions, projectFilter, config.projects);
 
     // Convert to dashboard format

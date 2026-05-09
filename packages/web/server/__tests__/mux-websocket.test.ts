@@ -234,6 +234,34 @@ describe("SessionBroadcaster", () => {
 
       expect(callback).not.toHaveBeenCalled();
     });
+
+    it("waits 15 seconds before aborting a slow snapshot", async () => {
+      let signal: AbortSignal | undefined;
+      mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) => {
+        signal = init?.signal as AbortSignal | undefined;
+        return new Promise((_resolve, reject) => {
+          if (!signal) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          signal.addEventListener("abort", () => reject(new Error("This operation was aborted")));
+        });
+      });
+
+      const unsubscribe = broadcaster.subscribe(vi.fn(), vi.fn());
+      expect(signal).toBeDefined();
+
+      // Stop interval polling so this test observes only the initial snapshot.
+      unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal?.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("disconnect", () => {
