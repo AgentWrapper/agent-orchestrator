@@ -1,0 +1,31 @@
+docs/canvases-feature.html
+  s_716542aec5f41c::t_cc30f4d5c8ff1d 502-509
+  s_716542aec5f41c::t_1a562ed70a0aac 606
+  s_716542aec5f41c::t_bc2cc6afab4004 211
+  s_716542aec5f41c::t_85e31d06460ff7 614
+  s_716542aec5f41c::t_5e84999e5b0ea8 440,442-444,446-480,482-484,499
+docs/canvases.md
+  s_716542aec5f41c::t_c4ea9cbc3d761a 126,128,130-132,136-151,155,160,169-218,220-229
+  s_716542aec5f41c::t_1359b870c8b8d7 9-10,13
+  s_716542aec5f41c::t_303eaeef713b64 240,242-251,253
+docs/canvases-launch.html
+  s_716542aec5f41c::t_fff93d4f837731 304-306,309-319,324,328-329,331
+docs/canvases-launch.md
+  s_716542aec5f41c::t_2103c32454061f 101,103,105,111-114,117-128,134,139-140,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "fc89af6ce4c70c8c204171df34924111abfb4cd7",
+  "prompts": {},
+  "sessions": {
+    "s_716542aec5f41c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
