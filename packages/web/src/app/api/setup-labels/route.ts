@@ -12,6 +12,9 @@ const LABELS = [
   { name: "agent:in-progress", color: "7C3AED", description: "Agent is working on this" },
   { name: "agent:blocked", color: "DC2626", description: "Agent is blocked" },
   { name: "agent:done", color: "16A34A", description: "Agent completed this" },
+  { name: "merged-unverified", color: "F59E0B", description: "PR merged; awaiting verification" },
+  { name: "verified", color: "16A34A", description: "Work verified after staging check" },
+  { name: "verification-failed", color: "DC2626", description: "Verification failed; needs follow-up" },
 ];
 
 /**
