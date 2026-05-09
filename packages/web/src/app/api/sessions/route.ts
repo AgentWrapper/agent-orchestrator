@@ -138,19 +138,18 @@ export async function GET(request: Request) {
       dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);
     }
 
-    const metadataSettled = await settlesWithin(
+    // PR enrichment reads already-loaded session metadata, so do not gate it
+    // behind slower tracker/agent enrichment. Otherwise a timed-out refresh can
+    // overwrite SSR-rich merge cards with default PR placeholders.
+    for (let i = 0; i < workerSessions.length; i++) {
+      if (!workerSessions[i]?.pr) continue;
+      enrichSessionPR(dashboardSessions[i]);
+    }
+
+    await settlesWithin(
       enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
       METADATA_ENRICH_TIMEOUT_MS,
     );
-
-    if (metadataSettled) {
-      // PR enrichment: read from session metadata (written by CLI lifecycle).
-      // No GitHub API calls — synchronous metadata read.
-      for (let i = 0; i < workerSessions.length; i++) {
-        if (!workerSessions[i]?.pr) continue;
-        enrichSessionPR(dashboardSessions[i]);
-      }
-    }
 
     recordApiObservation({
       config,

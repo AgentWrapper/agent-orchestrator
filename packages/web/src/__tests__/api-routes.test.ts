@@ -278,22 +278,77 @@ describe("API Routes", () => {
       expect(session).toHaveProperty("createdAt");
     });
 
-    it("skips PR enrichment when metadata enrichment hits timeout", async () => {
+    it("keeps PR enrichment when slower metadata enrichment hits timeout", async () => {
       vi.useFakeTimers();
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")
         .mockImplementation(() => new Promise<void>(() => {}));
 
-      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
-      await vi.advanceTimersByTimeAsync(3_000);
-      const res = await responsePromise;
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "worker-ready-pr",
+          status: "mergeable",
+          activity: "idle",
+          pr: {
+            number: 123,
+            url: "https://github.com/acme/my-app/pull/123",
+            title: "Basic PR title",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/ready-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+          metadata: {
+            prEnrichment: JSON.stringify({
+              state: "open",
+              title: "feat: stable enriched PR",
+              additions: 24,
+              deletions: 3,
+              ciStatus: "passing",
+              ciChecks: [{ name: "build", status: "passed" }],
+              reviewDecision: "approved",
+              mergeable: true,
+              hasConflicts: false,
+              blockers: [],
+            }),
+            prReviewComments: JSON.stringify({
+              unresolvedThreads: 0,
+              unresolvedComments: [],
+            }),
+          },
+        }),
+      ]);
 
-      expect(res.status).toBe(200);
-      expect(getSCM).not.toHaveBeenCalled();
+      try {
+        const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(3_000);
+        const res = await responsePromise;
+        const data = await res.json();
 
-      metadataSpy.mockRestore();
-      vi.useRealTimers();
+        expect(res.status).toBe(200);
+        expect(data.sessions[0].pr).toMatchObject({
+          title: "feat: stable enriched PR",
+          additions: 24,
+          deletions: 3,
+          ciStatus: "passing",
+          reviewDecision: "approved",
+          enriched: true,
+          mergeability: expect.objectContaining({
+            mergeable: true,
+            ciPassing: true,
+            approved: true,
+            noConflicts: true,
+          }),
+        });
+        expect(data.sessions[0].attentionLevel).toBe("merge");
+        expect(getSCM).not.toHaveBeenCalled();
+      } finally {
+        metadataSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {

@@ -4,6 +4,7 @@ import { useEffect, useReducer, useRef, useCallback } from "react";
 import type { SessionPatch } from "@/lib/mux-protocol";
 import {
   getAttentionLevel,
+  isPRRateLimited,
   type ActivityState,
   type AttentionLevel,
   type DashboardAttentionZoneMode,
@@ -96,6 +97,119 @@ type Action =
   | { type: "snapshot"; patches: SessionPatch[] }
   | { type: "setLoadError"; error: string | null };
 
+function isSamePR(
+  previous: NonNullable<DashboardSession["pr"]>,
+  incoming: NonNullable<DashboardSession["pr"]>,
+): boolean {
+  return (
+    previous.url === incoming.url ||
+    (previous.owner === incoming.owner &&
+      previous.repo === incoming.repo &&
+      previous.number === incoming.number)
+  );
+}
+
+function ciChecksAgreeWithStatus(
+  checks: NonNullable<DashboardSession["pr"]>["ciChecks"],
+  status: NonNullable<DashboardSession["pr"]>["ciStatus"],
+): boolean {
+  if (checks.length === 0) return true;
+  if (status === "passing") {
+    return checks.every((check) => check.status === "passed" || check.status === "skipped");
+  }
+  if (status === "failing") return checks.some((check) => check.status === "failed");
+  if (status === "pending") {
+    return (
+      checks.some((check) => check.status === "pending" || check.status === "running") &&
+      checks.every((check) => check.status !== "failed")
+    );
+  }
+  return false;
+}
+
+function preserveEnrichedPRDetails(
+  previous: DashboardSession | undefined,
+  incoming: DashboardSession,
+): DashboardSession {
+  if (!previous?.pr || !incoming.pr) return incoming;
+  if (incoming.pr.enriched !== false || previous.pr.enriched === false) return incoming;
+  if (!isSamePR(previous.pr, incoming.pr)) return incoming;
+  if (isPRRateLimited(incoming.pr)) return incoming;
+
+  const incomingMergeReady =
+    incoming.attentionLevel === "merge" ||
+    incoming.lifecycle?.prReason === "merge_ready" ||
+    incoming.lifecycle?.prReason === "approved" ||
+    incoming.status === "mergeable" ||
+    incoming.status === "approved";
+  const incomingApproved =
+    incoming.lifecycle?.prReason === "approved" || incoming.status === "approved";
+  const incomingCIFailed =
+    incoming.lifecycle?.prReason === "ci_failing" || incoming.status === "ci_failed";
+  const incomingChangesRequested =
+    incoming.lifecycle?.prReason === "changes_requested" ||
+    incoming.status === "changes_requested";
+  const incomingReviewPending =
+    incoming.lifecycle?.prReason === "review_pending" || incoming.status === "review_pending";
+  const ciStatus = incomingMergeReady
+    ? "passing"
+    : incomingCIFailed
+      ? "failing"
+      : incoming.pr.ciStatus;
+  const reviewDecision = incomingApproved
+    ? "approved"
+    : incomingChangesRequested
+      ? "changes_requested"
+      : incomingReviewPending
+        ? "pending"
+        : incoming.pr.reviewDecision;
+  const mergeability = incomingMergeReady
+    ? {
+        ...previous.pr.mergeability,
+        mergeable: true,
+        ciPassing: true,
+        noConflicts: incoming.pr.mergeability.noConflicts,
+        blockers: incoming.pr.mergeability.blockers,
+        approved: incomingApproved || reviewDecision === "approved",
+      }
+    : incoming.pr.mergeability;
+  const ciChecks =
+    incoming.pr.ciChecks.length > 0 || !ciChecksAgreeWithStatus(previous.pr.ciChecks, ciStatus)
+      ? incoming.pr.ciChecks
+      : previous.pr.ciChecks;
+
+  return {
+    ...incoming,
+    pr: {
+      ...previous.pr,
+      number: incoming.pr.number,
+      url: incoming.pr.url,
+      owner: incoming.pr.owner,
+      repo: incoming.pr.repo,
+      branch: incoming.pr.branch,
+      baseBranch: incoming.pr.baseBranch,
+      isDraft: incoming.pr.isDraft,
+      state: incoming.pr.state,
+      ciStatus,
+      ciChecks,
+      reviewDecision,
+      mergeability,
+      unresolvedThreads: incoming.pr.unresolvedThreads,
+      unresolvedComments: incoming.pr.unresolvedComments,
+    },
+  };
+}
+
+function preserveEnrichedPRs(
+  previousSessions: DashboardSession[],
+  incomingSessions: DashboardSession[],
+): DashboardSession[] {
+  const previousById = new Map(previousSessions.map((session) => [session.id, session]));
+  return incomingSessions.map((session) =>
+    preserveEnrichedPRDetails(previousById.get(session.id), session),
+  );
+}
+
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "setLoadError":
@@ -103,7 +217,7 @@ function reducer(state: State, action: Action): State {
     case "reset":
       return {
         ...state,
-        sessions: action.sessions,
+        sessions: preserveEnrichedPRs(state.sessions, action.sessions),
         ...(action.liveResolved ? { liveSessionsResolved: true, loadError: null } : {}),
         ...(action.attentionLevels !== undefined
           ? { attentionLevels: action.attentionLevels }
@@ -304,12 +418,13 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
           }
 
           lastRefreshAtRef.current = Date.now();
+          const updatedSessions = preserveEnrichedPRs(sessionsRef.current, updated.sessions);
           const attentionLevels = Object.fromEntries(
-            updated.sessions.map((s) => [s.id, getAttentionLevel(s, attentionZones)]),
+            updatedSessions.map((s) => [s.id, getAttentionLevel(s, attentionZones)]),
           ) as AttentionMap;
           dispatch({
             type: "reset",
-            sessions: updated.sessions,
+            sessions: updatedSessions,
             attentionLevels,
             liveResolved: true,
           });
