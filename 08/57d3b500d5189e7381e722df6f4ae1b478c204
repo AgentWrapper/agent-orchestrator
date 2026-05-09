@@ -1,0 +1,25 @@
+packages/web/src/components/CanvasMarkdown.tsx
+  s_716542aec5f41c::t_d57b1aa1d94b50 107-110,112,127-138,140-150,159-170
+  s_716542aec5f41c::t_8f9ae1ff6cec70 139
+packages/web/src/components/__tests__/CanvasMarkdown.test.tsx
+  s_716542aec5f41c::t_0b6d08524d282a 1-55
+docs/canvases-feature.html
+  s_716542aec5f41c::t_766eee54906d41 666-675,678-679
+  s_716542aec5f41c::t_45b5ba17761653 218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "0857d3b500d5189e7381e722df6f4ae1b478c204",
+  "prompts": {},
+  "sessions": {
+    "s_716542aec5f41c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
