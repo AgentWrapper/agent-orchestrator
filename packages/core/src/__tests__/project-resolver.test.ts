@@ -215,7 +215,7 @@ describe("project resolver", () => {
     const symlinkProjectPath = join(symlinkParent, "app-link");
     mkdirSync(realProjectPath, { recursive: true });
     mkdirSync(symlinkParent, { recursive: true });
-    symlinkSync(realProjectPath, symlinkProjectPath);
+    symlinkSync(realProjectPath, symlinkProjectPath, "junction");
     writeFileSync(
       join(realProjectPath, "agent-orchestrator.yaml"),
       ["agent: codex", "runtime: docker", "workspace: clone", ""].join("\n"),
