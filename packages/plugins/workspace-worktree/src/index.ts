@@ -135,13 +135,17 @@ async function resolveBaseRef(
 async function isRegisteredWorktree(repoPath: string, worktreePath: string): Promise<boolean> {
   try {
     const output = await git(repoPath, "worktree", "list", "--porcelain");
-    const target = toComparablePath(worktreePath);
+    // Normalize both sides so non-canonical inputs don't false-negative
+    // and let a subsequent rmSync delete a still-registered worktree
+    // (data loss). resolve() collapses trailing-slash / ".." segments;
+    // toComparablePath handles Windows backslashes and drive case.
+    const target = toComparablePath(resolve(worktreePath));
     return output
       .split("\n")
       .some(
         (line) =>
           line.startsWith("worktree ") &&
-          toComparablePath(line.slice("worktree ".length)) === target,
+          toComparablePath(resolve(line.slice("worktree ".length))) === target,
       );
   } catch {
     return false;
@@ -167,6 +171,41 @@ async function clearStaleWorktreePath(repoPath: string, worktreePath: string): P
 }
 
 /**
+ * Restore recovery: clear any stale worktree registration and/or stale
+ * directory at `workspacePath` so a subsequent `git worktree add` can
+ * succeed. Both restore branches (re-attach existing branch, create from
+ * base) need this — without it, an `<path> already exists` failure repeats.
+ *
+ * Refuses to rmSync the path if it's still a registered worktree, which
+ * would silently destroy the user's work. The entry-point `worktree prune`
+ * in restore() already ran, so we don't prune again here.
+ */
+async function cleanupStaleWorkspacePath(
+  repoPath: string,
+  workspacePath: string,
+): Promise<void> {
+  // Force-remove any registered worktree at this path. Best-effort — the
+  // path may not be registered, in which case git errors and we fall
+  // through to the dir cleanup.
+  try {
+    await git(repoPath, "worktree", "remove", "--force", workspacePath);
+  } catch {
+    // Best-effort
+  }
+
+  if (existsSync(workspacePath)) {
+    if (await isRegisteredWorktree(repoPath, workspacePath)) {
+      throw new Error(
+        `Worktree path "${workspacePath}" already exists and is still registered with git`,
+      );
+    }
+    // Use removeDirWithRetry for Windows file-handle drain races (matches
+    // destroy()'s fallback). On Unix this is just rmSync.
+    await removeDirWithRetry(workspacePath);
+  }
+}
+
+/**
  * Restore recovery: re-attach an existing local branch to a worktree at
  * `workspacePath`. Used when the branch is already present (destroy()
  * preserves it) but the first `git worktree add <path> <branch>` failed
@@ -182,28 +221,7 @@ async function reattachExistingBranch(
   workspacePath: string,
   branch: string,
 ): Promise<void> {
-  // Force-remove any registered worktree at this path. Best-effort — the
-  // path may not be registered, in which case git errors and we fall
-  // through to the dir cleanup.
-  try {
-    await git(repoPath, "worktree", "remove", "--force", workspacePath);
-  } catch {
-    // Best-effort
-  }
-
-  // Restore's entry-point already ran `worktree prune`, so the registry
-  // is up-to-date. If the path still exists on disk and isn't registered,
-  // it's leftover from a dirty teardown and safe to rmSync. If it IS
-  // still registered, refuse to delete (would destroy the user's work).
-  if (existsSync(workspacePath)) {
-    if (await isRegisteredWorktree(repoPath, workspacePath)) {
-      throw new Error(
-        `Worktree path "${workspacePath}" already exists and is still registered with git`,
-      );
-    }
-    rmSync(workspacePath, { recursive: true, force: true });
-  }
-
+  await cleanupStaleWorkspacePath(repoPath, workspacePath);
   await git(repoPath, "worktree", "add", workspacePath, branch);
 }
 
@@ -213,6 +231,9 @@ async function reattachExistingBranch(
  * because only `origin/<branch>` exists and we need to materialize the
  * local ref. Tries the remote ref first, then falls back to the local
  * default branch.
+ *
+ * Runs the same stale-path cleanup as reattachExistingBranch so this path
+ * also recovers when `workspacePath` has a stale registry entry / dir.
  */
 async function createBranchFromBase(
   repoPath: string,
@@ -221,6 +242,8 @@ async function createBranchFromBase(
   defaultBranch: string,
   hasOrigin: boolean,
 ): Promise<void> {
+  await cleanupStaleWorkspacePath(repoPath, workspacePath);
+
   const baseRef = await resolveBaseRef(repoPath, defaultBranch, { branch, hasOrigin });
 
   if (!baseRef.startsWith("origin/")) {

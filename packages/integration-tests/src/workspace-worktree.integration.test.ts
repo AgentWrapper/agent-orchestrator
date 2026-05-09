@@ -408,6 +408,74 @@ describe("workspace-worktree (integration)", () => {
     }
   }, 30_000);
 
+  // Coverage for the createBranchFromBase recovery path (Copilot review on
+  // PR #1742): when the LOCAL branch is missing (only origin/<branch>
+  // exists) AND `workspacePath` has stale state, the -b fallback must also
+  // run the cleanup. Without it, `git worktree add -b ...` fails with
+  // `'<path>' already exists` exactly like the re-attach path used to.
+  it("restore recovers when local branch is missing and stale dir exists at the path", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-restore-missing-branch-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+
+    try {
+      await git(isolatedRepoDir, "switch", "-c", "main");
+      await createCommit(isolatedRepoDir, "base.txt", "main\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "main");
+
+      // Manually push a session branch to origin without keeping it locally,
+      // simulating a session whose local branch was pruned but origin still
+      // has it (e.g. fetched after a remote-only force-update).
+      await git(isolatedRepoDir, "switch", "-c", "session/ao-1");
+      const sessionSha = await createCommit(isolatedRepoDir, "session.txt", "session work\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "session/ao-1");
+      // Switch off session/ao-1 then delete the local branch — only origin has it now.
+      await git(isolatedRepoDir, "switch", "main");
+      await git(isolatedRepoDir, "branch", "-D", "session/ao-1");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const proj: ProjectConfig = {
+        name: "restore-missing-branch",
+        repo: "test/restore-missing-branch",
+        path: isolatedRepoDir,
+        defaultBranch: "main",
+        sessionPrefix: "ao",
+      };
+      const workspacePath = join(isolatedWorktreeBaseDir, "restore-missing-branch", "ao-1");
+
+      // Plant a stale junk directory at workspacePath. workspace.exists()
+      // will return false (not a working tree) and restore is invoked.
+      // The first `worktree add` will fail with `'<path>' already exists`,
+      // refExists for refs/heads/session/ao-1 returns false (we deleted it),
+      // so createBranchFromBase runs and must clean the stale dir first.
+      await execFileAsync("mkdir", ["-p", workspacePath]);
+      await writeFile(join(workspacePath, "stale.txt"), "junk\n");
+      expect(existsSync(workspacePath)).toBe(true);
+
+      const restored = await isolatedWorkspace.restore!(
+        {
+          projectId: "restore-missing-branch",
+          sessionId: "ao-1",
+          project: proj,
+          branch: "session/ao-1",
+        },
+        workspacePath,
+      );
+
+      expect(restored.branch).toBe("session/ao-1");
+      // Junk file gone — cleanup ran before -b add.
+      expect(existsSync(join(workspacePath, "stale.txt"))).toBe(false);
+      // Local branch was recreated from origin/session/ao-1, preserving the
+      // session's commit (which only existed remotely before restore).
+      expect(await git(restored.path, "rev-parse", "HEAD")).toBe(sessionSha);
+      expect(await git(isolatedRepoDir, "rev-parse", "refs/heads/session/ao-1")).toBe(sessionSha);
+    } finally {
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
   it("resets a stale session branch when origin default branch advances", async () => {
     const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
     const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-stale-origin-"));

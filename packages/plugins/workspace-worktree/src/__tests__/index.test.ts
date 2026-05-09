@@ -714,6 +714,9 @@ describe("workspace.restore()", () => {
     mockOriginRemote();
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
     mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitSuccess(""); // worktree remove --force <path> (best-effort)
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/feat/TEST-1
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath origin/feat/TEST-1
 
@@ -742,6 +745,9 @@ describe("workspace.restore()", () => {
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
     mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitSuccess(""); // worktree remove --force <path> (best-effort)
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath refs/heads/main
 
@@ -804,7 +810,7 @@ describe("workspace.restore()", () => {
     expect(mockExecFileAsync).toHaveBeenLastCalledWith(
       "git",
       ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
-      { cwd: "/repo/path", timeout: 30_000 },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     // No -b or -B should ever appear when the branch already exists locally.
@@ -855,7 +861,7 @@ describe("workspace.restore()", () => {
     expect(mockExecFileAsync).toHaveBeenLastCalledWith(
       "git",
       ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
-      { cwd: "/repo/path", timeout: 30_000 },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     expect(info.branch).toBe("feat/TEST-1");
@@ -952,7 +958,79 @@ describe("workspace.restore()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--verify", "--quiet", "refs/heads/feat/TEST-1"],
-      { cwd: "/repo/path", timeout: 30_000 },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+  });
+
+  it("matches registered worktree even when workspacePath has trailing slash", async () => {
+    // Path normalization safety: if `workspacePath` is passed in a non-canonical
+    // form (trailing slash, ".." segments) and git reports a canonical path,
+    // strict string equality false-negatives. That would mistakenly rmSync a
+    // still-registered worktree → DATA LOSS. Both sides must be resolve()d.
+    const ws = create();
+
+    mockGitSuccess(""); // entry-point prune
+    mockOriginRemote();
+    mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    // reattachExistingBranch → cleanupStaleWorkspacePath
+    mockGitError("fatal: cannot remove"); // worktree remove --force fails
+    mockExistsSync.mockReturnValueOnce(true); // dir exists
+    // git reports canonical path (no trailing slash); we call restore with trailing slash
+    mockGitSuccess(
+      "worktree /mock-home/.worktrees/myproject/session-1\nbranch refs/heads/feat/TEST-1",
+    );
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1/"),
+    ).rejects.toThrow(/already exists and is still registered/);
+
+    // CRITICAL: rmSync MUST NOT have been called — the resolve() normalization
+    // correctly identified the path as still-registered despite the trailing slash.
+    expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("createBranchFromBase also clears stale workspace dir before worktree add -b", async () => {
+    // Mirror of the re-attach path: when the local branch is MISSING and the
+    // workspacePath has stale state, createBranchFromBase must also do the
+    // cleanup. Otherwise `git worktree add -b ...` fails with the same
+    // "<path> already exists" error the re-attach path was fixed for.
+    const ws = create();
+
+    mockGitSuccess(""); // entry-point prune
+    mockOriginRemote();
+    mockGitError(
+      "fatal: '/mock-home/.worktrees/myproject/session-1' already exists",
+    ); // first worktree add fails
+    mockGitError("fatal: bad ref"); // refExists → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitError("fatal: not registered"); // worktree remove --force fails
+    mockExistsSync.mockReturnValueOnce(true); // dir exists as junk
+    mockGitSuccess("worktree /some/other\nbranch refs/heads/main"); // not registered
+    // rmSync called (mocked)
+    mockGitSuccess(""); // resolveBaseRef: rev-parse origin/feat/TEST-1
+    mockGitSuccess(""); // worktree add -b ... origin/feat/TEST-1 succeeds
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    // Stale dir must have been removed before -b add.
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
+
+    expect(info.branch).toBe("feat/TEST-1");
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/feat/TEST-1",
+      ],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
