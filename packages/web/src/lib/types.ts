@@ -142,6 +142,39 @@ export interface DashboardAgentReportAuditEntry {
   after: DashboardAgentReportAuditSnapshot;
 }
 
+export type DashboardTimelineCategory =
+  | "lifecycle"
+  | "agent_report"
+  | "pr"
+  | "reaction"
+  | "runtime"
+  | "user_action"
+  | "error"
+  | "other";
+
+export interface DashboardActivityEvent {
+  id: number;
+  ts: string;
+  tsEpoch: number;
+  projectId: string | null;
+  sessionId: string | null;
+  source: string;
+  kind: string;
+  level: string;
+  summary: string;
+  data: unknown;
+}
+
+export interface DashboardTimelineEvent {
+  id: string;
+  timestamp: string;
+  category: DashboardTimelineCategory;
+  level: string;
+  source: string;
+  title: string;
+  detail: string | null;
+}
+
 export interface DashboardActivitySignal {
   state: ActivitySignalState;
   activity: ActivityState | null;

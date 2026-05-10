@@ -81,7 +81,9 @@ Health records provide current status and failure context per surface:
 ## Operator-Facing Diagnostics
 
 - **Dashboard**: use **Copy debug info** in the hero toolbar (desktop) to copy `/api/observability` plus page URL, project scope, and correlation id to the clipboard for issue reports. The observability banner shows overall status, SSE stream state, last correlation id, and latest failure reason.
+- **Session timeline**: each session detail page includes a timeline that merges recent activity events with the agent-report audit trail. Use it to inspect why a session changed state, when reactions fired, and whether runtime/SCM probes failed.
 - **API**: `/api/observability` returns merged per-project diagnostics (`overallStatus`, metrics, health, recent traces, session state).
+- **Session events API**: `/api/sessions/:id/events?limit=80` returns recent activity events for one session. The limit is clamped to 200.
 - **Terminal websocket health**: `/health` endpoints include active sessions and websocket/terminal health counters with last error/disconnect reasons.
 
 ## Rollout Notes

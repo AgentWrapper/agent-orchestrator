@@ -14,6 +14,7 @@ import { ProjectSidebar, type ProjectSidebarOrchestrator } from "./ProjectSideba
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
+import { SessionTimeline } from "./SessionTimeline";
 import { sessionActivityMeta } from "./session-detail-utils";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
@@ -213,6 +214,7 @@ export function SessionDetail({
                   />
                 )}
               </div>
+              <SessionTimeline session={session} />
             </main>
           </div>
         </div>

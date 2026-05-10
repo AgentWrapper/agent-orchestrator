@@ -222,6 +222,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     updateMetadata: vi.fn(),
     getProjectSessionsDir: vi.fn(() => "/tmp/ao-test/sessions"),
     readAgentReportAuditTrailAsync: vi.fn(async () => []),
+    queryActivityEvents: vi.fn(() => []),
   };
 });
 
@@ -232,6 +233,7 @@ import {
   GET as sessionDetailGET,
   PATCH as sessionDetailPATCH,
 } from "@/app/api/sessions/[id]/route";
+import { GET as sessionEventsGET } from "@/app/api/sessions/[id]/events/route";
 import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -752,6 +754,56 @@ describe("API Routes", () => {
       metadataSpy.mockRestore();
       prSpy.mockRestore();
     }, 10_000);
+  });
+
+  describe("GET /api/sessions/[id]/events", () => {
+    it("returns sanitized activity events for the session", async () => {
+      const core = await import("@aoagents/ao-core");
+      vi.mocked(core.queryActivityEvents).mockReturnValueOnce([
+        {
+          id: 42,
+          tsEpoch: 1710000000000,
+          ts: "2026-05-10T10:00:00.000Z",
+          projectId: "my-app",
+          sessionId: "backend-7",
+          source: "lifecycle",
+          kind: "lifecycle.transition",
+          level: "info",
+          summary: "Session moved to working",
+          data: '{"fromStatus":"spawning","toStatus":"working"}',
+        },
+      ]);
+
+      const res = await sessionEventsGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-7/events?limit=500"),
+        { params: Promise.resolve({ id: "backend-7" }) },
+      );
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(core.queryActivityEvents).toHaveBeenCalledWith({
+        projectId: "my-app",
+        sessionId: "backend-7",
+        limit: 200,
+      });
+      expect(data.events).toEqual([
+        expect.objectContaining({
+          id: 42,
+          source: "lifecycle",
+          kind: "lifecycle.transition",
+          data: { fromStatus: "spawning", toStatus: "working" },
+        }),
+      ]);
+    });
+
+    it("returns 404 for unknown sessions", async () => {
+      const res = await sessionEventsGET(
+        makeRequest("http://localhost:3000/api/sessions/missing/events"),
+        { params: Promise.resolve({ id: "missing" }) },
+      );
+
+      expect(res.status).toBe(404);
+    });
   });
 
   // ── PATCH /api/sessions/[id] ───────────────────────────────────────
