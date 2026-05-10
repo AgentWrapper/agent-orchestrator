@@ -1102,8 +1102,14 @@ async function runStartup(
           }
         }
       }
-    } catch {
-      // Non-fatal: don't block startup if last-stop handling fails
+    } catch (err) {
+      // Non-fatal: don't block startup if last-stop handling fails, but keep
+      // config/restore failures visible so cross-project restore gaps are diagnosable.
+      console.log(
+        chalk.yellow(
+          `  Warning: could not restore stopped sessions: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
   }
 

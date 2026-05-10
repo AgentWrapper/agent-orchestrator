@@ -1700,6 +1700,39 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockClearLastStop).toHaveBeenCalled();
   });
 
+  it("warns when all-project restore config loading fails", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: ["p1-1"],
+      otherProjects: [{ projectId: "project-2", sessionIds: ["p2-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    writeFileSync(join(tmpDir, "agent-orchestrator.yaml"), "projects: [\n");
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-2",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Warning: could not restore stopped sessions");
+    expect(output).toContain("Flow sequence");
+    expect(mockSessionManager.restore).not.toHaveBeenCalledWith("p1-1");
+    expect(mockClearLastStop).not.toHaveBeenCalled();
+  });
+
   it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
