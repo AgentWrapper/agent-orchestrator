@@ -82,8 +82,13 @@ describe("spawn", () => {
     expect(mockRuntime.create).toHaveBeenCalled();
   });
 
-  it("passes orchestratorSessionId (sessionPrefix-orchestrator) into agent launch config for workers", async () => {
+  it("passes orchestratorSessionId to workers when an orchestrator session exists", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
+    // Spawn the orchestrator first so its metadata exists on disk.
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+    (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mockClear();
+    (mockAgent.getEnvironment as ReturnType<typeof vi.fn>).mockClear();
+
     await sm.spawn({ projectId: "my-app" });
 
     expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
@@ -91,6 +96,18 @@ describe("spawn", () => {
     );
     expect(mockAgent.getEnvironment).toHaveBeenCalledWith(
       expect.objectContaining({ orchestratorSessionId: "app-orchestrator" }),
+    );
+  });
+
+  it("omits orchestratorSessionId for ad-hoc workers (no orchestrator spawned)", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
+    );
+    expect(mockAgent.getEnvironment).toHaveBeenCalledWith(
+      expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
     );
   });
 

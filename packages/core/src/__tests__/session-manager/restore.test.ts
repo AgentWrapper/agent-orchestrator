@@ -444,6 +444,26 @@ describe("restore", () => {
     );
   });
 
+  it("omits orchestratorSessionId when restoring an ad-hoc worker (no orchestrator on disk)", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-adhoc");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/Y",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.restore("app-1");
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
+    );
+  });
+
   it("uses orchestratorModel when restoring orchestrator sessions", async () => {
     const wsPath = join(tmpDir, "ws-app-orchestrator-restore");
     mkdirSync(wsPath, { recursive: true });
