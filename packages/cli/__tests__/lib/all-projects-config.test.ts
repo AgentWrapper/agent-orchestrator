@@ -68,6 +68,38 @@ describe("loadAllProjectsConfig", () => {
     expect(config.configPath).toBe("/global/agent-orchestrator.yaml");
   });
 
+  it("prefers the running config when project IDs collide", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockLoadConfig.mockImplementation((path: string) => {
+      if (path === "/global/agent-orchestrator.yaml") {
+        return {
+          ...makeConfig(path, ["shared-app", "global-app"]),
+          projects: {
+            "shared-app": { name: "Global Shared", path: "/global/shared" },
+            "global-app": { name: "Global App", path: "/global/app" },
+          },
+        };
+      }
+      if (path === "/local/agent-orchestrator.yaml") {
+        return {
+          ...makeConfig(path, ["shared-app"]),
+          projects: {
+            "shared-app": { name: "Running Shared", path: "/local/shared" },
+          },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const config = loadAllProjectsConfig("/local/agent-orchestrator.yaml");
+
+    expect(Object.keys(config.projects)).toEqual(["shared-app", "global-app"]);
+    expect(config.projects["shared-app"]).toMatchObject({
+      name: "Running Shared",
+      path: "/local/shared",
+    });
+  });
+
   it("does not hide malformed existing global configs", () => {
     mockExistsSync.mockReturnValue(true);
     mockLoadConfig.mockImplementation((path: string) => {

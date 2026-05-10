@@ -1700,7 +1700,7 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockClearLastStop).toHaveBeenCalled();
   });
 
-  it("warns when all-project restore config loading fails", async () => {
+  it("warns and falls back when merged all-project restore config loading fails", async () => {
     mockReadLastStop.mockResolvedValue({
       stoppedAt: "2026-04-28T10:00:00.000Z",
       projectId: "project-1",
@@ -1727,10 +1727,11 @@ describe("start command — orchestrator session strategy display", () => {
       .mocked(console.log)
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
-    expect(output).toContain("Warning: could not restore stopped sessions");
+    expect(output).toContain("Could not load merged all-project config");
     expect(output).toContain("Flow sequence");
-    expect(mockSessionManager.restore).not.toHaveBeenCalledWith("p1-1");
-    expect(mockClearLastStop).not.toHaveBeenCalled();
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
   });
 
   it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
@@ -2049,6 +2050,99 @@ describe("stop command", () => {
       .join("\n");
     expect(output).toContain("project-1");
     expect(output).toContain("project-2");
+  });
+
+  it("falls back to the running config and still kills the parent when merged full-stop config fails", async () => {
+    const globalConfigPath = join(tmpDir, "global-config.yaml");
+    const localConfigPath = join(tmpDir, "local-config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(globalConfigPath, "projects: [invalid");
+    writeFileSync(
+      localConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: localConfigPath,
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1"],
+    });
+    mockSessionManager.listStored.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    try {
+      await program.parseAsync(["node", "test", "stop"]);
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+
+    expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+    expect(mockUnregister).toHaveBeenCalled();
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Could not load merged all-project config");
+    expect(output).toContain("Projects: project-1");
+  });
+
+  it("records full-stop sessions grouped by actual project instead of arbitrary primary project", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.listStored.mockResolvedValue([
+      {
+        id: "p1-1",
+        projectId: "project-1",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockFindPidByPort.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockWriteLastStop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        sessionIds: [],
+        otherProjects: expect.arrayContaining([
+          { projectId: "project-1", sessionIds: ["p1-1"] },
+          { projectId: "project-2", sessionIds: ["p2-1"] },
+        ]),
+      }),
+    );
   });
 
   // Recovers from issue #645: when the configured port was busy at start, the

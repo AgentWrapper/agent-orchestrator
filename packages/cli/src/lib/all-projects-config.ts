@@ -62,7 +62,7 @@ function mergePlugins(
   return [...merged.values()];
 }
 
-function mergeMissingProjects(
+function mergeProjectsPreferSecondary(
   primary: OrchestratorConfig,
   secondary: OrchestratorConfig | null,
 ): OrchestratorConfig {
@@ -70,7 +70,7 @@ function mergeMissingProjects(
 
   const projects: Record<string, ProjectConfig> = { ...primary.projects };
   for (const [projectId, project] of Object.entries(secondary.projects)) {
-    projects[projectId] ??= withExplicitDefaults(project, secondary.defaults);
+    projects[projectId] = withExplicitDefaults(project, secondary.defaults);
   }
 
   return {
@@ -90,8 +90,9 @@ function mergeMissingProjects(
  * Load a config suitable for full-process shutdown/stop paths.
  *
  * The global registry is the broadest source of all AO projects. When AO was
- * launched from a local config, merge any local-only project from the running
- * config so no active session is missed.
+ * launched from a local config, merge projects from the running config so no
+ * active session is missed. The running config wins same-ID collisions because
+ * it is the config that owns the live daemon process being stopped.
  */
 export function loadAllProjectsConfig(runningConfigPath?: string): OrchestratorConfig {
   const globalPath = getGlobalConfigPath();
@@ -101,7 +102,56 @@ export function loadAllProjectsConfig(runningConfigPath?: string): OrchestratorC
       ? loadExistingOptionalConfig(runningConfigPath)
       : null;
 
-  if (globalConfig) return mergeMissingProjects(globalConfig, runningConfig);
+  if (globalConfig) return mergeProjectsPreferSecondary(globalConfig, runningConfig);
   if (runningConfig) return runningConfig;
   return loadConfig();
+}
+
+export interface AllProjectsConfigFallbackResult {
+  config: OrchestratorConfig;
+  warning?: string;
+}
+
+function formatLoadError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function loadFallbackCandidate(path: string | undefined): OrchestratorConfig {
+  return path ? loadConfig(path) : loadConfig();
+}
+
+/**
+ * Load all-project config for shutdown-like paths that must remain stoppable.
+ *
+ * `loadAllProjectsConfig()` stays strict so malformed existing configs are not
+ * hidden from ordinary callers. Stop/shutdown flows, however, must still be able
+ * to signal the registered daemon if one side of the merged config is broken.
+ */
+export function loadAllProjectsConfigWithFallback(
+  runningConfigPath?: string,
+): AllProjectsConfigFallbackResult {
+  try {
+    return { config: loadAllProjectsConfig(runningConfigPath) };
+  } catch (error) {
+    const globalPath = getGlobalConfigPath();
+    const candidates = [runningConfigPath, globalPath, undefined];
+    const attempted = new Set<string>();
+
+    for (const candidate of candidates) {
+      const key = candidate ?? "<default>";
+      if (attempted.has(key)) continue;
+      attempted.add(key);
+
+      try {
+        return {
+          config: loadFallbackCandidate(candidate),
+          warning: `Could not load merged all-project config (${formatLoadError(error)}); falling back to ${candidate ?? "default config"}.`,
+        };
+      } catch {
+        // Try the next narrower source.
+      }
+    }
+
+    throw error;
+  }
 }

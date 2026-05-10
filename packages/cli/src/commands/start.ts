@@ -71,7 +71,7 @@ import {
 } from "../lib/running-state.js";
 import { attachToDaemon, killExistingDaemon } from "../lib/daemon.js";
 import { startProjectSupervisor } from "../lib/project-supervisor.js";
-import { loadAllProjectsConfig } from "../lib/all-projects-config.js";
+import { loadAllProjectsConfigWithFallback } from "../lib/all-projects-config.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import {
@@ -115,6 +115,28 @@ function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
     return { ...localConfig.config };
   }
   return {};
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function groupSessionIdsByProject(
+  sessions: Array<{ id: string; projectId?: string }>,
+  killedSessionIds: string[],
+): Array<{ projectId: string; sessionIds: string[] }> {
+  const killed = new Set(killedSessionIds);
+  const byProject = new Map<string, string[]>();
+
+  for (const session of sessions) {
+    if (!killed.has(session.id)) continue;
+    const projectId = session.projectId ?? "unknown";
+    const ids = byProject.get(projectId) ?? [];
+    ids.push(session.id);
+    byProject.set(projectId, ids);
+  }
+
+  return [...byProject].map(([projectId, sessionIds]) => ({ projectId, sessionIds }));
 }
 
 function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectConfig): void {
@@ -1022,7 +1044,11 @@ async function runStartup(
               // global projects plus any local-only projects captured by stop.
               let restoreConfig = config;
               if (otherProjects.length > 0) {
-                restoreConfig = loadAllProjectsConfig(config.configPath);
+                const result = loadAllProjectsConfigWithFallback(config.configPath);
+                restoreConfig = result.config;
+                if (result.warning) {
+                  console.log(chalk.yellow(`  Warning: ${result.warning}`));
+                }
               }
               const sm = await getSessionManager(restoreConfig);
               const restoreSpinner = ora(
@@ -1770,135 +1796,167 @@ export function registerStop(program: Command): void {
           return;
         }
 
-        let config: OrchestratorConfig;
+        let config: OrchestratorConfig | null;
+        let configLoadWarning: string | undefined;
         if (!projectArg) {
-          config = loadAllProjectsConfig(running?.configPath);
+          try {
+            const result = loadAllProjectsConfigWithFallback(running?.configPath);
+            config = result.config;
+            configLoadWarning = result.warning;
+          } catch (err) {
+            config = null;
+            configLoadWarning = `Could not load config for session cleanup: ${formatUnknownError(err)}`;
+          }
         } else {
           config = loadConfig();
+        }
+        if (configLoadWarning) {
+          console.log(chalk.yellow(`  Warning: ${configLoadWarning}`));
         }
         // When a running daemon is registered, its config is authoritative for
         // full stops because killing that parent affects every supervised
         // project. For targeted stops from another cwd, fall back to the
         // global registry only if the local/running config does not contain
         // the named project.
-        if (projectArg && !config.projects[projectArg]) {
+        if (projectArg && config && !config.projects[projectArg]) {
           const globalPath = getGlobalConfigPath();
           if (existsSync(globalPath)) {
             config = loadConfig(globalPath);
           }
         }
         let _projectId: string;
-        let project: ProjectConfig;
+        let project: ProjectConfig | null;
         let stopTargetName: string;
         if (!projectArg) {
-          const firstProjectId = Object.keys(config.projects)[0];
-          if (!firstProjectId || !config.projects[firstProjectId]) {
+          const firstProjectId = config
+            ? Object.keys(config.projects)[0]
+            : (running?.projects[0] ?? "unknown");
+          if (config && (!firstProjectId || !config.projects[firstProjectId])) {
             throw new Error("No projects configured. Add a project to agent-orchestrator.yaml.");
           }
           _projectId = firstProjectId;
-          project = config.projects[firstProjectId];
+          project = config?.projects[firstProjectId] ?? null;
           stopTargetName = "all projects";
         } else {
+          if (!config) {
+            throw new Error("No config available for targeted stop.");
+          }
           const resolved = await resolveProject(config, projectArg, "stop");
           _projectId = resolved.projectId;
           project = resolved.project;
           stopTargetName = project.name;
         }
-        const port = config.port ?? DEFAULT_PORT;
+        const port = config?.port ?? running?.port ?? DEFAULT_PORT;
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(stopTargetName)}\n`));
 
-        const sm = await getSessionManager(config);
-        try {
-          // When no explicit project is given, list ALL sessions — ao stop
-          // kills the parent process which affects all projects. When a
-          // specific project is targeted, scope to that project only.
-          const stopAll = !projectArg;
-          const rawSessions = await sm.listStored(stopAll ? undefined : _projectId);
-          // Defensive consumer-side filter. `sm.list(projectId)` already scopes
-          // to the named project, but the kill loop hard-stops processes — a
-          // contract regression here would silently kill another project's
-          // work. When a project arg is given, drop anything that isn't ours.
-          const allSessions = stopAll
-            ? rawSessions
-            : rawSessions.filter((s) => s.projectId === _projectId);
-          const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
-          const killedSessionIds: string[] = [];
+        if (config) {
+          const sm = await getSessionManager(config);
+          try {
+            // When no explicit project is given, list ALL sessions — ao stop
+            // kills the parent process which affects all projects. When a
+            // specific project is targeted, scope to that project only.
+            const stopAll = !projectArg;
+            const rawSessions = await sm.listStored(stopAll ? undefined : _projectId);
+            // Defensive consumer-side filter. `sm.list(projectId)` already scopes
+            // to the named project, but the kill loop hard-stops processes — a
+            // contract regression here would silently kill another project's
+            // work. When a project arg is given, drop anything that isn't ours.
+            const allSessions = stopAll
+              ? rawSessions
+              : rawSessions.filter((s) => s.projectId === _projectId);
+            const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
+            const killedSessionIds: string[] = [];
 
-          // Separate sessions by project for display and recording
-          const targetActive = activeSessions.filter((s) => s.projectId === _projectId);
-          const otherActive = activeSessions.filter((s) => s.projectId !== _projectId);
-          // Group other-project sessions by projectId (used for display + recording)
-          const otherByProject = new Map<string, string[]>();
+            // Separate sessions by project for display and recording
+            const targetActive = stopAll
+              ? []
+              : activeSessions.filter((s) => s.projectId === _projectId);
+            const otherActive = stopAll
+              ? activeSessions
+              : activeSessions.filter((s) => s.projectId !== _projectId);
+            // Group other-project sessions by projectId (used for display + recording)
+            const otherByProject = new Map<string, string[]>();
 
-          if (activeSessions.length > 0) {
-            const spinner = ora(`Stopping ${activeSessions.length} active session(s)`).start();
-            const purgeOpenCode = opts?.purgeSession === true;
-            const warnings: string[] = [];
-            for (const session of activeSessions) {
-              try {
-                const result = await sm.kill(session.id, { purgeOpenCode });
-                if (result.cleaned || result.alreadyTerminated) {
-                  killedSessionIds.push(session.id);
+            if (activeSessions.length > 0) {
+              const spinner = ora(`Stopping ${activeSessions.length} active session(s)`).start();
+              const purgeOpenCode = opts?.purgeSession === true;
+              const warnings: string[] = [];
+              for (const session of activeSessions) {
+                try {
+                  const result = await sm.kill(session.id, { purgeOpenCode });
+                  if (result.cleaned || result.alreadyTerminated) {
+                    killedSessionIds.push(session.id);
+                  }
+                } catch (err) {
+                  warnings.push(
+                    `  Warning: failed to stop ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+                  );
                 }
-              } catch (err) {
-                warnings.push(
-                  `  Warning: failed to stop ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+              }
+              if (killedSessionIds.length === 0) {
+                spinner.fail("Failed to stop any sessions");
+              } else if (killedSessionIds.length < activeSessions.length) {
+                spinner.warn(
+                  `Stopped ${killedSessionIds.length}/${activeSessions.length} session(s)`,
+                );
+              } else {
+                spinner.succeed(`Stopped ${killedSessionIds.length} session(s)`);
+              }
+              for (const w of warnings) {
+                console.log(chalk.yellow(w));
+              }
+              // Show stopped sessions grouped by project
+              const killedTarget = targetActive
+                .filter((s) => killedSessionIds.includes(s.id))
+                .map((s) => s.id);
+              if (killedTarget.length > 0) {
+                console.log(
+                  chalk.green(`  ${project?.name ?? _projectId}: ${killedTarget.join(", ")}`),
                 );
               }
-            }
-            if (killedSessionIds.length === 0) {
-              spinner.fail("Failed to stop any sessions");
-            } else if (killedSessionIds.length < activeSessions.length) {
-              spinner.warn(
-                `Stopped ${killedSessionIds.length}/${activeSessions.length} session(s)`,
-              );
+              for (const s of otherActive) {
+                if (!killedSessionIds.includes(s.id)) continue;
+                const list = otherByProject.get(s.projectId ?? "unknown") ?? [];
+                list.push(s.id);
+                otherByProject.set(s.projectId ?? "unknown", list);
+              }
+              for (const [pid, ids] of otherByProject) {
+                console.log(chalk.green(`  ${pid}: ${ids.join(", ")}`));
+              }
             } else {
-              spinner.succeed(`Stopped ${killedSessionIds.length} session(s)`);
-            }
-            for (const w of warnings) {
-              console.log(chalk.yellow(w));
-            }
-            // Show stopped sessions grouped by project
-            const killedTarget = targetActive
-              .filter((s) => killedSessionIds.includes(s.id))
-              .map((s) => s.id);
-            if (killedTarget.length > 0) {
-              console.log(chalk.green(`  ${project.name}: ${killedTarget.join(", ")}`));
-            }
-            for (const s of otherActive) {
-              if (!killedSessionIds.includes(s.id)) continue;
-              const list = otherByProject.get(s.projectId ?? "unknown") ?? [];
-              list.push(s.id);
-              otherByProject.set(s.projectId ?? "unknown", list);
-            }
-            for (const [pid, ids] of otherByProject) {
-              console.log(chalk.green(`  ${pid}: ${ids.join(", ")}`));
-            }
-          } else {
-            console.log(chalk.yellow(`No active sessions found`));
-          }
-
-          // Record stopped sessions for restore on next `ao start`
-          if (killedSessionIds.length > 0) {
-            const otherProjects: Array<{ projectId: string; sessionIds: string[] }> = [];
-            for (const [pid, ids] of otherByProject) {
-              otherProjects.push({ projectId: pid, sessionIds: ids });
+              console.log(chalk.yellow(`No active sessions found`));
             }
 
-            await writeLastStop({
-              stoppedAt: new Date().toISOString(),
-              projectId: _projectId,
-              sessionIds: killedSessionIds.filter((id) => targetActive.some((s) => s.id === id)),
-              otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
-            });
+            // Record stopped sessions for restore on next `ao start`
+            if (killedSessionIds.length > 0) {
+              const groupedKilledSessions = groupSessionIdsByProject(
+                activeSessions,
+                killedSessionIds,
+              );
+              const primarySessionIds = stopAll
+                ? []
+                : killedSessionIds.filter((id) => targetActive.some((s) => s.id === id));
+              const otherProjects = stopAll
+                ? groupedKilledSessions
+                : groupedKilledSessions.filter((entry) => entry.projectId !== _projectId);
+
+              await writeLastStop({
+                stoppedAt: new Date().toISOString(),
+                projectId: _projectId,
+                sessionIds: primarySessionIds,
+                otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
+              });
+            }
+          } catch (err) {
+            console.log(
+              chalk.yellow(
+                `  Could not list sessions: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
           }
-        } catch (err) {
-          console.log(
-            chalk.yellow(
-              `  Could not list sessions: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          );
+        } else {
+          console.log(chalk.yellow("  Could not list sessions: no valid config available"));
         }
 
         // Only kill the parent `ao start` process and dashboard when stopping
@@ -1929,11 +1987,14 @@ export function registerStop(program: Command): void {
         // it observes that the last session became terminal.
 
         if (projectArg) {
-          console.log(chalk.bold.green(`\n✓ Stopped sessions for ${project.name}\n`));
+          console.log(
+            chalk.bold.green(`\n✓ Stopped sessions for ${project?.name ?? projectArg}\n`),
+          );
         } else {
           console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
           console.log(chalk.dim(`  Uptime: since ${running?.startedAt ?? "unknown"}`));
-          console.log(chalk.dim(`  Projects: ${Object.keys(config.projects).join(", ")}\n`));
+          const stoppedProjects = config ? Object.keys(config.projects) : (running?.projects ?? []);
+          console.log(chalk.dim(`  Projects: ${stoppedProjects.join(", ")}\n`));
         }
       } catch (err) {
         if (err instanceof Error) {
