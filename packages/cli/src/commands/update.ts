@@ -4,8 +4,10 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import {
   getGlobalConfigPath,
+  isCanonicalGlobalConfigPath,
   isWindows,
   loadConfig,
+  loadGlobalConfig,
   type Session,
 } from "@aoagents/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
@@ -63,6 +65,17 @@ export function registerUpdate(program: Command): void {
 
         const method = detectInstallMethod();
 
+        // Reject git-only flags up front when the install isn't a git source.
+        // Without this, users copy/pasting `ao update --skip-smoke` from older
+        // docs would silently no-op on npm/pnpm/bun installs (the flag would be
+        // accepted, ignored, and the user would never know why smoke tests
+        // didn't run — because they never ran on these install methods anyway).
+        if ((opts.skipSmoke || opts.smokeOnly) && method !== "git") {
+          const flag = opts.skipSmoke ? "--skip-smoke" : "--smoke-only";
+          console.error(`${flag} only applies to git installs (current install: ${method}).`);
+          process.exit(1);
+        }
+
         switch (method) {
           case "git":
             await handleGitUpdate(opts);
@@ -111,12 +124,28 @@ async function ensureNoActiveSessions(): Promise<boolean> {
   try {
     let config;
     try {
+      // Project-local config (search-upward) — works when `ao update` runs
+      // inside a registered project.
       config = loadConfig();
     } catch {
-      // Try the global config explicitly so `ao update` works from a directory
-      // outside any registered project.
+      // Outside any project — fall back to the global registry so `ao update`
+      // works from any cwd. We deliberately go through `loadGlobalConfig`
+      // first to check the registry layout (the global schema is different
+      // from a project config); only when projects are registered do we ask
+      // `loadConfig` to build a full OrchestratorConfig from the canonical
+      // global path. `loadConfig` dispatches to `buildEffectiveConfigFromGlobalConfigPath`
+      // when given that path — see packages/core/src/config.ts.
       const globalPath = getGlobalConfigPath();
-      if (!existsSync(globalPath)) return true; // No projects ⇒ nothing to guard.
+      if (!existsSync(globalPath)) return true; // No registry ⇒ nothing to guard.
+      const globalConfig = loadGlobalConfig(globalPath);
+      if (!globalConfig || Object.keys(globalConfig.projects).length === 0) {
+        return true; // Registry has no projects ⇒ no sessions to guard.
+      }
+      if (!isCanonicalGlobalConfigPath(globalPath)) {
+        // Defensive: if someone overrode AO_GLOBAL_CONFIG to a non-canonical
+        // path, loadConfig would treat the file as a project config. Bail.
+        return true;
+      }
       config = loadConfig(globalPath);
     }
     const sm = await getSessionManager(config);

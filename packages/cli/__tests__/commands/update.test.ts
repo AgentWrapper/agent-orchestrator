@@ -68,16 +68,22 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 import type * as AoCoreType from "@aoagents/ao-core";
 import type * as FsType from "node:fs";
 
-const { mockIsWindows } = vi.hoisted(() => ({
+const { mockIsWindows, mockLoadConfig, mockLoadGlobalConfig, mockExistsSync } = vi.hoisted(() => ({
   mockIsWindows: vi.fn(() => false),
+  mockLoadConfig: vi.fn(),
+  mockLoadGlobalConfig: vi.fn(),
+  mockExistsSync: vi.fn(() => false),
 }));
 
 vi.mock("@aoagents/ao-core", async () => {
   const actual = (await vi.importActual("@aoagents/ao-core")) as typeof AoCoreType;
   return {
     ...actual,
-    loadConfig: vi.fn(() => ({ projects: {}, configPath: "/tmp/test-config.yaml" })),
+    loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+    loadGlobalConfig: (...args: unknown[]) => mockLoadGlobalConfig(...args),
     getGlobalConfigPath: () => "/tmp/test-global-config.yaml",
+    isCanonicalGlobalConfigPath: (p: string | undefined) =>
+      p === "/tmp/test-global-config.yaml",
     isWindows: () => mockIsWindows(),
   };
 });
@@ -86,7 +92,7 @@ vi.mock("node:fs", async () => {
   const actual = (await vi.importActual("node:fs")) as typeof FsType;
   return {
     ...actual,
-    existsSync: () => false, // Force the global-config fallback to skip the guard.
+    existsSync: (path: string) => mockExistsSync(path),
   };
 });
 
@@ -112,6 +118,7 @@ vi.mock("node:child_process", async () => {
 });
 
 import { registerUpdate } from "../../src/commands/update.js";
+import type { InstallMethod } from "../../src/lib/update-check.js";
 import { EventEmitter } from "node:events";
 
 function makeNpmUpdateInfo(overrides = {}) {
@@ -154,6 +161,15 @@ describe("update command", () => {
     mockResolveUpdateChannel.mockReturnValue("manual");
     mockIsWindows.mockReset();
     mockIsWindows.mockReturnValue(false);
+    // Default: project-local loadConfig succeeds with no projects, and no
+    // global-config file exists. Tests opt into the global-config code path
+    // by making mockLoadConfig throw and mockExistsSync return true.
+    mockLoadConfig.mockReset();
+    mockLoadConfig.mockReturnValue({ projects: {}, configPath: "/tmp/test-config.yaml" });
+    mockLoadGlobalConfig.mockReset();
+    mockLoadGlobalConfig.mockReturnValue(null);
+    mockExistsSync.mockReset();
+    mockExistsSync.mockReturnValue(false);
     mockSessions.value = [];
     origStdinTTY = process.stdin.isTTY;
     origStdoutTTY = process.stdout.isTTY;
@@ -179,6 +195,43 @@ describe("update command", () => {
       program.parseAsync(["node", "test", "update", "--skip-smoke", "--smoke-only"]),
     ).rejects.toThrow("process.exit(1)");
     expect(mockRunRepoScript).not.toHaveBeenCalled();
+  });
+
+  describe("git-only flags rejected on non-git installs", () => {
+    it.each(["npm-global", "pnpm-global", "bun-global", "homebrew", "unknown"])(
+      "rejects --skip-smoke on %s installs with an actionable message",
+      async (method) => {
+        mockDetectInstallMethod.mockReturnValue(method as InstallMethod);
+        const errSpy = vi.mocked(console.error);
+        await expect(
+          program.parseAsync(["node", "test", "update", "--skip-smoke"]),
+        ).rejects.toThrow("process.exit(1)");
+        const messages = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+        expect(messages).toMatch(/--skip-smoke only applies to git installs/);
+        expect(mockRunRepoScript).not.toHaveBeenCalled();
+        expect(mockSpawn).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects --smoke-only on npm installs with an actionable message", async () => {
+      mockDetectInstallMethod.mockReturnValue("npm-global");
+      const errSpy = vi.mocked(console.error);
+      await expect(
+        program.parseAsync(["node", "test", "update", "--smoke-only"]),
+      ).rejects.toThrow("process.exit(1)");
+      const messages = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(messages).toMatch(/--smoke-only only applies to git installs/);
+    });
+
+    it("still accepts --skip-smoke on git installs", async () => {
+      mockDetectInstallMethod.mockReturnValue("git");
+      mockRunRepoScript.mockResolvedValue(0);
+      await program.parseAsync(["node", "test", "update", "--skip-smoke"]);
+      expect(mockRunRepoScript).toHaveBeenCalledWith(
+        "ao-update.sh",
+        expect.arrayContaining(["--skip-smoke"]),
+      );
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -491,6 +544,63 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(false); // decline, no install
       await program.parseAsync(["node", "test", "update"]);
       // Reaches the prompt step since the guard passed.
+      expect(mockPromptConfirm).toHaveBeenCalled();
+    });
+
+    // ---------------------------------------------------------------------
+    // Global-config layout (review #3)
+    // ---------------------------------------------------------------------
+
+    it("falls back to the global registry when running outside any project", async () => {
+      // Simulate `ao update` invoked from /tmp with no project-local config.
+      mockLoadConfig.mockImplementation((path?: string) => {
+        if (!path) throw new Error("no config found");
+        return { projects: { "my-app": { path: "/tmp/foo" } }, configPath: path };
+      });
+      mockLoadGlobalConfig.mockReturnValue({
+        projects: { "my-app": { path: "/tmp/foo" } },
+      });
+      mockExistsSync.mockReturnValue(true);
+      mockSessions.value = [{ id: "feat-1", status: "working" }];
+
+      await expect(
+        program.parseAsync(["node", "test", "update"]),
+      ).rejects.toThrow("process.exit(1)");
+
+      // Saw the global-projects map → built SessionManager → guard fired.
+      expect(mockLoadGlobalConfig).toHaveBeenCalled();
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it("returns early without building SessionManager when global registry is empty", async () => {
+      mockLoadConfig.mockImplementation((path?: string) => {
+        if (!path) throw new Error("no config found");
+        return { projects: {}, configPath: path };
+      });
+      mockLoadGlobalConfig.mockReturnValue({ projects: {} });
+      mockExistsSync.mockReturnValue(true);
+
+      // Guard returns true (allow update) without ever calling sm.list().
+      // No mockSessions configured, no spawn → confirms we never reached
+      // SessionManager construction.
+      mockPromptConfirm.mockResolvedValue(false); // decline soft-install
+      await program.parseAsync(["node", "test", "update"]);
+      expect(mockLoadGlobalConfig).toHaveBeenCalled();
+      // The decline-prompt path means the guard let us through.
+      expect(mockPromptConfirm).toHaveBeenCalled();
+    });
+
+    it("returns early without building SessionManager when global config file is missing", async () => {
+      mockLoadConfig.mockImplementation((path?: string) => {
+        if (!path) throw new Error("no config found");
+        return { projects: {}, configPath: path };
+      });
+      mockExistsSync.mockReturnValue(false); // no ~/.agent-orchestrator/config.yaml
+
+      mockPromptConfirm.mockResolvedValue(false);
+      await program.parseAsync(["node", "test", "update"]);
+      // We didn't even consult loadGlobalConfig — existsSync(globalPath) was false.
+      expect(mockLoadGlobalConfig).not.toHaveBeenCalled();
       expect(mockPromptConfirm).toHaveBeenCalled();
     });
   });
