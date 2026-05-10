@@ -114,6 +114,20 @@ export function getSessionTitle(session: DashboardSession): string {
   return session.status;
 }
 
+/**
+ * Format a duration given in milliseconds as a compact human-readable string.
+ *
+ * - Returns `"0s"` for zero, negative, or sub-second (< 1 000 ms) inputs.
+ * - Returns `"Xs"` for durations under 60 s.
+ * - Returns `"Xm Ys"` for durations between 1 m and 59 m 59 s.
+ * - Returns `"Xh Ym"` for durations of 1 h or more (seconds are dropped).
+ *
+ * @example
+ *   formatDuration(0)         // → "0s"
+ *   formatDuration(45_000)    // → "45s"
+ *   formatDuration(90_000)    // → "1m 30s"
+ *   formatDuration(3_600_000) // → "1h 0m"
+ */
 export function formatDuration(ms: number): string {
   if (ms <= 0) return "0s";
   const totalSeconds = Math.floor(ms / 1000);

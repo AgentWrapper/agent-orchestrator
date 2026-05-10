@@ -52,6 +52,11 @@ describe("formatDuration", () => {
     expect(formatDuration(-1000)).toBe("0s");
   });
 
+  it("returns '0s' for sub-second positive input", () => {
+    expect(formatDuration(500)).toBe("0s");
+    expect(formatDuration(999)).toBe("0s");
+  });
+
   it("shows seconds only for durations under 60s", () => {
     expect(formatDuration(45000)).toBe("45s");
     expect(formatDuration(1000)).toBe("1s");
