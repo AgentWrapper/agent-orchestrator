@@ -7,6 +7,7 @@ import {
   WorkspaceMissingError,
   SessionNotFoundError,
   recordActivityEvent,
+  type OrchestratorConfig,
 } from "@aoagents/ao-core";
 import {
   getCorrelationId,
@@ -25,9 +26,13 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
   }
 
+  let configForAttribution: OrchestratorConfig | undefined;
+  let projectIdForAttribution: string | undefined;
+
   try {
     const { config, sessionManager } = await getServices();
-    const projectId = resolveProjectIdForSessionId(config, id);
+    configForAttribution = config;
+    projectIdForAttribution = resolveProjectIdForSessionId(config, id);
     const restored = await sessionManager.restore(id);
 
     recordApiObservation({
@@ -38,11 +43,11 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       startedAt,
       outcome: "success",
       statusCode: 200,
-      projectId: restored.projectId ?? projectId,
+      projectId: restored.projectId ?? projectIdForAttribution,
       sessionId: id,
     });
     recordActivityEvent({
-      projectId: restored.projectId ?? projectId,
+      projectId: restored.projectId ?? projectIdForAttribution,
       sessionId: id,
       source: "api",
       kind: "api.session_restore_requested",
@@ -62,11 +67,16 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     if (err instanceof SessionNotFoundError) {
       return jsonWithCorrelation({ error: err.message }, { status: 404 }, correlationId);
     }
+    if (!configForAttribution) {
+      const serviceContext = await getServices().catch(() => undefined);
+      configForAttribution = serviceContext?.config;
+      projectIdForAttribution = configForAttribution
+        ? resolveProjectIdForSessionId(configForAttribution, id)
+        : undefined;
+    }
     if (err instanceof SessionNotRestorableError) {
-      const { config: cfg } = await getServices().catch(() => ({ config: undefined }));
-      const pid = cfg ? resolveProjectIdForSessionId(cfg, id) : undefined;
       recordActivityEvent({
-        projectId: pid,
+        projectId: projectIdForAttribution,
         sessionId: id,
         source: "api",
         kind: "api.session_restore_failed",
@@ -77,10 +87,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       return jsonWithCorrelation({ error: err.message }, { status: 409 }, correlationId);
     }
     if (err instanceof WorkspaceMissingError) {
-      const { config: cfg } = await getServices().catch(() => ({ config: undefined }));
-      const pid = cfg ? resolveProjectIdForSessionId(cfg, id) : undefined;
       recordActivityEvent({
-        projectId: pid,
+        projectId: projectIdForAttribution,
         sessionId: id,
         source: "api",
         kind: "api.session_restore_failed",
@@ -90,25 +98,23 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       });
       return jsonWithCorrelation({ error: err.message }, { status: 422 }, correlationId);
     }
-    const { config } = await getServices().catch(() => ({ config: undefined }));
-    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
-    if (config) {
+    if (configForAttribution) {
       recordApiObservation({
-        config,
+        config: configForAttribution,
         method: "POST",
         path: "/api/sessions/[id]/restore",
         correlationId,
         startedAt,
         outcome: "failure",
         statusCode: 500,
-        projectId,
+        projectId: projectIdForAttribution,
         sessionId: id,
         reason: err instanceof Error ? err.message : "Failed to restore session",
       });
     }
     const msg = err instanceof Error ? err.message : "Failed to restore session";
     recordActivityEvent({
-      projectId,
+      projectId: projectIdForAttribution,
       sessionId: id,
       source: "api",
       kind: "api.session_restore_failed",

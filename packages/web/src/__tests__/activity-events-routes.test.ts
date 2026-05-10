@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import {
   SessionNotFoundError,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
   recordActivityEvent,
   createInitialCanonicalLifecycle,
   createActivitySignal,
@@ -169,6 +171,7 @@ vi.mock("@/lib/services", () => ({
   invalidatePortfolioServicesCache: vi.fn(),
 }));
 
+import { getServices } from "@/lib/services";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -188,6 +191,7 @@ const recorded = vi.mocked(recordActivityEvent);
 
 beforeEach(() => {
   recorded.mockClear();
+  vi.mocked(getServices).mockClear();
 });
 
 describe("API mutation routes emit activity events (api source)", () => {
@@ -341,6 +345,25 @@ describe("API mutation routes emit activity events (api source)", () => {
       );
     });
 
+    it("POST /api/spawn does not emit api.session_spawn_failed when core spawn throws", async () => {
+      (mockSessionManager.spawn as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("runtime failed"),
+      );
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", issueId: "INT-101" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(500);
+      expect(
+        recorded.mock.calls.some(
+          ([event]) => (event as { kind: string }).kind === "api.session_spawn_failed",
+        ),
+      ).toBe(false);
+    });
+
     it("POST /api/sessions/:id/send emits api.session_message_failed on unexpected error", async () => {
       (mockSessionManager.send as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("write failed"),
@@ -361,6 +384,31 @@ describe("API mutation routes emit activity events (api source)", () => {
         }),
       );
     });
+
+    it.each([
+      ["non-restorable session", new SessionNotRestorableError("my-app-123", "still working"), 409],
+      ["missing workspace", new WorkspaceMissingError("/tmp/missing-workspace"), 422],
+      ["unexpected restore error", new Error("restore failed"), 500],
+    ])(
+      "POST /api/sessions/:id/restore emits attributed api.session_restore_failed for %s",
+      async (_name, error, statusCode) => {
+        (mockSessionManager.restore as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error);
+        const req = makeRequest("/api/sessions/my-app-123/restore", { method: "POST" });
+        const res = await restorePOST(req, { params: Promise.resolve({ id: "my-app-123" }) });
+
+        expect(res.status).toBe(statusCode);
+        expect(vi.mocked(getServices)).toHaveBeenCalledTimes(1);
+        expect(recorded).toHaveBeenCalledWith(
+          expect.objectContaining({
+            source: "api",
+            kind: "api.session_restore_failed",
+            projectId: "my-app",
+            sessionId: "my-app-123",
+            data: expect.objectContaining({ statusCode }),
+          }),
+        );
+      },
+    );
 
     it("POST /api/prs/:id/merge emits api.pr_merge_rejected for non-mergeable PR", async () => {
       (mockSCM.getMergeability as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -383,9 +431,7 @@ describe("API mutation routes emit activity events (api source)", () => {
     });
 
     it("POST /api/prs/:id/merge emits api.pr_merge_failed when mergePR throws", async () => {
-      (mockSCM.mergePR as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("github 500"),
-      );
+      (mockSCM.mergePR as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("github 500"));
       const req = makeRequest("/api/prs/432/merge", { method: "POST" });
       await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
 
@@ -393,6 +439,8 @@ describe("API mutation routes emit activity events (api source)", () => {
         expect.objectContaining({
           source: "api",
           kind: "api.pr_merge_failed",
+          projectId: "my-app",
+          sessionId: "backend-7",
           data: expect.objectContaining({ prNumber: 432, reason: "github 500" }),
         }),
       );

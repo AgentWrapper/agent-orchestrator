@@ -117,14 +117,6 @@ export async function POST(request: NextRequest) {
         data: { issueId: body.issueId },
       });
     }
-    recordActivityEvent({
-      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
-      source: "api",
-      kind: "api.session_spawn_failed",
-      level: "error",
-      summary: `session spawn failed: ${err instanceof Error ? err.message : "unknown error"}`,
-      data: { reason: err instanceof Error ? err.message : "unknown error" },
-    });
     return jsonWithCorrelation(
       { error: err instanceof Error ? err.message : "Failed to spawn session" },
       { status: 500 },
