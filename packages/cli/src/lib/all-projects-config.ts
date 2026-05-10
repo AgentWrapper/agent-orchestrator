@@ -112,12 +112,28 @@ export interface AllProjectsConfigFallbackResult {
   warning?: string;
 }
 
+export interface AllProjectsConfigFallbackOptions {
+  /**
+   * Allow the final fallback to `loadConfig()` with normal config discovery.
+   *
+   * This is safe for interactive restore flows where the user already selected
+   * the foreground project. Shutdown/stop paths must leave this disabled so a
+   * broken daemon-owned config cannot accidentally fall through to the caller's
+   * unrelated current working directory config.
+   */
+  includeDefaultFallback?: boolean;
+}
+
 function formatLoadError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function loadFallbackCandidate(path: string | undefined): OrchestratorConfig {
-  return path ? loadConfig(path) : loadConfig();
+function formatFallbackSource(candidate: string | undefined): string {
+  return candidate ?? "default config discovery";
+}
+
+function loadFallbackCandidate(candidate: string | undefined): OrchestratorConfig {
+  return candidate ? loadConfig(candidate) : loadConfig();
 }
 
 /**
@@ -129,15 +145,21 @@ function loadFallbackCandidate(path: string | undefined): OrchestratorConfig {
  */
 export function loadAllProjectsConfigWithFallback(
   runningConfigPath?: string,
+  options: AllProjectsConfigFallbackOptions = {},
 ): AllProjectsConfigFallbackResult {
   try {
     return { config: loadAllProjectsConfig(runningConfigPath) };
   } catch (error) {
     const globalPath = getGlobalConfigPath();
-    const candidates = [runningConfigPath, globalPath, undefined];
+    const candidates = [
+      runningConfigPath,
+      globalPath,
+      ...(options.includeDefaultFallback ? [undefined] : []),
+    ];
     const attempted = new Set<string>();
 
     for (const candidate of candidates) {
+      if (candidate === undefined && !options.includeDefaultFallback) continue;
       const key = candidate ?? "<default>";
       if (attempted.has(key)) continue;
       attempted.add(key);
@@ -145,7 +167,7 @@ export function loadAllProjectsConfigWithFallback(
       try {
         return {
           config: loadFallbackCandidate(candidate),
-          warning: `Could not load merged all-project config (${formatLoadError(error)}); falling back to ${candidate ?? "default config"}.`,
+          warning: `Could not load merged all-project config (${formatLoadError(error)}); falling back to ${formatFallbackSource(candidate)}.`,
         };
       } catch {
         // Try the next narrower source.

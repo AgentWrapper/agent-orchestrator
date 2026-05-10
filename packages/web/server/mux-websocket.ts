@@ -74,7 +74,7 @@ export class SessionBroadcaster {
   private readonly baseUrl: string;
 
   constructor(nextPort: string) {
-    this.baseUrl = `http://localhost:${nextPort}`;
+    this.baseUrl = `http://127.0.0.1:${nextPort}`;
   }
 
   /**

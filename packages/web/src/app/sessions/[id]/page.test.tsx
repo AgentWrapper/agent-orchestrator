@@ -114,7 +114,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,
@@ -156,7 +156,7 @@ describe("SessionPage project polling", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions",
+      "/api/sessions?fresh=metadata",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
@@ -182,7 +182,9 @@ describe("SessionPage project polling", () => {
         .mock.calls.filter(([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true"),
     ).toHaveLength(1);
 
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions")).toHaveLength(2);
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/sessions?fresh=metadata"),
+    ).toHaveLength(2);
   });
 
   it("does not deadlock project polling after a cached worker poll is skipped", async () => {
@@ -213,7 +215,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,
@@ -349,7 +351,7 @@ describe("SessionPage project polling", () => {
         });
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -393,7 +395,7 @@ describe("SessionPage project polling", () => {
         return Promise.reject(new DOMException("Aborted", "AbortError"));
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -438,7 +440,7 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
@@ -508,7 +510,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,
@@ -538,7 +540,9 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/projects")).toHaveLength(2);
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions")).toHaveLength(2);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?fresh=metadata"),
+    ).toHaveLength(2);
   });
 
   it("silences aborted sidebar refreshes during unmount", async () => {
@@ -573,7 +577,7 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return new Promise<Response>((_, reject) => {
           init?.signal?.addEventListener(
             "abort",
@@ -623,7 +627,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: false,
           status: 500,
@@ -696,7 +700,7 @@ describe("SessionPage project polling", () => {
         } as Response);
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return new Promise<Response>((resolve) => {
           resolveSidebarSessions = resolve;
         });
@@ -764,7 +768,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,
@@ -816,7 +820,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,
@@ -871,7 +875,7 @@ describe("SessionPage project polling", () => {
         } as Response;
       }
 
-      if (url === "/api/sessions") {
+      if (url === "/api/sessions?fresh=metadata") {
         return {
           ok: true,
           status: 200,

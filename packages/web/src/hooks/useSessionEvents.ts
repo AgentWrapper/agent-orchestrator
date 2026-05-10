@@ -397,8 +397,8 @@ export function useSessionEvents(options: UseSessionEventsOptions): State {
       lastFetchStartedAtRef.current = Date.now();
 
       const sessionsUrl = project
-        ? `/api/sessions?project=${encodeURIComponent(project)}`
-        : "/api/sessions";
+        ? `/api/sessions?project=${encodeURIComponent(project)}&fresh=metadata`
+        : "/api/sessions?fresh=metadata";
 
       void fetchJsonWithTimeout<{ sessions?: DashboardSession[] } | null>(sessionsUrl, {
         signal: refreshController.signal,

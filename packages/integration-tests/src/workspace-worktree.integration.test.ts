@@ -476,6 +476,62 @@ describe("workspace-worktree (integration)", () => {
     }
   }, 30_000);
 
+  it("restore refuses to remove a still-registered worktree path", async () => {
+    const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
+    const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-restore-registered-"));
+    const isolatedWorktreeBaseDir = await realpath(rawBase);
+    let createdPath: string | undefined;
+
+    try {
+      await git(isolatedRepoDir, "switch", "-c", "main");
+      await createCommit(isolatedRepoDir, "base.txt", "main\n");
+      await git(isolatedRepoDir, "push", "-u", "origin", "main");
+
+      const isolatedWorkspace = worktreePlugin.create({ worktreeDir: isolatedWorktreeBaseDir });
+      const proj: ProjectConfig = {
+        name: "restore-registered",
+        repo: "test/restore-registered",
+        path: isolatedRepoDir,
+        defaultBranch: "main",
+        sessionPrefix: "ao",
+      };
+
+      const created = await isolatedWorkspace.create({
+        projectId: "restore-registered",
+        sessionId: "ao-1",
+        project: proj,
+        branch: "session/ao-1",
+      });
+      createdPath = created.path;
+
+      await git(created.path, "config", "user.email", "test@test.com");
+      await git(created.path, "config", "user.name", "Test");
+      const sessionSha = await createCommit(created.path, "session.txt", "session work\n");
+
+      await expect(
+        isolatedWorkspace.restore!(
+          {
+            projectId: "restore-registered",
+            sessionId: "ao-1",
+            project: proj,
+            branch: "session/ao-1",
+          },
+          created.path,
+        ),
+      ).rejects.toThrow("still registered with git");
+
+      expect(existsSync(join(created.path, "session.txt"))).toBe(true);
+      expect(await git(created.path, "rev-parse", "HEAD")).toBe(sessionSha);
+    } finally {
+      if (createdPath) {
+        await git(isolatedRepoDir, "worktree", "remove", "--force", createdPath).catch(() => {});
+      }
+      await rm(isolatedWorktreeBaseDir, { recursive: true, force: true }).catch(() => {});
+      await rm(cloneParent, { recursive: true, force: true }).catch(() => {});
+      await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 30_000);
+
   it("resets a stale session branch when origin default branch advances", async () => {
     const { bareDir, cloneParent, repoDir: isolatedRepoDir } = await createRepoClone();
     const rawBase = await mkdtemp(join(tmpdir(), "ao-inttest-wt-stale-origin-"));

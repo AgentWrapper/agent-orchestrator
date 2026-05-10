@@ -67,7 +67,7 @@ export function installShutdownHandlers(ctx: ShutdownContext): void {
       try {
         const { config: shutdownConfig } = loadAllProjectsConfigWithFallback(ctx.configPath);
         const sm = await getSessionManager(shutdownConfig);
-        const allSessions = await sm.list();
+        const allSessions = await sm.listStored();
         const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
 
         const killedSessionIds: string[] = [];

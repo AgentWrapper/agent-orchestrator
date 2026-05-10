@@ -610,7 +610,7 @@ export default function SessionPage() {
       const body = await fetchJsonWithTimeout<{
         sessions?: DashboardSession[];
         orchestrators?: DashboardOrchestratorLink[];
-      } | null>("/api/sessions", {
+      } | null>("/api/sessions?fresh=metadata", {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
         timeoutMessage: `Sidebar sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,

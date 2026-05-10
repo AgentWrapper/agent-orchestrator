@@ -88,7 +88,8 @@ describe("shutdown handler", () => {
   it("uses the fallback all-project config for graceful session cleanup", async () => {
     const config = { projects: { "project-1": {}, "project-2": {} } };
     const sessionManager = {
-      list: vi.fn().mockResolvedValue([
+      list: vi.fn(() => new Promise(() => {})),
+      listStored: vi.fn().mockResolvedValue([
         { id: "p1-1", projectId: "project-1", status: "working", activity: "active" },
         { id: "p2-1", projectId: "project-2", status: "working", activity: "active" },
       ]),
@@ -112,6 +113,8 @@ describe("shutdown handler", () => {
     expect(mockLoadAllProjectsConfigWithFallback).toHaveBeenCalledWith(
       "/local/agent-orchestrator.yaml",
     );
+    expect(sessionManager.listStored).toHaveBeenCalledTimes(1);
+    expect(sessionManager.list).not.toHaveBeenCalled();
     expect(sessionManager.kill).toHaveBeenCalledWith("p1-1");
     expect(sessionManager.kill).toHaveBeenCalledWith("p2-1");
     expect(mockWriteLastStop).toHaveBeenCalledWith(

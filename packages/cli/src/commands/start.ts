@@ -1044,7 +1044,12 @@ async function runStartup(
               // global projects plus any local-only projects captured by stop.
               let restoreConfig = config;
               if (otherProjects.length > 0) {
-                const result = loadAllProjectsConfigWithFallback(config.configPath);
+                const result = loadAllProjectsConfigWithFallback(config.configPath, {
+                  // Interactive restore may use the foreground start config if
+                  // a stale global/running config blocks the merged view. Stop
+                  // and shutdown callers intentionally leave this disabled.
+                  includeDefaultFallback: true,
+                });
                 restoreConfig = result.config;
                 if (result.warning) {
                   console.log(chalk.yellow(`  Warning: ${result.warning}`));

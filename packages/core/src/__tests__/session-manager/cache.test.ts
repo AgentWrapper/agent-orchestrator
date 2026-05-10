@@ -68,7 +68,7 @@ describe("listCached", () => {
     expect(second[0].id).toBe("app-1");
   });
 
-  it("serves stale data immediately after TTL expires and refreshes in background", async () => {
+  it("returns refreshed data once the cache TTL expires", async () => {
     vi.useFakeTimers();
     try {
       writeMetadata(sessionsDir, "app-1", {
@@ -97,10 +97,40 @@ describe("listCached", () => {
       // Advance time past 35s TTL
       vi.setSystemTime(new Date(36_000));
       const afterExpiry = await sm.listCached();
-      // Stale-while-revalidate: the caller gets the old snapshot immediately.
-      expect(afterExpiry).toHaveLength(1);
+      expect(afterExpiry).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-      // The background refresh then updates the cache for the next caller.
+  it("can serve stale data after TTL when stale-while-revalidate is requested", async () => {
+    vi.useFakeTimers();
+    try {
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/w1",
+        branch: "feat/a",
+        status: "working",
+        project: "my-app",
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      vi.setSystemTime(new Date(0));
+      const first = await sm.listCached();
+      expect(first).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      writeMetadata(sessionsDir, "app-2", {
+        worktree: "/tmp/w2",
+        branch: "feat/b",
+        status: "working",
+        project: "my-app",
+      });
+
+      vi.setSystemTime(new Date(36_000));
+      const stale = await sm.listCached(undefined, { staleWhileRevalidate: true });
+      expect(stale).toHaveLength(1);
+
       await vi.waitFor(async () => {
         expect(await sm.listCached()).toHaveLength(2);
       });

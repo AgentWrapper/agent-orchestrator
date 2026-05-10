@@ -2391,14 +2391,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
   }
 
-  async function listCached(projectId?: string): Promise<Session[]> {
+  async function listCached(
+    projectId?: string,
+    options?: { staleWhileRevalidate?: boolean },
+  ): Promise<Session[]> {
     if (sessionCache && Date.now() < sessionCache.expiresAt) {
       return filterSessionCache(projectId);
     }
 
     if (sessionCache) {
-      refreshSessionCacheInBackground();
-      return filterSessionCache(projectId);
+      if (options?.staleWhileRevalidate) {
+        refreshSessionCacheInBackground();
+        return filterSessionCache(projectId);
+      }
+      const sessions = await refreshSessionCache();
+      return projectId ? sessions.filter((session) => session.projectId === projectId) : sessions;
     }
 
     const sessions = loadStoredSessions();

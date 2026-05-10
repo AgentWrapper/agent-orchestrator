@@ -1833,7 +1833,17 @@ export interface OpenCodeSessionManager extends SessionManager {
    * live enrichment.
    */
   listStored(projectId?: string): Promise<Session[]>;
-  listCached(projectId?: string): Promise<Session[]>;
+  /**
+   * List sessions through the in-process cache.
+   *
+   * Cold-cache callers receive an immediate stored-metadata snapshot while live
+   * enrichment refreshes the cache in the background. Once a cache exists,
+   * expired cache entries refresh before returning by default so explicit
+   * reconciliation callers get current membership. Pass staleWhileRevalidate for
+   * passive dashboard reads that must remain responsive while refresh happens in
+   * the background.
+   */
+  listCached(projectId?: string, options?: { staleWhileRevalidate?: boolean }): Promise<Session[]>;
   invalidateCache(): void;
 }
 

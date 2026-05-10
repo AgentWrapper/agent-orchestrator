@@ -104,7 +104,7 @@ describe("useSessionEvents - mux", () => {
     );
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        "/api/sessions?project=proj",
+        "/api/sessions?project=proj&fresh=metadata",
         expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
       );
     });
@@ -163,7 +163,7 @@ describe("useSessionEvents - mux", () => {
       await vi.advanceTimersByTimeAsync(120);
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/sessions?project=proj",
+      "/api/sessions?project=proj&fresh=metadata",
       expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
     );
 
@@ -246,7 +246,7 @@ describe("useSessionEvents - mux", () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        "/api/sessions?project=proj",
+        "/api/sessions?project=proj&fresh=metadata",
         expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
       );
     });
@@ -433,7 +433,7 @@ describe("useSessionEvents - mux", () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        "/api/sessions?project=proj",
+        "/api/sessions?project=proj&fresh=metadata",
         expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
       );
     });

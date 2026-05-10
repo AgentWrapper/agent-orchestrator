@@ -391,7 +391,9 @@ describe("API Routes", () => {
         { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app", {
+        staleWhileRevalidate: true,
+      });
     });
 
     it("uses the live session list when fresh=true is requested", async () => {
@@ -409,11 +411,33 @@ describe("API Routes", () => {
       expect(data.orchestratorId).toBe("docs-orchestrator");
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
-      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app", expect.anything());
+    });
+
+    it("uses fresh stored metadata when fresh=metadata is requested", async () => {
+      (mockSessionManager.listStored as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app&fresh=metadata"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.list).not.toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app", expect.anything());
     });
 
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {
-      const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
+      const deadLifecycle = createInitialCanonicalLifecycle(
+        "orchestrator",
+        new Date("2026-04-19T11:00:00.000Z"),
+      );
       deadLifecycle.session.state = "terminated";
       deadLifecycle.session.reason = "runtime_missing";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
@@ -467,11 +491,16 @@ describe("API Routes", () => {
         "my-app-orchestrator-1",
       ]);
       expect(data.sessions).toEqual([]);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app", {
+        staleWhileRevalidate: true,
+      });
     });
 
     it("keeps dead orchestrators as the fallback project-scoped payload when none are live", async () => {
-      const deadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
+      const deadLifecycle = createInitialCanonicalLifecycle(
+        "orchestrator",
+        new Date("2026-04-19T11:00:00.000Z"),
+      );
       deadLifecycle.session.state = "terminated";
       deadLifecycle.session.reason = "runtime_missing";
       deadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
@@ -506,7 +535,10 @@ describe("API Routes", () => {
     });
 
     it("prefers the most recently active dead orchestrator when no live project orchestrator exists", async () => {
-      const olderDeadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T10:00:00.000Z"));
+      const olderDeadLifecycle = createInitialCanonicalLifecycle(
+        "orchestrator",
+        new Date("2026-04-19T10:00:00.000Z"),
+      );
       olderDeadLifecycle.session.state = "terminated";
       olderDeadLifecycle.session.reason = "runtime_missing";
       olderDeadLifecycle.session.terminatedAt = "2026-04-19T10:00:00.000Z";
@@ -515,7 +547,10 @@ describe("API Routes", () => {
       olderDeadLifecycle.runtime.reason = "process_missing";
       olderDeadLifecycle.runtime.lastObservedAt = "2026-04-19T10:00:00.000Z";
 
-      const newerDeadLifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2026-04-19T11:00:00.000Z"));
+      const newerDeadLifecycle = createInitialCanonicalLifecycle(
+        "orchestrator",
+        new Date("2026-04-19T11:00:00.000Z"),
+      );
       newerDeadLifecycle.session.state = "terminated";
       newerDeadLifecycle.session.reason = "runtime_missing";
       newerDeadLifecycle.session.terminatedAt = "2026-04-19T11:00:00.000Z";
@@ -579,17 +614,20 @@ describe("API Routes", () => {
           },
         }),
       );
-      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(
+        sessionsWithPRs,
+      );
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")
         .mockResolvedValue(undefined);
 
-      const enrichSpy = vi
-        .spyOn(serialize, "enrichSessionPR")
-        .mockImplementation(
-          () => new Promise<void>((resolve) => { setTimeout(resolve, 1_000); }),
-        );
+      const enrichSpy = vi.spyOn(serialize, "enrichSessionPR").mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 1_000);
+          }),
+      );
 
       const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
 
@@ -655,7 +693,9 @@ describe("API Routes", () => {
           },
         }),
       ];
-      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(
+        sessionsWithPRs,
+      );
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")
@@ -699,7 +739,8 @@ describe("API Routes", () => {
       const runtimeTerminalLifecycle = createInitialCanonicalLifecycle("worker", new Date());
       runtimeTerminalLifecycle.session.state = "terminated";
       runtimeTerminalLifecycle.session.reason = "user_killed";
-      runtimeTerminalLifecycle.session.terminatedAt = runtimeTerminalLifecycle.session.lastTransitionAt;
+      runtimeTerminalLifecycle.session.terminatedAt =
+        runtimeTerminalLifecycle.session.lastTransitionAt;
       runtimeTerminalLifecycle.runtime.state = "missing";
       runtimeTerminalLifecycle.runtime.reason = "process_missing";
       runtimeTerminalLifecycle.pr.state = "open";
@@ -723,15 +764,15 @@ describe("API Routes", () => {
           },
         }),
       ];
-      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(sessionWithOpenPR);
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(
+        sessionWithOpenPR,
+      );
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")
         .mockResolvedValue(undefined);
 
-      const enrichSpy = vi
-        .spyOn(serialize, "enrichSessionPR")
-        .mockResolvedValue(true);
+      const enrichSpy = vi.spyOn(serialize, "enrichSessionPR").mockResolvedValue(true);
 
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
 
@@ -1121,7 +1162,9 @@ describe("API Routes", () => {
     });
 
     it("returns 500 when list fails", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("boom"),
+      );
       const res = await orchestratorsGET(
         makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
       );

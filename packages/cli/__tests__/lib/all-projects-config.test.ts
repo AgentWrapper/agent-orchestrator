@@ -22,7 +22,10 @@ vi.mock("@aoagents/ao-core", () => ({
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
 }));
 
-import { loadAllProjectsConfig } from "../../src/lib/all-projects-config.js";
+import {
+  loadAllProjectsConfig,
+  loadAllProjectsConfigWithFallback,
+} from "../../src/lib/all-projects-config.js";
 
 function makeConfig(configPath: string, projectIds: string[]) {
   return {
@@ -125,5 +128,38 @@ describe("loadAllProjectsConfig", () => {
     const config = loadAllProjectsConfig("/local/agent-orchestrator.yaml");
 
     expect(Object.keys(config.projects)).toEqual(["local-app"]);
+  });
+
+  it("fallback loading stays scoped to running and global config paths", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/global/agent-orchestrator.yaml") throw new Error("invalid global config");
+      if (path === "/local/agent-orchestrator.yaml") throw new Error("invalid local config");
+      if (path === undefined) return makeConfig("/cwd/agent-orchestrator.yaml", ["cwd-app"]);
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    expect(() => loadAllProjectsConfigWithFallback("/local/agent-orchestrator.yaml")).toThrow(
+      "invalid global config",
+    );
+    expect(mockLoadConfig).not.toHaveBeenCalledWith(undefined);
+  });
+
+  it("fallback loading can explicitly opt into default config discovery", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/global/agent-orchestrator.yaml") throw new Error("invalid global config");
+      if (path === "/local/agent-orchestrator.yaml") throw new Error("invalid local config");
+      if (path === undefined) return makeConfig("/cwd/agent-orchestrator.yaml", ["cwd-app"]);
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = loadAllProjectsConfigWithFallback("/local/agent-orchestrator.yaml", {
+      includeDefaultFallback: true,
+    });
+
+    expect(Object.keys(result.config.projects)).toEqual(["cwd-app"]);
+    expect(result.warning).toContain("default config discovery");
+    expect(mockLoadConfig).toHaveBeenCalledWith();
   });
 });

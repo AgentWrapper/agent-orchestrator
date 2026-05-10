@@ -78,7 +78,7 @@ describe("SessionBroadcaster", () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "http://localhost:3000/api/sessions/patches",
+        "http://127.0.0.1:3000/api/sessions/patches",
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(callback).toHaveBeenCalledWith(patches);
