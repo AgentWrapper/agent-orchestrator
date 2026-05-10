@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import {
+  ConfigNotFoundError,
   getGlobalConfigPath,
   loadConfig,
   type InstalledPluginConfig,
@@ -7,12 +8,30 @@ import {
   type ProjectConfig,
 } from "@aoagents/ao-core";
 
-function tryLoadConfig(path?: string): OrchestratorConfig | null {
+function isMissingConfigError(error: unknown): boolean {
+  if (error instanceof ConfigNotFoundError) return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function tryLoadOptionalConfig(path: string): OrchestratorConfig | null {
   try {
-    return path ? loadConfig(path) : loadConfig();
-  } catch {
+    return loadConfig(path);
+  } catch (error) {
+    if (isMissingConfigError(error)) return null;
+    throw error;
+  }
+}
+
+function loadExistingOptionalConfig(path: string): OrchestratorConfig | null {
+  if (!existsSync(path)) {
     return null;
   }
+  return tryLoadOptionalConfig(path);
 }
 
 function withExplicitDefaults(
@@ -76,9 +95,11 @@ function mergeMissingProjects(
  */
 export function loadAllProjectsConfig(runningConfigPath?: string): OrchestratorConfig {
   const globalPath = getGlobalConfigPath();
-  const globalConfig = existsSync(globalPath) ? tryLoadConfig(globalPath) : null;
+  const globalConfig = loadExistingOptionalConfig(globalPath);
   const runningConfig =
-    runningConfigPath && runningConfigPath !== globalPath ? tryLoadConfig(runningConfigPath) : null;
+    runningConfigPath && runningConfigPath !== globalPath
+      ? loadExistingOptionalConfig(runningConfigPath)
+      : null;
 
   if (globalConfig) return mergeMissingProjects(globalConfig, runningConfig);
   if (runningConfig) return runningConfig;
