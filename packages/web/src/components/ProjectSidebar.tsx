@@ -708,6 +708,7 @@ function ProjectSidebarInner({
                       const level = getAttentionLevel(session);
                       const isSessionActive = activeSessionId === session.id;
                       const title = session.branch ?? getSessionTitle(session);
+                      const prLabel = session.pr ? `, PR #${session.pr.number}` : "";
                       const sessionHref = projectSessionPath(project.id, session.id);
                       return (
                         <a
@@ -723,7 +724,7 @@ function ProjectSidebarInner({
                             isSessionActive && "project-sidebar__sess-row--active",
                           )}
                           aria-current={isSessionActive ? "page" : undefined}
-                          aria-label={`Open ${title}`}
+                          aria-label={`Open ${title}${prLabel}`}
                         >
                           <SessionDot level={level} />
                           <div className="flex-1 min-w-0">
@@ -744,6 +745,9 @@ function ProjectSidebarInner({
                               </div>
                             ) : null}
                           </div>
+                          {session.pr ? (
+                            <span className="project-sidebar__sess-pr">#{session.pr.number}</span>
+                          ) : null}
                           {!showSessionId ? (
                             <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
                               {LEVEL_LABELS[level]}

@@ -1351,6 +1351,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-decoration: underline;
 }
 
+.topbar-pr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.topbar-pr-pill:hover {
+  text-decoration: underline;
+}
+
 /* Danger button variant (kill) */
 .dashboard-app-btn--danger {
   color: var(--color-status-error);
@@ -4529,6 +4546,21 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   white-space: nowrap;
 }
 
+.project-sidebar__sess-pr {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-primary);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* Inline status (compact variant — name + status on one line) */
 .project-sidebar__sess-status--inline {
   font-size: 10px;
@@ -7619,6 +7651,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     font-size: 9px;
     padding: 1px 5px;
     max-width: 90px;
+  }
+  .topbar-session-pills .topbar-pr-pill {
+    font-size: 9px;
+    padding: 1px 5px;
   }
   .topbar-session-pills .topbar-zone-pill {
     font-size: 9px;

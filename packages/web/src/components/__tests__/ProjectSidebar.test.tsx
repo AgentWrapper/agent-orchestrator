@@ -297,6 +297,7 @@ describe("ProjectSidebar", () => {
             branch: null,
             status: "needs_input",
             activity: "waiting_input",
+            pr: makePR({ number: 42, title: "Review API changes" }),
           }),
           makeSession({
             id: "worker-2",
@@ -312,7 +313,10 @@ describe("ProjectSidebar", () => {
     );
 
     // Session rows are now anchors (support ctrl/cmd-click to open in new tab)
-    expect(screen.getByRole("link", { name: "Open Review API changes" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open Review API changes, PR #42" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("#42")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open feat/test" })).not.toBeInTheDocument();
   });
 
@@ -399,7 +403,7 @@ describe("ProjectSidebar", () => {
 
     expect(screen.getByRole("button", { name: /^Project One 1$/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Open Runtime missing but needs review" }),
+      screen.getByRole("link", { name: "Open Runtime missing but needs review, PR #100" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open Actually finished" })).not.toBeInTheDocument();
   });
