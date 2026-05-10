@@ -370,6 +370,56 @@ describe("pollBacklog", () => {
     expect(mockUpdateIssue).toHaveBeenCalledTimes(2);
   });
 
+  it("deduplicates active backlog issues per project", async () => {
+    mockLoadConfig.mockReturnValue({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      port: 3000,
+      readyThresholdMs: 300_000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: {
+        "test-project": {
+          path: "/tmp/test-project",
+          tracker: { plugin: "github" },
+          backlog: { label: "agent:backlog", maxConcurrent: 5 },
+        },
+        "other-project": {
+          path: "/tmp/other-project",
+          tracker: { plugin: "github" },
+          backlog: { label: "agent:backlog", maxConcurrent: 5 },
+        },
+      },
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+    });
+    mockListSessions.mockResolvedValue([
+      {
+        id: "other-1",
+        projectId: "other-project",
+        issueId: "123",
+        status: "working",
+        lifecycle: { pr: { state: "none" } },
+      },
+    ]);
+    mockListIssues.mockImplementation((_query, project) =>
+      project.path === "/tmp/test-project" ? [backlogIssue("123")] : [],
+    );
+    configureBacklogRegistry();
+
+    const { pollBacklog } = await import("../lib/services");
+    await pollBacklog();
+
+    expect(mockSpawn).toHaveBeenCalledWith({
+      projectId: "test-project",
+      issueId: "123",
+    });
+    expect(mockUpdateIssue).toHaveBeenCalledWith(
+      "123",
+      expect.objectContaining({ removeLabels: ["agent:backlog"] }),
+      expect.objectContaining({ path: "/tmp/test-project" }),
+    );
+  });
+
   it("releases transient issue claims when a spawn fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockListIssues.mockResolvedValue([backlogIssue("123")]);

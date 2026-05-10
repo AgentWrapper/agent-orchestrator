@@ -181,6 +181,10 @@ function getBacklogClaimingIssues(): Set<string> {
   return globalForBacklog._aoBacklogClaimingIssues;
 }
 
+function backlogIssueKey(projectId: string, issueId: string): string {
+  return `${projectId}:${issueId.toLowerCase()}`;
+}
+
 // Track which issues we've already processed to avoid repeated API calls
 const processedIssues = new Set<string>();
 
@@ -316,7 +320,9 @@ async function pollBacklogOnce(): Promise<void> {
     );
     const activeIssueIds = new Set(
       workerSessions
-        .map((session) => session.issueId?.toLowerCase())
+        .map((session) =>
+          session.issueId ? backlogIssueKey(session.projectId, session.issueId) : null,
+        )
         .filter((issueId): issueId is string => Boolean(issueId)),
     );
     const claimingIssueIds = getBacklogClaimingIssues();
@@ -345,7 +351,7 @@ async function pollBacklogOnce(): Promise<void> {
       for (const issue of backlogIssues) {
         if (availableSlots <= 0) break;
 
-        const issueKey = issue.id.toLowerCase();
+        const issueKey = backlogIssueKey(projectId, issue.id);
 
         // Skip if already being worked on or claimed by an in-flight spawn.
         if (activeIssueIds.has(issueKey) || claimingIssueIds.has(issueKey)) continue;
