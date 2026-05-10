@@ -215,7 +215,7 @@ describe("SessionDetail desktop layout", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restore terminal" })).not.toBeInTheDocument();
     expect(
-      within(screen.getByRole("banner")).getByRole("button", { name: "Restore" }),
+      within(screen.getByRole("banner")).getByRole("button", { name: "Restore worker-ended" }),
     ).toBeInTheDocument();
     expect(
       within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
@@ -252,11 +252,15 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toHaveClass(
-      "dashboard-app-btn--restore",
-    );
     expect(
-      within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" }),
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: "Restore my-app-orchestrator",
+      }),
+    ).toHaveClass("dashboard-app-btn--restore");
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", {
+        name: "Terminate my-app-orchestrator",
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -274,7 +278,7 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore worker-restore" }));
 
     await act(async () => {});
 
@@ -371,7 +375,7 @@ describe("SessionDetail desktop layout", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+      fireEvent.click(screen.getByRole("button", { name: "Terminate worker-kill" }));
     });
 
     expect(global.fetch).toHaveBeenCalledWith("/api/sessions/worker-kill/kill", { method: "POST" });
@@ -391,7 +395,7 @@ describe("SessionDetail desktop layout", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+      fireEvent.click(screen.getByRole("button", { name: "Terminate worker-kill-dashboard" }));
     });
 
     expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app");
