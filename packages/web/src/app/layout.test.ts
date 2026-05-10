@@ -14,10 +14,10 @@ describe("app layout metadata", () => {
     ]);
   });
 
-  it("exports metadata with the project-aware title and apple web app settings", async () => {
-    const { metadata } = await import("./layout");
+  it("generates metadata with the project-aware title and apple web app settings", async () => {
+    const { generateMetadata } = await import("./layout");
 
-    expect(metadata).toMatchObject({
+    await expect(generateMetadata()).resolves.toMatchObject({
       title: {
         template: "%s | Agent Orchestrator",
         default: "ao | Agent Orchestrator",

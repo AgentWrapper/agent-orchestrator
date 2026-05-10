@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
@@ -30,6 +30,7 @@ interface ProjectSettingsResponse {
 
 export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettingsModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const backdropPointerStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectSettingsResponse["project"] | null>(null);
@@ -105,8 +106,33 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
 
   if (!open || !projectId || typeof document === "undefined") return null;
 
+  const handleBackdropPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    backdropPointerStartedRef.current = event.target === event.currentTarget;
+  };
+
+  const handleBackdropPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const releaseTarget = document.elementFromPoint(event.clientX, event.clientY);
+    const shouldClose = backdropPointerStartedRef.current && releaseTarget === event.currentTarget;
+    backdropPointerStartedRef.current = false;
+    if (shouldClose) onClose();
+  };
+
+  const handleBackdropPointerCancel = () => {
+    backdropPointerStartedRef.current = false;
+  };
+
+  const handleDialogPointerEvent = (event: PointerEvent<HTMLDivElement>) => {
+    backdropPointerStartedRef.current = false;
+    event.stopPropagation();
+  };
+
   return createPortal(
-    <div className="project-settings-modal-backdrop" onClick={onClose}>
+    <div
+      className="project-settings-modal-backdrop"
+      onPointerDown={handleBackdropPointerDown}
+      onPointerUp={handleBackdropPointerUp}
+      onPointerCancel={handleBackdropPointerCancel}
+    >
       <div
         ref={modalRef}
         role="dialog"
@@ -114,6 +140,9 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
         aria-label="Project settings"
         className="project-settings-modal"
         tabIndex={-1}
+        onPointerDown={handleDialogPointerEvent}
+        onPointerUp={handleDialogPointerEvent}
+        onPointerCancel={handleDialogPointerEvent}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="project-settings-modal__header">

@@ -6,10 +6,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const homeDir = os.homedir().replace(/\\/g, "/");
+// Next does not expose a public helper for extending the default
+// htmlLimitedBots list. Keep the default Next 15 crawler coverage here and add
+// only narrow audit UAs, avoiding private next/dist imports in runtime config.
+const nextDefaultHtmlLimitedBotsSource = String.raw`[\w-]+-Google|Google-[\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight`;
+const htmlLimitedBots = new RegExp(
+  `${nextDefaultHtmlLimitedBotsSource}|Lighthouse|PageSpeed`,
+  "i",
+);
 const nextConfig = {
-  // Keep metadata in the initial HTML for Lighthouse-style audits. The local
-  // DevTools Lighthouse runner presents as Chrome, so include Chrome here.
-  htmlLimitedBots: /Chrome|Chromium|Lighthouse|PageSpeed/i,
+  // Preserve Next's crawler list and add narrow audit UAs without matching
+  // ordinary Chrome/Chromium browser traffic.
+  htmlLimitedBots,
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@aoagents/ao-core",

@@ -482,8 +482,8 @@ function DashboardInner({
   ) : null;
 
   const anyRateLimited = useMemo(
-    () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
-    [sessions],
+    () => projectSessions.some((session) => session.pr && isPRRateLimited(session.pr)),
+    [projectSessions],
   );
   const normalizedProjectName = projectName?.trim().toLowerCase();
   const headerProjectLabel =

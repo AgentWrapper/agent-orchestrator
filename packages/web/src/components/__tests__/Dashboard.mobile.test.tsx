@@ -181,6 +181,44 @@ describe("Dashboard unified layout (mobile viewport)", () => {
     expect(screen.queryByText(/GitHub API rate limited/i)).not.toBeInTheDocument();
   });
 
+  it("keeps the rate limit banner scoped to the selected project", () => {
+    render(
+      <Dashboard
+        projectId="alpha"
+        projectName="Alpha"
+        projects={[
+          { id: "alpha", name: "Alpha" },
+          { id: "beta", name: "Beta" },
+        ]}
+        initialSessions={[
+          makeSession({
+            id: "alpha-1",
+            projectId: "alpha",
+            status: "working",
+            pr: makePR({ number: 210 }),
+          }),
+          makeSession({
+            id: "beta-1",
+            projectId: "beta",
+            status: "reviewing",
+            pr: makePR({
+              number: 211,
+              mergeability: {
+                mergeable: false,
+                ciPassing: false,
+                approved: false,
+                noConflicts: true,
+                blockers: ["API rate limited or unavailable"],
+              },
+            }),
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText(/GitHub API rate limited/i)).not.toBeInTheDocument();
+  });
+
   it("opens the done bar and restores completed sessions", async () => {
     vi.setSystemTime(new Date("2026-04-11T11:07:00.000Z"));
 
