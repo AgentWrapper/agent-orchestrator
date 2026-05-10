@@ -166,10 +166,10 @@ export function useXtermTerminal(
         };
         // Feature-detect addEventListener — jsdom's document.fonts mock lacks it.
         const fontsFace = typeof document !== "undefined" ? document.fonts : undefined;
-        const fontsListenerAttached =
-          !!fontsFace && typeof fontsFace.addEventListener === "function";
-        if (fontsListenerAttached) {
-          fontsFace!.addEventListener("loadingdone", handleFontsLoadingDone);
+        let fontsListenerAttached = false;
+        if (fontsFace && typeof fontsFace.addEventListener === "function") {
+          fontsFace.addEventListener("loadingdone", handleFontsLoadingDone);
+          fontsListenerAttached = true;
         }
 
         // Touch scroll on mobile — disables follow-output while user scrolls.

@@ -19,9 +19,7 @@ export async function generateMetadata(props: {
   };
 }
 
-export default async function ProjectPage(props: {
-  params: Promise<{ projectId: string }>;
-}) {
+export default async function ProjectPage(props: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await props.params;
   const routeData = await getProjectRouteData(projectId);
 
@@ -39,19 +37,19 @@ export default async function ProjectPage(props: {
     );
   }
 
-  const pageData = await getDashboardPageData(projectId);
-  const sidebarData = await getDashboardPageData("all");
+  const pageData = await getDashboardPageData("all");
+  const projectName = routeData.project?.name ?? routeData.projectId;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-canvas)]">
       <Dashboard
-        initialSessions={sidebarData.sessions}
-        projectId={pageData.selectedProjectId}
-        projectName={pageData.projectName}
+        initialSessions={pageData.sessions}
+        projectId={routeData.projectId}
+        projectName={projectName}
         projects={pageData.projects}
-        orchestrators={sidebarData.orchestrators}
+        orchestrators={pageData.orchestrators}
         attentionZones={pageData.attentionZones}
-        dashboardLoadError={pageData.dashboardLoadError ?? sidebarData.dashboardLoadError}
+        dashboardLoadError={pageData.dashboardLoadError}
       />
     </div>
   );

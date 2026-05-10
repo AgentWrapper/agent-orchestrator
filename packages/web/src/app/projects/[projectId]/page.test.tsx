@@ -65,49 +65,40 @@ describe("ProjectPage", () => {
 
   it("passes all-project sessions to the dashboard while keeping the selected project context", async () => {
     hoisted.getProjectRouteDataMock.mockResolvedValue({
-      projectId: "nebula",
-      project: { id: "nebula", name: "Nebula" },
+      projectId: "alpha",
+      project: { id: "alpha", name: "Alpha" },
       projects: [
-        { id: "nebula", name: "Nebula" },
-        { id: "other", name: "Other" },
+        { id: "alpha", name: "Alpha" },
+        { id: "beta", name: "Beta" },
       ],
       degradedProject: null,
     });
-    const selectedProjectData = {
-      sessions: [{ id: "neb-1" }],
-      orchestrators: [{ id: "orch-neb", projectId: "nebula" }],
-      projectName: "Nebula",
-      projects: [
-        { id: "nebula", name: "Nebula" },
-        { id: "other", name: "Other" },
-      ],
-      selectedProjectId: "nebula",
-      attentionZones: "simple",
-    };
     const allProjectData = {
-      ...selectedProjectData,
-      sessions: [{ id: "neb-1" }, { id: "other-1" }],
+      sessions: [{ id: "alpha-1" }, { id: "beta-1" }],
       orchestrators: [
-        { id: "orch-neb", projectId: "nebula" },
-        { id: "orch-other", projectId: "other" },
+        { id: "orch-alpha", projectId: "alpha" },
+        { id: "orch-beta", projectId: "beta" },
+      ],
+      projects: [
+        { id: "alpha", name: "Alpha" },
+        { id: "beta", name: "Beta" },
       ],
       projectName: "All Projects",
       selectedProjectId: undefined,
+      attentionZones: "simple",
     };
-    hoisted.getDashboardPageDataMock.mockImplementation(async (project?: string) =>
-      project === "all" ? allProjectData : selectedProjectData,
-    );
+    hoisted.getDashboardPageDataMock.mockResolvedValue(allProjectData);
 
-    render(await ProjectPage({ params: Promise.resolve({ projectId: "nebula" }) }));
+    render(await ProjectPage({ params: Promise.resolve({ projectId: "alpha" }) }));
 
-    expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledWith("nebula");
+    expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledTimes(1);
     expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledWith("all");
     expect(hoisted.dashboardPropsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         initialSessions: allProjectData.sessions,
         orchestrators: allProjectData.orchestrators,
-        projectId: "nebula",
-        projectName: "Nebula",
+        projectId: "alpha",
+        projectName: "Alpha",
       }),
     );
   });

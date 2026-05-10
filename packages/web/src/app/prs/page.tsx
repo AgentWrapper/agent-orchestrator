@@ -25,18 +25,16 @@ export default async function PullRequestsRoute(props: {
 }) {
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
-  const pageData = await getDashboardPageData(projectFilter);
-  const sidebarData = pageData.selectedProjectId
-    ? await getDashboardPageData("all")
-    : pageData;
+  const pageData = await getDashboardPageData("all");
+  const selectedProjectId = projectFilter === "all" ? undefined : projectFilter;
 
   return (
     <PullRequestsPage
-      initialSessions={sidebarData.sessions}
-      projectId={pageData.selectedProjectId}
-      projectName={pageData.projectName}
+      initialSessions={pageData.sessions}
+      projectId={selectedProjectId}
+      projectName={getDashboardProjectName(projectFilter)}
       projects={pageData.projects}
-      orchestrators={sidebarData.orchestrators}
+      orchestrators={pageData.orchestrators}
       attentionZones={pageData.attentionZones}
     />
   );

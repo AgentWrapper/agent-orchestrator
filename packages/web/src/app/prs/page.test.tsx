@@ -5,7 +5,7 @@ const hoisted = vi.hoisted(() => ({
   getDashboardPageDataMock: vi.fn(),
   getDashboardProjectNameMock: vi.fn(),
   resolveDashboardProjectFilterMock: vi.fn(),
-  dashboardPropsMock: vi.fn(),
+  pullRequestsPagePropsMock: vi.fn(),
 }));
 
 vi.mock("@/lib/dashboard-page-data", () => ({
@@ -14,21 +14,21 @@ vi.mock("@/lib/dashboard-page-data", () => ({
   resolveDashboardProjectFilter: hoisted.resolveDashboardProjectFilterMock,
 }));
 
-vi.mock("@/components/Dashboard", () => ({
-  Dashboard: (props: Record<string, unknown>) => {
-    hoisted.dashboardPropsMock(props);
-    return <div data-testid="dashboard" />;
+vi.mock("@/components/PullRequestsPage", () => ({
+  PullRequestsPage: (props: Record<string, unknown>) => {
+    hoisted.pullRequestsPagePropsMock(props);
+    return <div data-testid="pull-requests-page" />;
   },
 }));
 
-import Home from "./page";
+import PullRequestsRoute from "./page";
 
-describe("Home dashboard route", () => {
+describe("PullRequestsRoute", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("keeps the selected project context but seeds Dashboard with all-project sidebar data", async () => {
+  it("loads all sessions once and keeps the selected project context for client filtering", async () => {
     hoisted.resolveDashboardProjectFilterMock.mockReturnValue("alpha");
     hoisted.getDashboardProjectNameMock.mockReturnValue("Alpha");
     const allProjectData = {
@@ -47,13 +47,13 @@ describe("Home dashboard route", () => {
     };
     hoisted.getDashboardPageDataMock.mockResolvedValue(allProjectData);
 
-    render(await Home({ searchParams: Promise.resolve({ project: "alpha" }) }));
+    render(await PullRequestsRoute({ searchParams: Promise.resolve({ project: "alpha" }) }));
 
     expect(hoisted.resolveDashboardProjectFilterMock).toHaveBeenCalledWith("alpha");
     expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledTimes(1);
     expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledWith("all");
     expect(hoisted.getDashboardProjectNameMock).toHaveBeenCalledWith("alpha");
-    expect(hoisted.dashboardPropsMock).toHaveBeenCalledWith(
+    expect(hoisted.pullRequestsPagePropsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         initialSessions: allProjectData.sessions,
         orchestrators: allProjectData.orchestrators,
