@@ -31,8 +31,11 @@ vi.mock("node:child_process", () => {
 });
 
 vi.mock("node:fs", () => ({
+  cpSync: vi.fn(),
   existsSync: vi.fn(() => false),
+  linkSync: vi.fn(),
   lstatSync: vi.fn(),
+  statSync: vi.fn(),
   symlinkSync: vi.fn(),
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -43,11 +46,7 @@ vi.mock("node:os", () => ({ homedir: () => "/mock-home" }));
 
 import * as childProcess from "node:child_process";
 import { create } from "../index.js";
-import type {
-  ProjectConfig,
-  WorkspaceCreateConfig,
-  WorkspaceInfo,
-} from "@aoagents/ao-core/types";
+import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@aoagents/ao-core/types";
 
 const mockExecFileAsync = (childProcess.execFile as unknown as Record<symbol, unknown>)[
   Symbol.for("nodejs.util.promisify.custom")
@@ -140,9 +139,13 @@ describe("workspace.branch_collision (SHOULD emit)", () => {
     mockExecFileAsync.mockRejectedValueOnce(
       new Error("fatal: a branch named 'feat/TEST-1' already exists"),
     );
+    // rev-parse baseRef for stale-branch comparison
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "abc\n", stderr: "" });
+    // refExists(branchRef) -> true
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "refs/heads/feat/TEST-1\n", stderr: "" });
+    // rev-parse existing branch -> same as base, so reuse it
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "abc\n", stderr: "" });
     // git worktree add (without -b) — succeeds
-    mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
-    // git checkout <branch> in worktree — succeeds
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
 
     await ws.create(makeCreateConfig());
@@ -157,6 +160,7 @@ describe("workspace.branch_collision (SHOULD emit)", () => {
         data: expect.objectContaining({
           plugin: "workspace-worktree",
           branch: "feat/TEST-1",
+          errorMessage: expect.stringContaining("already exists"),
         }),
       }),
     );
@@ -179,6 +183,7 @@ describe("workspace.destroy_fell_back (SHOULD emit)", () => {
         level: "warn",
         data: expect.objectContaining({
           plugin: "workspace-worktree",
+          workspacePath: "/some/stale/path",
           errorMessage: expect.stringContaining("not a git repository"),
         }),
       }),

@@ -9,15 +9,15 @@
  */
 
 import { request } from "node:https";
-import { recordActivityEvent } from "@aoagents/ao-core";
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  recordActivityEvent,
+  type CreateIssueInput,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type PluginModule,
+  type ProjectConfig,
+  type Tracker,
 } from "@aoagents/ao-core";
 import type { Composio } from "@composio/core";
 

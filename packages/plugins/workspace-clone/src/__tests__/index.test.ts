@@ -3,16 +3,26 @@ import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import type { ProjectConfig } from "@aoagents/ao-core";
 
+const { getShellMock, recordActivityEventMock } = vi.hoisted(() => ({
+  getShellMock: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
+  recordActivityEventMock: vi.fn(),
+}));
+
+vi.mock("@aoagents/ao-core", async () => {
+  const actual = (await vi.importActual("@aoagents/ao-core")) as Record<string, unknown>;
+  return {
+    ...actual,
+    getShell: getShellMock,
+    recordActivityEvent: recordActivityEventMock,
+  };
+});
+
 // Mock node:child_process with custom promisify support
 vi.mock("node:child_process", () => {
   const mockExecFile = vi.fn();
   (mockExecFile as any)[Symbol.for("nodejs.util.promisify.custom")] = vi.fn();
   return { execFile: mockExecFile };
 });
-
-vi.mock("@aoagents/ao-core", () => ({
-  getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
-}));
 
 // Mock node:fs
 vi.mock("node:fs", () => ({
@@ -267,7 +277,46 @@ describe("workspace.create()", () => {
       cwd: "/mock-home/.ao-clones/proj/sess",
     });
 
+    expect(recordActivityEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "workspace",
+        kind: "workspace.branch_collision",
+        level: "warn",
+        projectId: "proj",
+        sessionId: "sess",
+        data: expect.objectContaining({
+          plugin: "workspace-clone",
+          branch: "feat/existing",
+          errorMessage: expect.stringContaining("already exists"),
+        }),
+      }),
+    );
     expect(info.branch).toBe("feat/existing");
+  });
+
+  it("does not emit branch_collision when checkout -b fails for a non-collision reason", async () => {
+    const workspace = create();
+
+    mockGitSuccess("https://github.com/test/repo.git");
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    mockGitSuccess("");
+    // git checkout -b fails for a non-collision reason
+    mockGitError("fatal: cannot lock ref 'refs/heads/feat/locked': Permission denied");
+    // git checkout (plain) succeeds
+    mockGitSuccess("");
+
+    const info = await workspace.create({
+      projectId: "proj",
+      sessionId: "sess",
+      branch: "feat/locked",
+      project: makeProject(),
+    });
+
+    expect(info.branch).toBe("feat/locked");
+    const branchCollisionCalls = recordActivityEventMock.mock.calls.filter(
+      ([event]) => event.kind === "workspace.branch_collision",
+    );
+    expect(branchCollisionCalls).toHaveLength(0);
   });
 
   it("cleans up partial clone on clone failure", async () => {

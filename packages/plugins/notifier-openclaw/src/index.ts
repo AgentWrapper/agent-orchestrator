@@ -40,6 +40,12 @@ export const manifest = {
 };
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const UNREACHABLE_NETWORK_ERROR_CODES = [
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "ENETUNREACH",
+] as const;
 
 type WakeMode = "now" | "next-heartbeat";
 
@@ -118,6 +124,10 @@ function recordHealthFailure(path: string | null, error: unknown): void {
   writeHealthSummary(path, summary);
 }
 
+function isUnreachableNetworkError(error: Error): boolean {
+  return UNREACHABLE_NETWORK_ERROR_CODES.some((code) => error.message.includes(code));
+}
+
 async function postWithRetry(
   url: string,
   payload: OpenClawWebhookPayload,
@@ -181,7 +191,7 @@ async function postWithRetry(
       if (err === lastError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
 
-      if (lastError.message.includes("ECONNREFUSED")) {
+      if (isUnreachableNetworkError(lastError)) {
         recordActivityEvent({
           sessionId: context.sessionId,
           source: "notifier",

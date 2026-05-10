@@ -7,10 +7,10 @@ import {
   getShell,
   recordActivityEvent,
   type PluginModule,
+  type ProjectConfig,
   type Workspace,
   type WorkspaceCreateConfig,
   type WorkspaceInfo,
-  type ProjectConfig,
 } from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);

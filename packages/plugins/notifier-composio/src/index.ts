@@ -1,11 +1,11 @@
-import { recordActivityEvent } from "@aoagents/ao-core";
-import type {
-  PluginModule,
-  Notifier,
-  OrchestratorEvent,
-  NotifyAction,
-  NotifyContext,
-  EventPriority,
+import {
+  recordActivityEvent,
+  type EventPriority,
+  type Notifier,
+  type NotifyAction,
+  type NotifyContext,
+  type OrchestratorEvent,
+  type PluginModule,
 } from "@aoagents/ao-core";
 
 // Module-level guard so we only emit notifier.dep_missing once per process.

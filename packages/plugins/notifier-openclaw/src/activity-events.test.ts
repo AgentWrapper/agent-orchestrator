@@ -89,29 +89,46 @@ describe("notifier.auth_failed (MUST emit)", () => {
 });
 
 describe("notifier.unreachable (SHOULD emit)", () => {
-  it("emits on ECONNREFUSED (distinct from notifier.auth_failed)", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+  it.each(["ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "ENETUNREACH"])(
+    "emits on %s (distinct from notifier.auth_failed)",
+    async (code) => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error(`fetch failed: ${code}`));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const notifier = create({ token: "tok", retries: 0 });
+      await expect(notifier.notify(makeEvent())).rejects.toThrow(/Can't reach OpenClaw gateway/);
+
+      expect(recordActivityEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "notifier",
+          kind: "notifier.unreachable",
+          level: "warn",
+          sessionId: "ao-5",
+          data: expect.objectContaining({
+            plugin: "notifier-openclaw",
+            errorMessage: expect.stringContaining(code),
+          }),
+        }),
+      );
+
+      // Critically: should NOT also fire auth_failed — distinct shapes.
+      const authFailedCalls = recordActivityEventMock.mock.calls.filter(
+        ([event]) => event.kind === "notifier.auth_failed",
+      );
+      expect(authFailedCalls).toHaveLength(0);
+    },
+  );
+
+  it("does not emit unreachable for unrelated network errors", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed: certificate expired"));
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ token: "tok", retries: 0 });
-    await expect(notifier.notify(makeEvent())).rejects.toThrow(/Can't reach OpenClaw gateway/);
+    await expect(notifier.notify(makeEvent())).rejects.toThrow(/fetch failed: certificate expired/);
 
-    expect(recordActivityEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "notifier",
-        kind: "notifier.unreachable",
-        level: "warn",
-        sessionId: "ao-5",
-        data: expect.objectContaining({
-          plugin: "notifier-openclaw",
-        }),
-      }),
+    const unreachableCalls = recordActivityEventMock.mock.calls.filter(
+      ([event]) => event.kind === "notifier.unreachable",
     );
-
-    // Critically: should NOT also fire auth_failed — distinct shapes.
-    const authFailedCalls = recordActivityEventMock.mock.calls.filter(
-      ([event]) => event.kind === "notifier.auth_failed",
-    );
-    expect(authFailedCalls).toHaveLength(0);
+    expect(unreachableCalls).toHaveLength(0);
   });
 });
