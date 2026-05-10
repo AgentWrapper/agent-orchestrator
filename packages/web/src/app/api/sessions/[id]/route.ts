@@ -38,16 +38,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       await settlesWithin(auditPromise, AGENT_REPORT_AUDIT_TIMEOUT_MS);
     }
 
+    // PR enrichment reads already-loaded session metadata, so do not gate it
+    // behind slower tracker/agent enrichment. This mirrors the list route and
+    // keeps PR display fields stable if metadata enrichment times out.
+    if (coreSession.pr) {
+      enrichSessionPR(dashboardSession);
+    }
+
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await settlesWithin(
       enrichSessionsMetadata([coreSession], [dashboardSession], config, registry),
       METADATA_ENRICH_TIMEOUT_MS,
     );
-
-    // Enrich PR from session metadata (written by CLI lifecycle)
-    if (coreSession.pr) {
-      enrichSessionPR(dashboardSession);
-    }
 
     recordApiObservation({
       config,

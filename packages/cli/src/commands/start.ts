@@ -1018,13 +1018,11 @@ async function runStartup(
           if (allRestoreSessions.length > 0) {
             const shouldRestore = await promptConfirm("Restore these sessions?", true);
             if (shouldRestore) {
-              // Use global config so the session manager can see all projects
+              // Use merged all-project config so the session manager can see
+              // global projects plus any local-only projects captured by stop.
               let restoreConfig = config;
               if (otherProjects.length > 0) {
-                const globalPath = getGlobalConfigPath();
-                if (existsSync(globalPath)) {
-                  restoreConfig = loadConfig(globalPath);
-                }
+                restoreConfig = loadAllProjectsConfig(config.configPath);
               }
               const sm = await getSessionManager(restoreConfig);
               const restoreSpinner = ora(
@@ -1256,7 +1254,7 @@ async function killDashboardOnPort(port: number): Promise<boolean> {
   }
 }
 
-async function stopDashboard(port: number): Promise<void> {
+async function stopDashboard(port: number, options?: { parentStopped?: boolean }): Promise<void> {
   // 1. Try the expected port — verify it's a dashboard before killing
   if (await killDashboardOnPort(port)) {
     console.log(chalk.green("Dashboard stopped"));
@@ -1272,6 +1270,11 @@ async function stopDashboard(port: number): Promise<void> {
       console.log(chalk.green(`Dashboard stopped (was on port ${p})`));
       return;
     }
+  }
+
+  if (options?.parentStopped) {
+    console.log(chalk.green("Dashboard stopped"));
+    return;
   }
 
   console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
@@ -1901,6 +1904,7 @@ export function registerStop(program: Command): void {
           // triggers the shared shutdown handler in `lifecycle-service`, which
           // stops every per-project loop. No explicit stop call needed here —
           // this CLI invocation is a separate process with an empty active map.
+          const parentStopped = Boolean(running);
           if (running) {
             // Sweep detached Windows pty-hosts BEFORE killing the parent.
             // detached:true puts them outside the parent's process tree, so
@@ -1911,7 +1915,7 @@ export function registerStop(program: Command): void {
             await killProcessTree(running.pid, "SIGTERM");
             await unregister();
           }
-          await stopDashboard(running?.port ?? port);
+          await stopDashboard(running?.port ?? port, { parentStopped });
         }
         // Targeted stop deliberately does NOT edit `running.json` from this
         // child CLI process. The long-lived parent supervises lifecycle

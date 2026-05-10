@@ -840,6 +840,59 @@ describe("get", () => {
     expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
   });
 
+  it("periodically refreshes cached Codex sessions with live agent info", async () => {
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "live codex summary",
+        summaryIsFallback: false,
+        agentSessionId: "thread-123",
+        metadata: { codexThreadId: "thread-123", codexModel: "gpt-5.5" },
+      }),
+    };
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return codexAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      codexThreadId: "thread-123",
+      codexModel: "gpt-5.5",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithCodex });
+
+    for (let i = 1; i <= 3; i++) {
+      await sm.listCached("my-app");
+      await vi.waitFor(() => expect(codexAgent.getActivityState).toHaveBeenCalledTimes(i));
+      expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+      sm.invalidateCache();
+    }
+
+    await sm.listCached("my-app");
+    await vi.waitFor(() => expect(codexAgent.getSessionInfo).toHaveBeenCalledTimes(1));
+    const sessions = await sm.listCached("my-app");
+
+    expect(sessions[0]?.agentInfo).toMatchObject({
+      summary: "live codex summary",
+      summaryIsFallback: false,
+      agentSessionId: "thread-123",
+    });
+  });
+
   it("does not let cached refresh dedupe downgrade fresh list enrichment", async () => {
     const activityResolvers: Array<(value: { state: "idle" }) => void> = [];
     const codexAgent: Agent = {

@@ -2070,6 +2070,37 @@ describe("stop command", () => {
     }
   });
 
+  it("does not warn about dashboard port fallback after killing the registered parent on Windows", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockGetRunning.mockResolvedValue({
+        pid: 99999,
+        configPath: "/fake/config.yaml",
+        port: 3000,
+        startedAt: new Date().toISOString(),
+        projects: ["my-app"],
+      });
+      mockSessionManager.listStored.mockResolvedValue([]);
+      mockFindPidByPort.mockResolvedValue("88888");
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("Dashboard stopped");
+      expect(output).not.toContain("Could not stop dashboard");
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+  });
+
   it.runIf(isWindows())(
     "does not kill a reassigned port listener on Windows without dashboard ownership proof",
     async () => {

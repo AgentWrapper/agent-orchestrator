@@ -104,6 +104,7 @@ const multiProjectSessions: Session[] = [
 
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
+  listStored: vi.fn(async () => testSessions),
   listCached: vi.fn(async () => testSessions),
   invalidateCache: vi.fn(),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
@@ -237,6 +238,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Re-set default return values
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
+  (mockSessionManager.listStored as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
@@ -1433,7 +1435,8 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
       expect(data.sessions.length).toBe(testSessions.length);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith(undefined);
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith(undefined);
+      expect(mockSessionManager.listCached).not.toHaveBeenCalled();
       expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
@@ -1456,7 +1459,8 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalled();
       expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 

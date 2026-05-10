@@ -521,6 +521,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   } | null = null;
   let sessionCacheRefreshPromise: Promise<Session[]> | null = null;
   let sessionCacheGeneration = 0;
+  let sessionCacheRefreshCount = 0;
   const ensureOrchestratorPromises = new Map<string, Promise<Session>>();
   const boundedEnrichmentPromises = new Map<
     string,
@@ -2355,7 +2356,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   function refreshSessionCache(): Promise<Session[]> {
     if (sessionCacheRefreshPromise) return sessionCacheRefreshPromise;
     const generation = sessionCacheGeneration;
-    sessionCacheRefreshPromise = list(undefined, { preferCachedAgentInfo: true })
+    sessionCacheRefreshCount += 1;
+    // Most background refreshes use cached Codex metadata to keep passive
+    // dashboard reads cheap. Periodically run a live agent-info pass so cached
+    // dashboards converge from fallback Codex summaries to real session info.
+    const preferCachedAgentInfo = sessionCacheRefreshCount % 4 !== 0;
+    sessionCacheRefreshPromise = list(undefined, { preferCachedAgentInfo })
       .then((sessions) => {
         if (sessionCacheGeneration === generation) {
           sessionCache = {
