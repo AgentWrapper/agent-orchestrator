@@ -115,6 +115,23 @@ describe("AddProjectModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("closes when Escape is pressed inside the dialog", async () => {
+    const onClose = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ entries: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AddProjectModal open onClose={onClose} />);
+
+    fireEvent.keyDown(await screen.findByRole("dialog", { name: /add project/i }), {
+      key: "Escape",
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("offers opening the existing project or using a suffixed project ID when the server returns 409", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

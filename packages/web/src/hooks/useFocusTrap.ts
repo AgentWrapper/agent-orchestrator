@@ -13,8 +13,24 @@ const FOCUSABLE_SELECTOR = [
 
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (element) => element.tabIndex !== -1 && !element.hasAttribute("disabled"),
+    (element) =>
+      element.tabIndex !== -1 && !element.hasAttribute("disabled") && !isHiddenFromFocus(element),
   );
+}
+
+function isHiddenFromFocus(element: HTMLElement): boolean {
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (current.hidden || current.getAttribute("aria-hidden") === "true") return true;
+    const style = window.getComputedStyle(current);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.visibility === "collapse"
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElement | null>) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
@@ -126,6 +126,13 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
     event.stopPropagation();
   };
 
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  };
+
   return createPortal(
     <div
       className="project-settings-modal-backdrop"
@@ -143,6 +150,7 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
         onPointerDown={handleDialogPointerEvent}
         onPointerUp={handleDialogPointerEvent}
         onPointerCancel={handleDialogPointerEvent}
+        onKeyDown={handleDialogKeyDown}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="project-settings-modal__header">

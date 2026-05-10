@@ -52,4 +52,16 @@ describe("ProjectSettingsModal", () => {
     fireEvent.pointerUp(backdrop, { clientX: 4, clientY: 4 });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("closes when Escape is pressed inside the dialog", async () => {
+    const onClose = vi.fn();
+
+    render(<ProjectSettingsModal open projectId="alpha" onClose={onClose} />);
+
+    fireEvent.keyDown(await screen.findByRole("dialog", { name: /project settings/i }), {
+      key: "Escape",
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

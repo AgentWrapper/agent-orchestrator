@@ -1,6 +1,6 @@
 "use client";
 
-import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
@@ -275,6 +275,13 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     event.stopPropagation();
   };
 
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  };
+
   const navigateHistory = (nextIndex: number) => {
     if (nextIndex < 0 || nextIndex >= browseHistory.length) return;
     setBrowseHistoryIndex(nextIndex);
@@ -319,6 +326,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         onPointerDown={handleDialogPointerEvent}
         onPointerUp={handleDialogPointerEvent}
         onPointerCancel={handleDialogPointerEvent}
+        onKeyDown={handleDialogKeyDown}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="add-project-modal__titlebar">
