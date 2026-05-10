@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { isWindows } from "@aoagents/ao-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { GET as browseGET } from "@/app/api/filesystem/browse/route";
@@ -68,7 +69,7 @@ describe("/api/filesystem/browse", () => {
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
-  it.skipIf(process.platform === "win32")("returns 400 for an absolute path outside HOME", async () => {
+  it.skipIf(isWindows())("returns 400 for an absolute path outside HOME", async () => {
     // Pick an absolute path outside HOME that actually exists on the platform —
     // `/etc` exists on POSIX. The route's realpath() resolves first, so a
     // non-existent path returns 404 (not 400) before the outside-root check fires.
@@ -81,7 +82,7 @@ describe("/api/filesystem/browse", () => {
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
-  it.runIf(process.platform === "win32")("allows an absolute path outside HOME on Windows", async () => {
+  it.runIf(isWindows())("allows an absolute path outside HOME on Windows", async () => {
     const response = await browseGET(
       makeRequest(`/api/filesystem/browse?path=${encodeURIComponent(outsideDir)}`),
     );
@@ -99,7 +100,7 @@ describe("/api/filesystem/browse", () => {
 
   // Skipped on Windows: symlinkSync requires admin or Developer Mode on win32
   // and is not portable in CI. The Linux/macOS path covers the symlink check.
-  it.skipIf(process.platform === "win32")("returns 400 for a symlink inside HOME that points outside", async () => {
+  it.skipIf(isWindows())("returns 400 for a symlink inside HOME that points outside", async () => {
     const outsideRepo = path.join(outsideDir, "external-repo");
     mkdirSync(outsideRepo);
     symlinkSync(outsideRepo, path.join(homeDir, "external-link"));

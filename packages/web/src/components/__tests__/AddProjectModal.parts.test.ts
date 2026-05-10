@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveProjectIdFromPath,
   deriveProjectNameFromPath,
+  getBreadcrumbs,
   getParentBrowsePath,
   joinBrowsePath,
 } from "@/components/AddProjectModal.parts";
@@ -18,5 +19,13 @@ describe("AddProjectModal path helpers", () => {
     expect(getParentBrowsePath("D:\\projects\\my-repo")).toBe("D:\\projects");
     expect(getParentBrowsePath("D:\\projects")).toBe("D:\\");
     expect(getParentBrowsePath("D:\\")).toBeNull();
+  });
+
+  it("builds Windows breadcrumbs from the drive root", () => {
+    expect(getBreadcrumbs("D:\\projects\\my-repo")).toEqual([
+      { label: "D:", path: "D:\\" },
+      { label: "projects", path: "D:\\projects" },
+      { label: "my-repo", path: "D:\\projects\\my-repo" },
+    ]);
   });
 });

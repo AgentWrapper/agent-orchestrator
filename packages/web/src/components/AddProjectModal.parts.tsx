@@ -51,6 +51,23 @@ export function getParentBrowsePath(currentPath: string): string | null {
 
 export function getBreadcrumbs(currentPath: string): Array<{ label: string; path: string }> {
   if (currentPath === "~") return [{ label: "home", path: "~" }];
+  if (WINDOWS_DRIVE_ROOT_PATTERN.test(currentPath)) {
+    const separator = preferredSeparator(currentPath);
+    const label = currentPath.slice(0, 2);
+    return [{ label, path: `${label}${separator}` }];
+  }
+  if (WINDOWS_ABSOLUTE_PATTERN.test(currentPath)) {
+    const separator = preferredSeparator(currentPath);
+    const parts = trimBrowsePathEnd(currentPath).split(/[\\/]+/).filter(Boolean);
+    const drive = parts[0] ?? currentPath.slice(0, 2);
+    let running = `${drive}${separator}`;
+    const crumbs: Array<{ label: string; path: string }> = [{ label: drive, path: running }];
+    for (const part of parts.slice(1)) {
+      running = joinBrowsePath(running, part);
+      crumbs.push({ label: part, path: running });
+    }
+    return crumbs;
+  }
   const parts = currentPath.split(/[\\/]+/).filter(Boolean);
   const crumbs: Array<{ label: string; path: string }> = [{ label: "home", path: "~" }];
   let running = "~";
