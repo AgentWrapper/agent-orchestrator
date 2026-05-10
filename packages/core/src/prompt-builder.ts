@@ -44,6 +44,14 @@ Rules:
 - A fresh report is trusted over weak inference but runtime death, activity-based waiting_input, and SCM events (merged/closed PR, CI failure, reviews) still take precedence.
 - Use \`--note "<text>"\` to attach a short rationale when the state change is non-obvious.
 
+## Talking to the Orchestrator
+If \`AO_ORCHESTRATOR_SESSION_ID\` is set in your env, you can message the orchestrator session that spawned you:
+
+\`ao send $AO_ORCHESTRATOR_SESSION_ID "[from $AO_SESSION_ID] <your message>"\`
+
+- **Only do this when you genuinely cannot proceed alone** — e.g. cross-session coordination, a decision only the human-facing orchestrator can make, or a blocker outside your repo's scope. Do NOT ping for things you can resolve yourself (research, retries, normal CI/review fixes go through \`ao report\` and the existing flow).
+- **Always prefix your message with \`[from $AO_SESSION_ID]\`** — the orchestrator receives your text as raw input with no \`from:\` metadata and won't otherwise know who's writing.
+
 ## Git Workflow
 - Always create a feature branch from the default branch (never commit directly to it).
 - Use conventional commit messages (feat:, fix:, chore:, etc.).
@@ -70,6 +78,11 @@ Explicit reports help the orchestrator track your state accurately. Run these fr
 - \`ao report pr-created --pr-url <url>\` or \`draft-pr-created\` / \`ready-for-review\` — declare non-terminal PR workflow events when relevant.
 - \`ao report completed\` — finish non-coding research or analysis work.
 Do NOT self-report \`done\` or \`terminated\` — AO owns those transitions.
+
+## Talking to the Orchestrator
+If \`AO_ORCHESTRATOR_SESSION_ID\` is set, you can message the orchestrator that spawned you:
+\`ao send $AO_ORCHESTRATOR_SESSION_ID "[from $AO_SESSION_ID] <your message>"\`
+Only ping when you genuinely cannot proceed alone. Always prefix with \`[from $AO_SESSION_ID]\` — there is no \`from:\` metadata.
 
 ## Git Workflow
 - Always create a feature branch from the default branch (never commit directly to it).

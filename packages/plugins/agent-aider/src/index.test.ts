@@ -241,6 +241,15 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("sets AO_ORCHESTRATOR_SESSION_ID when provided, omits when not", () => {
+    expect(
+      agent.getEnvironment(makeLaunchConfig({ orchestratorSessionId: "myproj-orchestrator" }))[
+        "AO_ORCHESTRATOR_SESSION_ID"
+      ],
+    ).toBe("myproj-orchestrator");
+    expect(agent.getEnvironment(makeLaunchConfig())["AO_ORCHESTRATOR_SESSION_ID"]).toBeUndefined();
+  });
 });
 
 // =========================================================================

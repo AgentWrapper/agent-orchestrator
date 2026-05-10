@@ -1283,6 +1283,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       const agentLaunchConfig = {
         sessionId,
+        orchestratorSessionId: `${project.sessionPrefix}-orchestrator`,
         projectConfig: {
           ...project,
           agentConfig: {
@@ -2891,6 +2892,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const agentLaunchConfig = {
       sessionId,
+      ...(selection.role !== "orchestrator" && {
+        orchestratorSessionId: `${project.sessionPrefix}-orchestrator`,
+      }),
       projectConfig: projectConfigForLaunch,
       workspacePath,
       issueId: session.issueId ?? undefined,

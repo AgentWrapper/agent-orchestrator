@@ -195,6 +195,9 @@ function createKimicodeAgent(): Agent {
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
       const env: Record<string, string> = {};
       env["AO_SESSION_ID"] = config.sessionId;
+      if (config.orchestratorSessionId) {
+        env["AO_ORCHESTRATOR_SESSION_ID"] = config.orchestratorSessionId;
+      }
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }

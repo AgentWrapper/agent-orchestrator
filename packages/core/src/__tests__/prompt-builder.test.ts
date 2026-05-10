@@ -72,6 +72,23 @@ describe("buildPrompt split output", () => {
 
     expect(taskPrompt).toBeUndefined();
   });
+
+  it("teaches workers to message the orchestrator via AO_ORCHESTRATOR_SESSION_ID", () => {
+    const { systemPrompt } = buildPrompt({ project, projectId: "test-app" });
+    expect(systemPrompt).toContain("AO_ORCHESTRATOR_SESSION_ID");
+    expect(systemPrompt).toContain("ao send $AO_ORCHESTRATOR_SESSION_ID");
+    expect(systemPrompt).toContain("[from $AO_SESSION_ID]");
+  });
+
+  it("teaches the same in the no-repo prompt variant", () => {
+    const { systemPrompt } = buildPrompt({
+      project: { ...project, repo: undefined },
+      projectId: "test-app",
+    });
+    expect(systemPrompt).toContain(BASE_AGENT_PROMPT_NO_REPO);
+    expect(systemPrompt).toContain("AO_ORCHESTRATOR_SESSION_ID");
+    expect(systemPrompt).toContain("[from $AO_SESSION_ID]");
+  });
 });
 
 describe("buildPrompt", () => {

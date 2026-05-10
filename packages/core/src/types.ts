@@ -548,6 +548,14 @@ export interface Agent {
 
 export interface AgentLaunchConfig {
   sessionId: SessionId;
+  /**
+   * Session ID of the orchestrator that spawned this worker, when applicable.
+   * Surfaced to the agent process as the `AO_ORCHESTRATOR_SESSION_ID` env var
+   * so workers can reach back via `ao send`. Unset for orchestrator sessions
+   * themselves (an orchestrator is not its own parent) and for ad-hoc sessions
+   * spawned without an orchestrator.
+   */
+  orchestratorSessionId?: SessionId;
   projectConfig: ProjectConfig;
   /**
    * Per-session workspace path. Differs from `projectConfig.path` when the

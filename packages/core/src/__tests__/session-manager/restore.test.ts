@@ -406,6 +406,44 @@ describe("restore", () => {
     expect(meta?.["opencodeSessionId"]).toBe("ses_restore_discovered");
   }, 15000);
 
+  it("passes orchestratorSessionId when restoring worker sessions but not orchestrators", async () => {
+    const workerWs = join(tmpDir, "ws-app-1-osi-worker");
+    const orchWs = join(tmpDir, "ws-app-orchestrator-osi");
+    mkdirSync(workerWs, { recursive: true });
+    mkdirSync(orchWs, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: workerWs,
+      branch: "feat/X",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: orchWs,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      role: "orchestrator",
+      runtimeHandle: makeHandle("rt-old-2"),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.restore("app-1");
+    expect(mockAgent.getLaunchCommand).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orchestratorSessionId: "app-orchestrator" }),
+    );
+
+    (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mockClear();
+    (mockAgent.getEnvironment as ReturnType<typeof vi.fn>).mockClear();
+
+    await sm.restore("app-orchestrator");
+    expect(mockAgent.getLaunchCommand).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
+    );
+  });
+
   it("uses orchestratorModel when restoring orchestrator sessions", async () => {
     const wsPath = join(tmpDir, "ws-app-orchestrator-restore");
     mkdirSync(wsPath, { recursive: true });

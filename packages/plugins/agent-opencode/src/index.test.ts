@@ -466,6 +466,18 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("sets AO_ORCHESTRATOR_SESSION_ID when provided", () => {
+    const env = agent.getEnvironment(
+      makeLaunchConfig({ orchestratorSessionId: "myproj-orchestrator" }),
+    );
+    expect(env["AO_ORCHESTRATOR_SESSION_ID"]).toBe("myproj-orchestrator");
+  });
+
+  it("omits AO_ORCHESTRATOR_SESSION_ID when not provided", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["AO_ORCHESTRATOR_SESSION_ID"]).toBeUndefined();
+  });
 });
 
 describe("isProcessRunning", () => {

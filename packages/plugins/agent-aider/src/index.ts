@@ -129,6 +129,9 @@ function createAiderAgent(): Agent {
       const env: Record<string, string> = {};
       env["AO_SESSION_ID"] = config.sessionId;
       // NOTE: AO_PROJECT_ID is the caller's responsibility (spawn.ts sets it)
+      if (config.orchestratorSessionId) {
+        env["AO_ORCHESTRATOR_SESSION_ID"] = config.orchestratorSessionId;
+      }
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }

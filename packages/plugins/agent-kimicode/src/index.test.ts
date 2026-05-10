@@ -386,6 +386,16 @@ describe("getEnvironment", () => {
     );
   });
 
+  it("sets AO_ORCHESTRATOR_SESSION_ID only when provided", () => {
+    expect(
+      agent.getEnvironment(makeLaunchConfig()).AO_ORCHESTRATOR_SESSION_ID,
+    ).toBeUndefined();
+    expect(
+      agent.getEnvironment(makeLaunchConfig({ orchestratorSessionId: "myproj-orchestrator" }))
+        .AO_ORCHESTRATOR_SESSION_ID,
+    ).toBe("myproj-orchestrator");
+  });
+
   // PATH and GH_PATH are not set here — session-manager injects them for
   // every agent (see session-manager.ts: buildAgentPath + PREFERRED_GH_PATH).
   // Setting them locally would just be overwritten and cause the values to

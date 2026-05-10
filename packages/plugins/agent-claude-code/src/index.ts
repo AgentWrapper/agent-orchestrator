@@ -928,6 +928,10 @@ function createClaudeCodeAgent(): Agent {
       // - start.ts omits it for orchestrator (flat directories)
       // - session manager omits it (flat directories)
 
+      if (config.orchestratorSessionId) {
+        env["AO_ORCHESTRATOR_SESSION_ID"] = config.orchestratorSessionId;
+      }
+
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }

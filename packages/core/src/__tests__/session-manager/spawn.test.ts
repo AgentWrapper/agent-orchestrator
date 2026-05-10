@@ -82,6 +82,18 @@ describe("spawn", () => {
     expect(mockRuntime.create).toHaveBeenCalled();
   });
 
+  it("passes orchestratorSessionId (sessionPrefix-orchestrator) into agent launch config for workers", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ orchestratorSessionId: "app-orchestrator" }),
+    );
+    expect(mockAgent.getEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ orchestratorSessionId: "app-orchestrator" }),
+    );
+  });
+
   it("forwards AO_AGENT_GH_TRACE into spawned agent runtime env when configured", async () => {
     const previousTrace = process.env["AO_AGENT_GH_TRACE"];
     process.env["AO_AGENT_GH_TRACE"] = "/tmp/agent-gh-trace-test.jsonl";
@@ -1516,6 +1528,18 @@ describe("spawn", () => {
       expect(session.branch).toBe("orchestrator/app-orchestrator");
       expect(session.issueId).toBeNull();
       expect(session.workspacePath).toBe("/tmp/ws");
+    });
+
+    it("does not pass orchestratorSessionId into its own agent launch config", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
+      );
+      expect(mockAgent.getEnvironment).toHaveBeenCalledWith(
+        expect.not.objectContaining({ orchestratorSessionId: expect.anything() }),
+      );
     });
 
     it("creates a worktree with an orchestrator branch", async () => {
