@@ -314,7 +314,7 @@ describe("ProjectSidebar", () => {
 
     // Session rows are now anchors (support ctrl/cmd-click to open in new tab)
     expect(
-      screen.getByRole("link", { name: "Open Review API changes, PR #42" }),
+      screen.getByRole("link", { name: /Review API changes.*#42.*(respond|review|merge|working)/ }),
     ).toBeInTheDocument();
     expect(screen.getByText("#42")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open feat/test" })).not.toBeInTheDocument();
@@ -403,7 +403,9 @@ describe("ProjectSidebar", () => {
 
     expect(screen.getByRole("button", { name: /^Project One 1$/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Open Runtime missing but needs review, PR #100" }),
+      screen.getByRole("link", {
+        name: /Runtime missing but needs review.*#100.*(respond|review|merge|working)/,
+      }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open Actually finished" })).not.toBeInTheDocument();
   });
@@ -437,7 +439,7 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "Open Implement sidebar polish" }));
+    fireEvent.click(screen.getByRole("link", { name: /Implement sidebar polish.*working/ }));
 
     expect(mockPush).toHaveBeenCalledWith("/projects/project-1/sessions/worker-2");
   });

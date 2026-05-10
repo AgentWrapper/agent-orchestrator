@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
@@ -50,6 +52,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [projectIdInput, setProjectIdInput] = useState("");
   const [projectNameInput, setProjectNameInput] = useState("");
+  useFocusTrap(open, modalRef);
 
   const browse = async (
     path: string,
@@ -120,7 +123,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     setSelectedBrowsePath(initialPath);
     setProjectIdInput("");
     setProjectNameInput("");
-    modalRef.current?.focus();
     void browse(initialPath, { mode: "replace", selectedPath: initialPath });
   }, [open]);
 
@@ -250,7 +252,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     }
   };
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const navigateHistory = (nextIndex: number) => {
     if (nextIndex < 0 || nextIndex >= browseHistory.length) return;
@@ -279,9 +281,17 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     <div className="add-project-modal__notice add-project-modal__notice--error">{networkError}</div>
   ) : null;
 
-  return (
-    <div className="add-project-modal-backdrop">
-      <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Add project" className="add-project-modal" tabIndex={-1}>
+  return createPortal(
+    <div className="add-project-modal-backdrop" onClick={onClose}>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add project"
+        className="add-project-modal"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="add-project-modal__titlebar">
           <h2 className="add-project-modal__windowtitle">add project</h2>
           <button type="button" aria-label="Close" onClick={onClose} className="add-project-modal__iconbtn">×</button>
@@ -369,6 +379,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

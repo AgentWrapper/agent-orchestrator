@@ -1,33 +1,17 @@
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
-  getProjectRouteDataMock: vi.fn(),
   getDashboardPageDataMock: vi.fn(),
+  getDashboardProjectNameMock: vi.fn(),
+  resolveDashboardProjectFilterMock: vi.fn(),
   dashboardPropsMock: vi.fn(),
-}));
-
-vi.mock("next/link", () => ({
-  default: ({
-    children,
-    ...props
-  }: React.PropsWithChildren<React.AnchorHTMLAttributes<HTMLAnchorElement>>) => (
-    <a {...props}>{children}</a>
-  ),
-}));
-
-vi.mock("next/navigation", () => ({
-  notFound: vi.fn(() => {
-    throw new Error("NEXT_NOT_FOUND");
-  }),
-}));
-
-vi.mock("@/lib/project-route-data", () => ({
-  getProjectRouteData: hoisted.getProjectRouteDataMock,
 }));
 
 vi.mock("@/lib/dashboard-page-data", () => ({
   getDashboardPageData: hoisted.getDashboardPageDataMock,
+  getDashboardProjectName: hoisted.getDashboardProjectNameMock,
+  resolveDashboardProjectFilter: hoisted.resolveDashboardProjectFilterMock,
 }));
 
 vi.mock("@/components/Dashboard", () => ({
@@ -37,42 +21,15 @@ vi.mock("@/components/Dashboard", () => ({
   },
 }));
 
-import ProjectPage from "./page";
+import Home from "./page";
 
-describe("ProjectPage", () => {
+describe("Home dashboard route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders degraded project state when the project is degraded", async () => {
-    hoisted.getProjectRouteDataMock.mockResolvedValue({
-      projectId: "broken",
-      project: null,
-      projects: [{ id: "broken", name: "Broken" }],
-      degradedProject: {
-        projectId: "broken",
-        path: "/tmp/broken",
-        resolveError: "Local config failed validation",
-      },
-    });
-
-    render(await ProjectPage({ params: Promise.resolve({ projectId: "broken" }) }));
-
-    expect(screen.getByText("This project's config failed to load")).toBeInTheDocument();
-    expect(screen.getByText("Local config failed validation")).toBeInTheDocument();
-    expect(screen.queryByTestId("dashboard")).not.toBeInTheDocument();
-  });
-
-  it("passes all-project sessions to the dashboard while keeping the selected project context", async () => {
-    hoisted.getProjectRouteDataMock.mockResolvedValue({
-      projectId: "nebula",
-      project: { id: "nebula", name: "Nebula" },
-      projects: [
-        { id: "nebula", name: "Nebula" },
-        { id: "other", name: "Other" },
-      ],
-      degradedProject: null,
-    });
+  it("keeps the selected project context but seeds Dashboard with all-project sidebar data", async () => {
+    hoisted.resolveDashboardProjectFilterMock.mockReturnValue("nebula");
     const selectedProjectData = {
       sessions: [{ id: "neb-1" }],
       orchestrators: [{ id: "orch-neb", projectId: "nebula" }],
@@ -98,8 +55,9 @@ describe("ProjectPage", () => {
       project === "all" ? allProjectData : selectedProjectData,
     );
 
-    render(await ProjectPage({ params: Promise.resolve({ projectId: "nebula" }) }));
+    render(await Home({ searchParams: Promise.resolve({ project: "nebula" }) }));
 
+    expect(hoisted.resolveDashboardProjectFilterMock).toHaveBeenCalledWith("nebula");
     expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledWith("nebula");
     expect(hoisted.getDashboardPageDataMock).toHaveBeenCalledWith("all");
     expect(hoisted.dashboardPropsMock).toHaveBeenCalledWith(

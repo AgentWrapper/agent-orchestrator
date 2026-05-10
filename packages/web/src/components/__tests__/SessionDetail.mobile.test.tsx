@@ -102,6 +102,21 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
     expect(screen.getAllByRole("link", { name: /PR #88/i }).length).toBeGreaterThan(0);
   });
 
+
+  it("links the mobile PR tab to the PR route for the session project", () => {
+    render(
+      <SessionDetail
+        session={makeSession({ id: "worker-pr-nav", projectId: "my-app" })}
+        projectOrchestratorId={null}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute(
+      "href",
+      "/prs?project=my-app",
+    );
+  });
+
   it("renders the session detail shell for active sessions", () => {
     render(
       <SessionDetail

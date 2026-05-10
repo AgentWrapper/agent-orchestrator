@@ -15,7 +15,7 @@ export const viewport: Viewport = {
   ],
 };
 
-export async function generateMetadata(): Promise<Metadata> {
+function createMetadata(): Metadata {
   const projectName = getProjectName();
   return {
     title: {
@@ -30,6 +30,8 @@ export async function generateMetadata(): Promise<Metadata> {
     },
   };
 }
+
+export const metadata: Metadata = createMetadata();
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

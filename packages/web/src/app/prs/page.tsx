@@ -14,7 +14,10 @@ export async function generateMetadata(props: {
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
   const projectName = getDashboardProjectName(projectFilter);
-  return { title: { absolute: `ao | ${projectName} PRs` } };
+  return {
+    title: { absolute: `ao | ${projectName} PRs` },
+    description: `Pull requests opened by AO agents for ${projectName}.`,
+  };
 }
 
 export default async function PullRequestsRoute(props: {
@@ -23,14 +26,17 @@ export default async function PullRequestsRoute(props: {
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
   const pageData = await getDashboardPageData(projectFilter);
+  const sidebarData = pageData.selectedProjectId
+    ? await getDashboardPageData("all")
+    : pageData;
 
   return (
     <PullRequestsPage
-      initialSessions={pageData.sessions}
+      initialSessions={sidebarData.sessions}
       projectId={pageData.selectedProjectId}
       projectName={pageData.projectName}
       projects={pageData.projects}
-      orchestrators={pageData.orchestrators}
+      orchestrators={sidebarData.orchestrators}
       attentionZones={pageData.attentionZones}
     />
   );

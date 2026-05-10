@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 interface ProjectSettingsModalProps {
   open: boolean;
@@ -31,11 +33,7 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectSettingsResponse["project"] | null>(null);
-
-  useEffect(() => {
-    if (!open || !projectId) return;
-    modalRef.current?.focus();
-  }, [open, projectId]);
+  useFocusTrap(Boolean(open && projectId), modalRef);
 
   useEffect(() => {
     if (!open) return;
@@ -105,9 +103,9 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
     };
   }, [project, projectId]);
 
-  if (!open || !projectId) return null;
+  if (!open || !projectId || typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div className="project-settings-modal-backdrop" onClick={onClose}>
       <div
         ref={modalRef}
@@ -145,6 +143,7 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

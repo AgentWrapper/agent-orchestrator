@@ -274,6 +274,7 @@ export function SessionDetailHeader({
             type="button"
             className="dashboard-app-btn dashboard-app-btn--restore"
             onClick={onRestore}
+            aria-label={`Restore ${session.id}`}
           >
             <svg
               className="topbar-action-icon"
@@ -294,6 +295,7 @@ export function SessionDetailHeader({
             type="button"
             className="dashboard-app-btn dashboard-app-btn--danger"
             onClick={onKill}
+            aria-label={`Terminate ${session.id}`}
           >
             <svg
               className="h-3.5 w-3.5"

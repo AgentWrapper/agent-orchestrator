@@ -7,6 +7,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const homeDir = os.homedir().replace(/\\/g, "/");
 const nextConfig = {
+  // Keep metadata in the initial HTML for Lighthouse-style audits. The local
+  // DevTools Lighthouse runner presents as Chrome, so include Chrome here.
+  htmlLimitedBots: /Chrome|Chromium|Lighthouse|PageSpeed/i,
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@aoagents/ao-core",

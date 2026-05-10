@@ -141,6 +141,40 @@ describe("PullRequestsPage", () => {
     expect(screen.getByText("Closed PR")).toBeInTheDocument();
   });
 
+
+  it("keeps the sidebar portfolio counts while filtering PRs to the selected project", () => {
+    mockDesktopViewport();
+
+    render(
+      <PullRequestsPage
+        initialSessions={[
+          makeSession({
+            id: "my-app-pr",
+            projectId: "my-app",
+            status: "approved",
+            pr: makePR({ number: 634, title: "Scoped project PR" }),
+          }),
+          makeSession({
+            id: "docs-pr",
+            projectId: "docs",
+            status: "approved",
+            pr: makePR({ number: 777, title: "Docs PR should stay out" }),
+          }),
+        ]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[
+          { id: "my-app", name: "My App", path: "/tmp/my-app" },
+          { id: "docs", name: "Docs", path: "/tmp/docs" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /^Docs 1$/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "#634" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "#777" })).not.toBeInTheDocument();
+  });
+
   it("shows the empty desktop state when there are no pull requests", () => {
     mockDesktopViewport();
 

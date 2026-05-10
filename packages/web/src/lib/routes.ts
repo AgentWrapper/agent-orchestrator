@@ -9,3 +9,7 @@ export function projectSessionPath(projectId: string, sessionId: string): string
 export function projectSessionHashPath(projectId: string, sessionId: string, hash: string): string {
   return `${projectSessionPath(projectId, sessionId)}${hash}`;
 }
+
+export function projectPullRequestsPath(projectId: string): string {
+  return `/prs?project=${encodeURIComponent(projectId)}`;
+}

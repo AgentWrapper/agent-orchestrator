@@ -15,7 +15,7 @@ import {
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
-import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useSessionEvents, type AttentionMap } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -25,6 +25,7 @@ import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { filterProjectSessions } from "@/lib/project-utils";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -168,10 +169,23 @@ function DashboardInner({
     attentionZones,
   });
 
+  const projectMap = useMemo(
+    () =>
+      Object.fromEntries(
+        projects.map((project) => [project.id, { sessionPrefix: project.sessionPrefix }]),
+      ),
+    [projects],
+  );
   const projectSessions = useMemo(() => {
-    if (!projectId) return sessions;
-    return sessions.filter((s) => s.projectId === projectId);
-  }, [sessions, projectId]);
+    return filterProjectSessions(sessions, projectId, projectMap);
+  }, [sessions, projectId, projectMap]);
+  const pageAttentionLevels = useMemo<AttentionMap>(() => {
+    if (!projectId) return attentionLevels;
+    const visibleIds = new Set(projectSessions.map((session) => session.id));
+    return Object.fromEntries(
+      Object.entries(attentionLevels).filter(([sessionId]) => visibleIds.has(sessionId)),
+    ) as AttentionMap;
+  }, [attentionLevels, projectId, projectSessions]);
   const connectionStatus: "connected" | "reconnecting" | "disconnected" =
     mux?.status === "disconnected" ? "disconnected"
     : mux?.status === "connected" ? "connected"
@@ -235,10 +249,10 @@ function DashboardInner({
 
   // Update document title with live attention counts
   useEffect(() => {
-    const needsAttention = countNeedingAttention(attentionLevels);
+    const needsAttention = countNeedingAttention(pageAttentionLevels);
     const label = projectName ?? "ao";
     document.title = needsAttention > 0 ? `${label} (${needsAttention} need attention)` : label;
-  }, [attentionLevels, projectName]);
+  }, [pageAttentionLevels, projectName]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -478,6 +492,13 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const mobileSidebarHiddenProps =
+    isMobile && !mobileMenuOpen
+      ? ({ "aria-hidden": true, inert: true } as React.HTMLAttributes<HTMLDivElement> & {
+          inert: boolean;
+        })
+      : {};
+
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setMobileMenuOpen((current) => !current);
@@ -597,6 +618,7 @@ function DashboardInner({
           >
             <div
               className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}
+              {...mobileSidebarHiddenProps}
             >
               <ProjectSidebar
                 projects={projects}
@@ -614,7 +636,7 @@ function DashboardInner({
             )}
 
             <main className="dashboard-main dashboard-main--desktop">
-              <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
+              <DynamicFavicon attentionLevels={pageAttentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
                 <h1 className="dashboard-main__title">Dashboard</h1>
                 <p className="dashboard-main__subtitle">

@@ -103,7 +103,7 @@ export function useXtermTerminal(
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
-          minimumContrastRatio: isDark ? 1 : 7,
+          minimumContrastRatio: isDark ? 4.5 : 7,
           // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
           // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
           // the available width, causing right-side clipping when the actual
@@ -395,7 +395,7 @@ export function useXtermTerminal(
     if (!terminal) return;
     const isDark = appearance === "dark" || resolvedTheme !== "light";
     terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
-    terminal.options.minimumContrastRatio = isDark ? 1 : 7;
+    terminal.options.minimumContrastRatio = isDark ? 4.5 : 7;
   }, [appearance, resolvedTheme, terminalThemes]);
 
   // Font size change — mutate in place and persist, then resize the PTY so
