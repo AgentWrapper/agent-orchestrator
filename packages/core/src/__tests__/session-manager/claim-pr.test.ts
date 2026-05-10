@@ -1,13 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  utimesSync,
-} from "node:fs";
+import { utimesSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
-import {
-  writeMetadata,
-  readMetadataRaw,
-} from "../../metadata.js";
+import { writeMetadata, readMetadataRaw } from "../../metadata.js";
 import {
   type OrchestratorConfig,
   type PluginRegistry,
@@ -16,7 +11,12 @@ import {
   type Workspace,
   type SCM,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 let sessionsDir: string;
@@ -106,6 +106,64 @@ describe("claimPR", () => {
       pr: "https://github.com/org/my-app/pull/42",
     });
     expect(raw!["prAutoDetect"]).toBeUndefined();
+  });
+
+  it("resolves full PR URLs against the URL repository", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-2"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await sm.claimPR("app-2", "https://github.com/ComposioHQ/agent-orchestrator/pull/1618");
+
+    expect(mockSCM.resolvePR).toHaveBeenCalledWith(
+      "1618",
+      expect.objectContaining({ repo: "ComposioHQ/agent-orchestrator" }),
+    );
+  });
+
+  it("resolves bare PR numbers against an explicit repo override", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-2"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await sm.claimPR("app-2", "42", { repoOverride: "ComposioHQ/agent-orchestrator" });
+
+    expect(mockSCM.resolvePR).toHaveBeenCalledWith(
+      "42",
+      expect.objectContaining({ repo: "ComposioHQ/agent-orchestrator" }),
+    );
+  });
+
+  it("rejects invalid repo overrides before calling the SCM plugin", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-2"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await expect(sm.claimPR("app-2", "42", { repoOverride: "not a repo" })).rejects.toThrow(
+      'Invalid repo "not a repo"',
+    );
+    expect(mockSCM.resolvePR).not.toHaveBeenCalled();
   });
 
   it("consolidates ownership by disabling PR auto-detect on the previous session", async () => {
@@ -384,6 +442,20 @@ describe("claimPR", () => {
     raw = readMetadataRaw(sessionsDir, "app-1");
     expect(raw!["pr"]).toBe("https://github.com/org/my-app/pull/99");
     expect(raw!["branch"]).toBe("feat/second-pr");
+    expect(JSON.parse(raw!["prHistory"]!)).toEqual([
+      expect.objectContaining({
+        url: "https://github.com/org/my-app/pull/42",
+        number: 42,
+        branch: "feat/first-pr",
+      }),
+    ]);
+    expect(result2.previousPr).toEqual(
+      expect.objectContaining({
+        url: "https://github.com/org/my-app/pull/42",
+        number: 42,
+        branch: "feat/first-pr",
+      }),
+    );
   });
 
   // Idempotent re-claim by same owner

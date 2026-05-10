@@ -512,6 +512,7 @@ export function createMockSessionManager(): OpenCodeSessionManager {
       sessionId: "app-1",
       projectId: "my-app",
       pr: makePR(),
+      previousPr: null,
       branchChanged: false,
       githubAssigned: true,
       takenOverFrom: [],

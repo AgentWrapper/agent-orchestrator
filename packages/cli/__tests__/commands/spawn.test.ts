@@ -4,23 +4,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@aoagents/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockGetRunning } = vi.hoisted(
-  () => ({
-    mockExec: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-      claimPR: vi.fn(),
-    },
-    mockGetRunning: vi.fn(),
-  }),
-);
+const { mockExec, mockConfigRef, mockSessionManager, mockGetRunning } = vi.hoisted(() => ({
+  mockExec: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+    claimPR: vi.fn(),
+  },
+  mockGetRunning: vi.fn(),
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
@@ -534,9 +532,7 @@ describe("spawn command", () => {
   it("reports error when spawn fails", async () => {
     mockSessionManager.spawn.mockRejectedValue(new Error("worktree creation failed"));
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
   });
 
   it("claims a PR for the spawned session when --claim-pr is provided", async () => {
@@ -570,6 +566,7 @@ describe("spawn command", () => {
         baseBranch: "main",
         isDraft: false,
       },
+      previousPr: null,
       branchChanged: true,
       githubAssigned: false,
       takenOverFrom: [],
@@ -584,6 +581,7 @@ describe("spawn command", () => {
     });
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
       assignOnGithub: undefined,
+      repoOverride: undefined,
     });
 
     const succeedMsg = String(mockSpinner.succeed.mock.calls[0]?.[0] ?? "");
@@ -623,9 +621,55 @@ describe("spawn command", () => {
         baseBranch: "main",
         isDraft: false,
       },
+      previousPr: null,
       branchChanged: true,
       githubAssigned: true,
       takenOverFrom: ["app-9"],
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "--claim-pr", "123", "--assign-on-github"]);
+
+    expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
+      assignOnGithub: true,
+      repoOverride: undefined,
+    });
+  });
+
+  it("passes --claim-pr-repo through to claimPR", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockSessionManager.claimPR.mockResolvedValue({
+      sessionId: "app-1",
+      projectId: "my-app",
+      pr: {
+        number: 123,
+        url: "https://github.com/org/repo/pull/123",
+        title: "Existing PR",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/claimed-pr",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      previousPr: null,
+      branchChanged: true,
+      githubAssigned: false,
+      takenOverFrom: [],
     });
 
     await program.parseAsync([
@@ -634,12 +678,26 @@ describe("spawn command", () => {
       "spawn",
       "--claim-pr",
       "123",
-      "--assign-on-github",
+      "--claim-pr-repo",
+      "ComposioHQ/agent-orchestrator",
     ]);
 
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
-      assignOnGithub: true,
+      assignOnGithub: undefined,
+      repoOverride: "ComposioHQ/agent-orchestrator",
     });
+  });
+
+  it("rejects --claim-pr-repo without --claim-pr", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "--claim-pr-repo", "org/repo"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("--claim-pr-repo requires --claim-pr");
   });
 
   it("rejects --assign-on-github without --claim-pr", async () => {
@@ -791,6 +849,7 @@ describe("spawn pre-flight checks", () => {
         baseBranch: "main",
         isDraft: false,
       },
+      previousPr: null,
       branchChanged: true,
       githubAssigned: false,
       takenOverFrom: [],
@@ -860,7 +919,9 @@ describe("batch-spawn command", () => {
     return cmd;
   }
 
-  function makeFakeSession(overrides: Partial<Session> & Pick<Session, "id" | "projectId">): Session {
+  function makeFakeSession(
+    overrides: Partial<Session> & Pick<Session, "id" | "projectId">,
+  ): Session {
     return {
       status: "spawning",
       activity: null,
@@ -1001,9 +1062,7 @@ describe("spawn daemon-polling enforcement", () => {
   it("refuses to spawn when no AO daemon is running", async () => {
     mockGetRunning.mockResolvedValue(null);
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -1022,9 +1081,7 @@ describe("spawn daemon-polling enforcement", () => {
       projects: ["other-project"],
     });
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)

@@ -68,6 +68,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { parsePrFromUrl } from "./utils/pr.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -103,10 +104,104 @@ import {
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+const MAX_PR_HISTORY_ENTRIES = 20;
 // On Windows, execFile cannot resolve .cmd shim extensions without invoking the shell.
 // windowsHide:true suppresses the conhost popup that the shell would otherwise flash.
 const EXEC_SHELL_OPTION =
   process.platform === "win32" ? ({ shell: true, windowsHide: true } as const) : ({} as const);
+
+function normalizeRepoOverride(repoOverride: string | undefined): string | null {
+  const trimmed = repoOverride?.trim();
+  if (!trimmed) return null;
+
+  const segments = trimmed.split("/");
+  const valid =
+    segments.length >= 2 &&
+    segments.every((segment) => {
+      return (
+        segment.length > 0 &&
+        segment !== "." &&
+        segment !== ".." &&
+        /^[A-Za-z0-9_.-]+$/.test(segment)
+      );
+    });
+
+  if (!valid) {
+    throw new Error(`Invalid repo "${repoOverride}". Expected owner/repo.`);
+  }
+
+  return segments.join("/");
+}
+
+function resolveClaimPRTarget(
+  reference: string,
+  project: ProjectConfig,
+  options: ClaimPROptions | undefined,
+): { reference: string; project: ProjectConfig } {
+  const explicitRepo = normalizeRepoOverride(options?.repoOverride);
+  const parsed = parsePrFromUrl(reference);
+  const inferredRepo = parsed?.owner && parsed.repo ? `${parsed.owner}/${parsed.repo}` : null;
+  const repo = explicitRepo ?? inferredRepo;
+
+  if (!repo) {
+    return { reference, project };
+  }
+
+  return {
+    reference: parsed?.number ? String(parsed.number) : reference,
+    project: { ...project, repo },
+  };
+}
+
+function readPRHistory(raw: Record<string, string>) {
+  const encoded = raw["prHistory"];
+  if (!encoded) return [];
+
+  try {
+    const parsed = JSON.parse(encoded) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const record = entry as Record<string, unknown>;
+      if (typeof record["url"] !== "string" || !record["url"]) return [];
+      return [
+        {
+          url: record["url"],
+          number: typeof record["number"] === "number" ? record["number"] : null,
+          branch: typeof record["branch"] === "string" ? record["branch"] : null,
+          replacedAt: typeof record["replacedAt"] === "string" ? record["replacedAt"] : "",
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function buildPreviousPREntry(raw: Record<string, string>, nextPrUrl: string, replacedAt: string) {
+  const previousUrl = raw["pr"];
+  if (!previousUrl || previousUrl === nextPrUrl) return null;
+
+  const lifecycle = parseCanonicalLifecycle(raw);
+  const parsed = parsePrFromUrl(previousUrl);
+  return {
+    url: previousUrl,
+    number: lifecycle.pr.number ?? parsed?.number ?? null,
+    branch: raw["branch"] || null,
+    replacedAt,
+  };
+}
+
+function appendPRHistory(
+  raw: Record<string, string>,
+  previousPr: ReturnType<typeof buildPreviousPREntry>,
+) {
+  if (!previousPr) return null;
+
+  const history = readPRHistory(raw).filter((entry) => entry.url !== previousPr.url);
+  history.push(previousPr);
+  return history.slice(-MAX_PR_HISTORY_ENTRIES);
+}
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -292,7 +387,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isFixedOrchestratorReservationError(err: unknown, sessionId: string): boolean {
-  return err instanceof Error && err.message.includes(`Orchestrator session "${sessionId}" already exists`);
+  return (
+    err instanceof Error &&
+    err.message.includes(`Orchestrator session "${sessionId}" already exists`)
+  );
 }
 
 async function getTmuxForegroundCommand(sessionName: string): Promise<string | null> {
@@ -310,9 +408,7 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
 }
 
 /** Parse lifecycle from raw metadata for writeMetadata (restore path). */
-function parseLifecycleFromRaw(
-  raw: Record<string, string>,
-): CanonicalSessionLifecycle | undefined {
+function parseLifecycleFromRaw(raw: Record<string, string>): CanonicalSessionLifecycle | undefined {
   const source = raw["lifecycle"] ?? raw["statePayload"];
   if (!source) return undefined;
   try {
@@ -442,11 +538,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // previous launch ran far enough to write to ~/.kimi/sessions. A failed
     // launch (e.g. the --agent-file YAML crash) leaves no session to resume,
     // and falling back to a fresh getLaunchCommand is the only sensible choice.
-    return (
-      agentName === "claude-code" ||
-      agentName === "codex" ||
-      agentName === "opencode"
-    );
+    return agentName === "claude-code" || agentName === "codex" || agentName === "opencode";
   }
 
   function applyMetadataUpdatesToRaw(
@@ -593,7 +685,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const duplicatePRAttachments = new Map<string, ActiveSessionRecord[]>();
 
     for (const record of repaired) {
-      if (!record.raw["lifecycle"] && (!record.raw["statePayload"] || record.raw["stateVersion"] !== "2")) {
+      if (
+        !record.raw["lifecycle"] &&
+        (!record.raw["statePayload"] || record.raw["stateVersion"] !== "2")
+      ) {
         const lifecycle = cloneLifecycle(
           parseCanonicalLifecycle(record.raw, {
             sessionId: record.sessionName,
@@ -675,7 +770,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return repaired;
   }
 
-  function loadActiveSessionRecords(projectId: string, project: ProjectConfig): ActiveSessionRecord[] {
+  function loadActiveSessionRecords(
+    projectId: string,
+    project: ProjectConfig,
+  ): ActiveSessionRecord[] {
     const sessionsDir = getProjectSessionsDir(projectId);
     if (!existsSync(sessionsDir)) return [];
 
@@ -831,9 +929,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
-      const tmuxName = project.path
-        ? generateSessionName(project.sessionPrefix, num)
-        : undefined;
+      const tmuxName = project.path ? generateSessionName(project.sessionPrefix, num) : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
         return { num, sessionId, tmuxName };
@@ -1783,7 +1879,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return null;
   }
 
-  async function ensureOrchestratorInternal(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+  async function ensureOrchestratorInternal(
+    orchestratorConfig: OrchestratorSpawnConfig,
+  ): Promise<Session> {
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
@@ -1795,10 +1893,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
         project.orchestratorSessionStrategy,
       );
-      if (
-        orchestratorSessionStrategy === "delete" ||
-        orchestratorSessionStrategy === "ignore"
-      ) {
+      if (orchestratorSessionStrategy === "delete" || orchestratorSessionStrategy === "ignore") {
         await kill(sessionId, { purgeOpenCode: orchestratorSessionStrategy === "delete" });
         deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId);
         return spawnOrchestrator(orchestratorConfig);
@@ -2259,8 +2354,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           continue;
         }
 
-        const cleanupAgent = resolveSelectionForSession(project, terminatedId, terminatedRaw).agentName;
-        const mappedOpenCodeSessionId = asValidOpenCodeSessionId(terminatedRaw["opencodeSessionId"]);
+        const cleanupAgent = resolveSelectionForSession(
+          project,
+          terminatedId,
+          terminatedRaw,
+        ).agentName;
+        const mappedOpenCodeSessionId = asValidOpenCodeSessionId(
+          terminatedRaw["opencodeSessionId"],
+        );
         if (cleanupAgent === "opencode" && terminatedRaw["opencodeCleanedAt"]) {
           pushSkipped(projectKey, terminatedId);
           continue;
@@ -2614,7 +2715,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
-    const pr = await scm.resolvePR(reference, project);
+    const claimTarget = resolveClaimPRTarget(reference, project, options);
+    const pr = await scm.resolvePR(claimTarget.reference, claimTarget.project);
     const prState = await scm.getPRState(pr);
     if (prState !== PR_STATE.OPEN) {
       throw new Error(`Cannot claim PR #${pr.number} because it is ${prState}`);
@@ -2631,7 +2733,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
-        otherRaw["branch"] === pr.branch && (otherRaw["prAutoDetect"] ?? "on") !== "off" && otherRaw["prAutoDetect"] !== "false";
+        otherRaw["branch"] === pr.branch &&
+        (otherRaw["prAutoDetect"] ?? "on") !== "off" &&
+        otherRaw["prAutoDetect"] !== "false";
 
       if (samePr || sameBranch) {
         conflictingSessions.add(sessionName);
@@ -2647,17 +2751,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const branchChanged = await scm.checkoutPR(pr, workspacePath);
 
+    const replacedAt = new Date().toISOString();
+    const previousPr = buildPreviousPREntry(raw, pr.url, replacedAt);
+    const nextPRHistory = appendPRHistory(raw, previousPr);
+
     const claimLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
       next.pr.state = "open";
       next.pr.reason = "in_progress";
       next.pr.number = pr.number;
       next.pr.url = pr.url;
-      next.pr.lastObservedAt = new Date().toISOString();
+      next.pr.lastObservedAt = replacedAt;
     });
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
       status: deriveLegacyStatus(claimLifecycle),
       branch: pr.branch,
+      ...(nextPRHistory ? { prHistory: JSON.stringify(nextPRHistory) } : {}),
       prAutoDetect: "",
       ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
@@ -2681,9 +2790,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
         prAutoDetect: "false",
-        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
-          ? { status: "working" }
-          : {}),
+        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "") ? { status: "working" } : {}),
         ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
       invalidateCache();
@@ -2708,6 +2815,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       sessionId,
       projectId,
       pr,
+      previousPr,
       branchChanged,
       githubAssigned,
       githubAssignmentError,

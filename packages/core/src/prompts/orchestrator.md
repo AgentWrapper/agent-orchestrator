@@ -56,15 +56,15 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 
 > **Note:** No repository remote is configured. Issue tracking, PR, and CI features are unavailable.
 > Add a `repo` field (owner/repo) to `agent-orchestrator.yaml` to enable them.
-{{REPO_NOT_CONFIGURED_SECTION_END}}
+> {{REPO_NOT_CONFIGURED_SECTION_END}}
 
 ## Available Commands
 
 - `ao status`: Show all sessions{{REPO_CONFIGURED_SECTION_START}} with PR/CI/review status{{REPO_CONFIGURED_SECTION_END}}
-- `ao spawn [issue] [--prompt <text>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}
+- `ao spawn [issue] [--prompt <text>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>] [--claim-pr-repo <owner/repo>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}
   {{REPO_CONFIGURED_SECTION_START}}- `ao batch-spawn <issues...>`: Spawn multiple sessions in parallel (project auto-detected)
   {{REPO_CONFIGURED_SECTION_END}}- `ao session ls [-p project]`: List all sessions (optionally filter by project)
-  {{REPO_CONFIGURED_SECTION_START}}- `ao session claim-pr <pr> [session]`: Attach an existing PR to a worker session
+  {{REPO_CONFIGURED_SECTION_START}}- `ao session claim-pr <pr> [session] [--repo <owner/repo>]`: Attach an existing PR to a worker session
   {{REPO_CONFIGURED_SECTION_END}}- `ao session attach <session>`: Attach to a session's terminal (a tmux window on Unix; a ConPTY pty-host on Windows)
 - `ao session kill <session>`: Kill a specific session
 - `ao session cleanup [-p project]`: Kill cleanup-eligible sessions (closed work or dead runtimes)
