@@ -1,6 +1,12 @@
 import { readFileSync } from "fs";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../../next.config.js";
+
+const require = createRequire(import.meta.url);
+const { HTML_LIMITED_BOT_UA_RE_STRING } = require("next/dist/shared/lib/router/utils/is-bot") as {
+  HTML_LIMITED_BOT_UA_RE_STRING: string;
+};
 
 describe("next config htmlLimitedBots", () => {
   const htmlLimitedBots = nextConfig.htmlLimitedBots as RegExp;
@@ -23,5 +29,9 @@ describe("next config htmlLimitedBots", () => {
     const source = readFileSync("next.config.js", "utf8");
 
     expect(source).not.toContain("next/dist/");
+  });
+
+  it("fails loudly when Next changes its default HTML-limited bot list", () => {
+    expect(htmlLimitedBots.source).toContain(HTML_LIMITED_BOT_UA_RE_STRING);
   });
 });
