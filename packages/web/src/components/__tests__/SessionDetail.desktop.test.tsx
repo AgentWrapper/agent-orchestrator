@@ -128,13 +128,15 @@ describe("SessionDetail desktop layout", () => {
       "href",
       "https://github.com/acme/app/tree/feat/desktop-detail",
     );
-    // PR button is anchored to the PR URL (ctrl-click opens on GitHub, plain click toggles popover)
-    const prButton = screen.getByRole("link", { name: "PR #310" });
-    expect(prButton).toHaveAttribute("href", "https://github.com/acme/app/pull/100");
+    // Related PR is visible as a direct link in the topbar pills.
+    expect(screen.getByRole("link", { name: "PR #310" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/pull/100",
+    );
 
-    // PR details (blockers, file count, unresolved comments) now live inside a
-    // popover anchored to the PR button. Click to open it before asserting contents.
-    fireEvent.click(prButton);
+    // PR details (blockers, file count, unresolved comments) stay available from
+    // a compact popover trigger.
+    fireEvent.click(screen.getByRole("link", { name: "PR details for #310" }));
 
     expect(screen.getByText("3 files")).toBeInTheDocument();
     expect(screen.getByText("Draft")).toBeInTheDocument();
@@ -169,8 +171,8 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    // Open the PR popover (button is now a link with aria-label "PR #311")
-    fireEvent.click(screen.getByRole("link", { name: "PR #311" }));
+    // Open the PR popover from the compact details trigger.
+    fireEvent.click(screen.getByRole("link", { name: "PR details for #311" }));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Ask Agent to Fix" }));
@@ -213,7 +215,7 @@ describe("SessionDetail desktop layout", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restore terminal" })).not.toBeInTheDocument();
     expect(
-      within(screen.getByRole("banner")).getByRole("button", { name: "Restore" }),
+      within(screen.getByRole("banner")).getByRole("button", { name: "Restore worker-ended" }),
     ).toBeInTheDocument();
     expect(
       within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
@@ -250,11 +252,15 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Restore" })).toHaveClass(
-      "dashboard-app-btn--restore",
-    );
     expect(
-      within(screen.getByRole("banner")).queryByRole("button", { name: "Kill" }),
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: "Restore my-app-orchestrator",
+      }),
+    ).toHaveClass("dashboard-app-btn--restore");
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", {
+        name: "Terminate my-app-orchestrator",
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -272,7 +278,7 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore worker-restore" }));
 
     await act(async () => {});
 
@@ -369,7 +375,7 @@ describe("SessionDetail desktop layout", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+      fireEvent.click(screen.getByRole("button", { name: "Terminate worker-kill" }));
     });
 
     expect(global.fetch).toHaveBeenCalledWith("/api/sessions/worker-kill/kill", { method: "POST" });
@@ -389,7 +395,7 @@ describe("SessionDetail desktop layout", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Kill" }));
+      fireEvent.click(screen.getByRole("button", { name: "Terminate worker-kill-dashboard" }));
     });
 
     expect(routerPushMock).toHaveBeenCalledWith("/projects/my-app");

@@ -20,7 +20,10 @@ export async function generateMetadata(props: {
       projectName = project.name;
     }
   }
-  return { title: { absolute: `ao | ${projectName} - Orchestrator` } };
+  return {
+    title: { absolute: `ao | ${projectName} - Orchestrator` },
+    description: `Open or resume the AO orchestrator session for ${projectName}.`,
+  };
 }
 
 export default async function OrchestratorsRoute(props: {
@@ -39,6 +42,12 @@ export default async function OrchestratorsRoute(props: {
           <p className="mt-2 text-[var(--color-text-secondary)]">
             No project specified. Please provide a project parameter.
           </p>
+          <a
+            href="/"
+            className="mt-4 inline-flex border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-primary)] hover:no-underline"
+          >
+            Back to dashboard
+          </a>
         </div>
       </div>
     );

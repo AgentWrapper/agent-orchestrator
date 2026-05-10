@@ -14,19 +14,23 @@ export async function generateMetadata(props: {
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
   const projectName = getDashboardProjectName(projectFilter);
-  return { title: { absolute: `ao | ${projectName}` } };
+  return {
+    title: { absolute: `ao | ${projectName}` },
+    description: `Live AO dashboard for ${projectName} agent sessions, pull requests, and merge status.`,
+  };
 }
 
 export default async function Home(props: { searchParams: Promise<{ project?: string }> }) {
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
-  const pageData = await getDashboardPageData(projectFilter);
+  const pageData = await getDashboardPageData("all");
+  const selectedProjectId = projectFilter === "all" ? undefined : projectFilter;
 
   return (
     <Dashboard
       initialSessions={pageData.sessions}
-      projectId={pageData.selectedProjectId}
-      projectName={pageData.projectName}
+      projectId={selectedProjectId}
+      projectName={getDashboardProjectName(projectFilter)}
       projects={pageData.projects}
       orchestrators={pageData.orchestrators}
       attentionZones={pageData.attentionZones}

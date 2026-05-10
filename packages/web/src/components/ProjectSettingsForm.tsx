@@ -32,9 +32,23 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
   const [trackerPlugin, setTrackerPlugin] = useState(initialValues.trackerPlugin);
   const [scmPlugin, setScmPlugin] = useState(initialValues.scmPlugin);
   const [reactions, setReactions] = useState(initialValues.reactions);
+  const [baseline, setBaseline] = useState(() => ({
+    agent: initialValues.agent,
+    runtime: initialValues.runtime,
+    trackerPlugin: initialValues.trackerPlugin,
+    scmPlugin: initialValues.scmPlugin,
+    reactions: initialValues.reactions,
+  }));
   const [submitting, setSubmitting] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
+
+  const hasChanges =
+    agent !== baseline.agent ||
+    runtime !== baseline.runtime ||
+    trackerPlugin !== baseline.trackerPlugin ||
+    scmPlugin !== baseline.scmPlugin ||
+    reactions !== baseline.reactions;
 
   const behaviorPayload = useMemo(
     () => ({
@@ -85,6 +99,7 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
         return;
       }
 
+      setBaseline({ agent, runtime, trackerPlugin, scmPlugin, reactions });
       showToast("Project settings updated.", "success");
       router.refresh();
     } catch {
@@ -110,7 +125,7 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={submitting}
+            disabled={submitting || !hasChanges}
             className="project-settings-form__save"
           >
             {submitting ? "Saving..." : "Save changes"}

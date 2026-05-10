@@ -200,8 +200,8 @@
   /* Text — cream, not blue-white */
   --color-text-primary: #f0ece8;
   --color-text-secondary: #a8a29e;
-  --color-text-tertiary: #78716c;
-  --color-text-muted: #57534e;
+  --color-text-tertiary: #96908b;
+  --color-text-muted: #8f8984;
   --color-text-inverse: #121110;
 
   /* Interactive accent — warm periwinkle */
@@ -223,17 +223,17 @@
   --color-status-attention: #e2a336;
   --color-status-idle: #44403c;
   --color-status-done: #44403c;
-  --color-status-error: #ef4444;
+  --color-status-error: #f87171;
   --color-status-merge: #22c55e;
   --color-ci-pass: #22c55e;
-  --color-ci-fail: #ef4444;
+  --color-ci-fail: #f87171;
 
   /* Semantic aliases */
   --color-accent-blue: #60a5fa;
   --color-accent-green: #22c55e;
   --color-accent-yellow: #eab308;
   --color-accent-orange: #ff9d57;
-  --color-accent-red: #ef4444;
+  --color-accent-red: #f87171;
   --color-accent-violet: #a78bfa;
   --color-accent-purple: #a78bfa;
 
@@ -309,8 +309,8 @@
   --color-column-header: transparent;
 
   /* Alert colors — warm-tinted */
-  --color-alert-ci: #ef4444;
-  --color-alert-ci-bg: rgba(239, 68, 68, 0.08);
+  --color-alert-ci: #f87171;
+  --color-alert-ci-bg: rgba(248, 113, 113, 0.08);
   --color-alert-ci-unknown: #e2a336;
   --color-alert-review: #60a5fa;
   --color-alert-review-bg: rgba(96, 165, 250, 0.08);
@@ -358,9 +358,9 @@
   --z-base: 0;
   --z-raised: 10;
   --z-nav: 100;
-  --z-modal: 200;
   --z-bottom-nav: 250;
   --z-overlay: 300;
+  --z-modal: 360;
   --z-toast: 400;
   --z-connection-bar: 500;
 
@@ -1348,6 +1348,23 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-accent);
 }
 .topbar-branch-pill--link:hover {
+  text-decoration: underline;
+}
+
+.topbar-pr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.topbar-pr-pill:hover {
   text-decoration: underline;
 }
 
@@ -4045,7 +4062,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-settings-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4525,6 +4542,21 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-size: 9px;
   font-family: var(--font-mono);
   color: var(--color-text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.project-sidebar__sess-pr {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-primary);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -5036,8 +5068,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 8px;
   width: 100%;
   min-width: 0;
-  height: calc(100vh - 240px);
-  height: calc(100dvh - 240px);
+  min-height: 0;
+  height: 100%;
   overflow-x: auto;
   padding-bottom: 8px;
 }
@@ -7620,6 +7652,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     padding: 1px 5px;
     max-width: 90px;
   }
+  .topbar-session-pills .topbar-pr-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+  }
   .topbar-session-pills .topbar-zone-pill {
     font-size: 9px;
     padding: 1px 5px;
@@ -7652,3 +7688,112 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .topbar-zone-pill--working { background: color-mix(in srgb, var(--color-accent-blue)      12%, transparent); color: var(--color-accent-blue); }
 .topbar-zone-pill--pending { background: color-mix(in srgb, var(--color-status-attention) 12%, transparent); color: var(--color-status-attention); }
 .topbar-zone-pill--done    { background: color-mix(in srgb, var(--color-text-tertiary)    14%, transparent); color: var(--color-text-tertiary); }
+
+/* ── Accessibility polish from UX audit ─────────────────────────────── */
+.dark .project-sidebar__sect-label,
+.dark .project-sidebar__sess-status,
+.dark .project-sidebar__sess-pr,
+.dark .project-sidebar__proj-badge {
+  color: var(--color-text-secondary);
+}
+
+.dark .dashboard-main__subtitle,
+.dark .kanban-column__title,
+.dark .kanban-column__count,
+.dark .card__id,
+.dark .card__branch,
+.dark .card__meta-sep,
+.dark .card__diff-size,
+.dark .session-card__secondary,
+.dark .card__status,
+.dark .done-bar__toggle,
+.dark .done-bar__label,
+.dark .done-bar__count,
+.dark .dashboard-stat-card__meta {
+  color: var(--color-text-secondary);
+}
+
+.dark .alert-row__notified {
+  opacity: 1;
+}
+
+.dark .alert-row__action {
+  opacity: 1;
+}
+
+.dark .terminal .xterm-dim {
+  color: #8b8b96 !important;
+}
+
+.kanban-column-body {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.kanban-column::after {
+  content: "";
+  display: block;
+  height: 10px;
+  margin-top: -10px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--color-column-bg));
+}
+
+@media (max-width: 767px) {
+  .dashboard-app-sidebar-toggle,
+  .dashboard-app-btn,
+  .project-sidebar__add-btn,
+  .project-sidebar__footer-btn,
+  .project-sidebar__theme-toggle,
+  .project-sidebar__proj-action,
+  .project-sidebar__proj-toggle,
+  .project-sidebar__sess-row,
+  .project-sidebar__collapsed-icon,
+  .project-sidebar__collapsed-session-btn,
+  .add-project-modal__iconbtn,
+  .add-project-modal__toolbtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .project-sidebar__sess-row {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .project-sidebar__proj-toggle {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .add-project-modal-backdrop,
+  .project-settings-modal-backdrop {
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+  }
+
+  .add-project-modal,
+  .project-settings-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .add-project-modal {
+    height: min(680px, calc(100dvh - 24px));
+  }
+
+  .project-settings-modal {
+    height: auto;
+  }
+
+  .project-settings-modal__header {
+    padding: 14px 16px;
+  }
+
+  .project-settings-modal__title {
+    font-size: 18px;
+  }
+}

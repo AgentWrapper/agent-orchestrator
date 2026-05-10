@@ -80,6 +80,58 @@ describe("AddProjectModal", () => {
     expect(screen.getByRole("button", { name: /^add project$/i })).toBeDisabled();
   });
 
+  it("does not close when a pointer drag starts inside and ends on the backdrop", async () => {
+    const onClose = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ entries: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AddProjectModal open onClose={onClose} />);
+
+    const dialog = await screen.findByRole("dialog", { name: /add project/i });
+    const backdrop = dialog.parentElement;
+    if (!backdrop) throw new Error("Expected modal backdrop");
+    const elementFromPoint = vi.fn<(x: number, y: number) => Element | null>();
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: elementFromPoint,
+    });
+
+    elementFromPoint.mockReturnValue(backdrop);
+    fireEvent.pointerDown(dialog);
+    fireEvent.pointerUp(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+
+    elementFromPoint.mockReturnValue(dialog);
+    fireEvent.pointerDown(backdrop);
+    fireEvent.pointerUp(backdrop, { clientX: 24, clientY: 24 });
+    expect(onClose).not.toHaveBeenCalled();
+
+    elementFromPoint.mockReturnValue(backdrop);
+    fireEvent.pointerDown(backdrop);
+    fireEvent.pointerUp(backdrop, { clientX: 4, clientY: 4 });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes when Escape is pressed inside the dialog", async () => {
+    const onClose = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ entries: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AddProjectModal open onClose={onClose} />);
+
+    fireEvent.keyDown(await screen.findByRole("dialog", { name: /add project/i }), {
+      key: "Escape",
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("offers opening the existing project or using a suffixed project ID when the server returns 409", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

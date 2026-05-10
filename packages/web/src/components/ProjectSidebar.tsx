@@ -404,8 +404,8 @@ function ProjectSidebarInner({
                       isActive && "project-sidebar__collapsed-session-btn--active",
                     )}
                     data-level={level}
-                    title={rawTitle}
-                    aria-label={rawTitle}
+                    title={`${rawTitle} · ${LEVEL_LABELS[level]}`}
+                    aria-label={`${rawTitle}, ${LEVEL_LABELS[level]}`}
                   >
                     <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
                     <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
@@ -723,7 +723,6 @@ function ProjectSidebarInner({
                             isSessionActive && "project-sidebar__sess-row--active",
                           )}
                           aria-current={isSessionActive ? "page" : undefined}
-                          aria-label={`Open ${title}`}
                         >
                           <SessionDot level={level} />
                           <div className="flex-1 min-w-0">
@@ -744,6 +743,9 @@ function ProjectSidebarInner({
                               </div>
                             ) : null}
                           </div>
+                          {session.pr ? (
+                            <span className="project-sidebar__sess-pr">#{session.pr.number}</span>
+                          ) : null}
                           {!showSessionId ? (
                             <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
                               {LEVEL_LABELS[level]}

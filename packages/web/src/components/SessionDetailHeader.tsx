@@ -191,6 +191,12 @@ export function SessionDetailHeader({
               <span className="topbar-branch-pill">{session.branch}</span>
             )
           ) : null}
+          {pr ? (
+            <a href={pr.url} target="_blank" rel="noopener noreferrer" className="topbar-pr-pill">
+              PR #{pr.number}
+              <span aria-hidden="true">↗</span>
+            </a>
+          ) : null}
           {isOrchestrator && orchestratorZones ? (
             <OrchestratorZonePills zones={orchestratorZones} />
           ) : null}
@@ -221,7 +227,7 @@ export function SessionDetailHeader({
                 setPrPopoverOpen((value) => !value);
               }}
               aria-expanded={prPopoverOpen}
-              aria-label={`PR #${pr.number}`}
+              aria-label={`PR details for #${pr.number}`}
             >
               <span
                 className={cn(
@@ -234,7 +240,7 @@ export function SessionDetailHeader({
                       : "topbar-pr-dot--amber",
                 )}
               />
-              PR #{pr.number}
+              <span className="topbar-btn-label">Details</span>
               <svg
                 width="10"
                 height="10"
@@ -268,6 +274,7 @@ export function SessionDetailHeader({
             type="button"
             className="dashboard-app-btn dashboard-app-btn--restore"
             onClick={onRestore}
+            aria-label={`Restore ${session.id}`}
           >
             <svg
               className="topbar-action-icon"
@@ -288,6 +295,7 @@ export function SessionDetailHeader({
             type="button"
             className="dashboard-app-btn dashboard-app-btn--danger"
             onClick={onKill}
+            aria-label={`Terminate ${session.id}`}
           >
             <svg
               className="h-3.5 w-3.5"

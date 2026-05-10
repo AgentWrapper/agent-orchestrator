@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DegradedProjectState } from "@/components/DegradedProjectState";
@@ -5,6 +6,18 @@ import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { getProjectRouteData } from "@/lib/project-route-data";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(props: {
+  params: Promise<{ projectId: string }>;
+}): Promise<Metadata> {
+  const { projectId } = await props.params;
+  const routeData = await getProjectRouteData(projectId);
+  const projectName = routeData?.project?.name ?? routeData?.projectId ?? projectId;
+  return {
+    title: { absolute: `ao | ${projectName} Settings` },
+    description: `Behavior settings for the ${projectName} AO project.`,
+  };
+}
 
 export default async function ProjectSettingsPage(props: {
   params: Promise<{ projectId: string }>;

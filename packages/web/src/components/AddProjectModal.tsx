@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
@@ -37,6 +39,7 @@ interface AddProjectModalProps {
 export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const router = useRouter();
   const modalRef = useRef<HTMLDivElement>(null);
+  const backdropPointerStartedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
@@ -50,6 +53,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [projectIdInput, setProjectIdInput] = useState("");
   const [projectNameInput, setProjectNameInput] = useState("");
+  useFocusTrap(open, modalRef);
 
   const browse = async (
     path: string,
@@ -120,7 +124,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     setSelectedBrowsePath(initialPath);
     setProjectIdInput("");
     setProjectNameInput("");
-    modalRef.current?.focus();
     void browse(initialPath, { mode: "replace", selectedPath: initialPath });
   }, [open]);
 
@@ -250,7 +253,34 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     }
   };
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
+
+  const handleBackdropPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    backdropPointerStartedRef.current = event.target === event.currentTarget;
+  };
+
+  const handleBackdropPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const releaseTarget = document.elementFromPoint(event.clientX, event.clientY);
+    const shouldClose = backdropPointerStartedRef.current && releaseTarget === event.currentTarget;
+    backdropPointerStartedRef.current = false;
+    if (shouldClose) onClose();
+  };
+
+  const handleBackdropPointerCancel = () => {
+    backdropPointerStartedRef.current = false;
+  };
+
+  const handleDialogPointerEvent = (event: PointerEvent<HTMLDivElement>) => {
+    backdropPointerStartedRef.current = false;
+    event.stopPropagation();
+  };
+
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  };
 
   const navigateHistory = (nextIndex: number) => {
     if (nextIndex < 0 || nextIndex >= browseHistory.length) return;
@@ -279,9 +309,26 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     <div className="add-project-modal__notice add-project-modal__notice--error">{networkError}</div>
   ) : null;
 
-  return (
-    <div className="add-project-modal-backdrop">
-      <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Add project" className="add-project-modal" tabIndex={-1}>
+  return createPortal(
+    <div
+      className="add-project-modal-backdrop"
+      onPointerDown={handleBackdropPointerDown}
+      onPointerUp={handleBackdropPointerUp}
+      onPointerCancel={handleBackdropPointerCancel}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add project"
+        className="add-project-modal"
+        tabIndex={-1}
+        onPointerDown={handleDialogPointerEvent}
+        onPointerUp={handleDialogPointerEvent}
+        onPointerCancel={handleDialogPointerEvent}
+        onKeyDown={handleDialogKeyDown}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="add-project-modal__titlebar">
           <h2 className="add-project-modal__windowtitle">add project</h2>
           <button type="button" aria-label="Close" onClick={onClose} className="add-project-modal__iconbtn">×</button>
@@ -369,6 +416,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

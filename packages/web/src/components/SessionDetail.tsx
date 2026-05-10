@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
 import { SidebarContext } from "./workspace/SidebarContext";
-import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { projectDashboardPath, projectPullRequestsPath, projectSessionPath } from "@/lib/routes";
 
 import { ProjectSidebar, type ProjectSidebarOrchestrator } from "./ProjectSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
@@ -83,6 +83,13 @@ export function SessionDetail({
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
   const dashboardHref = session.projectId ? projectDashboardPath(session.projectId) : "/";
+  const prsHref = session.projectId ? projectPullRequestsPath(session.projectId) : "/prs";
+  const mobileSidebarHiddenProps =
+    isMobile && !mobileSidebarOpen
+      ? ({ "aria-hidden": true, inert: true } as React.HTMLAttributes<HTMLDivElement> & {
+          inert: boolean;
+        })
+      : {};
 
   const handleKill = useCallback(async () => {
     try {
@@ -166,6 +173,7 @@ export function SessionDetail({
               className={`sidebar-wrapper${
                 mobileSidebarOpen ? " sidebar-wrapper--mobile-open" : ""
               }`}
+              {...mobileSidebarHiddenProps}
             >
               <ProjectSidebar
                 projects={projects}
@@ -187,7 +195,10 @@ export function SessionDetail({
           )}
 
           <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
+            <main
+              className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]"
+              aria-label={`${headline} terminal session`}
+            >
               <div className="flex-1 min-h-0 flex flex-col">
                 {!showTerminal ? (
                   <div className="session-detail-terminal-placeholder h-full" />
@@ -220,9 +231,7 @@ export function SessionDetail({
           ariaLabel="Session navigation"
           activeTab={isOrchestrator ? "orchestrator" : undefined}
           dashboardHref={dashboardHref}
-          prsHref={
-            session.projectId ? `/?project=${encodeURIComponent(session.projectId)}&tab=prs` : "/"
-          }
+          prsHref={prsHref}
           showOrchestrator={!!orchestratorHref}
           orchestratorHref={orchestratorHref}
         />

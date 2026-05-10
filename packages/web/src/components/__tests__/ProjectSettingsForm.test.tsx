@@ -41,6 +41,7 @@ describe("ProjectSettingsForm", () => {
 
     expect(screen.getByDisplayValue("/tmp/docs")).toBeDisabled();
     expect(screen.getByDisplayValue("org/repo")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "claude-code" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -67,6 +68,7 @@ describe("ProjectSettingsForm", () => {
     await waitFor(() => {
       expect(refreshMock).toHaveBeenCalled();
       expect(screen.getByText("Project settings updated.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     });
   });
 

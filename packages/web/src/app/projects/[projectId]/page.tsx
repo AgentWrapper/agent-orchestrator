@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { DegradedProjectState } from "@/components/DegradedProjectState";
@@ -6,9 +7,19 @@ import { getProjectRouteData } from "@/lib/project-route-data";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProjectPage(props: {
+export async function generateMetadata(props: {
   params: Promise<{ projectId: string }>;
-}) {
+}): Promise<Metadata> {
+  const { projectId } = await props.params;
+  const routeData = await getProjectRouteData(projectId);
+  const projectName = routeData?.project?.name ?? routeData?.projectId ?? projectId;
+  return {
+    title: { absolute: `ao | ${projectName}` },
+    description: `Live AO dashboard for ${projectName} agent sessions, pull requests, and merge status.`,
+  };
+}
+
+export default async function ProjectPage(props: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await props.params;
   const routeData = await getProjectRouteData(projectId);
 
@@ -26,17 +37,19 @@ export default async function ProjectPage(props: {
     );
   }
 
-  const pageData = await getDashboardPageData(projectId);
+  const pageData = await getDashboardPageData("all");
+  const projectName = routeData.project?.name ?? routeData.projectId;
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-canvas)]">
       <Dashboard
         initialSessions={pageData.sessions}
-        projectId={pageData.selectedProjectId}
-        projectName={pageData.projectName}
+        projectId={routeData.projectId}
+        projectName={projectName}
         projects={pageData.projects}
         orchestrators={pageData.orchestrators}
         attentionZones={pageData.attentionZones}
+        dashboardLoadError={pageData.dashboardLoadError}
       />
     </div>
   );

@@ -14,7 +14,7 @@ describe("app layout metadata", () => {
     ]);
   });
 
-  it("builds metadata with the project-aware title and apple web app settings", async () => {
+  it("generates metadata with the project-aware title and apple web app settings", async () => {
     const { generateMetadata } = await import("./layout");
 
     await expect(generateMetadata()).resolves.toMatchObject({

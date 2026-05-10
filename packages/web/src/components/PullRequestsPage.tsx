@@ -10,7 +10,7 @@ import {
   type DashboardAttentionZoneMode,
   getAttentionLevel,
 } from "@/lib/types";
-import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useSessionEvents, type AttentionMap } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
@@ -18,7 +18,7 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { PRCard, PRTableRow } from "./PRStatus";
 import { MobileBottomNav } from "./MobileBottomNav";
 import type { ProjectInfo } from "@/lib/project-name";
-import { getProjectScopedHref } from "@/lib/project-utils";
+import { filterProjectSessions, getProjectScopedHref } from "@/lib/project-utils";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
 interface PullRequestsPageProps {
@@ -65,7 +65,6 @@ export function PullRequestsPage({
   }, [initialSessions, attentionZones]);
   const { sessions, attentionLevels } = useSessionEvents({
     initialSessions,
-    project: projectId,
     muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
     attentionZones,
@@ -84,13 +83,30 @@ export function PullRequestsPage({
     [orchestratorLinks, projectId],
   );
   const [prFilter, setPrFilter] = useState<PRFilterValue>("all");
+  const projectMap = useMemo(
+    () =>
+      Object.fromEntries(
+        projects.map((project) => [project.id, { sessionPrefix: project.sessionPrefix }]),
+      ),
+    [projects],
+  );
+  const projectSessions = useMemo(() => {
+    return filterProjectSessions(sessions, projectId, projectMap);
+  }, [projectId, projectMap, sessions]);
+  const pageAttentionLevels = useMemo<AttentionMap>(() => {
+    if (!projectId) return attentionLevels;
+    const visibleIds = new Set(projectSessions.map((session) => session.id));
+    return Object.fromEntries(
+      Object.entries(attentionLevels).filter(([sessionId]) => visibleIds.has(sessionId)),
+    ) as AttentionMap;
+  }, [attentionLevels, projectId, projectSessions]);
 
   const allPRs = useMemo(() => {
-    return sessions
+    return projectSessions
       .filter((session): session is DashboardSession & { pr: DashboardPR } => !!session.pr)
       .map((session) => session.pr)
       .sort((a, b) => b.number - a.number);
-  }, [sessions]);
+  }, [projectSessions]);
 
   const openPRs = useMemo(() => allPRs.filter((pr) => pr.state === "open"), [allPRs]);
   const mergedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "merged"), [allPRs]);
@@ -101,6 +117,12 @@ export function PullRequestsPage({
     ? projectSessionPath(currentProjectOrchestrator.projectId, currentProjectOrchestrator.id)
     : null;
   const activeMobilePRs = prFilter === "open" ? openPRs : prFilter === "merged" ? mergedPRs : prFilter === "closed" ? closedPRs : allPRs;
+  const mobileSidebarHiddenProps =
+    isMobile && !mobileMenuOpen
+      ? ({ "aria-hidden": true, inert: true } as React.HTMLAttributes<HTMLDivElement> & {
+          inert: boolean;
+        })
+      : {};
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -111,7 +133,10 @@ export function PullRequestsPage({
         className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
       >
       {showSidebar ? (
-        <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
+        <div
+          className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}
+          {...mobileSidebarHiddenProps}
+        >
           <ProjectSidebar
             projects={projects}
             sessions={sessions}
@@ -128,7 +153,7 @@ export function PullRequestsPage({
         <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
       )}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
-        <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
+        <DynamicFavicon attentionLevels={pageAttentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
         {isMobile ? (
           <section className="mobile-pr-page-header">
             <div className="mobile-pr-page-header__top">
