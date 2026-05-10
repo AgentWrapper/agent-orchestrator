@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync, renameSync } from "node:fs";
+import type * as NodeFs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -15,6 +16,16 @@ import {
 } from "../metadata.js";
 import { recordActivityEvent } from "../activity-events.js";
 
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return {
+    ...actual,
+    renameSync: vi.fn((...args: Parameters<typeof actual.renameSync>) =>
+      actual.renameSync(...args),
+    ),
+  };
+});
+
 vi.mock("../activity-events.js", () => ({
   recordActivityEvent: vi.fn(),
 }));
@@ -25,6 +36,7 @@ beforeEach(() => {
   dataDir = join(tmpdir(), `ao-test-metadata-${randomUUID()}`);
   mkdirSync(dataDir, { recursive: true });
   vi.mocked(recordActivityEvent).mockClear();
+  vi.mocked(renameSync).mockClear();
 });
 
 afterEach(() => {
@@ -355,6 +367,7 @@ describe("mutateMetadata corrupt-file handling", () => {
         source: "session-manager",
         kind: "metadata.corrupt_detected",
         level: "error",
+        summary: expect.stringContaining("renamed to"),
         data: expect.objectContaining({
           renamedTo: expect.stringMatching(/\.corrupt-\d+$/),
           renameSucceeded: true,
@@ -363,6 +376,37 @@ describe("mutateMetadata corrupt-file handling", () => {
         }),
       }),
     );
+  });
+
+  it("emits a rename-failed summary when corrupt metadata cannot be renamed", () => {
+    const sessionPath = join(dataDir, "ao-rename-failed.json");
+    writeFileSync(sessionPath, "{ broken json", "utf-8");
+    vi.mocked(renameSync).mockImplementationOnce(() => {
+      throw new Error("rename denied");
+    });
+
+    const result = mutateMetadata(
+      dataDir,
+      "ao-rename-failed",
+      (existing) => ({ ...existing, branch: "feat/x" }),
+      { createIfMissing: true },
+    );
+
+    expect(result).not.toBeNull();
+    const call = vi
+      .mocked(recordActivityEvent)
+      .mock.calls.find((c) => c[0].kind === "metadata.corrupt_detected");
+    expect(call).toBeDefined();
+    expect(call![0]).toMatchObject({
+      sessionId: "ao-rename-failed",
+      summary: expect.stringContaining("failed to rename"),
+      data: expect.objectContaining({
+        renamedTo: null,
+        renameSucceeded: false,
+        path: sessionPath,
+      }),
+    });
+    expect(call![0].summary).not.toContain("renamed to");
   });
 
   it("truncates contentSample to 200 chars in metadata.corrupt_detected", () => {

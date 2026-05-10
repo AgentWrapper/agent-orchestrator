@@ -18,7 +18,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   CanonicalSessionLifecycle,
   CanonicalSessionReason,
@@ -255,6 +255,11 @@ function buildAuditDir(dataDir: string): string {
   return join(dataDir, ".agent-report-audit");
 }
 
+function inferProjectIdFromDataDir(dataDir: string): string | undefined {
+  // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
+  return basename(dirname(dataDir)) || undefined;
+}
+
 const AGENT_REPORT_AUDIT_MAX_BYTES = 256 * 1024;
 const AGENT_REPORT_AUDIT_MAX_ENTRIES = 200;
 
@@ -384,9 +389,11 @@ export function applyAgentReport(
   sessionId: SessionId,
   input: ApplyAgentReportInput,
 ): ApplyAgentReportResult {
+  const projectId = inferProjectIdFromDataDir(dataDir);
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) {
     recordActivityEvent({
+      projectId,
       sessionId,
       source: "api",
       kind: "api.agent_report.session_not_found",
@@ -468,6 +475,7 @@ export function applyAgentReport(
         after: before,
       });
       recordActivityEvent({
+        projectId,
         sessionId,
         source: "api",
         kind: "api.agent_report.transition_rejected",

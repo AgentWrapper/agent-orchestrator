@@ -375,13 +375,16 @@ export function mutateMetadata(
             content.length > 200 ? `${content.slice(0, 200)}` : content;
           // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
           const inferredProjectId = basename(dirname(dataDir));
+          const summary = renamed
+            ? `Corrupt metadata for session ${sessionId} renamed to ${basename(corruptPath)}`
+            : `Corrupt metadata detected for session ${sessionId}; failed to rename forensic copy before rewrite`;
           recordActivityEvent({
             projectId: inferredProjectId || undefined,
             sessionId,
             source: "session-manager",
             kind: "metadata.corrupt_detected",
             level: "error",
-            summary: `Corrupt metadata for session ${sessionId} renamed to ${basename(corruptPath)}`,
+            summary,
             data: {
               path,
               renamedTo: renamed ? basename(corruptPath) : null,
