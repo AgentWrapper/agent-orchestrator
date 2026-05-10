@@ -512,7 +512,7 @@ export function applyAgentReport(
       }
     }
     return next;
-  });
+  }, { activityEventSource: "agent-report" });
 
   if (!nextMetadata || !before || !previousState || !nextState || !legacyStatus) {
     throw new Error(`Failed to apply agent report for session ${sessionId}`);

@@ -325,11 +325,16 @@ function normalizeMetadataRecord(data: Record<string, string>): Record<string, s
   );
 }
 
+export interface MutateMetadataOptions {
+  createIfMissing?: boolean;
+  activityEventSource?: string;
+}
+
 export function mutateMetadata(
   dataDir: string,
   sessionId: SessionId,
   updater: (existing: Record<string, string>) => Record<string, string>,
-  options: { createIfMissing?: boolean } = {},
+  options: MutateMetadataOptions = {},
 ): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   const lockPath = `${path}.lock`;
@@ -373,7 +378,7 @@ export function mutateMetadata(
           // detection queryable.
           recordActivityEvent({
             sessionId,
-            source: "session-manager",
+            source: options.activityEventSource ?? "metadata",
             kind: "metadata.corrupt_detected",
             level: "warn",
             summary: `corrupt metadata JSON detected: ${sessionId}`,

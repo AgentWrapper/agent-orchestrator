@@ -2597,7 +2597,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
                 ...existing,
                 opencodeSessionId: "",
                 opencodeCleanedAt: new Date().toISOString(),
-              }));
+              }), { activityEventSource: "session-manager" });
             } catch (err) {
               const errorMessage = err instanceof Error ? err.message : String(err);
               result.errors.push({

@@ -159,6 +159,7 @@ describe("session.prompt_delivery_failed (MUST)", () => {
     expect(event!.level).toBe("error");
     expect(event!.source).toBe("session-manager");
     expect(event!.data).toMatchObject({ attempts: 3 });
+    expect(event!.summary).toBe(`prompt delivery failed after 3 retries: ${event!.sessionId}`);
     expect(JSON.stringify(event!.data ?? {})).not.toContain("secret task content");
   });
 
@@ -427,13 +428,13 @@ describe("metadata.corrupt_detected (MUST)", () => {
       sessionsDir,
       "app-corrupt",
       () => ({ branch: "feat/x", project: "my-app" }),
-      { createIfMissing: true },
+      { createIfMissing: true, activityEventSource: "agent-report" },
     );
 
     const event = findEvent("metadata.corrupt_detected");
     expect(event).toBeDefined();
     expect(event!.level).toBe("warn");
-    expect(event!.source).toBe("session-manager");
+    expect(event!.source).toBe("agent-report");
     expect(event!.sessionId).toBe("app-corrupt");
     const data = event!.data as Record<string, unknown>;
     expect(data["renamed"]).toBe(true);
