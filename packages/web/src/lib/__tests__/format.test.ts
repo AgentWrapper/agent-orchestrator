@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { humanizeBranch, getSessionTitle } from "../format";
+import { humanizeBranch, getSessionTitle, formatDuration } from "../format";
 import type { DashboardSession } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,38 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// formatDuration
+// ---------------------------------------------------------------------------
+
+describe("formatDuration", () => {
+  it("returns '0s' for zero input", () => {
+    expect(formatDuration(0)).toBe("0s");
+  });
+
+  it("returns '0s' for negative input", () => {
+    expect(formatDuration(-1000)).toBe("0s");
+  });
+
+  it("shows seconds only for durations under 60s", () => {
+    expect(formatDuration(45000)).toBe("45s");
+    expect(formatDuration(1000)).toBe("1s");
+    expect(formatDuration(59000)).toBe("59s");
+  });
+
+  it("shows minutes and seconds for durations under 1h", () => {
+    expect(formatDuration(90000)).toBe("1m 30s");
+    expect(formatDuration(60000)).toBe("1m 0s");
+    expect(formatDuration(3599000)).toBe("59m 59s");
+  });
+
+  it("shows hours and minutes for durations of 1h or more", () => {
+    expect(formatDuration(3600000)).toBe("1h 0m");
+    expect(formatDuration(7200000)).toBe("2h 0m");
+    expect(formatDuration(5400000)).toBe("1h 30m");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // humanizeBranch

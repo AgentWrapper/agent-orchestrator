@@ -114,6 +114,17 @@ export function getSessionTitle(session: DashboardSession): string {
   return session.status;
 }
 
+export function formatDuration(ms: number): string {
+  if (ms <= 0) return "0s";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours >= 1) return `${hours}h ${minutes}m`;
+  if (minutes >= 1) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function formatRelativeTime(input: number): string {
   const elapsedMs = Date.now() - input;
 
