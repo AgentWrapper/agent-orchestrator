@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { Command } from "commander";
 import chalk from "chalk";
 import { runRepoScript } from "../lib/script-runner.js";
@@ -8,6 +8,7 @@ import {
   getCurrentVersion,
   getUpdateCommand,
   invalidateCache,
+  isVersionOutdated,
 } from "../lib/update-check.js";
 import { promptConfirm } from "../lib/prompts.js";
 
@@ -23,37 +24,33 @@ export function registerUpdate(program: Command): void {
     .option("--skip-smoke", "Skip smoke tests after rebuilding (git installs only)")
     .option("--smoke-only", "Run smoke tests without fetching or rebuilding (git installs only)")
     .option("--check", "Print version info as JSON without upgrading")
-    .action(
-      async (opts: { skipSmoke?: boolean; smokeOnly?: boolean; check?: boolean }) => {
-        if (opts.skipSmoke && opts.smokeOnly) {
-          console.error(
-            "`ao update` does not allow `--skip-smoke` together with `--smoke-only`.",
-          );
-          process.exit(1);
-        }
+    .action(async (opts: { skipSmoke?: boolean; smokeOnly?: boolean; check?: boolean }) => {
+      if (opts.skipSmoke && opts.smokeOnly) {
+        console.error("`ao update` does not allow `--skip-smoke` together with `--smoke-only`.");
+        process.exit(1);
+      }
 
-        // --check: print JSON and exit
-        if (opts.check) {
-          await handleCheck();
-          return;
-        }
+      // --check: print JSON and exit
+      if (opts.check) {
+        await handleCheck();
+        return;
+      }
 
-        const method = detectInstallMethod();
+      const method = detectInstallMethod();
 
-        switch (method) {
-          case "git":
-            await handleGitUpdate(opts);
-            break;
-          case "npm-global":
-          case "pnpm-global":
-            await handleNpmUpdate(opts);
-            break;
-          case "unknown":
-            await handleUnknownUpdate();
-            break;
-        }
-      },
-    );
+      switch (method) {
+        case "git":
+          await handleGitUpdate(opts);
+          break;
+        case "npm-global":
+        case "pnpm-global":
+          await handleNpmUpdate(opts);
+          break;
+        case "unknown":
+          await handleUnknownUpdate();
+          break;
+      }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -69,10 +66,7 @@ async function handleCheck(): Promise<void> {
 // git install
 // ---------------------------------------------------------------------------
 
-async function handleGitUpdate(opts: {
-  skipSmoke?: boolean;
-  smokeOnly?: boolean;
-}): Promise<void> {
+async function handleGitUpdate(opts: { skipSmoke?: boolean; smokeOnly?: boolean }): Promise<void> {
   const args: string[] = [];
   if (opts.skipSmoke) args.push("--skip-smoke");
   if (opts.smokeOnly) args.push("--smoke-only");
@@ -84,10 +78,7 @@ async function handleGitUpdate(opts: {
     }
     invalidateCache();
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("Script not found: ao-update.sh")
-    ) {
+    if (error instanceof Error && error.message.includes("Script not found: ao-update.sh")) {
       console.error(
         chalk.red(
           "ao-update.sh is missing from the bundled assets. " +
@@ -107,10 +98,7 @@ async function handleGitUpdate(opts: {
 // npm-global install
 // ---------------------------------------------------------------------------
 
-async function handleNpmUpdate(opts: {
-  skipSmoke?: boolean;
-  smokeOnly?: boolean;
-}): Promise<void> {
+async function handleNpmUpdate(opts: { skipSmoke?: boolean; smokeOnly?: boolean }): Promise<void> {
   if (opts.skipSmoke || opts.smokeOnly) {
     console.log(
       chalk.yellow("--skip-smoke and --smoke-only only apply to git source installs. Ignoring."),
@@ -147,6 +135,21 @@ async function handleNpmUpdate(opts: {
 
   const exitCode = await runNpmInstall(command);
   if (exitCode === 0) {
+    const verified = verifyRunnableAoVersion(info.latestVersion);
+    if (!verified) {
+      console.error(
+        chalk.red(
+          "\nUpdate command completed, but the runnable `ao` in PATH still does not report the latest version.",
+        ),
+      );
+      console.error(
+        chalk.yellow(
+          "Check your PATH, shell hash cache, or package manager global bin directory, then rerun `ao --version`.",
+        ),
+      );
+      process.exit(1);
+    }
+
     invalidateCache();
     console.log(chalk.green("\nUpdate complete."));
   } else {
@@ -156,8 +159,12 @@ async function handleNpmUpdate(opts: {
 
 function runNpmInstall(command: string): Promise<number> {
   const [cmd, ...args] = command.split(" ");
+  if (!cmd) {
+    return Promise.resolve(1);
+  }
+
   return new Promise<number>((resolveExit, reject) => {
-    const child = spawn(cmd!, args, { stdio: "inherit" });
+    const child = spawn(cmd, args, { stdio: "inherit" });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       if (signal) {
@@ -171,6 +178,30 @@ function runNpmInstall(command: string): Promise<number> {
       resolveExit(code ?? 1);
     });
   });
+}
+
+export function parseAoVersionOutput(output: string): string | null {
+  const match = output.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/);
+  return match?.[1] ?? null;
+}
+
+function verifyRunnableAoVersion(expectedVersion: string): boolean {
+  const result = spawnSync("ao", ["--version"], {
+    encoding: "utf-8",
+    shell: process.platform === "win32",
+    timeout: 3000,
+  });
+
+  if (result.status !== 0 || result.error) {
+    return false;
+  }
+
+  const actualVersion = parseAoVersionOutput(`${result.stdout}\n${result.stderr}`);
+  if (!actualVersion) {
+    return false;
+  }
+
+  return actualVersion === expectedVersion || !isVersionOutdated(actualVersion, expectedVersion);
 }
 
 // ---------------------------------------------------------------------------
