@@ -63,17 +63,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   - Set `AO_PUBLIC_URL` to the externally-reachable URL of the dashboard
   - All console output, `ao open` browser launches, and orchestrator-prompt session links use this URL instead of `http://localhost:<port>`
   - Example: `export AO_PUBLIC_URL="https://ao.example.com"`
-  - **Terminal WebSocket routing** — the dashboard auto-detects how to reach the mux:
-    - When the dashboard is served on a standard port (HTTPS 443 or HTTP 80), the mux WebSocket connects to `/ao-terminal-mux` on the same hostname. Your proxy just needs to forward that path with WebSocket upgrade headers to the dashboard's port; no extra subdomain or port is required.
-    - For non-standard ports or custom paths, set `TERMINAL_WS_PATH=/your/ws/path` and have your proxy route that path to the dashboard.
-    - As a fallback (e.g. when accessing a remote dashboard directly by `host:port` rather than through a proxy), the dashboard connects to `directTerminalPort` (default 14801) on the same hostname — that port must also be reachable.
-  - Minimal Caddy example for a reverse-proxied install:
-
-    ```caddy
-    ao.example.com {
-        reverse_proxy localhost:3000
-    }
-    ```
+  - When the dashboard is served on a standard port (HTTPS 443 / HTTP 80) the dashboard JS connects the mux WebSocket to `/ao-terminal-mux` on the same hostname. Your proxy needs to forward that path to the direct terminal server (`DIRECT_TERMINAL_PORT`, default 14801) — its upgrade handler accepts both `/mux` and `/ao-terminal-mux`. For custom paths set `TERMINAL_WS_PATH=/your/path`.
 
 ## Installation
 
