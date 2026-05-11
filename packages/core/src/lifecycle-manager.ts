@@ -530,7 +530,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         reposByPlugin.set(pluginKey, new Set());
       }
       reposByPlugin.get(pluginKey)!.add(project.repo);
-
+      //Option : also track the actual PR repo of ot differs from the configured repo.
+      // This handles multi repo projects (eg: git submodules) where an agent creates
+      // a PR on a different repo than the one configured in agent-orchestrator.yaml
+      if (session.pr) {
+        const actualPRRepo = `${session.pr.owner}/${session.pr.repo}`;
+        if (actualPRRepo !== project.repo) {
+          reposByPlugin.get(pluginKey)!.add(actualPRRepo);
+        }
+      }
       if (!session.pr) continue;
 
       const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;

@@ -624,5 +624,44 @@ describe("plugin integration", () => {
       const states = lm.getStates();
       expect(states.get("app-1")).toBe("changes_requested");
     });
+    it("populatePREnrichmentCache includes actual PR repo when it differs from configured repo", async () => {
+      const submodulePR = makePR({
+        number: 99,
+        url: "https://github.com/acme/sub-module/pull/99",
+        title: "feat: fix in submodule",
+        owner: "acme",
+        repo: "sub-module",
+        branch: "feat/issue-99",
+        baseBranch: "main",
+      });
+      seedSession({ status: "pr_open", pr: submodulePR });
+      const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
+      const originalBatch = scmPlugin.enrichSessionsPRBatch;
+      let capturedRepos: string[] = [];
+      scmPlugin.enrichSessionsPRBatch = vi.fn().mockImplementation(
+        (_prs, _observer, repos) => {
+          capturedRepos = repos ?? [];
+          return Promise.resolve(
+            new Map([[`${submodulePR.owner}/${submodulePR.repo}#${submodulePR.number}`, {
+              state: "open", ciStatus: "passing", reviewDecision: "approved", mergeable: true,
+            }]]),
+          );
+        },
+      );
+      const mockSM: OpenCodeSessionManager = {
+        ...sm,
+        list: vi.fn().mockResolvedValue([makeSession({ status: "pr_open", pr: submodulePR })]),
+        get: vi.fn().mockResolvedValue(makeSession({ status: "pr_open", pr: submodulePR })),
+        kill: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockResolvedValue(undefined),
+        claimPR: vi.fn(),
+        spawnOrchestrator: vi.fn(),
+      };
+      const lm = createLifecycleManager({ config, registry, sessionManager: mockSM });
+      await lm.check("app-1");
+      scmPlugin.enrichSessionsPRBatch = originalBatch;
+      expect(capturedRepos).toContain("acme/sub-module");
+      expect(capturedRepos).toContain("acme/app");
+    });
   });
 });
