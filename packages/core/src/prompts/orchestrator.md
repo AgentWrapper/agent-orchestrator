@@ -56,7 +56,7 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 
 > **Note:** No repository remote is configured. Issue tracking, PR, and CI features are unavailable.
 > Add a `repo` field (owner/repo) to `agent-orchestrator.yaml` to enable them.
-> {{REPO_NOT_CONFIGURED_SECTION_END}}
+{{REPO_NOT_CONFIGURED_SECTION_END}}
 
 ## Available Commands
 

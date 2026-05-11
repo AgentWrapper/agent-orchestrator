@@ -166,6 +166,58 @@ describe("claimPR", () => {
     expect(mockSCM.resolvePR).not.toHaveBeenCalled();
   });
 
+  it("does not strip local sessions on branch name alone when claiming a cross-repo PR", async () => {
+    const mockSCM = makeSCM({
+      resolvePR: vi.fn().mockImplementation((_ref: string, proj: { repo?: string }) => {
+        if (proj.repo === "other/external") {
+          return Promise.resolve({
+            number: 99,
+            url: "https://github.com/other/external/pull/99",
+            title: "External PR",
+            owner: "other",
+            repo: "external",
+            branch: "main",
+            baseBranch: "main",
+            isDraft: false,
+          });
+        }
+        return Promise.resolve({
+          number: 42,
+          url: "https://github.com/org/my-app/pull/42",
+          title: "Existing PR",
+          owner: "org",
+          repo: "my-app",
+          branch: "feat/existing-pr",
+          baseBranch: "main",
+          isDraft: false,
+        });
+      }),
+    });
+
+    writeMetadata(sessionsDir, "app-local", {
+      worktree: "/tmp/ws-local",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      pr: "https://github.com/org/my-app/pull/5",
+      runtimeHandle: makeHandle("rt-local"),
+    });
+
+    writeMetadata(sessionsDir, "app-claimer", {
+      worktree: "/tmp/ws-claim",
+      branch: "develop",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-claim"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    const result = await sm.claimPR("app-claimer", "99", { repoOverride: "other/external" });
+
+    expect(result.takenOverFrom).toEqual([]);
+    expect(readMetadataRaw(sessionsDir, "app-local")!["pr"]).toBe("https://github.com/org/my-app/pull/5");
+  });
+
   it("consolidates ownership by disabling PR auto-detect on the previous session", async () => {
     const mockSCM = makeSCM();
 

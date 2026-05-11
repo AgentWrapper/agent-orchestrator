@@ -168,6 +168,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     issue: raw["issue"] as string | undefined,
     issueTitle: raw["issueTitle"] as string | undefined,
     pr: raw["pr"] as string | undefined,
+    prHistory: typeof raw["prHistory"] === "string" ? raw["prHistory"] : undefined,
     prAutoDetect:
       raw["prAutoDetect"] === "off" ||
       raw["prAutoDetect"] === "false" ||

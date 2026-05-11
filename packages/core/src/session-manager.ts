@@ -2730,6 +2730,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Cannot claim PR #${pr.number} because it is ${prState}`);
     }
 
+    const claimRepoKey = (claimTarget.project.repo ?? "").trim().toLowerCase();
+    const homeRepoKey = (project.repo ?? "").trim().toLowerCase();
+    let sameRepoForBranchConflicts = true;
+    if (claimRepoKey && homeRepoKey) {
+      sameRepoForBranchConflicts = claimRepoKey === homeRepoKey;
+    } else if (claimRepoKey !== homeRepoKey) {
+      sameRepoForBranchConflicts = false;
+    }
+
     const conflictingSessions = new Set<SessionId>();
     const activeRecords = loadActiveSessionRecords(projectId, project).filter(
       (record) => record.sessionName !== sessionId,
@@ -2741,6 +2750,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
+        sameRepoForBranchConflicts &&
         otherRaw["branch"] === pr.branch &&
         (otherRaw["prAutoDetect"] ?? "on") !== "off" &&
         otherRaw["prAutoDetect"] !== "false";
