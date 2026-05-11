@@ -86,6 +86,7 @@ export class SessionBroadcaster {
     onError?: (error: string) => void,
   ): () => void {
     const wasEmpty = this.subscribers.size === 0;
+    let coldSnapshotPromise: Promise<void> | null = null;
     this.subscribers.add(callback);
     if (onError) this.errorSubscribers.add(onError);
 
@@ -99,7 +100,7 @@ export class SessionBroadcaster {
         // Isolate subscriber errors
       }
     } else {
-      void this.refreshSnapshot().then((result) => {
+      coldSnapshotPromise = this.refreshSnapshot().then((result) => {
         if (result.sessions && this.subscribers.has(callback)) {
           try {
             callback(result.sessions);
@@ -118,7 +119,13 @@ export class SessionBroadcaster {
 
     // Start polling if this is the first subscriber
     if (wasEmpty) {
-      this.schedulePoll();
+      if (coldSnapshotPromise) {
+        void coldSnapshotPromise.finally(() => {
+          if (this.subscribers.size > 0) this.schedulePoll();
+        });
+      } else {
+        this.schedulePoll();
+      }
     }
 
     return () => {

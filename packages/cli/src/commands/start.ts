@@ -1964,6 +1964,11 @@ export function registerStop(program: Command): void {
                 activeSessions,
                 killedSessionIds,
               );
+              // A full stop has no true primary project: `_projectId` is only
+              // the first configured project used to make last-stop records
+              // readable by older callers. Store every killed session under
+              // its real project so restore can reclassify the current
+              // project on display without losing cross-project scope.
               const primarySessionIds = stopAll
                 ? []
                 : killedSessionIds.filter((id) => targetActive.some((s) => s.id === id));

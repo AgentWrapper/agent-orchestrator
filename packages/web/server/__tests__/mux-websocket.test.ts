@@ -124,6 +124,36 @@ describe("SessionBroadcaster", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
+    it("does not double-notify subscribers when cold fetch overlaps the first poll delay", async () => {
+      const patches = [makePatch("s1")];
+      let resolveJson: ((value: { sessions: typeof patches }) => void) | undefined;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          new Promise((resolve) => {
+            resolveJson = resolve;
+          }),
+      });
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      broadcaster.subscribe(cb1);
+      broadcaster.subscribe(cb2);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(cb1).not.toHaveBeenCalled();
+      expect(cb2).not.toHaveBeenCalled();
+
+      resolveJson?.({ sessions: patches });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb1).toHaveBeenCalledTimes(1);
+      expect(cb2).toHaveBeenCalledTimes(1);
+      expect(cb1).toHaveBeenCalledWith(patches);
+      expect(cb2).toHaveBeenCalledWith(patches);
+    });
+
     it("returns an unsubscribe function that stops polling when last subscriber leaves", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
