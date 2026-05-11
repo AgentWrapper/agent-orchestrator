@@ -1241,6 +1241,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               errorMessage: err instanceof Error ? err.message : String(err),
             },
           });
+
+          // Don't fall through to default-to-working. Commit current PR state
+          // so the session doesn't regress from a known PR status to bare
+          // "working" while we wait for the next batch cycle to succeed.
+          return commit({
+            status: deriveLegacyStatus(lifecycle),
+            evidence: activityEvidence,
+            detecting: { attempts: 0 },
+          });
         }
       } catch (error) {
         observer?.recordOperation?.({
