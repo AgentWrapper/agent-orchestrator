@@ -2538,6 +2538,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-status-error);
 }
 
+.session-timeline__item--user_action .session-timeline__marker {
+  background: var(--color-status-pending);
+}
+
+.session-timeline__item--other .session-timeline__marker {
+  background: var(--color-status-idle);
+}
+
 .session-timeline__content {
   min-width: 0;
 }

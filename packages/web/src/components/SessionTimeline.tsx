@@ -10,6 +10,8 @@ import type {
 } from "@/lib/types";
 
 const TIMELINE_LIMIT = 80;
+/** Matches dashboard SSE refresh cadence so the timeline stays in sync with session state. */
+const TIMELINE_REFRESH_MS = 5000;
 
 const FILTERS: Array<{ value: "all" | DashboardTimelineCategory; label: string }> = [
   { value: "all", label: "All" },
@@ -18,11 +20,13 @@ const FILTERS: Array<{ value: "all" | DashboardTimelineCategory; label: string }
   { value: "pr", label: "PR/CI" },
   { value: "reaction", label: "Reactions" },
   { value: "runtime", label: "Runtime" },
+  { value: "user_action", label: "Actions" },
   { value: "error", label: "Errors" },
+  { value: "other", label: "Other" },
 ];
 
 function categoryForActivityEvent(event: DashboardActivityEvent): DashboardTimelineCategory {
-  if (event.level === "error" || event.kind.endsWith("_failed") || event.kind.includes("failed")) {
+  if (event.level === "error" || event.kind.includes("failed")) {
     return "error";
   }
   if (event.source === "runtime" || event.kind.startsWith("runtime.")) return "runtime";
@@ -144,26 +148,34 @@ export function SessionTimeline({ session }: { session: DashboardSession }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoadState("loading");
-    void fetch(`/api/sessions/${encodeURIComponent(session.id)}/events?limit=${TIMELINE_LIMIT}`, {
-      cache: "no-store",
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return (await response.json()) as { events?: DashboardActivityEvent[] };
-      })
-      .then((payload) => {
-        if (cancelled) return;
-        setActivityEvents(Array.isArray(payload.events) ? payload.events : []);
-        setLoadState("ready");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setActivityEvents([]);
-        setLoadState("error");
-      });
+    const url = `/api/sessions/${encodeURIComponent(session.id)}/events?limit=${TIMELINE_LIMIT}`;
+
+    const load = (isInitial: boolean) => {
+      if (isInitial) setLoadState("loading");
+      void fetch(url, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return (await response.json()) as { events?: DashboardActivityEvent[] };
+        })
+        .then((payload) => {
+          if (cancelled) return;
+          setActivityEvents(Array.isArray(payload.events) ? payload.events : []);
+          setLoadState("ready");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (isInitial) {
+            setActivityEvents([]);
+            setLoadState("error");
+          }
+        });
+    };
+
+    load(true);
+    const intervalId = window.setInterval(() => load(false), TIMELINE_REFRESH_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [session.id]);
 
