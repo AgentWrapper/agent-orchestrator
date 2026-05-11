@@ -1,11 +1,16 @@
 import { existsSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import {
   ConfigNotFoundError,
   getGlobalConfigPath,
   loadConfig,
+  type ExternalPluginEntryRef,
   type InstalledPluginConfig,
+  type NotifierConfig,
   type OrchestratorConfig,
   type ProjectConfig,
+  type SCMConfig,
+  type TrackerConfig,
 } from "@aoagents/ao-core";
 
 function isMissingConfigError(error: unknown): boolean {
@@ -53,13 +58,107 @@ function mergePlugins(
   if (!primary && !secondary) return undefined;
 
   const merged = new Map<string, InstalledPluginConfig>();
-  for (const plugin of secondary ?? []) {
-    merged.set(plugin.name, plugin);
-  }
   for (const plugin of primary ?? []) {
     merged.set(plugin.name, plugin);
   }
+  for (const plugin of secondary ?? []) {
+    merged.set(plugin.name, plugin);
+  }
   return [...merged.values()];
+}
+
+function absolutePathFromConfig(value: string | undefined, configPath: string): string | undefined {
+  if (!value || isAbsolute(value)) return value;
+  return resolve(dirname(configPath), value);
+}
+
+function withAbsolutePluginPath<T extends { path?: string }>(
+  config: T | undefined,
+  configPath: string,
+): T | undefined {
+  if (!config?.path) return config;
+  const path = absolutePathFromConfig(config.path, configPath);
+  return path === config.path ? config : { ...config, path };
+}
+
+function withAbsoluteInstalledPluginPaths(
+  plugins: InstalledPluginConfig[] | undefined,
+  configPath: string,
+): InstalledPluginConfig[] | undefined {
+  return plugins?.map((plugin) => withAbsolutePluginPath(plugin, configPath) ?? plugin);
+}
+
+function withAbsoluteNotifierPaths(
+  notifiers: Record<string, NotifierConfig>,
+  configPath: string,
+): Record<string, NotifierConfig> {
+  return Object.fromEntries(
+    Object.entries(notifiers).map(([id, notifier]) => [
+      id,
+      withAbsolutePluginPath(notifier, configPath) ?? notifier,
+    ]),
+  );
+}
+
+function withAbsoluteProjectPluginPaths(project: ProjectConfig, configPath: string): ProjectConfig {
+  const tracker = withAbsolutePluginPath<TrackerConfig>(project.tracker, configPath);
+  const scm = withAbsolutePluginPath<SCMConfig>(project.scm, configPath);
+  return {
+    ...project,
+    ...(tracker ? { tracker } : {}),
+    ...(scm ? { scm } : {}),
+  };
+}
+
+function withAbsoluteExternalEntryPaths(
+  entries: ExternalPluginEntryRef[] | undefined,
+  configPath: string,
+): ExternalPluginEntryRef[] | undefined {
+  return entries?.map((entry) => withAbsolutePluginPath(entry, configPath) ?? entry);
+}
+
+function normalizeConfigRelativePluginPaths(config: OrchestratorConfig): OrchestratorConfig {
+  return {
+    ...config,
+    plugins: withAbsoluteInstalledPluginPaths(config.plugins, config.configPath),
+    notifiers: withAbsoluteNotifierPaths(config.notifiers, config.configPath),
+    projects: Object.fromEntries(
+      Object.entries(config.projects).map(([projectId, project]) => [
+        projectId,
+        withAbsoluteProjectPluginPaths(project, config.configPath),
+      ]),
+    ),
+    _externalPluginEntries: withAbsoluteExternalEntryPaths(
+      config._externalPluginEntries,
+      config.configPath,
+    ),
+  };
+}
+
+function mergeExternalPluginEntries(
+  primary: OrchestratorConfig,
+  secondary: OrchestratorConfig,
+  projects: Record<string, ProjectConfig>,
+): ExternalPluginEntryRef[] | undefined {
+  const secondaryProjectIds = new Set(Object.keys(secondary.projects));
+  const entries = (primary._externalPluginEntries ?? []).filter(
+    (entry) =>
+      entry.location.kind !== "project" || !secondaryProjectIds.has(entry.location.projectId),
+  );
+  const primaryNotifierIds = new Set(Object.keys(primary.notifiers));
+
+  for (const entry of secondary._externalPluginEntries ?? []) {
+    if (entry.location.kind === "project") {
+      if (projects[entry.location.projectId]) entries.push(entry);
+      continue;
+    }
+
+    if (!primaryNotifierIds.has(entry.location.notifierId)) {
+      entries.push(entry);
+    }
+  }
+
+  return entries.length > 0 ? entries : undefined;
 }
 
 function mergeProjectsPreferSecondary(
@@ -67,22 +166,24 @@ function mergeProjectsPreferSecondary(
   secondary: OrchestratorConfig | null,
 ): OrchestratorConfig {
   if (!secondary || secondary.configPath === primary.configPath) return primary;
+  const normalizedSecondary = normalizeConfigRelativePluginPaths(secondary);
 
   const projects: Record<string, ProjectConfig> = { ...primary.projects };
-  for (const [projectId, project] of Object.entries(secondary.projects)) {
-    projects[projectId] = withExplicitDefaults(project, secondary.defaults);
+  for (const [projectId, project] of Object.entries(normalizedSecondary.projects)) {
+    projects[projectId] = withExplicitDefaults(project, normalizedSecondary.defaults);
   }
 
   return {
     ...primary,
-    plugins: mergePlugins(primary.plugins, secondary.plugins),
-    notifiers: { ...secondary.notifiers, ...primary.notifiers },
+    plugins: mergePlugins(primary.plugins, normalizedSecondary.plugins),
+    notifiers: { ...normalizedSecondary.notifiers, ...primary.notifiers },
     notificationRouting: {
-      ...secondary.notificationRouting,
+      ...normalizedSecondary.notificationRouting,
       ...primary.notificationRouting,
     },
-    reactions: { ...secondary.reactions, ...primary.reactions },
+    reactions: { ...normalizedSecondary.reactions, ...primary.reactions },
     projects,
+    _externalPluginEntries: mergeExternalPluginEntries(primary, normalizedSecondary, projects),
   };
 }
 
@@ -91,8 +192,10 @@ function mergeProjectsPreferSecondary(
  *
  * The global registry is the broadest source of all AO projects. When AO was
  * launched from a local config, merge projects from the running config so no
- * active session is missed. The running config wins same-ID collisions because
- * it is the config that owns the live daemon process being stopped.
+ * active session is missed. For projects and plugin definitions, the running
+ * config wins same-ID collisions because it owns the live daemon process being
+ * stopped. Running-config relative plugin paths are converted to absolute paths
+ * before merging, while non-plugin global fields keep global-config precedence.
  */
 export function loadAllProjectsConfig(runningConfigPath?: string): OrchestratorConfig {
   const globalPath = getGlobalConfigPath();

@@ -103,6 +103,97 @@ describe("loadAllProjectsConfig", () => {
     });
   });
 
+  it("uses running plugin definitions and preserves running-relative plugin paths", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockLoadConfig.mockImplementation((path: string) => {
+      if (path === "/global/agent-orchestrator.yaml") {
+        return {
+          ...makeConfig(path, ["shared-app"]),
+          plugins: [{ name: "tracker-custom", source: "local", path: "./global-plugin" }],
+          projects: {
+            "shared-app": {
+              name: "Global Shared",
+              path: "/global/shared",
+              tracker: { plugin: "tracker-custom", path: "./global-tracker" },
+            },
+          },
+          _externalPluginEntries: [
+            {
+              source: "projects.shared-app.tracker",
+              location: { kind: "project", projectId: "shared-app", configType: "tracker" },
+              slot: "tracker",
+              path: "./global-tracker",
+            },
+          ],
+        };
+      }
+      if (path === "/local/app/agent-orchestrator.yaml") {
+        return {
+          ...makeConfig(path, ["shared-app", "local-app"]),
+          plugins: [{ name: "tracker-custom", source: "local", path: "./local-plugin" }],
+          projects: {
+            "shared-app": {
+              name: "Running Shared",
+              path: "/local/app/shared",
+              tracker: { plugin: "tracker-custom", path: "./local-tracker" },
+            },
+            "local-app": {
+              name: "Local App",
+              path: "/local/app/local",
+              scm: { plugin: "scm-custom", path: "./local-scm" },
+            },
+          },
+          _externalPluginEntries: [
+            {
+              source: "projects.shared-app.tracker",
+              location: { kind: "project", projectId: "shared-app", configType: "tracker" },
+              slot: "tracker",
+              path: "./local-tracker",
+            },
+            {
+              source: "projects.local-app.scm",
+              location: { kind: "project", projectId: "local-app", configType: "scm" },
+              slot: "scm",
+              path: "./local-scm",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const config = loadAllProjectsConfig("/local/app/agent-orchestrator.yaml");
+
+    expect(config.configPath).toBe("/global/agent-orchestrator.yaml");
+    expect(config.plugins).toEqual([
+      { name: "tracker-custom", source: "local", path: "/local/app/local-plugin" },
+    ]);
+    expect(config.projects["shared-app"]).toMatchObject({
+      name: "Running Shared",
+      tracker: { path: "/local/app/local-tracker" },
+    });
+    expect(config.projects["local-app"]).toMatchObject({
+      scm: { path: "/local/app/local-scm" },
+    });
+    expect(config._externalPluginEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "projects.shared-app.tracker",
+          path: "/local/app/local-tracker",
+        }),
+        expect.objectContaining({ source: "projects.local-app.scm", path: "/local/app/local-scm" }),
+      ]),
+    );
+    expect(config._externalPluginEntries).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "projects.shared-app.tracker",
+          path: "./global-tracker",
+        }),
+      ]),
+    );
+  });
+
   it("does not hide malformed existing global configs", () => {
     mockExistsSync.mockReturnValue(true);
     mockLoadConfig.mockImplementation((path: string) => {

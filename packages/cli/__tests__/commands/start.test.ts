@@ -1671,6 +1671,44 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockClearLastStop).toHaveBeenCalled();
   });
 
+  it("does not display current-project full-stop sessions as other-project sessions", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: [],
+      otherProjects: [
+        { projectId: "project-1", sessionIds: ["p1-1"] },
+        { projectId: "project-2", sessionIds: ["p2-1"] },
+      ],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.restore.mockResolvedValue(undefined);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-1",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("1 session(s) were active before last ao stop");
+    expect(output).toContain("project-2: p2-1");
+    expect(output).not.toContain("project-1: p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
   it("restores primary and other-project sessions from mixed all-project last-stop records", async () => {
     mockReadLastStop.mockResolvedValue({
       stoppedAt: "2026-04-28T10:00:00.000Z",
@@ -1694,6 +1732,12 @@ describe("start command — orchestrator session strategy display", () => {
       "--no-orchestrator",
     ]);
 
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("session(s) were active before last ao stop");
+    expect(output).toContain("session(s) from project-1 were also stopped");
     expect(mockPromptConfirm).toHaveBeenCalledWith("Restore these sessions?", true);
     expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
     expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
@@ -2186,7 +2230,7 @@ describe("stop command", () => {
 
       await program.parseAsync(["node", "test", "stop"]);
 
-      expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+      expect(mockFindPidByPort).not.toHaveBeenCalled();
       expect(mockKillProcessTree).not.toHaveBeenCalled();
       const psCalls = mockExec.mock.calls.filter((c) => c[0] === "ps");
       expect(psCalls).toHaveLength(0);
@@ -2215,6 +2259,7 @@ describe("stop command", () => {
       await program.parseAsync(["node", "test", "stop"]);
 
       expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+      expect(mockFindPidByPort).not.toHaveBeenCalled();
       const output = vi
         .mocked(console.log)
         .mock.calls.map((c) => c.join(" "))

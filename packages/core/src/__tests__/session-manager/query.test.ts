@@ -705,6 +705,53 @@ describe("get", () => {
     expect(secondSession?.agentInfo?.summary).toBe("working on the fix");
   });
 
+  it("does not share bounded get cooldowns across different timeout budgets", async () => {
+    vi.useFakeTimers();
+    try {
+      const agentWithStuckState: Agent = {
+        ...mockAgent,
+        getActivityState: vi.fn(() => new Promise<null>(() => {})),
+        getSessionInfo: vi.fn().mockResolvedValue(null),
+      };
+      const registryWithStuckState: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithStuckState;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-1"),
+      });
+
+      const sm = createSessionManager({ config, registry: registryWithStuckState });
+      const shortSessionPromise = sm.get("app-1", { enrichTimeoutMs: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      const shortSession = await shortSessionPromise;
+
+      expect(shortSession).not.toBeNull();
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(1);
+
+      const longSessionPromise = sm.get("app-1", { enrichTimeoutMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const longSession = await longSessionPromise;
+
+      expect(longSession).not.toBeNull();
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not immediately retry when bounded session info enrichment stalls", async () => {
     vi.useFakeTimers();
     try {

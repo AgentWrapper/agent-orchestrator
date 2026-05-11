@@ -2465,7 +2465,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           plugins,
           options.enrichTimeoutMs,
           undefined,
-          { dedupeKey: `get:${sessionsDir}\0${sessionId}` },
+          { dedupeKey: `get:${options.enrichTimeoutMs}:${sessionsDir}\0${sessionId}` },
         );
       } else {
         await ensureHandleAndEnrich(

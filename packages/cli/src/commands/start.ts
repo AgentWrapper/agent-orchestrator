@@ -1009,6 +1009,11 @@ async function runStartup(
         } else {
           const shouldIncludePrimarySessions =
             lastStop.projectId === projectId || otherProjects.length > 0;
+          const currentProjectSessions = [
+            ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
+            ...otherProjects.filter((p) => p.projectId === projectId).flatMap((p) => p.sessionIds),
+          ];
+          const displayOtherProjects = otherProjects.filter((p) => p.projectId !== projectId);
           // Build flat list of all sessions to restore, grouped for display
           const allRestoreSessions: string[] = [
             ...(shouldIncludePrimarySessions ? lastStop.sessionIds : []),
@@ -1016,7 +1021,19 @@ async function runStartup(
           ];
 
           // Display grouped by project
-          if (shouldIncludePrimarySessions && lastStop.sessionIds.length > 0) {
+          if (currentProjectSessions.length > 0) {
+            console.log(
+              chalk.yellow(
+                `\n  ${currentProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`,
+              ),
+            );
+            console.log(chalk.dim(`  ${currentProjectSessions.join(", ")}\n`));
+          }
+          if (
+            shouldIncludePrimarySessions &&
+            lastStop.sessionIds.length > 0 &&
+            (lastStop.projectId !== projectId || currentProjectSessions.length === 0)
+          ) {
             const label =
               lastStop.projectId === projectId
                 ? "session(s) were active before last ao stop"
@@ -1026,12 +1043,15 @@ async function runStartup(
             );
             console.log(chalk.dim(`  ${lastStop.sessionIds.join(", ")}\n`));
           }
-          if (otherProjects.length > 0) {
-            const otherTotal = otherProjects.reduce((sum, p) => sum + p.sessionIds.length, 0);
+          if (displayOtherProjects.length > 0) {
+            const otherTotal = displayOtherProjects.reduce(
+              (sum, p) => sum + p.sessionIds.length,
+              0,
+            );
             console.log(
               chalk.yellow(`  ${otherTotal} session(s) from other projects were also stopped:`),
             );
-            for (const p of otherProjects) {
+            for (const p of displayOtherProjects) {
               console.log(chalk.dim(`  ${p.projectId}: ${p.sessionIds.join(", ")}`));
             }
             console.log();
@@ -1257,14 +1277,14 @@ async function getParentPid(pid: string | number): Promise<string | null> {
  */
 async function killDashboardOnPort(port: number): Promise<boolean> {
   try {
-    const pid = await findPidByPort(port);
-    if (!pid) return false;
-
     // On Windows, the ordinary stop path kills the registered AO parent with
     // taskkill /T. Avoid the port-fallback heuristic there because without a
     // reliable command-line ownership check it could kill an unrelated service
     // that happens to listen on the configured dashboard port.
     if (isWindows()) return false;
+
+    const pid = await findPidByPort(port);
+    if (!pid) return false;
 
     // On Unix, verify the process is actually a dashboard before killing so
     // unrelated co-listeners (sidecars, SO_REUSEPORT) are left untouched.
@@ -1292,6 +1312,11 @@ async function killDashboardOnPort(port: number): Promise<boolean> {
 }
 
 async function stopDashboard(port: number, options?: { parentStopped?: boolean }): Promise<void> {
+  if (options?.parentStopped && isWindows()) {
+    console.log(chalk.green("Dashboard stopped"));
+    return;
+  }
+
   // 1. Try the expected port — verify it's a dashboard before killing
   if (await killDashboardOnPort(port)) {
     console.log(chalk.green("Dashboard stopped"));
