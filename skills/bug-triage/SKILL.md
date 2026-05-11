@@ -28,6 +28,123 @@ Collect all available context about the bug:
 
 3. **If from live observation:** Record session states, logs, metrics at the time of the bug.
 
+The method for gathering context depends on where the report comes from:
+
+| Source | How to gather |
+|--------|---------------|
+| **Discord thread** | Bot fetch script or Discord API |
+| **Slack thread** | Slack API or Hermes adapter |
+| **GitHub issue** | `gh issue view <number> --repo <repo> --json body,comments` |
+| **Chat/DM** | Read the conversation history directly |
+| **Live observation** | Pull live data via `ao_sessions`, `ao_observability` |
+
+If you don't have access to the source platform's API, ask the reporter to paste the relevant details.
+
+### Step 0b: Minimum Viable Report Gate
+
+Before you start tracing code, the report must have enough substance to investigate.
+
+**Required (must have ALL):**
+- ✅ **What happened** — description of the bug, error message, or unexpected behavior
+- ✅ **Where it happened** — which page/feature/command
+- ✅ **When it started** — after an upgrade? first time? was it working before? This tells you whether to diff versions, bisect commits, or look at config changes.
+
+**Required (at least 2 of 4):**
+- ✅ **OS / Shell / Runtime** — or gather locally if on the same machine (see Step 0c)
+- ✅ **AO version** — or run `ao --version` locally
+- ✅ **Reproducibility** — consistent or intermittent? does it happen every time?
+- ✅ **Reproduction steps** — even rough ones ("run ao start with this config")
+
+**If the bug is on the same machine as you** — gather as much as you can yourself before asking (see Step 0c). Don't ask the reporter for info you can pull directly.
+
+**Examples:**
+
+| Report | Verdict | Action |
+|--------|---------|--------|
+| "AO broken" | ❌ Insufficient | Ask for all 3 required + 2 of 4 supporting |
+| "Terminal blank on dashboard after upgrading to 0.5.0" | ✅ Sufficient | Start tracing, gather version locally |
+| "ao start crashes with YAML parse error" | ⚠️ Almost | Start tracing, ask "when did this start?" |
+| "it's slow" | ❌ Insufficient | Ask: which part? when did it start? always or sometimes? |
+
+If the report is insufficient, respond with:
+> "I'd like to triage this but need more info. Can you share:
+> 1. **What exactly happened?** (error message, unexpected behavior)
+> 2. **Where?** (which page/command/feature)
+> 3. **When did it start?** (after upgrade? first time?)
+> 4. **How can I reproduce it?** (steps, config, or rough description)"
+
+### Step 0c: Local Diagnostics (when the bug is on the same machine)
+
+When the bug is reproducible on the agent's own machine, gather everything you can **before** tracing code. Don't ask the reporter for info you can pull yourself.
+
+**Environment (auto-gather):**
+```bash
+ao --version                              # Installed version
+node --version                            # Node runtime
+echo $SHELL                               # Current shell
+uname -a                                  # OS kernel
+cat agent-orchestrator.yaml               # Active config
+cat ~/.agent-orchestrator/running.json    # Daemon state
+```
+
+**Process and system health:**
+```bash
+pm2 status                                # Is AO running? restart count?
+ps aux | grep ao                          # Running AO processes
+tmux list-sessions                        # Active tmux sessions (orphans?)
+lsof -i :3000                             # What's bound to dashboard port?
+```
+
+**AO event log** — structured timeline of everything that happened:
+```bash
+# Recent events (spawns, transitions, CI failures, errors)
+ao events list --limit 50
+
+# Filter by session or type
+ao events list --session ao-5 --limit 100
+ao events list --type lifecycle.transition --since 2h
+
+# Filter errors only
+ao events list --log-level error --since 1h
+
+# Full-text search across event summaries
+ao events search "spawn failed"
+ao events search "stuck" --limit 50
+
+# Event statistics (counts by kind and source)
+ao events stats
+
+# JSON output for programmatic processing
+ao events list --session ao-5 --json
+```
+
+Event kinds you'll see: `session.spawned`, `session.spawn_failed`, `session.killed`, `lifecycle.transition`, `ci.failing`, `review.pending`, `runtime.probe_failed`, `agent.process_probe_failed`, `reaction.escalated`, `lifecycle.poll_failed`. Sources: `lifecycle`, `session-manager`, `api`, `runtime`, `agent`, `reaction`.
+
+**AO observability (if running):**
+- `ao_sessions` — current session states, are any stuck?
+- `ao_observability` — health dashboard, worker status, SSE event stream state
+- `ao_issues` — open issues that might be related
+
+**Session state files:**
+```bash
+# Individual session state (lifecycle, runtime, config)
+cat ~/.agent-orchestrator/projects/*/sessions/*.json | python3 -m json.tool
+
+# What changed recently?
+ls -lt ~/.agent-orchestrator/
+```
+
+**Reproducibility testing:**
+If the reporter gave reproduction steps, **try them**. Running the actual command is worth 100 lines of code tracing. If you can reproduce it, you have the real error output, the real stack trace, and the real state — no guessing needed.
+
+**What this gives you that the reporter can't:**
+- Actual error output and stack traces (not screenshots of error text)
+- Process state at the moment of failure
+- Whether other sessions/projects are affected
+- Whether the bug is environment-specific or reproducible on a clean setup
+- Recent file changes that might have triggered it
+- Full event timeline via `ao events`
+
 ## Step 1: Understand the Issue
 
 1. Read the bug report carefully. Ask clarifying questions if ambiguous.
@@ -60,13 +177,7 @@ Collect all available context about the bug:
 
 ### Step 1b: Cross-Platform Check (Windows / macOS / Linux)
 
-AO runs on **Windows, macOS, and Linux** as first-class targets. Many bugs are OS-specific — what works on Linux may be completely broken on Windows (different runtime, different shell, different paths).
-
-**If you can't pinpoint the root cause after tracing the code, ask the reporter:**
-1. **What OS are you on?** Windows, macOS, Linux — and which version
-2. **What shell?** PowerShell, cmd.exe, bash, zsh, fish
-3. **What runtime?** `runtime-process` (Windows default) or `runtime-tmux` (macOS/Linux default)
-4. **Is it reproducible?** Consistent or intermittent? Does it happen on other OSes?
+AO runs on **Windows, macOS, and Linux** as first-class targets. Many bugs are OS-specific — what works on Linux may be completely broken on Windows (different runtime, different shell, different paths). Environment info should already be collected (Step 1.2 or Step 0c). Use it here to determine if the bug could be platform-specific.
 
 **Common Windows-specific bug patterns to check:**
 - **Path separators** — `C:\Users\...` vs `/home/...`. Code using hardcoded `/` or `\` breaks cross-platform
@@ -92,13 +203,12 @@ If the bug looks OS-specific, tag the issue with `to-reproduce` and include the 
 Don't burn tool calls cycling through hypotheses. If any of these conditions are met, **stop and ask the reporter for more info** before continuing:
 
 - **3 failed hypotheses** — you've traced 3 different code paths and none explain the symptom. Stop.
-- **Can't reproduce** and no logs/screenshots available — ask for exact reproduction steps and system info.
 - **Root cause is in a dependency** (upstream bug confirmed) — stop, file with upstream reference, don't guess at a local fix.
 - **Bug only visible in UI** and you can't take a screenshot — ask the reporter to describe exactly what they see and when it happens.
-- **Reporter's environment unknown** — you haven't collected OS/shell/version info yet. Ask before tracing more code.
+- **Can't reproduce** after trying the reported steps — ask for additional context (different config? specific sequence?).
 
 When stopping, tell the reporter what you've tried and what you need. Example:
-> "I've traced through the lifecycle manager, session manager, and runtime code but can't pinpoint the root cause. Can you share: (1) your OS and shell, (2) exact steps to reproduce, (3) whether it's consistent or intermittent?"
+> "I've traced through the lifecycle manager, session manager, and runtime code but can't pinpoint the root cause. Can you share: (1) exact steps to reproduce, (2) whether it's consistent or intermittent, (3) when it first started happening?"
 
 ## Step 2: Search for Duplicate and Related Issues
 
