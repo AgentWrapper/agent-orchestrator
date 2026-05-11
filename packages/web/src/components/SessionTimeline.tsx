@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   DashboardActivityEvent,
   DashboardAgentReportAuditEntry,
@@ -145,12 +145,15 @@ export function SessionTimeline({ session }: { session: DashboardSession }) {
   const [activityEvents, setActivityEvents] = useState<DashboardActivityEvent[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [filter, setFilter] = useState<"all" | DashboardTimelineCategory>("all");
+  /** Bumped on each fetch start so slower overlapping polls cannot overwrite newer results. */
+  const fetchGenerationRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     const url = `/api/sessions/${encodeURIComponent(session.id)}/events?limit=${TIMELINE_LIMIT}`;
 
     const load = (isInitial: boolean) => {
+      const generation = ++fetchGenerationRef.current;
       if (isInitial) setLoadState("loading");
       void fetch(url, { cache: "no-store" })
         .then(async (response) => {
@@ -158,12 +161,12 @@ export function SessionTimeline({ session }: { session: DashboardSession }) {
           return (await response.json()) as { events?: DashboardActivityEvent[] };
         })
         .then((payload) => {
-          if (cancelled) return;
+          if (cancelled || generation !== fetchGenerationRef.current) return;
           setActivityEvents(Array.isArray(payload.events) ? payload.events : []);
           setLoadState("ready");
         })
         .catch(() => {
-          if (cancelled) return;
+          if (cancelled || generation !== fetchGenerationRef.current) return;
           if (isInitial) {
             setActivityEvents([]);
             setLoadState("error");
