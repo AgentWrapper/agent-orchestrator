@@ -87,20 +87,25 @@ esac\nexit 0`,
     expect(commands).toContain("npm link --force");
   });
 
-  it("syncs the fork with upstream via gh and fast-forwards the local checkout from upstream", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-upstream-script-"));
-    const fakeRepo = join(tempRoot, "repo");
-    mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
-    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
+  // Bash-script tests skipped on Windows: spawnSync("bash", ...) requires bash
+  // which isn't guaranteed without Git for Windows. The Windows code path uses
+  // detectWindowsBash() at runtime, exercised separately.
+  it.skipIf(process.platform === "win32")(
+    "syncs the fork with upstream via gh and fast-forwards the local checkout from upstream",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-upstream-script-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+      mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
 
-    const binDir = join(tempRoot, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const commandLog = join(tempRoot, "commands.log");
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
 
-    createFakeBinary(
-      binDir,
-      "git",
-      `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}\ncase "$*" in\n  "remote get-url origin") printf 'https://github.com/yyovil/agent-orchestrator.git\\n' ;;
+      createFakeBinary(
+        binDir,
+        "git",
+        `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}\ncase "$*" in\n  "remote get-url origin") printf 'https://github.com/yyovil/agent-orchestrator.git\\n' ;;
   "remote get-url upstream") printf 'https://github.com/ComposioHQ/agent-orchestrator.git\\n' ;;
   "rev-parse --is-inside-work-tree") printf 'true\\n' ;;
   "status --porcelain") ;;
@@ -111,50 +116,51 @@ esac\nexit 0`,
   "pull --ff-only upstream main") ;;
   *) ;;
 esac\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "gh",
-      `printf 'gh %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "pnpm",
-      `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "npm",
-      `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "node",
-      `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
-    );
+      );
+      createFakeBinary(
+        binDir,
+        "gh",
+        `printf 'gh %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "pnpm",
+        `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "npm",
+        `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "node",
+        `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
+      );
 
-    const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
-        AO_REPO_ROOT: fakeRepo,
-      },
-      encoding: "utf8",
-    });
+      const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
 
-    const commands = readFileSync(commandLog, "utf8");
-    rmSync(tempRoot, { recursive: true, force: true });
+      const commands = readFileSync(commandLog, "utf8");
+      rmSync(tempRoot, { recursive: true, force: true });
 
-    expect(result.status).toBe(0);
-    expect(commands).toContain(
-      "gh repo sync yyovil/agent-orchestrator --source ComposioHQ/agent-orchestrator --branch main",
-    );
-    expect(commands).toContain("git fetch upstream main");
-    expect(commands).toContain("git pull --ff-only upstream main");
-    expect(commands).not.toContain("git fetch origin main");
-  });
+      expect(result.status).toBe(0);
+      expect(commands).toContain(
+        "gh repo sync yyovil/agent-orchestrator --source ComposioHQ/agent-orchestrator --branch main",
+      );
+      expect(commands).toContain("git fetch upstream main");
+      expect(commands).toContain("git pull --ff-only upstream main");
+      expect(commands).not.toContain("git fetch origin main");
+    },
+  );
 
-  it("uses forced npm link so stale global ao shims are overwritten", () => {
+  it.skipIf(process.platform === "win32")("uses forced npm link so stale global ao shims are overwritten", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
@@ -220,7 +226,7 @@ exit 0`,
     expect(result.stdout).not.toContain("Permission denied");
   });
 
-  it("runs the built-in smoke commands in smoke-only mode", () => {
+  it.skipIf(process.platform === "win32")("runs the built-in smoke commands in smoke-only mode", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
@@ -307,7 +313,7 @@ exit 0`,
     expect(result.stderr).toContain("commit or stash");
   });
 
-  it("skips rebuild but still runs smoke tests when local HEAD matches remote HEAD", () => {
+  it.skipIf(process.platform === "win32")("skips rebuild but still runs smoke tests when local HEAD matches remote HEAD", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-already-latest-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });

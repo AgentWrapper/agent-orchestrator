@@ -25,7 +25,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc && cp -r src/assets dist/",
+    "build": "tsc && node --input-type=commonjs -e \"require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

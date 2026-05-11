@@ -20,6 +20,7 @@
  */
 
 import chalk from "chalk";
+import { killProcessTree } from "@aoagents/ao-core";
 import { unregister, waitForExit, type RunningState } from "./running-state.js";
 
 /**
@@ -81,20 +82,18 @@ export function attachToDaemon(running: RunningState): AttachedDaemon {
  * still alive, wait another 3s. Throws if the process refuses to die.
  * Always unregisters `running.json` on success so the next `ao start` can
  * spawn a fresh daemon without hitting the "already running" gate.
+ *
+ * Uses {@link killProcessTree} (not raw `process.kill`) so Windows actually
+ * terminates the daemon and its detached grandchildren (pty-host, dashboard
+ * subprocess) via `taskkill /T /F`. On POSIX this is process-group aware
+ * with a fallback to direct kill. Both paths swallow "already dead" errors
+ * internally.
  */
 export async function killExistingDaemon(running: RunningState): Promise<void> {
-  try {
-    process.kill(running.pid, "SIGTERM");
-  } catch {
-    // already dead — fall through to wait/unregister
-  }
+  await killProcessTree(running.pid, "SIGTERM");
   if (!(await waitForExit(running.pid, 5000))) {
     console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
-    try {
-      process.kill(running.pid, "SIGKILL");
-    } catch {
-      // already dead
-    }
+    await killProcessTree(running.pid, "SIGKILL");
     if (!(await waitForExit(running.pid, 3000))) {
       throw new Error(
         `Failed to stop AO process (PID ${running.pid}). Check permissions or stop it manually.`,

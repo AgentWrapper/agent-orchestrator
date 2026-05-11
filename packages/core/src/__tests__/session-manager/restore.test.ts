@@ -24,7 +24,7 @@ import {
   type Workspace,
 } from "../../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
-import { installMockOpencode } from "./opencode-helpers.js";
+import { installMockOpencode, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -337,7 +337,7 @@ describe("restore", () => {
     mkdirSync(wsPath, { recursive: true });
     const deleteLogPath = join(tmpDir, "opencode-restore-validation.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: wsPath,
@@ -386,7 +386,7 @@ describe("restore", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: wsPath,

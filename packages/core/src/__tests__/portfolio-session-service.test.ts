@@ -15,18 +15,23 @@ function writeSessionFile(projectId: string, sessionId: string, data: Record<str
 describe("portfolio-session-service", () => {
   let tempRoot: string;
   let oldHome: string | undefined;
+  let oldUserProfile: string | undefined;
 
   beforeEach(() => {
     tempRoot = join(tmpdir(), `ao-portfolio-sessions-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(tempRoot, { recursive: true });
     oldHome = process.env["HOME"];
+    oldUserProfile = process.env["USERPROFILE"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
   });
 
   afterEach(() => {
     if (oldHome === undefined) delete process.env["HOME"];
     else process.env["HOME"] = oldHome;
-    rmSync(tempRoot, { recursive: true, force: true });
+    if (oldUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = oldUserProfile;
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("lists worker sessions and excludes orchestrators, disabled projects, and degraded projects", async () => {

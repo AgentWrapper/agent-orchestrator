@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 /** Run a tmux command and return stdout. */
 function tmux(...args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("tmux", args, { timeout: 10_000 }, (error, stdout, stderr) => {
+    execFile("tmux", args, { timeout: 10_000, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         // tmux exits non-zero for many benign cases (no sessions, etc.)
         reject(new Error(`tmux ${args[0]} failed: ${stderr || error.message}`));

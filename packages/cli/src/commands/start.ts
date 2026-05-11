@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, basename, dirname } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
@@ -25,6 +25,10 @@ import {
   configToYaml,
   isCanonicalGlobalConfigPath,
   isTerminalSession,
+  getDefaultRuntime,
+  isWindows,
+  findPidByPort,
+  killProcessTree,
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
@@ -35,7 +39,7 @@ import {
   writeLocalProjectConfig,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { exec, execSilent, git } from "../lib/shell.js";
+import { exec, execSilent, forwardSignalsToChild, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { listLifecycleWorkers } from "../lib/lifecycle-service.js";
 import { startBunTmpJanitor } from "../lib/bun-tmp-janitor.js";
@@ -94,6 +98,7 @@ import {
 import { ensureGit, runtimePreflight } from "../lib/startup-preflight.js";
 import { installShutdownHandlers } from "../lib/shutdown.js";
 import { resolveOrCreateProject } from "../lib/resolve-project.js";
+import { pathsEqual } from "../lib/path-equality.js";
 
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { projectSessionUrl } from "../lib/routes.js";
@@ -199,10 +204,7 @@ async function resolveProject(
     const currentDirResolved = resolve(cwd());
     const cwdAlreadyInConfig = projectIds.some((id) => {
       try {
-        return (
-          resolve(config.projects[id].path.replace(/^~/, process.env["HOME"] || "")) ===
-          currentDirResolved
-        );
+        return pathsEqual(config.projects[id].path, currentDirResolved);
       } catch {
         return false;
       }
@@ -318,7 +320,7 @@ function ghInstallAttempts(): InstallAttempt[] {
       { cmd: "sudo", args: ["dnf", "install", "-y", "gh"], label: "sudo dnf install -y gh" },
     ];
   }
-  if (process.platform === "win32") {
+  if (isWindows()) {
     return [
       {
         cmd: "winget",
@@ -541,7 +543,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const config: Record<string, unknown> = {
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent,
       workspace: "worktree",
       notifiers: [],
@@ -576,7 +578,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
     console.log(chalk.dim("  Add a 'repo' field (owner/repo) to the config to enable them.\n"));
   }
 
-  if (!env.hasTmux) {
+  if (!env.hasTmux && getDefaultRuntime() === "tmux") {
     console.log(chalk.yellow("⚠ tmux not found — will prompt to install at startup"));
   }
   if (!env.hasGh) {
@@ -616,14 +618,12 @@ async function addProjectToConfig(
   const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
 
   // Check if this path is already registered under any project name.
-  // Use realpathSync for canonical comparison (resolves symlinks, case variants).
+  // pathsEqual canonicalizes via realpathSync and lowercases on Windows so
+  // drive-letter case and 8.3-vs-long-name differences don't cause a miss.
   // Done before ensureGit so already-registered paths return early without requiring git.
-  const canonicalPath = realpathSync(resolvedPath);
   const existingByPath = Object.entries(config.projects).find(([, p]) => {
     try {
-      return (
-        realpathSync(resolve(p.path.replace(/^~/, process.env["HOME"] || ""))) === canonicalPath
-      );
+      return pathsEqual(p.path, resolvedPath);
     } catch {
       return false;
     }
@@ -790,7 +790,7 @@ async function startDashboard(
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   } else {
@@ -803,7 +803,7 @@ async function startDashboard(
     child = spawn("node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
-      detached: false,
+      detached: !isWindows(),
       env,
     });
   }
@@ -953,7 +953,9 @@ async function runStartup(
         const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
         if (currentProjectSessions.length > 0) {
           console.log(
-            chalk.yellow(`\n  ${currentProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`),
+            chalk.yellow(
+              `\n  ${currentProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`,
+            ),
           );
           console.log(chalk.dim(`  ${currentProjectSessions.join(", ")}\n`));
         }
@@ -1001,9 +1003,13 @@ async function runStartup(
               }
             }
             if (restoredCount === allRestoreSessions.length) {
-              restoreSpinner.succeed(`Restored ${restoredCount}/${allRestoreSessions.length} session(s)`);
+              restoreSpinner.succeed(
+                `Restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
+              );
             } else {
-              restoreSpinner.warn(`Restored ${restoredCount}/${allRestoreSessions.length} session(s)`);
+              restoreSpinner.warn(
+                `Restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
+              );
             }
             for (const w of warnings) {
               console.log(chalk.yellow(w));
@@ -1015,9 +1021,7 @@ async function runStartup(
             // and the remaining sessions would never be retryable. When
             // every session restored (or was skipped), clear the file.
             if (failedSessionIds.size > 0) {
-              const remainingTarget = lastStop.sessionIds.filter((id) =>
-                failedSessionIds.has(id),
-              );
+              const remainingTarget = lastStop.sessionIds.filter((id) => failedSessionIds.has(id));
               const remainingOther = otherProjects
                 .map((p) => ({
                   projectId: p.projectId,
@@ -1099,12 +1103,21 @@ async function runStartup(
 
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
-    // Kill the dashboard child when the parent exits for any reason
-    // (Ctrl+C, SIGTERM from `ao stop`, normal exit, etc.).
-    // We use the `exit` event instead of SIGINT/SIGTERM to avoid
-    // conflicting with the shutdown handler in registerStart that
-    // flushes lifecycle state and calls process.exit() with the
-    // correct exit code (130 for SIGINT, 0 for SIGTERM).
+    const pid = dashboardProcess.pid;
+
+    // On Unix the dashboard is spawned with detached:true (own process group)
+    // so Ctrl+C only reaches AO's process group, not the dashboard's. Forward
+    // SIGINT/SIGTERM so the dashboard group is also cleaned up on exit.
+    // On Windows, detached:false keeps child in the same console —
+    // Ctrl+C reaches both processes. No signal forwarding needed.
+    if (!isWindows() && pid) {
+      forwardSignalsToChild(pid, dashboardProcess);
+    }
+
+    // Also kill the dashboard child when the parent exits for any reason
+    // (normal exit path after lifecycle flush). The `exit` event is
+    // synchronous and fires regardless of platform, so it covers the cases
+    // where forwardSignalsToChild doesn't (Windows, or non-signal exits).
     /* c8 ignore start -- exit handler only fires on process termination */
     const killDashboardChild = (): void => {
       try {
@@ -1131,7 +1144,7 @@ async function runStartup(
 
 /**
  * Stop dashboard server.
- * Uses lsof to find the process listening on the port, then kills it.
+ * Uses platform adapter to find the process listening on the port, then kills it.
  * Best effort — if it fails, just warn the user.
  */
 /** Pattern matching AO dashboard processes (production and dev mode). */
@@ -1144,28 +1157,22 @@ const DASHBOARD_CMD_PATTERN = /next-server|start-all\.js|next dev|ao-web/;
  */
 async function killDashboardOnPort(port: number): Promise<boolean> {
   try {
-    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
-    const pids = stdout
-      .trim()
-      .split("\n")
-      .filter((p) => p.length > 0);
-    if (pids.length === 0) return false;
+    const pid = await findPidByPort(port);
+    if (!pid) return false;
 
-    // Filter to only dashboard PIDs
-    const dashboardPids: string[] = [];
-    for (const pid of pids) {
+    // On Unix, verify the process is actually a dashboard before killing so
+    // unrelated co-listeners (sidecars, SO_REUSEPORT) are left untouched.
+    // findPidByPort on Windows uses netstat; we trust the port match there.
+    if (!isWindows()) {
       try {
-        const { stdout: cmdline } = await exec("ps", ["-p", pid, "-o", "args="]);
-        if (DASHBOARD_CMD_PATTERN.test(cmdline)) {
-          dashboardPids.push(pid);
-        }
+        const { stdout: cmdline } = await exec("ps", ["-p", String(pid), "-o", "args="]);
+        if (!DASHBOARD_CMD_PATTERN.test(cmdline)) return false;
       } catch {
-        // process vanished — skip
+        return false;
       }
     }
-    if (dashboardPids.length === 0) return false;
 
-    await exec("kill", dashboardPids);
+    await killProcessTree(Number(pid));
     return true;
   } catch {
     return false;
@@ -1243,9 +1250,7 @@ async function attachAndSpawnOrchestrator(opts: {
     console.log(chalk.dim(`  Dashboard config reloaded.`));
   } else {
     console.log(
-      chalk.yellow(
-        `  ⚠ ${notifyResult.reason}. Refresh the page if the project doesn't show up.`,
-      ),
+      chalk.yellow(`  ⚠ ${notifyResult.reason}. Refresh the page if the project doesn't show up.`),
     );
   }
 
@@ -1309,8 +1314,7 @@ export function registerStart(program: Command): void {
           // ── Already-running detection (before any config mutation) ──
           let running = await isAlreadyRunning();
           let startNewOrchestrator = false;
-          const isProjectId =
-            projectArg && !isRepoUrl(projectArg) && !isLocalPath(projectArg);
+          const isProjectId = projectArg && !isRepoUrl(projectArg) && !isLocalPath(projectArg);
           const projectArgIsUrlOrPath =
             !!projectArg && (isRepoUrl(projectArg) || isLocalPath(projectArg));
 
@@ -1346,10 +1350,7 @@ export function registerStart(program: Command): void {
                 try {
                   const loadedCfg = loadConfig();
                   const proj = loadedCfg.projects[p];
-                  return (
-                    proj &&
-                    resolve(proj.path.replace(/^~/, process.env["HOME"] || "")) === cwdResolved
-                  );
+                  return proj !== undefined && pathsEqual(proj.path, cwdResolved);
                 } catch {
                   return false;
                 }
@@ -1606,7 +1607,49 @@ export function registerStart(program: Command): void {
  * Paths contain / or ~ or . at the start.
  */
 function isLocalPath(arg: string): boolean {
-  return arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..");
+  if (arg.startsWith("/") || arg.startsWith("~") || arg.startsWith("./") || arg.startsWith("..")) {
+    return true;
+  }
+  // Windows paths: drive-letter (C:\, D:/), UNC (\\server\share), or relative backslash paths.
+  if (/^[A-Za-z]:[\\/]/.test(arg)) return true;
+  if (arg.startsWith("\\\\") || arg.startsWith(".\\") || arg.startsWith("..\\")) return true;
+  return false;
+}
+
+/**
+ * Lazy import + invoke the runtime-process plugin's Windows pty-host sweep.
+ * Kept lazy so non-Windows users don't pay the import cost on every `ao stop`,
+ * and so the cli isn't tightly coupled to the plugin's surface.
+ *
+ * Errors are swallowed: a sweep failure must not prevent `ao stop` from killing
+ * the parent process — the user explicitly asked us to stop AO.
+ */
+async function sweepWindowsPtyHostsBeforeParentKill(): Promise<void> {
+  if (!isWindows()) return;
+  try {
+    const mod = (await import("@aoagents/ao-plugin-runtime-process")) as {
+      sweepWindowsPtyHosts?: () => Promise<{
+        attempted: number;
+        gracefullyExited: number;
+        forceKilled: number;
+        failed: number;
+      }>;
+    };
+    if (typeof mod.sweepWindowsPtyHosts !== "function") return;
+    const result = await mod.sweepWindowsPtyHosts();
+    if (result.attempted > 0) {
+      console.log(
+        chalk.dim(
+          `  Swept ${result.attempted} pty-host(s): ` +
+            `${result.gracefullyExited} graceful, ` +
+            `${result.forceKilled} force-killed` +
+            (result.failed > 0 ? `, ${result.failed} failed` : ""),
+        ),
+      );
+    }
+  } catch {
+    /* sweep is best-effort; don't block ao stop on it */
+  }
 }
 
 export function registerStop(program: Command): void {
@@ -1623,11 +1666,15 @@ export function registerStop(program: Command): void {
         if (opts.all) {
           // --all: kill via running.json if available, then fallback to config
           if (running) {
-            try {
-              process.kill(running.pid, "SIGTERM");
-            } catch {
-              // Already dead
-            }
+            // Sweep detached Windows pty-hosts BEFORE killing the parent.
+            // detached:true puts them outside the parent's process tree, so
+            // taskkill /T cannot reach them. The sweep speaks the named-pipe
+            // protocol so node-pty disposes ConPTY gracefully (avoids WER
+            // 0x800700e8). No-op on non-Windows.
+            await sweepWindowsPtyHostsBeforeParentKill();
+            // killProcessTree handles process trees on Windows (taskkill /T /F)
+            // and process groups on Unix; it swallows "already dead" internally.
+            await killProcessTree(running.pid, "SIGTERM");
             await unregister();
             console.log(chalk.green(`\n✓ Stopped AO on port ${running.port}`));
             console.log(chalk.dim(`  Projects: ${running.projects.join(", ")}\n`));
@@ -1695,7 +1742,9 @@ export function registerStop(program: Command): void {
             if (killedSessionIds.length === 0) {
               spinner.fail("Failed to stop any sessions");
             } else if (killedSessionIds.length < activeSessions.length) {
-              spinner.warn(`Stopped ${killedSessionIds.length}/${activeSessions.length} session(s)`);
+              spinner.warn(
+                `Stopped ${killedSessionIds.length}/${activeSessions.length} session(s)`,
+              );
             } else {
               spinner.succeed(`Stopped ${killedSessionIds.length} session(s)`);
             }
@@ -1732,9 +1781,7 @@ export function registerStop(program: Command): void {
             await writeLastStop({
               stoppedAt: new Date().toISOString(),
               projectId: _projectId,
-              sessionIds: killedSessionIds.filter((id) =>
-                targetActive.some((s) => s.id === id),
-              ),
+              sessionIds: killedSessionIds.filter((id) => targetActive.some((s) => s.id === id)),
               otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
             });
           }
@@ -1756,11 +1803,13 @@ export function registerStop(program: Command): void {
           // stops every per-project loop. No explicit stop call needed here —
           // this CLI invocation is a separate process with an empty active map.
           if (running) {
-            try {
-              process.kill(running.pid, "SIGTERM");
-            } catch {
-              // Already dead
-            }
+            // Sweep detached Windows pty-hosts BEFORE killing the parent.
+            // detached:true puts them outside the parent's process tree, so
+            // taskkill /T cannot reach them. The sweep speaks the named-pipe
+            // protocol so node-pty disposes ConPTY gracefully (avoids WER
+            // 0x800700e8). No-op on non-Windows.
+            await sweepWindowsPtyHostsBeforeParentKill();
+            await killProcessTree(running.pid, "SIGTERM");
             await unregister();
           }
           await stopDashboard(running?.port ?? port);

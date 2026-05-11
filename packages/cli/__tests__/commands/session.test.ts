@@ -30,6 +30,7 @@ const {
   mockGh,
   mockExec,
   mockSpawn,
+  mockIsWindows,
   mockConfigRef,
   mockSessionManager,
   sessionsDirRef,
@@ -39,6 +40,7 @@ const {
   mockGh: vi.fn(),
   mockExec: vi.fn(),
   mockSpawn: vi.fn(),
+  mockIsWindows: vi.fn().mockReturnValue(false),
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockSessionManager: {
     list: vi.fn(),
@@ -71,6 +73,16 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+const mockNetConnect = vi.fn();
+vi.mock("node:net", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("node:net")>();
+  return {
+    ...actual,
+    connect: (...args: unknown[]) => mockNetConnect(...args),
+  };
+});
+
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: mockTmux,
   exec: mockExec,
@@ -96,6 +108,8 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    isWindows: () => mockIsWindows(),
+    generateConfigHash: () => "abcdef123456",
   };
 });
 
@@ -735,12 +749,214 @@ describe("session attach", () => {
   });
 
   it("fails when tmux session does not exist", async () => {
+    mockIsWindows.mockReturnValue(false);
     mockSessionManager.get.mockResolvedValue(null);
     mockTmux.mockResolvedValue(null);
 
     await expect(
       program.parseAsync(["node", "test", "session", "attach", "unknown-1"]),
     ).rejects.toThrow("process.exit(1)");
+  });
+
+  it("connects to named pipe on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" } },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    const mockSocket = new EventEmitter();
+    Object.assign(mockSocket, { destroy: vi.fn(), write: vi.fn() });
+    mockNetConnect.mockReturnValue(mockSocket);
+
+    // Fire the command — it awaits an infinite promise, so don't await it.
+    // The process.exit mock throws, which surfaces synchronously through emit().
+    void program.parseAsync(["node", "test", "session", "attach", "app-1"]);
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockSocket.emit("connect");
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Exercise binary protocol: send terminal data (0x01)
+    const termData = Buffer.from("hello");
+    const dataFrame = Buffer.alloc(5 + termData.length);
+    dataFrame.writeUInt8(0x01, 0);
+    dataFrame.writeUInt32BE(termData.length, 1);
+    termData.copy(dataFrame, 5);
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    mockSocket.emit("data", dataFrame);
+    expect(writeSpy).toHaveBeenCalledWith(termData);
+    writeSpy.mockRestore();
+
+    // Exercise stdin relay: send input data (becomes MSG_TERMINAL_INPUT = 0x02)
+    const inputData = Buffer.from("ls\r");
+    process.stdin.emit("data", inputData);
+    expect((mockSocket as { write: ReturnType<typeof vi.fn> }).write).toHaveBeenCalled();
+    const written = (mockSocket as { write: ReturnType<typeof vi.fn> }).write.mock.calls.at(-1)![0] as Buffer;
+    expect(written.readUInt8(0)).toBe(0x02); // MSG_TERMINAL_INPUT
+    expect(written.subarray(5).toString()).toBe("ls\r");
+
+    // close handler calls process.exit(0) which throws synchronously through emit
+    expect(() => mockSocket.emit("close")).toThrow("process.exit(0)");
+    expect(mockNetConnect).toHaveBeenCalledWith("\\\\.\\pipe\\ao-pty-hash-app-1");
+    // Remove stdin listeners to prevent cross-test contamination
+    process.stdin.removeAllListeners("data");
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("handles PTY exit status on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    const mockSocket = new EventEmitter();
+    Object.assign(mockSocket, { destroy: vi.fn(), write: vi.fn() });
+    mockNetConnect.mockReturnValue(mockSocket);
+
+    void program.parseAsync(["node", "test", "session", "attach", "app-1"]);
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockSocket.emit("connect");
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Exercise PTY exit status (MSG_STATUS_RES = 0x07, alive=false)
+    // process.exit is inside try/catch in the data handler, so the mock throw
+    // gets swallowed. Verify via side effects instead.
+    const statusPayload = Buffer.from(JSON.stringify({ alive: false, exitCode: 42 }));
+    const statusFrame = Buffer.alloc(5 + statusPayload.length);
+    statusFrame.writeUInt8(0x07, 0);
+    statusFrame.writeUInt32BE(statusPayload.length, 1);
+    statusPayload.copy(statusFrame, 5);
+    mockSocket.emit("data", statusFrame);
+
+    // cleanup() was called (socket destroyed)
+    expect((mockSocket as { destroy: ReturnType<typeof vi.fn> }).destroy).toHaveBeenCalled();
+    // process.exit was called with the exit code from the status message
+    expect(process.exit).toHaveBeenCalledWith(42);
+
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("detaches on Ctrl+backslash on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    const mockSocket = new EventEmitter();
+    Object.assign(mockSocket, { destroy: vi.fn(), write: vi.fn() });
+    mockNetConnect.mockReturnValue(mockSocket);
+
+    // Temporarily replace process.exit with a non-throwing spy so it doesn't
+    // propagate through EventEmitter and prevent subsequent listener calls.
+    // The global beforeEach spy throws, which breaks emit() propagation for
+    // listeners registered on process.stdin (a shared singleton).
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    void program.parseAsync(["node", "test", "session", "attach", "app-1"]);
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockSocket.emit("connect");
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Ctrl+\ (0x1c) triggers detach
+    process.stdin.emit("data", Buffer.from([0x1c]));
+
+    expect((mockSocket as { destroy: ReturnType<typeof vi.fn> }).destroy).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    exitSpy.mockRestore();
+
+    // Remove the stdin listener we attached to prevent cross-test contamination
+    process.stdin.removeAllListeners("data");
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("falls back to config hash when runtimeHandle is missing on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSessionManager.get.mockResolvedValue(null);
+
+    const mockSocket = new EventEmitter();
+    Object.assign(mockSocket, { destroy: vi.fn() });
+    mockNetConnect.mockReturnValue(mockSocket);
+
+    void program.parseAsync(["node", "test", "session", "attach", "app-1"]);
+
+    await new Promise((r) => setTimeout(r, 10));
+    // Should use config hash fallback for pipe path
+    expect(mockNetConnect).toHaveBeenCalled();
+    const pipePath = mockNetConnect.mock.calls[0][0] as string;
+    expect(pipePath).toMatch(/\\\\\.\\pipe\\ao-pty-/);
+
+    // Clean up: trigger error to exit
+    expect(() => mockSocket.emit("error", new Error("ENOENT"))).toThrow("process.exit(1)");
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("shows error when pipe not available on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" } },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    const mockSocket = new EventEmitter();
+    Object.assign(mockSocket, { destroy: vi.fn() });
+    mockNetConnect.mockReturnValue(mockSocket);
+
+    // Fire the command — it awaits an infinite promise, so don't await it.
+    void program.parseAsync(["node", "test", "session", "attach", "app-1"]);
+
+    await new Promise((r) => setTimeout(r, 10));
+    // error handler calls process.exit(1) which throws synchronously through emit
+    expect(() => mockSocket.emit("error", new Error("connect ENOENT"))).toThrow("process.exit(1)");
+    mockIsWindows.mockReturnValue(false);
   });
 });
 

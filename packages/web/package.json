@@ -34,6 +34,7 @@
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
     "@aoagents/ao-plugin-agent-kimicode": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
+    "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-github": "workspace:*",

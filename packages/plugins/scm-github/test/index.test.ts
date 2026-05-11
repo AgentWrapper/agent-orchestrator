@@ -483,7 +483,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.assignPRToCurrentUser?.(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["pr", "edit", "42", "--repo", "acme/repo", "--add-assignee", "@me"],
         expect.any(Object),
       );
@@ -530,7 +530,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["pr", "merge", "42", "--repo", "acme/repo", "--squash", "--delete-branch"],
         expect.any(Object),
       );
@@ -540,7 +540,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr, "merge");
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--merge"]),
         expect.any(Object),
       );
@@ -550,7 +550,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.mergePR(pr, "rebase");
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["--rebase"]),
         expect.any(Object),
       );
@@ -564,7 +564,7 @@ describe("scm-github plugin", () => {
       ghMock.mockResolvedValueOnce({ stdout: "" });
       await scm.closePR(pr);
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         ["pr", "close", "42", "--repo", "acme/repo"],
         expect.any(Object),
       );

@@ -27,6 +27,7 @@ describe("project resolver", () => {
   let tempRoot: string;
   let configPath: string;
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
   let originalGlobalConfig: string | undefined;
 
   beforeEach(() => {
@@ -34,19 +35,22 @@ describe("project resolver", () => {
     configPath = join(tempRoot, ".agent-orchestrator", "config.yaml");
     mkdirSync(tempRoot, { recursive: true });
     originalHome = process.env["HOME"];
+    originalUserProfile = process.env["USERPROFILE"];
     originalGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
     process.env["AO_GLOBAL_CONFIG"] = configPath;
   });
 
   afterEach(() => {
     process.env["HOME"] = originalHome;
+    process.env["USERPROFILE"] = originalUserProfile;
     if (originalGlobalConfig === undefined) {
       delete process.env["AO_GLOBAL_CONFIG"];
     } else {
       process.env["AO_GLOBAL_CONFIG"] = originalGlobalConfig;
     }
-    rmSync(tempRoot, { recursive: true, force: true });
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("resolves registry-only projects with shared defaults", () => {

@@ -170,6 +170,12 @@ function ProjectSidebarInner({
   const [showKilled, setShowKilled] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const [showSessionId, setShowSessionId] = useState<boolean>(loadShowSessionId);
+  // Inline session-rename state. Only one row is edited at a time. `pendingRenames`
+  // mirrors the in-flight / just-saved value so the new label appears immediately
+  // without waiting for the next SSE refresh.
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [pendingRenames, setPendingRenames] = useState<Map<string, string>>(new Map());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
@@ -290,6 +296,76 @@ function ProjectSidebarInner({
     }
     return map;
   }, [sessions, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
+
+  // Clear an optimistic rename once the prop session.displayName catches up.
+  // Without this, we'd keep masking the server value forever after a save.
+  useEffect(() => {
+    if (pendingRenames.size === 0 || !sessions) return;
+    const next = new Map(pendingRenames);
+    let changed = false;
+    for (const session of sessions) {
+      const pending = next.get(session.id);
+      if (pending !== undefined && (session.displayName ?? "") === pending) {
+        next.delete(session.id);
+        changed = true;
+      }
+    }
+    if (changed) setPendingRenames(next);
+  }, [sessions, pendingRenames]);
+
+  const startRename = (session: DashboardSession, currentTitle: string) => {
+    // Prefer the in-flight optimistic value over the prop — if the user opens
+    // rename while a previous PATCH is still propagating, the prop still shows
+    // the pre-rename value but we want the input to start from the latest.
+    // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
+    // from the live title so the user types over the visible label.
+    const pending = pendingRenames.get(session.id);
+    const initial =
+      pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "");
+    setEditingSessionId(session.id);
+    setEditingValue(initial || currentTitle);
+  };
+
+  const cancelRename = () => {
+    setEditingSessionId(null);
+    setEditingValue("");
+  };
+
+  const submitRename = async (sessionId: string) => {
+    // Guard against double-submit. submitRename is wired to both Enter (which
+    // unmounts the input) and onBlur (which can fire during that unmount in
+    // some browsers); without this, both paths would fire a PATCH.
+    if (editingSessionId !== sessionId) return;
+    // Trim, but allow empty — empty means "revert to default" on the server.
+    const next = editingValue.trim();
+    setEditingSessionId(null);
+    setEditingValue("");
+    setPendingRenames((prev) => {
+      const map = new Map(prev);
+      map.set(sessionId, next);
+      return map;
+    });
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: next === "" ? null : next }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to rename session");
+      }
+    } catch {
+      // Roll back the optimistic update so the row reverts to the prop value.
+      // The user sees the original name return — no further notification is
+      // needed for this niche failure path.
+      setPendingRenames((prev) => {
+        const map = new Map(prev);
+        map.delete(sessionId);
+        return map;
+      });
+    }
+  };
 
   const navigate = (url: string, session?: DashboardSession) => {
     if (session) {
@@ -707,49 +783,130 @@ function ProjectSidebarInner({
                     visibleSessions.map((session) => {
                       const level = getAttentionLevel(session);
                       const isSessionActive = activeSessionId === session.id;
-                      const title = session.branch ?? getSessionTitle(session);
+                      // Display precedence: optimistic rename (just-saved value)
+                      // → user-set displayName → branch → fallback chain.
+                      // Auto-derived displayName (displayNameUserSet=false) is
+                      // intentionally skipped here so PR/issue titles surfaced
+                      // by getSessionTitle aren't shadowed — mirrors the gate in
+                      // format.ts:getSessionTitle.
+                      const pending = pendingRenames.get(session.id);
+                      const effectiveDisplayName =
+                        pending !== undefined
+                          ? pending
+                          : session.displayNameUserSet
+                            ? (session.displayName ?? "")
+                            : "";
+                      const title =
+                        effectiveDisplayName !== ""
+                          ? effectiveDisplayName
+                          : (session.branch ?? getSessionTitle(session));
                       const sessionHref = projectSessionPath(project.id, session.id);
+                      const isEditing = editingSessionId === session.id;
+                      if (isEditing) {
+                        return (
+                          <div
+                            key={session.id}
+                            className={cn(
+                              "project-sidebar__sess-row",
+                              isSessionActive && "project-sidebar__sess-row--active",
+                            )}
+                            data-editing="true"
+                          >
+                            <SessionDot level={level} />
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editingValue}
+                              onChange={(e) => setEditingValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  void submitRename(session.id);
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  cancelRename();
+                                }
+                              }}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onBlur={() => void submitRename(session.id)}
+                              maxLength={80}
+                              aria-label={`Rename ${session.id}`}
+                              className="project-sidebar__sess-rename-input"
+                            />
+                          </div>
+                        );
+                      }
                       return (
-                        <a
+                        <div
                           key={session.id}
-                          href={sessionHref}
-                          onClick={(e) => {
-                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
-                            e.preventDefault();
-                            navigate(sessionHref, session);
-                          }}
                           className={cn(
-                            "project-sidebar__sess-row",
+                            "project-sidebar__sess-row group",
                             isSessionActive && "project-sidebar__sess-row--active",
                           )}
-                          aria-current={isSessionActive ? "page" : undefined}
-                          aria-label={`Open ${title}`}
                         >
-                          <SessionDot level={level} />
-                          <div className="flex-1 min-w-0">
-                            <span
-                              className={cn(
-                                "project-sidebar__sess-label",
-                                isSessionActive && "project-sidebar__sess-label--active",
-                              )}
-                            >
-                              {title}
-                            </span>
-                            {showSessionId ? (
-                              <div className="project-sidebar__sess-meta">
-                                <span className="project-sidebar__sess-id">{session.id}</span>
-                                <span className="project-sidebar__sess-status">
-                                  {LEVEL_LABELS[level]}
-                                </span>
-                              </div>
+                          <a
+                            href={sessionHref}
+                            onClick={(e) => {
+                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                              e.preventDefault();
+                              navigate(sessionHref, session);
+                            }}
+                            className="project-sidebar__sess-link flex flex-1 min-w-0 items-center gap-[7px]"
+                            aria-current={isSessionActive ? "page" : undefined}
+                            aria-label={`Open ${title}`}
+                          >
+                            <SessionDot level={level} />
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={cn(
+                                  "project-sidebar__sess-label",
+                                  isSessionActive && "project-sidebar__sess-label--active",
+                                )}
+                              >
+                                {title}
+                              </span>
+                              {showSessionId ? (
+                                <div className="project-sidebar__sess-meta">
+                                  <span className="project-sidebar__sess-id">{session.id}</span>
+                                  <span className="project-sidebar__sess-status">
+                                    {LEVEL_LABELS[level]}
+                                  </span>
+                                </div>
+                              ) : null}
+                            </div>
+                            {!showSessionId ? (
+                              <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
+                                {LEVEL_LABELS[level]}
+                              </span>
                             ) : null}
-                          </div>
-                          {!showSessionId ? (
-                            <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
-                              {LEVEL_LABELS[level]}
-                            </span>
-                          ) : null}
-                        </a>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              startRename(session, title);
+                            }}
+                            className="project-sidebar__sess-rename-btn opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+                            title="Rename session"
+                            aria-label={`Rename ${session.id}`}
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M12 20h9" />
+                              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                            </svg>
+                          </button>
+                        </div>
                       );
                     })
                   ) : error ? (

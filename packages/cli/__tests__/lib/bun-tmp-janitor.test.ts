@@ -30,7 +30,10 @@ function setMtime(path: string, ageMs: number): void {
   utimesSync(path, t, t);
 }
 
-describe("bun-tmp-janitor", () => {
+// Skipped on Windows: startBunTmpJanitor() is a no-op on win32 (opencode ships
+// no Windows binary, and the kernel disallows unlinking mapped files), so the
+// behavioural tests below have no work to assert against.
+describe.skipIf(process.platform === "win32")("bun-tmp-janitor", () => {
   beforeEach(() => {
     mockedDir = mkdtempSync(join(tmpdir(), "ao-bun-janitor-test-"));
   });

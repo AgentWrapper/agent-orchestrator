@@ -36,7 +36,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     workspacePath,
     runtimeHandle: handle,
     agentInfo: null,
-    createdAt: new Date(),
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // 1 day ago (well before any JSONL entries)
     lastActivityAt: new Date(),
     metadata: {},
     ...overrides,
@@ -76,7 +76,7 @@ describe("Claude Code Activity Detection", () => {
     });
 
     it("handles Windows paths (no leading slash)", () => {
-      expect(toClaudeProjectPath("C:\\Users\\dev\\project")).toBe("C-Users-dev-project");
+      expect(toClaudeProjectPath("C:\\Users\\dev\\project")).toBe("C--Users-dev-project");
     });
 
     it("handles consecutive dots and slashes", () => {

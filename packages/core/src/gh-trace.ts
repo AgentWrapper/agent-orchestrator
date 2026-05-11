@@ -35,13 +35,24 @@ async function resolveGhBinary(): Promise<string> {
     .split(delimiter)
     .filter((entry) => entry && entry !== aoBinDir);
 
+  // On Windows the binary is `gh.exe` (or `gh.cmd` for npm shims). Honor
+  // PATHEXT so we match whatever the user actually installed.
+  const exts =
+    process.platform === "win32"
+      ? (process.env["PATHEXT"]?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT"]).map(
+          (e) => e.toLowerCase(),
+        )
+      : [""];
+
   for (const dir of dirs) {
-    const candidate = join(dir, "gh");
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Not found or not executable — try next
+    for (const ext of exts) {
+      const candidate = join(dir, `gh${ext}`);
+      try {
+        await access(candidate, constants.X_OK);
+        return candidate;
+      } catch {
+        // Not found or not executable — try next
+      }
     }
   }
 

@@ -35,7 +35,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aoagents/ao-core": "workspace:*"
+    "@aoagents/ao-core": "workspace:*",
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

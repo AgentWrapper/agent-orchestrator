@@ -39,6 +39,10 @@ describe("/api/projects/[id]", () => {
       registry: {
         get: vi.fn().mockReturnValue(null),
       },
+      sessionManager: {
+        list: vi.fn().mockResolvedValue([]),
+        kill: vi.fn().mockResolvedValue({ cleaned: true, alreadyTerminated: false }),
+      },
     });
     oldGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
     oldHome = process.env["HOME"];
@@ -250,15 +254,20 @@ describe("/api/projects/[id]", () => {
     mkdirSync(repoDir, { recursive: true });
     const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
-     const destroy = vi.fn().mockResolvedValue(undefined);
-     const list = vi.fn().mockResolvedValue([
-       { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
-     ]);
-     getServices.mockResolvedValue({
-       registry: {
-         get: vi.fn().mockReturnValue({ list, destroy }),
-       },
-     });
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    const list = vi.fn().mockResolvedValue([
+      { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
+    ]);
+    const sessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      kill: vi.fn().mockResolvedValue({ cleaned: true, alreadyTerminated: false }),
+    };
+    getServices.mockResolvedValue({
+      registry: {
+        get: vi.fn().mockReturnValue({ list, destroy }),
+      },
+      sessionManager,
+    });
 
     const projectDir = getProjectDir(effectiveId);
     mkdirSync(projectDir, { recursive: true });
@@ -281,6 +290,94 @@ describe("/api/projects/[id]", () => {
     expect(destroy).toHaveBeenCalledWith(
       path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`),
     );
+    expect(sessionManager.list).toHaveBeenCalledWith(effectiveId);
+  });
+
+  it("DELETE kills project sessions before removing managed workspaces", async () => {
+    const repoDir = path.join(tempRoot, "demo-sessions");
+    mkdirSync(repoDir, { recursive: true });
+    const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
+    const events: string[] = [];
+
+    const destroy = vi.fn().mockImplementation(async () => {
+      events.push("workspace.destroy");
+    });
+    const list = vi.fn().mockImplementation(async () => {
+      events.push("workspace.list");
+      return [
+        { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
+      ];
+    });
+    const sessionManager = {
+      list: vi.fn().mockImplementation(async () => {
+        events.push("sessions.list");
+        return [
+          { id: `${effectiveId}-1`, projectId: effectiveId },
+          { id: `${effectiveId}-2`, projectId: effectiveId },
+        ];
+      }),
+      kill: vi.fn().mockImplementation(async (sessionId: string) => {
+        events.push(`sessions.kill:${sessionId}`);
+        return { cleaned: true, alreadyTerminated: false };
+      }),
+    };
+    getServices.mockResolvedValue({
+      registry: {
+        get: vi.fn().mockReturnValue({ list, destroy }),
+      },
+      sessionManager,
+    });
+
+    const projectDir = getProjectDir(effectiveId);
+    mkdirSync(projectDir, { recursive: true });
+
+    const { DELETE } = await import("@/app/api/projects/[id]/route");
+    const response = await DELETE(makeRequest("DELETE", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(events).toEqual([
+      "sessions.list",
+      `sessions.kill:${effectiveId}-1`,
+      `sessions.kill:${effectiveId}-2`,
+      "workspace.list",
+      "workspace.destroy",
+    ]);
+    expect(sessionManager.kill).toHaveBeenCalledWith(`${effectiveId}-1`, {
+      purgeOpenCode: true,
+      reason: "manually_killed",
+    });
+    expect(sessionManager.kill).toHaveBeenCalledWith(`${effectiveId}-2`, {
+      purgeOpenCode: true,
+      reason: "manually_killed",
+    });
+  });
+
+  it("stops stale Windows pty-hosts by project storage path", async () => {
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const execFileStdout = vi.fn(async (file: string, args: string[]) => {
+      calls.push({ file, args });
+      return file === "powershell.exe" ? "[26448, 26448, 27700]" : "";
+    });
+    const delay = vi.fn(async () => undefined);
+
+    const { stopStaleWindowsPtyHosts } = await import("@/lib/windows-pty-cleanup");
+    await stopStaleWindowsPtyHosts(
+      "C:\\Users\\priya\\.agent-orchestrator\\projects\\ao-windows-test-2-b8fv",
+      {
+        platform: "win32",
+        execFileStdout,
+        delay,
+      },
+    );
+
+    expect(calls).toEqual([
+      { file: "powershell.exe", args: expect.arrayContaining(["-EncodedCommand"]) },
+      { file: "taskkill.exe", args: ["/PID", "26448", "/T", "/F"] },
+      { file: "taskkill.exe", args: ["/PID", "27700", "/T", "/F"] },
+    ]);
+    expect(delay).toHaveBeenCalledWith(250);
   });
 
   // Regression for the boundary-bug-hunter finding on PR #1466: DELETE used

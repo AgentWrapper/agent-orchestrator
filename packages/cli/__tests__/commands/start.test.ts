@@ -32,6 +32,8 @@ const {
   mockSessionManager,
   mockWaitForPortAndOpen,
   mockSpawn,
+  mockFindPidByPort,
+  mockKillProcessTree,
   mockStartProjectSupervisor,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
@@ -52,6 +54,8 @@ const {
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
+  mockFindPidByPort: vi.fn(),
+  mockKillProcessTree: vi.fn(),
   mockStartProjectSupervisor: vi.fn(),
 }));
 
@@ -138,6 +142,8 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
+    findPidByPort: mockFindPidByPort,
+    killProcessTree: mockKillProcessTree,
   };
 });
 
@@ -327,7 +333,11 @@ beforeEach(async () => {
   vi.mocked(webDir.findFreePort).mockResolvedValue(3000);
   vi.mocked(webDir.buildDashboardEnv).mockResolvedValue({});
   const projectDetection = await import("../../src/lib/project-detection.js");
-  vi.mocked(projectDetection.detectProjectType).mockReturnValue({ languages: [], frameworks: [], tools: [] });
+  vi.mocked(projectDetection.detectProjectType).mockReturnValue({
+    languages: [],
+    frameworks: [],
+    tools: [],
+  });
   vi.mocked(projectDetection.generateRulesFromTemplates).mockReturnValue(null);
   vi.mocked(projectDetection.formatProjectTypeForDisplay).mockReturnValue("");
 
@@ -373,6 +383,10 @@ beforeEach(async () => {
   });
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
+  mockFindPidByPort.mockReset();
+  mockFindPidByPort.mockResolvedValue(null);
+  mockKillProcessTree.mockReset();
+  mockKillProcessTree.mockResolvedValue(undefined);
   mockStartProjectSupervisor.mockReset();
   mockStartProjectSupervisor.mockResolvedValue({ stop: vi.fn(), reconcileNow: vi.fn() });
   mockDetectOpenClawInstallation.mockReset();
@@ -424,7 +438,10 @@ function makeConfig(projects: Record<string, Record<string, unknown>>): Record<s
     configPath: join(tmpDir, "agent-orchestrator.yaml"),
     port: 3000,
     defaults: {
-      runtime: "tmux",
+      // Use "process" so the test runs on every platform without
+      // tripping ensureTmux. Tests that exercise the tmux preflight
+      // path set runtime explicitly.
+      runtime: "process",
       agent: "claude-code",
       workspace: "worktree",
       notifiers: [],
@@ -646,17 +663,13 @@ describe("start command — URL argument", () => {
     mockExecSilent.mockResolvedValue("Logged in");
 
     mockSpawn.mockImplementation(
-      (
-        cmd: string,
-        args: string[],
-        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
-      ) => {
-      if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
-        createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
-          "Cargo.toml": "",
-        });
-      }
-      return createSpawnChild({ closeCode: 0 });
+      (cmd: string, args: string[], _opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
+        if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
+          createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
+            "Cargo.toml": "",
+          });
+        }
+        return createSpawnChild({ closeCode: 0 });
       },
     );
 
@@ -695,25 +708,21 @@ describe("start command — URL argument", () => {
     });
 
     mockSpawn.mockImplementation(
-      (
-        cmd: string,
-        args: string[],
-        _opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
-      ) => {
-      if (cmd === "git" && args[0] === "clone") {
-        const url = String(args[3] ?? "");
-        // SSH attempt fails (simulate non-zero exit)
-        if (url.startsWith("git@")) {
-          return createSpawnChild({ closeCode: 1 });
+      (cmd: string, args: string[], _opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
+        if (cmd === "git" && args[0] === "clone") {
+          const url = String(args[3] ?? "");
+          // SSH attempt fails (simulate non-zero exit)
+          if (url.startsWith("git@")) {
+            return createSpawnChild({ closeCode: 1 });
+          }
+
+          // HTTPS fallback succeeds
+          createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
+            "Cargo.toml": "",
+          });
         }
 
-        // HTTPS fallback succeeds
-        createFakeRepo(repoDir, "https://github.com/owner/my-app.git", {
-          "Cargo.toml": "",
-        });
-      }
-
-      return createSpawnChild({ closeCode: 0 });
+        return createSpawnChild({ closeCode: 0 });
       },
     );
 
@@ -755,7 +764,7 @@ describe("start command — URL argument", () => {
       [
         "port: 4000",
         "defaults:",
-        "  runtime: tmux",
+        "  runtime: process",
         "  agent: claude-code",
         "  workspace: worktree",
         "  notifiers: [desktop]",
@@ -796,7 +805,7 @@ describe("start command — URL argument", () => {
       [
         "port: 4000",
         "defaults:",
-        "  runtime: tmux",
+        "  runtime: process",
         "  agent: claude-code",
         "  workspace: worktree",
         "  notifiers: [desktop]",
@@ -872,7 +881,20 @@ describe("start command — non-interactive install safety", () => {
   it("does not auto-install tmux when missing in non-interactive mode", async () => {
     mockIsHumanCaller.mockReturnValue(false);
 
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    // This test exercises the tmux preflight path, so the config must
+    // explicitly select runtime: tmux (makeConfig defaults to process).
+    // Pin the platform to linux so the Windows branch (which exits before
+    // calling execSilent) doesn't short-circuit the tmux -V check we're
+    // asserting on.
+    const tmuxConfig = makeConfig({ "my-app": makeProject() }) as {
+      defaults: Record<string, unknown>;
+    };
+    tmuxConfig.defaults.runtime = "tmux";
+    mockConfigRef.current = tmuxConfig;
+
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+
     mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
       if (cmd === "git" && args[0] === "--version") return "git version 2.43.0";
       if (cmd === "tmux" && args[0] === "-V") return null;
@@ -881,9 +903,15 @@ describe("start command — non-interactive install safety", () => {
       return null;
     });
 
-    await expect(
-      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
-    ).rejects.toThrow("process.exit(1)");
+    try {
+      await expect(
+        program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+      ).rejects.toThrow("process.exit(1)");
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
 
     expect(hasPrivilegedInstallAttempt()).toBe(false);
     expect(mockExec.mock.calls.some((call) => String(call[0]) === "tmux")).toBe(false);
@@ -1228,10 +1256,10 @@ describe("start command — orchestrator session strategy display", () => {
 
     await program.parseAsync(["node", "test", "start", "--rebuild", "--no-orchestrator"]);
 
-    expect(dashboardRebuild.rebuildDashboardProductionArtifacts).toHaveBeenCalledWith(tmpDir, [
-      3000,
-      3001,
-    ]);
+    expect(dashboardRebuild.rebuildDashboardProductionArtifacts).toHaveBeenCalledWith(
+      tmpDir,
+      [3000, 3001],
+    );
   });
 
   it("opens the most recent orchestrator session page when multiple existing orchestrators found with dashboard enabled and reuse is explicit", async () => {
@@ -1743,87 +1771,172 @@ describe("stop command", () => {
     });
   });
 
-  it("finds orphaned dashboard on a reassigned port via port scan", async () => {
+  it("calls killProcessTree with numeric PID when findPidByPort returns a PID", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-    // Port 3000 has nothing, but port 3001 has the orphaned dashboard
-    mockDashboardOnPort(3001, "99999");
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("was on port 3001");
-  });
-
-  it("skips non-dashboard processes during port scan", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-    // Port 3000 has nothing, port 3001 has an unrelated process,
-    // port 3002 has the actual dashboard
-    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
-      if (cmd === "kill") return { stdout: "", stderr: "" };
-      if (cmd === "ps") {
-        const pid = args[1];
-        if (pid === "11111") return { stdout: "python -m http.server 3001", stderr: "" };
-        if (pid === "22222")
-          return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "lsof") {
-        const portArg = args.find((a) => a.startsWith(":"));
-        if (portArg === ":3001") return { stdout: "11111", stderr: "" };
-        if (portArg === ":3002") return { stdout: "22222", stderr: "" };
-      }
+    mockSessionManager.list.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue("1234");
+    // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
+    // before killing. Stub it to return a matching cmdline so we reach the kill.
+    mockExec.mockImplementation(async (cmd: string) => {
+      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
       throw new Error("no process");
     });
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    // Should skip port 3001 (python) and find the dashboard on 3002
-    expect(output).toContain("was on port 3002");
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
   });
 
-  it("only kills dashboard PIDs when port has mixed processes", async () => {
+  it("does not call killProcessTree when findPidByPort returns null", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
-    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-    // Port 3000 has two processes: a dashboard and an unrelated sidecar
-    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
-      if (cmd === "kill") {
-        // Only the dashboard PID should be killed, not the sidecar
-        expect(args).toEqual(["11111"]);
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "ps") {
-        const pid = args[1];
-        if (pid === "11111")
-          return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-        if (pid === "22222") return { stdout: "nginx: worker process", stderr: "" };
-        return { stdout: "", stderr: "" };
-      }
-      if (cmd === "lsof") {
-        const portArg = args.find((a) => a.startsWith(":"));
-        if (portArg === ":3000") return { stdout: "11111\n22222", stderr: "" };
-      }
-      throw new Error("no process");
-    });
+    mockSessionManager.list.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((c) => c.join(" "))
-      .join("\n");
-    expect(output).toContain("Dashboard stopped");
+    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+    expect(mockKillProcessTree).not.toHaveBeenCalled();
+  });
+
+  // Recovers from issue #645: when the configured port was busy at start, the
+  // dashboard auto-reassigned to port+N and `ao stop` couldn't find it. The
+  // port-scan fallback in stopDashboard walks port+1..port+MAX_PORT_SCAN.
+  // Skip on Windows: killDashboardOnPort skips the `ps` cmdline verification
+  // there (uses netstat trust), so the assertions on `ps` output don't apply.
+  it.skipIf(process.platform === "win32")(
+    "finds orphaned dashboard on a reassigned port via port scan",
+    async () => {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockSessionManager.list.mockResolvedValue([]);
+      // Port 3000 has nothing; port 3001 has the orphaned dashboard
+      mockFindPidByPort.mockImplementation(async (port: number) =>
+        port === 3001 ? "99999" : null,
+      );
+      // ps cmdline check inside killDashboardOnPort must pass for the kill to fire
+      mockExec.mockImplementation(async (cmd: string) => {
+        if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
+        throw new Error("no process");
+      });
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockKillProcessTree).toHaveBeenCalledWith(99999);
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("was on port 3001");
+    },
+  );
+
+  // Windows parallel: the port-scan fallback must still find the orphaned
+  // dashboard, but killDashboardOnPort intentionally skips the `ps` cmdline
+  // check (no `ps` on Windows; we trust netstat output via findPidByPort).
+  // Ensures a developer who breaks the Windows port-scan path is caught.
+  it.runIf(process.platform === "win32")(
+    "finds orphaned dashboard on a reassigned port via port scan (Windows)",
+    async () => {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockSessionManager.list.mockResolvedValue([]);
+      mockFindPidByPort.mockImplementation(async (port: number) =>
+        port === 3001 ? "99999" : null,
+      );
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockKillProcessTree).toHaveBeenCalledWith(99999);
+      // `ps` must NOT be invoked on Windows — the cmdline verification is
+      // skipped by design in killDashboardOnPort.
+      const psCalls = mockExec.mock.calls.filter((c) => c[0] === "ps");
+      expect(psCalls).toHaveLength(0);
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("was on port 3001");
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// runtime fallback — platform-aware default (B01/B02/B21)
+// ---------------------------------------------------------------------------
+
+describe("start command — platform-aware runtime fallback", () => {
+  it("does not call ensureTmux when config has no runtime and platform is win32", async () => {
+    // Config with no defaults.runtime — the fallback kicks in.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        // runtime intentionally absent
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Windows — getDefaultRuntime() will return "process".
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() calls execSilent("tmux", ["-V"]) — it must NOT have been called.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) =>
+        String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks).toHaveLength(0);
+  });
+
+  it("calls ensureTmux when config has no runtime and platform is linux", async () => {
+    // Same config without runtime, but on a non-Windows platform.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Linux — getDefaultRuntime() returns "tmux", ensureTmux() must fire.
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // ensureTmux() must have checked for tmux availability.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) =>
+        String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks.length).toBeGreaterThan(0);
   });
 
   it("targeted stop does NOT kill parent process or dashboard", async () => {
@@ -1980,15 +2093,14 @@ describe("stop command", () => {
     mockSessionManager.list.mockResolvedValue([]);
     mockExec.mockRejectedValue(new Error("no process"));
 
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(killSpy).toHaveBeenCalledWith(99999, "SIGTERM");
+    // Stop now goes through killProcessTree (which is module-mocked above),
+    // not a direct process.kill — that's how it gets `taskkill /T /F` on
+    // Windows and process-group kill on Unix. Assert on the mock.
+    expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
     expect(mockUnregister).toHaveBeenCalled();
     expect(mockRemoveProjectFromRunning).not.toHaveBeenCalled();
-
-    killSpy.mockRestore();
   });
 
   it("targeted stop records last-stop with correct project scope", async () => {
@@ -2267,7 +2379,7 @@ describe("start command — already-running detection", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             "my-app": {
               name: "My App",
@@ -2312,8 +2424,7 @@ describe("start command — already-running detection", () => {
         ) {
           return "https://github.com/org/new-repo.git";
         }
-        if (args[0] === "symbolic-ref" && workingDir === repoDir)
-          return "refs/remotes/origin/main";
+        if (args[0] === "symbolic-ref" && workingDir === repoDir) return "refs/remotes/origin/main";
         if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === repoDir)
           return "abc";
         return null;
@@ -2416,8 +2527,7 @@ describe("start command — already-running detection", () => {
     });
 
     mockWaitForExit.mockResolvedValue(true);
-
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    mockKillProcessTree.mockResolvedValue(undefined);
 
     mockPromptSelect.mockResolvedValue("restart");
 
@@ -2431,7 +2541,10 @@ describe("start command — already-running detection", () => {
       // Startup after restart may throw — that's OK for this test
     }
 
-    expect(killSpy).toHaveBeenCalledWith(9999, "SIGTERM");
+    // killExistingDaemon delegates to killProcessTree (taskkill /T /F on Windows,
+    // process group signalling on Unix) instead of raw process.kill, so dead
+    // grandchildren of the daemon don't leak.
+    expect(mockKillProcessTree).toHaveBeenCalledWith(9999, "SIGTERM");
     expect(mockUnregister).toHaveBeenCalled();
 
     const output = vi
@@ -2439,8 +2552,6 @@ describe("start command — already-running detection", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("Stopped existing instance");
-
-    killSpy.mockRestore();
   });
 
   it("creates new orchestrator entry when human caller selects 'new'", async () => {
@@ -2460,7 +2571,7 @@ describe("start command — already-running detection", () => {
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             "my-app": {
               name: "My App",
@@ -2514,7 +2625,7 @@ describe("start command — already-running detection", () => {
     const { stringify: yamlStringify } = await import("yaml");
     const originalYaml = yamlStringify(
       {
-        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
         projects: {
           "my-app": {
             name: "My App",
@@ -2567,7 +2678,7 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             "my-app": {
               name: "My App",
@@ -2620,7 +2731,7 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             "old-name": {
               name: "Old Name",
@@ -2680,7 +2791,7 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             current: {
               projectId: "current",
@@ -2781,7 +2892,7 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
           projects: {
             current: {
               projectId: "current",

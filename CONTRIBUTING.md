@@ -27,7 +27,10 @@ Include:
 
 ## Development Setup
 
-**Prerequisites**: Node.js 20+, pnpm 9.15+, Git 2.25+, tmux, gh CLI
+**Prerequisites**: Node.js 20+, pnpm 9.15+, Git 2.25+, gh CLI
+
+- **Unix (macOS/Linux)**: also install `tmux` — it is the default runtime.
+- **Windows**: tmux is **not** required. The default runtime on Windows is `process` (ConPTY via `node-pty`), and PowerShell is the default shell. See [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) for what's different on Windows when contributing.
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git

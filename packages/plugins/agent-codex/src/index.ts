@@ -8,6 +8,7 @@ import {
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
+  isWindows,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -178,11 +179,23 @@ async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise
 }
 
 /**
+ * Normalize a path for cross-platform comparison. Codex's JSONL may emit
+ * forward-slash paths or vary drive-letter case on Windows; AO constructs
+ * workspace paths via path.join which yields backslashes on Windows. Compare
+ * via a canonical form: forward slashes throughout, lowercased drive letter.
+ */
+function toComparablePath(p: string): string {
+  const slash = p.replace(/\\/g, "/");
+  return slash.replace(/^([a-zA-Z]):/, (_, d: string) => d.toLowerCase() + ":");
+}
+
+/**
  * Check if the first few complete JSONL records of a session file contain a
  * session_meta entry matching the given workspace path. This avoids parsing a
  * truncated session_meta line when Codex embeds large base_instructions.
  */
 async function sessionFileMatchesCwd(filePath: string, workspacePath: string): Promise<boolean> {
+  const wantedCwd = toComparablePath(workspacePath);
   try {
     const lines = await readJsonlPrefixLines(filePath, SESSION_MATCH_SCAN_LINE_LIMIT);
     for (const line of lines) {
@@ -191,7 +204,11 @@ async function sessionFileMatchesCwd(filePath: string, workspacePath: string): P
         if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
           const entry = parsed as CodexJsonlLine;
           const payload = getCodexPayload(entry);
-          if (entry.type === "session_meta" && payload.cwd === workspacePath) {
+          if (
+            entry.type === "session_meta" &&
+            typeof payload.cwd === "string" &&
+            toComparablePath(payload.cwd) === wantedCwd
+          ) {
             return true;
           }
         }
@@ -346,6 +363,10 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
  * Returns "codex" as final fallback (let the shell resolve it at runtime).
  */
 export async function resolveCodexBinary(): Promise<string> {
+  if (isWindows()) {
+    return resolveCodexBinaryWindows();
+  }
+
   // 1. Try `which codex`
   try {
     const { stdout } = await execFileAsync("which", ["codex"], { timeout: 10_000 });
@@ -374,6 +395,51 @@ export async function resolveCodexBinary(): Promise<string> {
   }
 
   // 3. Fallback: let the shell resolve it
+  return "codex";
+}
+
+/**
+ * Windows-specific binary lookup. `which` does not exist on Windows; the
+ * equivalent is `where.exe`, which can return multiple lines (PATHEXT
+ * variants). npm-installed CLIs land as `<name>.cmd` shims, while
+ * Rust/Cargo installs produce `<name>.exe`. We prefer the .cmd shim because
+ * it forwards to the right node binary, then fall back to .exe.
+ */
+async function resolveCodexBinaryWindows(): Promise<string> {
+  for (const target of ["codex.cmd", "codex.exe"]) {
+    try {
+      const { stdout } = await execFileAsync("where.exe", [target], {
+        timeout: 10_000,
+        windowsHide: true,
+      });
+      const first = stdout.split(/\r?\n/).find((line) => line.trim().length > 0);
+      if (first) return first.trim();
+    } catch {
+      // Not on PATH — try next target
+    }
+  }
+
+  // Fall back to common npm/Cargo install locations so AO works even when
+  // the user installed Codex into a directory not currently on PATH.
+  const appData = process.env["APPDATA"];
+  const home = homedir();
+  const candidates = [
+    appData ? join(appData, "npm", "codex.cmd") : null,
+    appData ? join(appData, "npm", "codex.exe") : null,
+    join(home, ".cargo", "bin", "codex.exe"),
+  ].filter((p): p is string => p !== null);
+
+  for (const candidate of candidates) {
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // Not at this location
+    }
+  }
+
+  // Last resort: bare name. PowerShell will hit PATHEXT to find codex.cmd.
+  // Combined with the `& ` prefix from formatLaunchCommand this still works.
   return "codex";
 }
 
@@ -441,6 +507,19 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
   return result;
 }
 
+/**
+ * Format a launch command for the host shell. On Windows the resolved binary
+ * path is single-quoted by shellEscape (e.g. `'C:\Users\...\codex.cmd'`), and
+ * PowerShell parses a leading quoted string as an expression — `'codex' -c …`
+ * fails with "Unexpected token '-c' in expression or statement". Prepending
+ * the call operator `& ` tells PowerShell to *invoke* the string as a command.
+ * On Unix the prefix is unnecessary; bash treats `'codex' -c …` as a command.
+ */
+function formatLaunchCommand(parts: string[]): string {
+  const cmd = parts.join(" ");
+  return isWindows() ? `& ${cmd}` : cmd;
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -473,7 +552,7 @@ function createCodexAgent(): Agent {
         parts.push("--", shellEscape(config.prompt));
       }
 
-      return parts.join(" ");
+      return formatLaunchCommand(parts);
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -624,6 +703,8 @@ function createCodexAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // ps -eo is Unix-only; guard against stale tmux handles on Windows
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -745,7 +826,7 @@ function createCodexAgent(): Agent {
       // Positional threadId goes last, after all flags
       parts.push(shellEscape(threadId));
 
-      return parts.join(" ");
+      return formatLaunchCommand(parts);
     },
 
     async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
@@ -795,7 +876,11 @@ export type {
 
 export function detect(): boolean {
   try {
-    execFileSync("codex", ["--version"], { stdio: "ignore" });
+    execFileSync("codex", ["--version"], {
+      stdio: "ignore",
+      shell: isWindows(),
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;

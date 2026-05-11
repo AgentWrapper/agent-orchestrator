@@ -4536,6 +4536,53 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-transform: lowercase;
 }
 
+/* Rename pencil button — sits at the rightmost edge of a session row.
+   Hidden by default; revealed on row hover (via Tailwind `group-hover`)
+   and on focus so keyboard users can reach it. */
+.project-sidebar__sess-rename-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-radius: 0;
+  transition:
+    opacity 80ms,
+    color 80ms,
+    background 80ms;
+}
+
+.project-sidebar__sess-rename-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--sidebar-row-hover);
+}
+
+/* Inline rename input — replaces the label while editing. Inherits the
+   row's font sizing so the input visually swaps in without layout shift. */
+.project-sidebar__sess-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0;
+  padding: 1px 6px;
+  outline: none;
+}
+
+.project-sidebar__sess-rename-input:focus {
+  border-color: var(--color-accent-amber);
+}
+
 /* Sidebar settings popover */
 .project-sidebar__settings-wrap {
   position: relative;
@@ -7644,11 +7691,34 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   white-space: nowrap;
   color: var(--color-text-secondary);
 }
-.topbar-zone-pill__value { font-weight: 600; font-variant-numeric: tabular-nums; }
-.topbar-zone-pill__label { opacity: 0.85; }
-.topbar-zone-pill--merge   { background: color-mix(in srgb, var(--color-status-ready)     12%, transparent); color: var(--color-status-ready); }
-.topbar-zone-pill--respond { background: color-mix(in srgb, var(--color-status-error)     12%, transparent); color: var(--color-status-error); }
-.topbar-zone-pill--review  { background: color-mix(in srgb, var(--color-accent-orange)    12%, transparent); color: var(--color-accent-orange); }
-.topbar-zone-pill--working { background: color-mix(in srgb, var(--color-accent-blue)      12%, transparent); color: var(--color-accent-blue); }
-.topbar-zone-pill--pending { background: color-mix(in srgb, var(--color-status-attention) 12%, transparent); color: var(--color-status-attention); }
-.topbar-zone-pill--done    { background: color-mix(in srgb, var(--color-text-tertiary)    14%, transparent); color: var(--color-text-tertiary); }
+.topbar-zone-pill__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-zone-pill__label {
+  opacity: 0.85;
+}
+.topbar-zone-pill--merge {
+  background: color-mix(in srgb, var(--color-status-ready) 12%, transparent);
+  color: var(--color-status-ready);
+}
+.topbar-zone-pill--respond {
+  background: color-mix(in srgb, var(--color-status-error) 12%, transparent);
+  color: var(--color-status-error);
+}
+.topbar-zone-pill--review {
+  background: color-mix(in srgb, var(--color-accent-orange) 12%, transparent);
+  color: var(--color-accent-orange);
+}
+.topbar-zone-pill--working {
+  background: color-mix(in srgb, var(--color-accent-blue) 12%, transparent);
+  color: var(--color-accent-blue);
+}
+.topbar-zone-pill--pending {
+  background: color-mix(in srgb, var(--color-status-attention) 12%, transparent);
+  color: var(--color-status-attention);
+}
+.topbar-zone-pill--done {
+  background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
+  color: var(--color-text-tertiary);
+}

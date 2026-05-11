@@ -272,6 +272,17 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Platform adapter — centralized cross-platform branching
+export {
+  isWindows,
+  isMac,
+  getDefaultRuntime,
+  getShell,
+  killProcessTree,
+  findPidByPort,
+  getEnvDefaults,
+} from "./platform.js";
+
 export { normalizeOriginUrl, relativeSubdir, deriveStorageKey } from "./storage-key.js";
 
 // Global config — Option C hybrid architecture (global registry + local behavior)
@@ -375,9 +386,17 @@ export type {
 
 export { atomicWriteFileSync } from "./atomic-write.js";
 
+export {
+  registerWindowsPtyHost,
+  unregisterWindowsPtyHost,
+  getWindowsPtyHosts,
+  clearWindowsPtyHostRegistry,
+  type WindowsPtyHostEntry,
+} from "./windows-pty-registry.js";
+
 // Activity event logging — structured diagnostic event trail
 export { recordActivityEvent, droppedEventCount } from "./activity-events.js";
-export { isActivityEventsFtsEnabled } from "./events-db.js";
+export { isActivityEventsFtsEnabled, closeDb } from "./events-db.js";
 export type {
   ActivityEventInput,
   ActivityEventKind,

@@ -29,11 +29,15 @@ describe("notifier-desktop integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPlatform.mockReturnValue("darwin");
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
-        cb(null);
-      },
-    );
+    mockExecFile.mockImplementation((..._args: unknown[]) => {
+      // execFile is called as (cmd, args, cb) on darwin/linux and as
+      // (cmd, args, opts, cb) on win32 — pick whichever trailing arg is the
+      // callback so both shapes work.
+      const cb = _args.find((a) => typeof a === "function") as
+        | ((err: Error | null) => void)
+        | undefined;
+      cb?.(null);
+    });
   });
 
   describe("config -> behavior flow", () => {
@@ -139,15 +143,32 @@ describe("notifier-desktop integration", () => {
       expect(args).not.toContain("--urgency=critical");
     });
 
-    it("win32 -> no execFile call, warns", async () => {
+    it("win32 -> powershell.exe with EncodedCommand toast XML", async () => {
       mockPlatform.mockReturnValue("win32");
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       const notifier = desktopPlugin.create();
-      await notifier.notify(makeEvent());
+      await notifier.notify(makeEvent({ message: "ci test" }));
 
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "powershell.exe",
+        expect.arrayContaining(["-EncodedCommand"]),
+        expect.objectContaining({ windowsHide: true }),
+        expect.any(Function),
+      );
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const encoded = args[args.indexOf("-EncodedCommand") + 1];
+      const script = Buffer.from(encoded, "base64").toString("utf16le");
+      expect(script).toContain("ToastNotificationManager");
+      expect(script).toContain("ci test");
+    });
+
+    it("unsupported platform -> no execFile, warns", async () => {
+      mockPlatform.mockReturnValue("freebsd");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const notifier = desktopPlugin.create();
+      await notifier.notify(makeEvent());
       expect(mockExecFile).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("win32"));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("freebsd"));
       warnSpy.mockRestore();
     });
   });

@@ -17,7 +17,7 @@ Every interface the system uses is defined here. If you're working on any part o
 
 **Main interfaces:**
 
-- `Runtime` — where sessions execute (tmux, docker, k8s)
+- `Runtime` — where sessions execute (tmux on Unix, `process` / ConPTY via node-pty on Windows, docker, k8s)
 - `Agent` — AI coding tool adapter (claude-code, codex, aider)
 - `Workspace` — code isolation (worktree, clone)
 - `Tracker` — issue tracking (GitHub Issues, Linear)
@@ -236,6 +236,6 @@ This package is a dependency of all other packages. Build it first if working on
 
 **Why plugin slots?**
 
-- Swappability: use tmux locally, docker in CI, k8s in prod
+- Swappability: use tmux on Linux/macOS, `process` (ConPTY) on Windows, docker in CI, k8s in prod — same agent/workspace stack across all of them
 - Testability: mock plugins for tests
 - Extensibility: users can add custom plugins (e.g., company-specific notifier)
