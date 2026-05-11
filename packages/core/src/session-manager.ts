@@ -1248,12 +1248,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
+      // If an orchestrator session exists on disk for this project, give the
+      // worker the literal command to message it. Existence-on-disk is the
+      // signal: if metadata was ever written for the canonical orchestrator
+      // ID, the orchestrator workflow is in play here.
+      const orchestratorSessionId = `${project.sessionPrefix}-orchestrator`;
+      const orchestratorExists = readMetadataRaw(sessionsDir, orchestratorSessionId) !== null;
+
       const { systemPrompt, taskPrompt } = buildPrompt({
         project,
         projectId: spawnConfig.projectId,
         issueId: spawnConfig.issueId,
         issueContext,
         userPrompt: spawnConfig.prompt,
+        ...(orchestratorExists && { orchestratorSessionId }),
       });
 
       const baseDir = getProjectDir(spawnConfig.projectId);

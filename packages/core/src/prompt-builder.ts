@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ProjectConfig } from "./types.js";
+import type { ProjectConfig, SessionId } from "./types.js";
 
 // =============================================================================
 // LAYER 1: BASE AGENT PROMPT
@@ -94,6 +94,14 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
+
+  /**
+   * Session ID of the orchestrator the worker can message back via `ao send`.
+   * When provided, the prompt gains a "Talking to the Orchestrator" section
+   * with the literal command. Caller should pass this only when an
+   * orchestrator session actually exists for the project.
+   */
+  orchestratorSessionId?: SessionId;
 }
 
 // =============================================================================
@@ -189,6 +197,23 @@ export function buildPrompt(
   // Layer 1: Base prompt is always included for every managed session.
   // Use trimmed prompt when no repo is configured (PR/CI instructions don't apply).
   systemSections.push(config.project.repo ? BASE_AGENT_PROMPT : BASE_AGENT_PROMPT_NO_REPO);
+
+  // Layer 1b: Orchestrator back-channel — only rendered when caller passes an
+  // orchestratorSessionId (i.e., an orchestrator is actually running for this
+  // project). `ao send` auto-prefixes `[from <sender-session-id>]`, so the
+  // example here is just the bare command.
+  if (config.orchestratorSessionId) {
+    systemSections.push(
+      [
+        "## Talking to the Orchestrator",
+        `You can message the orchestrator session that spawned you with:`,
+        ``,
+        `\`ao send ${config.orchestratorSessionId} "<your message>"\``,
+        ``,
+        `Only do this when you genuinely cannot proceed alone — cross-session coordination, a decision only the human-facing orchestrator can make, or a blocker outside your repo's scope. Do NOT ping for things you can resolve yourself (research, retries, normal CI/review fixes go through \`ao report\` and the existing flow). \`ao send\` automatically tags the message with your session ID, so the orchestrator always knows who's writing.`,
+      ].join("\n"),
+    );
+  }
 
   // Layer 2: Worker sessions are scoped to a single issue, so issue/task
   // context belongs in the system prompt with the rest of the session context.

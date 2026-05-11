@@ -11,6 +11,8 @@ const {
   mockRegistry,
   mockGetCurrentVersion,
   mockReadCachedUpdateInfo,
+  mockDetectInstallMethod,
+  mockGetUpdateCommand,
 } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
   mockFindConfigFile: vi.fn(),
@@ -25,6 +27,8 @@ const {
   },
   mockGetCurrentVersion: vi.fn(() => "0.2.2"),
   mockReadCachedUpdateInfo: vi.fn(() => null),
+  mockDetectInstallMethod: vi.fn(() => "unknown"),
+  mockGetUpdateCommand: vi.fn(() => "npm install -g @aoagents/ao@latest"),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
@@ -36,7 +40,10 @@ vi.mock("@aoagents/ao-core", () => ({
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
-  resolveNotifierTarget: (config: { notifiers?: Record<string, { plugin?: string }> }, reference: string) => {
+  resolveNotifierTarget: (
+    config: { notifiers?: Record<string, { plugin?: string }> },
+    reference: string,
+  ) => {
     const configured = config.notifiers?.[reference];
     return {
       reference,
@@ -51,8 +58,10 @@ vi.mock("../../src/lib/openclaw-probe.js", () => ({
 }));
 
 vi.mock("../../src/lib/update-check.js", () => ({
+  detectInstallMethod: () => mockDetectInstallMethod(),
   getCurrentVersion: () => mockGetCurrentVersion(),
-  readCachedUpdateInfo: () => mockReadCachedUpdateInfo(),
+  getUpdateCommand: (...args: unknown[]) => mockGetUpdateCommand(...args),
+  readCachedUpdateInfo: (...args: unknown[]) => mockReadCachedUpdateInfo(...args),
   isVersionOutdated: (current: string, latest: string) => {
     const parseVersion = (version: string) => {
       const [base, prerelease] = version.split("-", 2);
@@ -219,7 +228,9 @@ describe("doctor command", () => {
     const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toContain('defaults.runtime -> runtime plugin "tmux"');
     expect(output).toContain('projects.my-app.scm.plugin -> scm plugin "github"');
-    expect(output).toContain('defaults.notifiers: alerts (plugin: slack) -> notifier plugin "slack"');
+    expect(output).toContain(
+      'defaults.notifiers: alerts (plugin: slack) -> notifier plugin "slack"',
+    );
   });
 
   it("fails when a referenced plugin cannot be loaded", async () => {
