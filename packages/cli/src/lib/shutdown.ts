@@ -12,12 +12,13 @@
  * see ao-118 plan PR B).
  */
 
-import { isTerminalSession, loadConfig } from "@aoagents/ao-core";
+import { isTerminalSession } from "@aoagents/ao-core";
 import { stopBunTmpJanitor } from "./bun-tmp-janitor.js";
 import { getSessionManager } from "./create-session-manager.js";
 import { stopAllLifecycleWorkers } from "./lifecycle-service.js";
 import { stopProjectSupervisor } from "./project-supervisor.js";
 import { unregister, writeLastStop } from "./running-state.js";
+import { loadAllProjectsConfigWithFallback } from "./all-projects-config.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -64,9 +65,9 @@ export function installShutdownHandlers(ctx: ShutdownContext): void {
 
     void (async () => {
       try {
-        const shutdownConfig = loadConfig(ctx.configPath);
+        const { config: shutdownConfig } = loadAllProjectsConfigWithFallback(ctx.configPath);
         const sm = await getSessionManager(shutdownConfig);
-        const allSessions = await sm.list();
+        const allSessions = await sm.listStored();
         const activeSessions = allSessions.filter((s) => !isTerminalSession(s));
 
         const killedSessionIds: string[] = [];
@@ -104,10 +105,13 @@ export function installShutdownHandlers(ctx: ShutdownContext): void {
             otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
           });
         }
-
+      } catch {
+        // Best-effort session cleanup — always continue to unregister/exit.
+      }
+      try {
         await unregister();
       } catch {
-        // Best-effort — always exit even if cleanup fails
+        // Best-effort running-state cleanup.
       }
       try {
         // Await any in-flight sweep so shutdown does not exit while

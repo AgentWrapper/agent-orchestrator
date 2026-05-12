@@ -156,10 +156,31 @@ export function refreshDashboardSessionDerivedFields(session: DashboardSession):
   return session;
 }
 
+function summaryFromSessionMetadata(session: Session): {
+  summary: string | null;
+  summaryIsFallback: boolean;
+} {
+  const metadataSummary = session.metadata["summary"];
+  if (metadataSummary) {
+    return { summary: metadataSummary, summaryIsFallback: false };
+  }
+
+  const codexModel = session.metadata["codexModel"]?.trim();
+  if (codexModel) {
+    return {
+      summary: `Codex session (${codexModel})`,
+      summaryIsFallback: true,
+    };
+  }
+
+  return { summary: null, summaryIsFallback: false };
+}
+
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
-  const summary = agentSummary ?? session.metadata["summary"] ?? null;
+  const metadataSummary = summaryFromSessionMetadata(session);
+  const summary = agentSummary ?? metadataSummary.summary;
 
   return refreshDashboardSessionDerivedFields({
     id: session.id,
@@ -183,7 +204,9 @@ export function sessionToDashboard(session: Session): DashboardSession {
     displayName: session.metadata["displayName"] ?? null,
     displayNameUserSet: session.metadata["displayNameUserSet"] === "true",
     summary,
-    summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
+    summaryIsFallback: agentSummary
+      ? (session.agentInfo?.summaryIsFallback ?? false)
+      : metadataSummary.summaryIsFallback,
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr
@@ -338,13 +361,11 @@ export function readPREnrichmentFromMetadata(
       additions: e.additions ?? 0,
       deletions: e.deletions ?? 0,
       ciStatus: e.ciStatus ?? "none",
-      ciChecks: (e.ciChecks ?? []).map(
-        (c: { name: string; status: string; url?: string }) => ({
-          name: c.name,
-          status: c.status,
-          url: c.url,
-        }),
-      ),
+      ciChecks: (e.ciChecks ?? []).map((c: { name: string; status: string; url?: string }) => ({
+        name: c.name,
+        status: c.status,
+        url: c.url,
+      })),
       reviewDecision: e.reviewDecision ?? "none",
       mergeability: {
         mergeable: e.mergeable ?? false,
@@ -366,9 +387,7 @@ export function readPREnrichmentFromMetadata(
  * The CLI lifecycle manager persists batch enrichment data to metadata files.
  * No GitHub API calls — reads from disk via the metadata already loaded.
  */
-export function enrichSessionPR(
-  dashboard: DashboardSession,
-): boolean {
+export function enrichSessionPR(dashboard: DashboardSession): boolean {
   if (!dashboard.pr) return false;
 
   const data = readPREnrichmentFromMetadata(dashboard.metadata);

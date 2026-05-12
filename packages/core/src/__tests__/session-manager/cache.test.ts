@@ -1,17 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createSessionManager } from "../../session-manager.js";
 import { writeMetadata } from "../../metadata.js";
-import type { OrchestratorConfig, PluginRegistry } from "../../types.js";
-import { setupTestContext, teardownTestContext, type TestContext } from "../test-utils.js";
+import type { Agent, OrchestratorConfig, PluginRegistry } from "../../types.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 let sessionsDir: string;
+let mockAgent: Agent;
 let mockRegistry: PluginRegistry;
 let config: OrchestratorConfig;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ sessionsDir, mockRegistry, config } = ctx);
+  ({ sessionsDir, mockAgent, mockRegistry, config } = ctx);
 });
 
 afterEach(() => {
@@ -62,34 +68,116 @@ describe("listCached", () => {
     expect(second[0].id).toBe("app-1");
   });
 
-  it("bypasses cache after TTL expires", async () => {
-    writeMetadata(sessionsDir, "app-1", {
-      worktree: "/tmp/w1",
-      branch: "feat/a",
-      status: "working",
-      project: "my-app",
-    });
+  it("returns refreshed data once the cache TTL expires", async () => {
+    vi.useFakeTimers();
+    try {
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/w1",
+        branch: "feat/a",
+        status: "working",
+        project: "my-app",
+      });
 
-    const sm = createSessionManager({ config, registry: mockRegistry });
+      const sm = createSessionManager({ config, registry: mockRegistry });
 
-    // Warm the cache at t=0
-    vi.setSystemTime(new Date(0));
-    const first = await sm.listCached();
-    expect(first).toHaveLength(1);
+      // Warm the cache at t=0
+      vi.setSystemTime(new Date(0));
+      const first = await sm.listCached();
+      expect(first).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
 
-    // Add a session to disk while cache is warm
-    writeMetadata(sessionsDir, "app-2", {
-      worktree: "/tmp/w2",
-      branch: "feat/b",
-      status: "working",
-      project: "my-app",
-    });
+      // Add a session to disk while cache is warm
+      writeMetadata(sessionsDir, "app-2", {
+        worktree: "/tmp/w2",
+        branch: "feat/b",
+        status: "working",
+        project: "my-app",
+      });
 
-    // Advance time past 35s TTL
-    vi.setSystemTime(new Date(36_000));
-    const afterExpiry = await sm.listCached();
-    // Cache miss — disk re-read sees both sessions
-    expect(afterExpiry).toHaveLength(2);
+      // Advance time past 35s TTL
+      vi.setSystemTime(new Date(36_000));
+      const afterExpiry = await sm.listCached();
+      expect(afterExpiry).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("can serve stale data after TTL when stale-while-revalidate is requested", async () => {
+    vi.useFakeTimers();
+    try {
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/w1",
+        branch: "feat/a",
+        status: "working",
+        project: "my-app",
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      vi.setSystemTime(new Date(0));
+      const first = await sm.listCached();
+      expect(first).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      writeMetadata(sessionsDir, "app-2", {
+        worktree: "/tmp/w2",
+        branch: "feat/b",
+        status: "working",
+        project: "my-app",
+      });
+
+      vi.setSystemTime(new Date(36_000));
+      const stale = await sm.listCached(undefined, { staleWhileRevalidate: true });
+      expect(stale).toHaveLength(1);
+
+      await vi.waitFor(async () => {
+        expect(await sm.listCached()).toHaveLength(2);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns a metadata snapshot on cold cache without waiting for stalled enrichment", async () => {
+    vi.useFakeTimers();
+    try {
+      const agentWithStuckState: Agent = {
+        ...mockAgent,
+        getActivityState: vi.fn(() => new Promise<null>(() => {})),
+        getSessionInfo: vi.fn().mockResolvedValue(null),
+      };
+      const registryWithStuckState: PluginRegistry = {
+        ...mockRegistry,
+        get: vi
+          .fn()
+          .mockImplementation((slot: Parameters<PluginRegistry["get"]>[0], name: string) => {
+            if (slot === "agent") return agentWithStuckState;
+            return mockRegistry.get(slot, name);
+          }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/w1",
+        branch: "feat/a",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-1"),
+      });
+
+      const sm = createSessionManager({ config, registry: registryWithStuckState });
+      const cached = await sm.listCached();
+
+      expect(cached).toHaveLength(1);
+      expect(cached[0]!.id).toBe("app-1");
+      expect(cached[0]!.activity).toBeNull();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(agentWithStuckState.getActivityState).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(12_100);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reflects new session immediately after spawn (cache invalidated)", async () => {

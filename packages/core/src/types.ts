@@ -263,10 +263,7 @@ export function isRestorable(session: {
   lifecycle?: CanonicalSessionLifecycle;
 }): boolean {
   if (session.lifecycle) {
-    return (
-      isTerminalSession(session) &&
-      !NON_RESTORABLE_STATUSES.has(session.status)
-    );
+    return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
   }
   return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
 }
@@ -346,11 +343,7 @@ export function isOrchestratorSession(
   if (allSessionPrefixes) {
     for (const prefix of allSessionPrefixes) {
       if (prefix === sessionPrefix) continue;
-      if (
-        new RegExp(
-          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
-        ).test(session.id)
-      ) {
+      if (new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`).test(session.id)) {
         return false;
       }
     }
@@ -856,7 +849,11 @@ export interface SCM {
    * @param observer - Optional observer for batch operation metrics
    * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
    */
-  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver, repos?: string[]): Promise<Map<string, PREnrichmentData>>;
+  enrichSessionsPRBatch?(
+    prs: PRInfo[],
+    observer?: BatchObserver,
+    repos?: string[],
+  ): Promise<Map<string, PREnrichmentData>>;
 
   /**
    * Optional: validate that this SCM's prerequisites (auth, CLI tools) are
@@ -1308,7 +1305,7 @@ export interface LifecycleConfig {
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /** Optional JSON Schema hint for editor autocomplete/validation. */
-  "$schema"?: string;
+  $schema?: string;
 
   /**
    * Path to the config file (set automatically during load).
@@ -1811,6 +1808,14 @@ export interface KillOptions {
   reason?: LifecycleKillReason;
 }
 
+export interface SessionGetOptions {
+  /**
+   * Bound live runtime/agent enrichment. When this expires, get() returns the
+   * metadata-backed session with any enrichment that completed in time.
+   */
+  enrichTimeoutMs?: number;
+}
+
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
@@ -1818,7 +1823,7 @@ export interface SessionManager {
   ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
-  get(sessionId: SessionId): Promise<Session | null>;
+  get(sessionId: SessionId, options?: SessionGetOptions): Promise<Session | null>;
   kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
   cleanup(
     projectId?: string,
@@ -1832,7 +1837,29 @@ export interface SessionManager {
 export interface OpenCodeSessionManager extends SessionManager {
   /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
-  listCached(projectId?: string): Promise<Session[]>;
+  /**
+   * List sessions from persisted metadata only.
+   *
+   * This is the dashboard fast path: it avoids live runtime / agent probes so
+   * local UI reads never block behind a stalled terminal, agent CLI, or
+   * OpenCode discovery call. Call list() when the caller explicitly needs fresh
+   * live enrichment.
+   */
+  listStored(projectId?: string): Promise<Session[]>;
+  /**
+   * List sessions through the in-process cache.
+   *
+   * Cold-cache callers receive an immediate stored-metadata snapshot while live
+   * enrichment refreshes the cache in the background. The initial TTL starts
+   * with that metadata snapshot and is replaced when the background refresh
+   * completes, so passive stale-while-revalidate callers may briefly see
+   * fallback summaries during slow first enrichment. Once a cache exists,
+   * expired cache entries refresh before returning by default so explicit
+   * reconciliation callers get current membership. Pass staleWhileRevalidate
+   * for passive dashboard reads that must remain responsive while refresh
+   * happens in the background.
+   */
+  listCached(projectId?: string, options?: { staleWhileRevalidate?: boolean }): Promise<Session[]>;
   invalidateCache(): void;
 }
 
@@ -1986,40 +2013,44 @@ export class ProjectResolveError extends Error {
 
 /** A project entry in the portfolio index (merged from discovery + registration + preferences) */
 export interface PortfolioProject {
-  id: string;                          // Stable portfolio identity (configProjectKey, with collision suffix if needed)
-  name: string;                        // Human-readable display name
-  configPath: string;                  // Absolute path to agent-orchestrator.yaml
-  configProjectKey: string;            // Key in config.projects map
-  repoPath: string;                    // Absolute local filesystem path
-  repo?: string;                       // "owner/repo" for SCM
+  id: string; // Stable portfolio identity (configProjectKey, with collision suffix if needed)
+  name: string; // Human-readable display name
+  configPath: string; // Absolute path to agent-orchestrator.yaml
+  configProjectKey: string; // Key in config.projects map
+  repoPath: string; // Absolute local filesystem path
+  repo?: string; // "owner/repo" for SCM
   defaultBranch?: string;
   sessionPrefix: string;
   source: "discovered" | "registered" | "config"; // How this entry was found
-  enabled: boolean;                    // User can disable without removing
-  pinned: boolean;                     // User preference for ordering
-  lastSeenAt: string;                  // ISO timestamp
-  resolveError?: string;               // Present only when the project is degraded
+  enabled: boolean; // User can disable without removing
+  pinned: boolean; // User preference for ordering
+  lastSeenAt: string; // ISO timestamp
+  resolveError?: string; // Present only when the project is degraded
 }
 
 /** User preferences overlay (canonical, small file) */
 export interface PortfolioPreferences {
   version: 1;
   defaultProjectId?: string;
-  projectOrder?: string[];             // Ordered project IDs for display
-  projects?: Record<string, {          // Per-project preferences
-    pinned?: boolean;
-    enabled?: boolean;
-    displayName?: string;
-  }>;
+  projectOrder?: string[]; // Ordered project IDs for display
+  projects?: Record<
+    string,
+    {
+      // Per-project preferences
+      pinned?: boolean;
+      enabled?: boolean;
+      displayName?: string;
+    }
+  >;
 }
 
 /** Registered projects (explicit `ao project add`) */
 export interface PortfolioRegistered {
   version: 1;
   projects: Array<{
-    path: string;                      // Repo path
-    configProjectKey?: string;         // Key in config if multi-project YAML
-    addedAt: string;                   // ISO timestamp
+    path: string; // Repo path
+    configProjectKey?: string; // Key in config if multi-project YAML
+    addedAt: string; // ISO timestamp
   }>;
 }
 

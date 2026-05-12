@@ -105,6 +105,7 @@ const multiProjectSessions: Session[] = [
 
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
+  listStored: vi.fn(async () => testSessions),
   listCached: vi.fn(async () => testSessions),
   invalidateCache: vi.fn(),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
@@ -256,6 +257,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Re-set default return values
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
+  (mockSessionManager.listStored as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
@@ -297,22 +299,77 @@ describe("API Routes", () => {
       expect(session).toHaveProperty("createdAt");
     });
 
-    it("skips PR enrichment when metadata enrichment hits timeout", async () => {
+    it("keeps PR enrichment when slower metadata enrichment hits timeout", async () => {
       vi.useFakeTimers();
 
       const metadataSpy = vi
         .spyOn(serialize, "enrichSessionsMetadata")
         .mockImplementation(() => new Promise<void>(() => {}));
 
-      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
-      await vi.advanceTimersByTimeAsync(3_000);
-      const res = await responsePromise;
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "worker-ready-pr",
+          status: "mergeable",
+          activity: "idle",
+          pr: {
+            number: 123,
+            url: "https://github.com/acme/my-app/pull/123",
+            title: "Basic PR title",
+            owner: "acme",
+            repo: "my-app",
+            branch: "feat/ready-pr",
+            baseBranch: "main",
+            isDraft: false,
+          },
+          metadata: {
+            prEnrichment: JSON.stringify({
+              state: "open",
+              title: "feat: stable enriched PR",
+              additions: 24,
+              deletions: 3,
+              ciStatus: "passing",
+              ciChecks: [{ name: "build", status: "passed" }],
+              reviewDecision: "approved",
+              mergeable: true,
+              hasConflicts: false,
+              blockers: [],
+            }),
+            prReviewComments: JSON.stringify({
+              unresolvedThreads: 0,
+              unresolvedComments: [],
+            }),
+          },
+        }),
+      ]);
 
-      expect(res.status).toBe(200);
-      expect(getSCM).not.toHaveBeenCalled();
+      try {
+        const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(3_000);
+        const res = await responsePromise;
+        const data = await res.json();
 
-      metadataSpy.mockRestore();
-      vi.useRealTimers();
+        expect(res.status).toBe(200);
+        expect(data.sessions[0].pr).toMatchObject({
+          title: "feat: stable enriched PR",
+          additions: 24,
+          deletions: 3,
+          ciStatus: "passing",
+          reviewDecision: "approved",
+          enriched: true,
+          mergeability: expect.objectContaining({
+            mergeable: true,
+            ciPassing: true,
+            approved: true,
+            noConflicts: true,
+          }),
+        });
+        expect(data.sessions[0].attentionLevel).toBe("merge");
+        expect(getSCM).not.toHaveBeenCalled();
+      } finally {
+        metadataSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {
@@ -353,7 +410,9 @@ describe("API Routes", () => {
         { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app", {
+        staleWhileRevalidate: true,
+      });
     });
 
     it("uses the live session list when fresh=true is requested", async () => {
@@ -371,7 +430,26 @@ describe("API Routes", () => {
       expect(data.orchestratorId).toBe("docs-orchestrator");
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
-      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app", expect.anything());
+    });
+
+    it("uses fresh stored metadata when fresh=metadata is requested", async () => {
+      (mockSessionManager.listStored as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app&fresh=metadata"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.list).not.toHaveBeenCalledWith("docs-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalledWith("docs-app", expect.anything());
     });
 
     it("prefers the most recently active live orchestrator for project-scoped worker navigation", async () => {
@@ -432,7 +510,9 @@ describe("API Routes", () => {
         "my-app-orchestrator-1",
       ]);
       expect(data.sessions).toEqual([]);
-      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.listCached).toHaveBeenCalledWith("my-app", {
+        staleWhileRevalidate: true,
+      });
     });
 
     it("keeps dead orchestrators as the fallback project-scoped payload when none are live", async () => {
@@ -748,10 +828,32 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       expect(data.id).toBe("backend-7");
       expect(data.projectId).toBe("my-app");
+      expect(mockSessionManager.get).toHaveBeenCalledWith("backend-7", { enrichTimeoutMs: 3000 });
 
       metadataSpy.mockRestore();
       prSpy.mockRestore();
     }, 10_000);
+
+    it("uses bounded session lookup while recording failures", async () => {
+      (mockSessionManager.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error("detail boom"))
+        .mockResolvedValueOnce(testSessions[1]);
+
+      const res = await sessionDetailGET(
+        makeRequest("http://localhost:3000/api/sessions/backend-3"),
+        { params: Promise.resolve({ id: "backend-3" }) },
+      );
+      const data = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(data.error).toBe("Internal server error");
+      expect(mockSessionManager.get).toHaveBeenNthCalledWith(1, "backend-3", {
+        enrichTimeoutMs: 3000,
+      });
+      expect(mockSessionManager.get).toHaveBeenNthCalledWith(2, "backend-3", {
+        enrichTimeoutMs: 3000,
+      });
+    });
   });
 
   // ── PATCH /api/sessions/[id] ───────────────────────────────────────
@@ -1496,6 +1598,9 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
       expect(data.sessions.length).toBe(testSessions.length);
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith(undefined);
+      expect(mockSessionManager.listCached).not.toHaveBeenCalled();
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
     it("each patch contains id, status, activity, attentionLevel, lastActivityAt", async () => {
@@ -1517,6 +1622,9 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(Array.isArray(data.sessions)).toBe(true);
+      expect(mockSessionManager.listStored).toHaveBeenCalledWith("my-app");
+      expect(mockSessionManager.listCached).not.toHaveBeenCalled();
+      expect(mockSessionManager.list).not.toHaveBeenCalled();
     });
 
     it("returns 500 when getServices throws", async () => {

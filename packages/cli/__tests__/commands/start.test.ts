@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { EventEmitter } from "node:events";
-import type { SessionManager } from "@aoagents/ao-core";
+import { isWindows, type SessionManager } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -41,6 +41,7 @@ const {
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockSessionManager: {
     list: vi.fn(),
+    listStored: vi.fn(),
     restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
@@ -271,6 +272,7 @@ import { registerStart, registerStop, autoCreateConfig } from "../../src/command
 let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let originalAoGlobalConfig: string | undefined;
 
 function createSpawnChild(options?: {
   /** Emit `error` instead of `close`. */
@@ -308,6 +310,8 @@ function createSpawnChild(options?: {
 
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
+  originalAoGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
+  process.env["AO_GLOBAL_CONFIG"] = join(tmpDir, "no-such-global.yaml");
 
   program = new Command();
   program.exitOverride();
@@ -343,6 +347,10 @@ beforeEach(async () => {
 
   mockSessionManager.list.mockReset();
   mockSessionManager.list.mockResolvedValue([]);
+  mockSessionManager.listStored.mockReset();
+  mockSessionManager.listStored.mockImplementation((...args: unknown[]) =>
+    mockSessionManager.list(...args),
+  );
   mockSessionManager.restore.mockReset();
   mockSessionManager.restore.mockResolvedValue({ id: "app-orchestrator-restored" });
   mockSessionManager.get.mockReset();
@@ -425,6 +433,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   if (cwdSpy) cwdSpy.mockRestore();
+  if (originalAoGlobalConfig === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+  else process.env["AO_GLOBAL_CONFIG"] = originalAoGlobalConfig;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -1633,6 +1643,141 @@ describe("start command — orchestrator session strategy display", () => {
     expect(mockClearLastStop).toHaveBeenCalled();
   });
 
+  it("offers restore when last-stop contains only other-project sessions", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: [],
+      otherProjects: [{ projectId: "project-2", sessionIds: ["p2-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.restore.mockResolvedValue(undefined);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-1",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    expect(mockPromptConfirm).toHaveBeenCalledWith("Restore these sessions?", true);
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
+  it("does not display current-project full-stop sessions as other-project sessions", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: [],
+      otherProjects: [
+        { projectId: "project-1", sessionIds: ["p1-1"] },
+        { projectId: "project-2", sessionIds: ["p2-1"] },
+      ],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.restore.mockResolvedValue(undefined);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-1",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("1 session(s) were active before last ao stop");
+    expect(output).toContain("project-2: p2-1");
+    expect(output).not.toContain("project-1: p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
+  it("restores primary and other-project sessions from mixed all-project last-stop records", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: ["p1-1"],
+      otherProjects: [{ projectId: "project-2", sessionIds: ["p2-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.restore.mockResolvedValue(undefined);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-2",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("session(s) were active before last ao stop");
+    expect(output).toContain("session(s) from project-1 were also stopped");
+    expect(mockPromptConfirm).toHaveBeenCalledWith("Restore these sessions?", true);
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
+  it("warns and falls back when merged all-project restore config loading fails", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "project-1",
+      sessionIds: ["p1-1"],
+      otherProjects: [{ projectId: "project-2", sessionIds: ["p2-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    writeFileSync(join(tmpDir, "agent-orchestrator.yaml"), "projects: [\n");
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "project-2",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Could not load merged all-project config");
+    expect(output).toContain("Flow sequence");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p1-1");
+    expect(mockSessionManager.restore).toHaveBeenCalledWith("p2-1");
+    expect(mockClearLastStop).toHaveBeenCalled();
+  });
+
   it("opens the bare dashboard URL when --no-orchestrator skips the orchestrator block", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
@@ -1771,22 +1916,53 @@ describe("stop command", () => {
     });
   });
 
-  it("calls killProcessTree with numeric PID when findPidByPort returns a PID", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.list.mockResolvedValue([]);
-    mockFindPidByPort.mockResolvedValue("1234");
-    // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
-    // before killing. Stub it to return a matching cmdline so we reach the kill.
-    mockExec.mockImplementation(async (cmd: string) => {
-      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-      throw new Error("no process");
-    });
+  it.skipIf(isWindows())(
+    "calls killProcessTree with numeric PID when findPidByPort returns a PID",
+    async () => {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockSessionManager.list.mockResolvedValue([]);
+      mockFindPidByPort.mockResolvedValue("1234");
+      // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
+      // before killing. Stub it to return a matching cmdline so we reach the kill.
+      mockExec.mockImplementation(async (cmd: string) => {
+        if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
+        throw new Error("no process");
+      });
 
-    await program.parseAsync(["node", "test", "stop"]);
+      await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
-    expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
-  });
+      expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
+      expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
+    },
+  );
+
+  it.skipIf(isWindows())(
+    "kills the dashboard supervisor when the port belongs to the Next.js child",
+    async () => {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockSessionManager.list.mockResolvedValue([]);
+      mockFindPidByPort.mockResolvedValue("2222");
+      mockExec.mockImplementation(async (cmd: string, args: string[]) => {
+        if (cmd !== "ps") throw new Error("no process");
+        const pid = args[1];
+        const field = args[3];
+        if (pid === "2222" && field === "args=") {
+          return { stdout: "next-server (v15.5.15)", stderr: "" };
+        }
+        if (pid === "2222" && field === "ppid=") {
+          return { stdout: "1111", stderr: "" };
+        }
+        if (pid === "1111" && field === "args=") {
+          return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
+        }
+        throw new Error(`unexpected ps ${args.join(" ")}`);
+      });
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockKillProcessTree).toHaveBeenCalledWith(1111);
+    },
+  );
 
   it("does not call killProcessTree when findPidByPort returns null", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
@@ -1799,12 +1975,226 @@ describe("stop command", () => {
     expect(mockKillProcessTree).not.toHaveBeenCalled();
   });
 
+  it("uses metadata-only session listing during stop", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.list.mockRejectedValue(new Error("live enrichment should not run"));
+    mockSessionManager.listStored.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.listStored).toHaveBeenCalledWith(undefined);
+    expect(mockSessionManager.list).not.toHaveBeenCalled();
+  });
+
+  it("uses the global config for full stop when running state is missing", async () => {
+    const globalConfigPath = join(tmpDir, "global-config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+            "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+    mockConfigRef.current = makeConfig({
+      "local-only": makeProject({ name: "Local Only", sessionPrefix: "local" }),
+    });
+    mockSessionManager.listStored.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    try {
+      await program.parseAsync(["node", "test", "stop"]);
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Projects: project-1, project-2");
+    expect(output).not.toContain("local-only");
+  });
+
+  it("merges running local config with global config for full stop coverage", async () => {
+    const globalConfigPath = join(tmpDir, "global-config.yaml");
+    const localConfigPath = join(tmpDir, "local-config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    writeFileSync(
+      localConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: localConfigPath,
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1", "project-2"],
+    });
+    mockSessionManager.listStored.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    try {
+      await program.parseAsync(["node", "test", "stop"]);
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("project-1");
+    expect(output).toContain("project-2");
+  });
+
+  it("falls back to the running config and still kills the parent when merged full-stop config fails", async () => {
+    const globalConfigPath = join(tmpDir, "global-config.yaml");
+    const localConfigPath = join(tmpDir, "local-config.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(globalConfigPath, "projects: [invalid");
+    writeFileSync(
+      localConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+    mockGetRunning.mockResolvedValue({
+      pid: 99999,
+      configPath: localConfigPath,
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: ["project-1"],
+    });
+    mockSessionManager.listStored.mockResolvedValue([]);
+    mockFindPidByPort.mockResolvedValue(null);
+
+    try {
+      await program.parseAsync(["node", "test", "stop"]);
+    } finally {
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+
+    expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+    expect(mockUnregister).toHaveBeenCalled();
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Could not load merged all-project config");
+    expect(output).toContain("Projects: project-1");
+  });
+
+  it("records full-stop sessions grouped by actual project instead of arbitrary primary project", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.listStored.mockResolvedValue([
+      {
+        id: "p1-1",
+        projectId: "project-1",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockFindPidByPort.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockWriteLastStop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        sessionIds: [],
+        otherProjects: expect.arrayContaining([
+          { projectId: "project-1", sessionIds: ["p1-1"] },
+          { projectId: "project-2", sessionIds: ["p2-1"] },
+        ]),
+      }),
+    );
+  });
+
   // Recovers from issue #645: when the configured port was busy at start, the
   // dashboard auto-reassigned to port+N and `ao stop` couldn't find it. The
   // port-scan fallback in stopDashboard walks port+1..port+MAX_PORT_SCAN.
-  // Skip on Windows: killDashboardOnPort skips the `ps` cmdline verification
-  // there (uses netstat trust), so the assertions on `ps` output don't apply.
-  it.skipIf(process.platform === "win32")(
+  // Skip on Windows: the port fallback is disabled there unless we have a
+  // reliable dashboard ownership check, so these Unix `ps` assertions do not apply.
+  it.skipIf(isWindows())(
     "finds orphaned dashboard on a reassigned port via port scan",
     async () => {
       mockConfigRef.current = makeConfig({ "my-app": makeProject() });
@@ -1830,12 +2220,61 @@ describe("stop command", () => {
     },
   );
 
-  // Windows parallel: the port-scan fallback must still find the orphaned
-  // dashboard, but killDashboardOnPort intentionally skips the `ps` cmdline
-  // check (no `ps` on Windows; we trust netstat output via findPidByPort).
-  // Ensures a developer who breaks the Windows port-scan path is caught.
-  it.runIf(process.platform === "win32")(
-    "finds orphaned dashboard on a reassigned port via port scan (Windows)",
+  it("does not kill a port listener on Windows without dashboard ownership proof", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockSessionManager.list.mockResolvedValue([]);
+      mockFindPidByPort.mockResolvedValue("99999");
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockFindPidByPort).not.toHaveBeenCalled();
+      expect(mockKillProcessTree).not.toHaveBeenCalled();
+      const psCalls = mockExec.mock.calls.filter((c) => c[0] === "ps");
+      expect(psCalls).toHaveLength(0);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+  });
+
+  it("does not warn about dashboard port fallback after killing the registered parent on Windows", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+      mockGetRunning.mockResolvedValue({
+        pid: 99999,
+        configPath: "/fake/config.yaml",
+        port: 3000,
+        startedAt: new Date().toISOString(),
+        projects: ["my-app"],
+      });
+      mockSessionManager.listStored.mockResolvedValue([]);
+      mockFindPidByPort.mockResolvedValue("88888");
+
+      await program.parseAsync(["node", "test", "stop"]);
+
+      expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+      expect(mockFindPidByPort).not.toHaveBeenCalled();
+      const output = vi
+        .mocked(console.log)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      expect(output).toContain("Dashboard stopped");
+      expect(output).not.toContain("Could not stop dashboard");
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+  });
+
+  it.runIf(isWindows())(
+    "does not kill a reassigned port listener on Windows without dashboard ownership proof",
     async () => {
       mockConfigRef.current = makeConfig({ "my-app": makeProject() });
       mockSessionManager.list.mockResolvedValue([]);
@@ -1845,16 +2284,14 @@ describe("stop command", () => {
 
       await program.parseAsync(["node", "test", "stop"]);
 
-      expect(mockKillProcessTree).toHaveBeenCalledWith(99999);
-      // `ps` must NOT be invoked on Windows — the cmdline verification is
-      // skipped by design in killDashboardOnPort.
+      expect(mockKillProcessTree).not.toHaveBeenCalled();
       const psCalls = mockExec.mock.calls.filter((c) => c[0] === "ps");
       expect(psCalls).toHaveLength(0);
       const output = vi
         .mocked(console.log)
         .mock.calls.map((c) => c.join(" "))
         .join("\n");
-      expect(output).toContain("was on port 3001");
+      expect(output).toContain("Could not stop dashboard");
     },
   );
 });
@@ -2379,7 +2816,12 @@ describe("start command — already-running detection", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2571,7 +3013,12 @@ describe("start command — already-running detection", () => {
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2625,7 +3072,12 @@ describe("start command — already-running detection", () => {
     const { stringify: yamlStringify } = await import("yaml");
     const originalYaml = yamlStringify(
       {
-        defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        defaults: {
+          runtime: "process",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: [],
+        },
         projects: {
           "my-app": {
             name: "My App",
@@ -2678,7 +3130,12 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2731,7 +3188,12 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "old-name": {
               name: "Old Name",
@@ -2791,7 +3253,12 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             current: {
               projectId: "current",
@@ -2892,7 +3359,12 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             current: {
               projectId: "current",

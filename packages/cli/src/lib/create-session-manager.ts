@@ -19,9 +19,48 @@ import {
 import { importPluginModuleFromSource } from "./plugin-store.js";
 
 const registryPromises = new Map<string, Promise<PluginRegistry>>();
+const registryPromisesByConfig = new WeakMap<OrchestratorConfig, Promise<PluginRegistry>>();
+
+function stableCacheValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableCacheValue);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, stableCacheValue(nestedValue)]),
+  );
+}
 
 function getRegistryCacheKey(config: OrchestratorConfig): string {
-  return config.configPath || "__default__";
+  return JSON.stringify(
+    stableCacheValue({
+      configPath: config.configPath || "__default__",
+      plugins: config.plugins ?? [],
+      externalPluginEntries: config._externalPluginEntries ?? [],
+      notifiers: config.notifiers ?? {},
+    }),
+  );
+}
+
+function hasConfigMutationSideEffects(config: OrchestratorConfig): boolean {
+  return (config._externalPluginEntries?.length ?? 0) > 0;
+}
+
+function createRegistryPromise(
+  config: OrchestratorConfig,
+  onError: () => void,
+): Promise<PluginRegistry> {
+  return (async () => {
+    const registry = createPluginRegistry();
+    // Prefer the AO-managed plugin store when a package is installed there,
+    // but still fall back to the CLI/workspace dependency tree for built-ins.
+    await registry.loadFromConfig(config, importPluginModuleFromSource);
+    return registry;
+  })().catch((err) => {
+    onError();
+    throw err;
+  });
 }
 
 /**
@@ -30,19 +69,26 @@ function getRegistryCacheKey(config: OrchestratorConfig): string {
  * await the same initialization rather than racing.
  */
 export async function getPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
+  // External inline plugin loading mutates the config with discovered
+  // manifest.name values. Cache only by object identity in that case so fresh
+  // equivalent configs still receive those mutation side effects.
+  if (hasConfigMutationSideEffects(config)) {
+    let registryPromise = registryPromisesByConfig.get(config);
+    if (!registryPromise) {
+      registryPromise = createRegistryPromise(config, () => {
+        registryPromisesByConfig.delete(config);
+      });
+      registryPromisesByConfig.set(config, registryPromise);
+    }
+    return registryPromise;
+  }
+
   const cacheKey = getRegistryCacheKey(config);
   let registryPromise = registryPromises.get(cacheKey);
 
   if (!registryPromise) {
-    registryPromise = (async () => {
-      const registry = createPluginRegistry();
-      // Prefer the AO-managed plugin store when a package is installed there,
-      // but still fall back to the CLI/workspace dependency tree for built-ins.
-      await registry.loadFromConfig(config, importPluginModuleFromSource);
-      return registry;
-    })().catch((err) => {
+    registryPromise = createRegistryPromise(config, () => {
       registryPromises.delete(cacheKey);
-      throw err;
     });
     registryPromises.set(cacheKey, registryPromise);
   }

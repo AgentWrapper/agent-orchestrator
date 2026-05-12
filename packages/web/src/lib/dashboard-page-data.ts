@@ -13,7 +13,12 @@ import {
   enrichSessionsMetadataFast,
   listDashboardOrchestrators,
 } from "@/lib/serialize";
-import { getPrimaryProjectId, getProjectName, getAllProjects, type ProjectInfo } from "@/lib/project-name";
+import {
+  getPrimaryProjectId,
+  getProjectName,
+  getAllProjects,
+  type ProjectInfo,
+} from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 
@@ -24,12 +29,7 @@ const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
  * Avoids dumping stack traces into the banner.
  */
 export function formatDashboardLoadError(err: unknown): string {
-  const rawMessage =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : "";
+  const rawMessage = err instanceof Error ? err.message : typeof err === "string" ? err : "";
 
   if (rawMessage.trim()) {
     const firstLine = rawMessage
@@ -76,7 +76,9 @@ export function resolveDashboardProjectFilter(project?: string): string {
   return getPrimaryProjectId();
 }
 
-export const getDashboardPageData = cache(async function getDashboardPageData(project?: string): Promise<DashboardPageData> {
+export const getDashboardPageData = cache(async function getDashboardPageData(
+  project?: string,
+): Promise<DashboardPageData> {
   const projectFilter = resolveDashboardProjectFilter(project);
   const pageData: DashboardPageData = {
     sessions: [],
@@ -89,7 +91,9 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
 
   let config: Awaited<ReturnType<typeof getServices>>["config"];
   let registry: Awaited<ReturnType<typeof getServices>>["registry"];
-  let allSessions: Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["sessionManager"]["listCached"]>>;
+  let allSessions: Awaited<
+    ReturnType<Awaited<ReturnType<typeof getServices>>["sessionManager"]["listCached"]>
+  >;
 
   try {
     const services = await getServices();
@@ -97,7 +101,9 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     registry = services.registry;
     pageData.attentionZones = config.dashboard?.attentionZones ?? DEFAULT_ATTENTION_ZONE_MODE;
     try {
-      allSessions = await services.sessionManager.listCached();
+      allSessions = await services.sessionManager.listCached(undefined, {
+        staleWhileRevalidate: true,
+      });
     } catch (listErr) {
       pageData.dashboardLoadError = formatDashboardLoadError(listErr);
       return pageData;

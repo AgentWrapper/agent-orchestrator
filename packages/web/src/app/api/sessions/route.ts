@@ -14,7 +14,10 @@ import type { DashboardOrchestratorLink } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
-function compareOrchestratorRecency(a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }, b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }): number {
+function compareOrchestratorRecency(
+  a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string },
+  b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string },
+): number {
   return (
     (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
     (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
@@ -54,7 +57,7 @@ function selectPreferredOrchestratorId(
 function listPreferredProjectOrchestrators(
   sessions: Parameters<typeof listDashboardOrchestrators>[0],
   projects: Parameters<typeof listDashboardOrchestrators>[1],
-) : DashboardOrchestratorLink[] {
+): DashboardOrchestratorLink[] {
   const preferredOrchestrators = listProjectOrchestratorSessions(sessions, projects);
 
   return preferredOrchestrators
@@ -74,23 +77,32 @@ export async function GET(request: Request) {
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
     const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
-    const fresh = searchParams.get("fresh") === "true";
+    const freshness = searchParams.get("fresh");
+    const fresh = freshness === "true";
+    const metadataFresh = freshness === "metadata";
 
     const { config, registry, sessionManager } = await getServices();
     const requestedProjectId =
       projectFilter && projectFilter !== "all" && config.projects[projectFilter]
         ? projectFilter
         : undefined;
+    // `fresh=metadata` is the membership-reconciliation path: bypass the
+    // in-process cache so external ao start/stop writes appear promptly, but do
+    // not run live runtime/agent probes like `fresh=true`.
     const coreSessions = fresh
       ? await sessionManager.list(requestedProjectId)
-      : await sessionManager.listCached(requestedProjectId);
+      : metadataFresh
+        ? await sessionManager.listStored(requestedProjectId)
+        : await sessionManager.listCached(requestedProjectId, { staleWhileRevalidate: true });
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = requestedProjectId
       ? listPreferredProjectOrchestrators(visibleSessions, config.projects)
       : listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = requestedProjectId
       ? selectPreferredOrchestratorId(visibleSessions, config.projects)
-      : (orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null);
+      : orchestrators.length === 1
+        ? (orchestrators[0]?.id ?? null)
+        : null;
 
     if (orchestratorOnly) {
       recordApiObservation({
@@ -101,7 +113,11 @@ export async function GET(request: Request) {
         startedAt,
         outcome: "success",
         statusCode: 200,
-        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length, fresh },
+        data: {
+          orchestratorOnly: true,
+          orchestratorCount: orchestrators.length,
+          fresh: freshness ?? false,
+        },
       });
 
       return jsonWithCorrelation(
@@ -138,19 +154,18 @@ export async function GET(request: Request) {
       dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);
     }
 
-    const metadataSettled = await settlesWithin(
+    // PR enrichment reads already-loaded session metadata, so do not gate it
+    // behind slower tracker/agent enrichment. Otherwise a timed-out refresh can
+    // overwrite SSR-rich merge cards with default PR placeholders.
+    for (let i = 0; i < workerSessions.length; i++) {
+      if (!workerSessions[i]?.pr) continue;
+      enrichSessionPR(dashboardSessions[i]);
+    }
+
+    await settlesWithin(
       enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
       METADATA_ENRICH_TIMEOUT_MS,
     );
-
-    if (metadataSettled) {
-      // PR enrichment: read from session metadata (written by CLI lifecycle).
-      // No GitHub API calls — synchronous metadata read.
-      for (let i = 0; i < workerSessions.length; i++) {
-        if (!workerSessions[i]?.pr) continue;
-        enrichSessionPR(dashboardSessions[i]);
-      }
-    }
 
     recordApiObservation({
       config,
@@ -160,7 +175,7 @@ export async function GET(request: Request) {
       startedAt,
       outcome: "success",
       statusCode: 200,
-      data: { sessionCount: dashboardSessions.length, activeOnly, fresh },
+      data: { sessionCount: dashboardSessions.length, activeOnly, fresh: freshness ?? false },
     });
 
     return jsonWithCorrelation(

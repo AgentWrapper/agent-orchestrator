@@ -177,32 +177,36 @@ async function clearStaleWorktreePath(repoPath: string, worktreePath: string): P
  * base) need this — without it, an `<path> already exists` failure repeats.
  *
  * Refuses to rmSync the path if it's still a registered worktree, which
- * would silently destroy the user's work. The entry-point `worktree prune`
- * in restore() already ran, so we don't prune again here.
+ * would silently destroy the user's work. Prunes again here because callers
+ * reach this helper only after `git worktree add` has failed on stale state.
  */
-async function cleanupStaleWorkspacePath(
-  repoPath: string,
-  workspacePath: string,
-): Promise<void> {
-  // Force-remove any registered worktree at this path. Best-effort — the
-  // path may not be registered, in which case git errors and we fall
-  // through to the dir cleanup.
+async function cleanupStaleWorkspacePath(repoPath: string, workspacePath: string): Promise<void> {
   try {
-    await git(repoPath, "worktree", "remove", "--force", workspacePath);
+    await git(repoPath, "worktree", "prune");
   } catch {
-    // Best-effort
+    // Best-effort prune before deciding whether the path is still live.
   }
 
-  if (existsSync(workspacePath)) {
-    if (await isRegisteredWorktree(repoPath, workspacePath)) {
-      throw new Error(
-        `Worktree path "${workspacePath}" already exists and is still registered with git`,
-      );
+  if (!existsSync(workspacePath)) {
+    // Missing paths are safe to deregister; there is no workspace content to
+    // destroy. This recovers from stale worktree entries left by interrupted
+    // cleanup before retrying `git worktree add`.
+    try {
+      await git(repoPath, "worktree", "remove", "--force", workspacePath);
+    } catch {
+      // Best-effort; the entry may already have been pruned.
     }
-    // Use removeDirWithRetry for Windows file-handle drain races (matches
-    // destroy()'s fallback). On Unix this is just rmSync.
-    await removeDirWithRetry(workspacePath);
+    return;
   }
+
+  if (await isRegisteredWorktree(repoPath, workspacePath)) {
+    throw new Error(
+      `Worktree path "${workspacePath}" already exists and is still registered with git`,
+    );
+  }
+  // Use removeDirWithRetry for Windows file-handle drain races (matches
+  // destroy()'s fallback). On Unix this is just rmSync.
+  await removeDirWithRetry(workspacePath);
 }
 
 /**

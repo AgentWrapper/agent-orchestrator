@@ -80,7 +80,7 @@ describe("SessionBroadcaster", () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "http://localhost:3000/api/sessions/patches",
+        "http://127.0.0.1:3000/api/sessions/patches",
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(callback).toHaveBeenCalledWith(patches);
@@ -118,12 +118,42 @@ describe("SessionBroadcaster", () => {
       broadcaster.subscribe(vi.fn());
       await vi.advanceTimersByTimeAsync(0);
 
-      // 1 snapshot for sub1 + 1 snapshot for sub2 = 2
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // Cold snapshots are coalesced across subscribers.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // After 3 seconds, only one polling fetch happens
       await vi.advanceTimersByTimeAsync(3000);
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not double-notify subscribers when cold fetch overlaps the first poll delay", async () => {
+      const patches = [makePatch("s1")];
+      let resolveJson: ((value: { sessions: typeof patches }) => void) | undefined;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          new Promise((resolve) => {
+            resolveJson = resolve;
+          }),
+      });
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      broadcaster.subscribe(cb1);
+      broadcaster.subscribe(cb2);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(cb1).not.toHaveBeenCalled();
+      expect(cb2).not.toHaveBeenCalled();
+
+      resolveJson?.({ sessions: patches });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb1).toHaveBeenCalledTimes(1);
+      expect(cb2).toHaveBeenCalledTimes(1);
+      expect(cb1).toHaveBeenCalledWith(patches);
+      expect(cb2).toHaveBeenCalledWith(patches);
     });
 
     it("returns an unsubscribe function that stops polling when last subscriber leaves", async () => {
@@ -235,6 +265,34 @@ describe("SessionBroadcaster", () => {
       await vi.advanceTimersByTimeAsync(10);
 
       expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("waits 15 seconds before aborting a slow snapshot", async () => {
+      let signal: AbortSignal | undefined;
+      mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) => {
+        signal = init?.signal as AbortSignal | undefined;
+        return new Promise((_resolve, reject) => {
+          if (!signal) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          signal.addEventListener("abort", () => reject(new Error("This operation was aborted")));
+        });
+      });
+
+      const unsubscribe = broadcaster.subscribe(vi.fn(), vi.fn());
+      expect(signal).toBeDefined();
+
+      // Stop interval polling so this test observes only the initial snapshot.
+      unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal?.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 

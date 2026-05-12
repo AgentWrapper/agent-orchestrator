@@ -35,6 +35,7 @@ import {
   type ClaimPRResult,
   type KillOptions,
   type KillResult,
+  type SessionGetOptions,
   type LifecycleKillReason,
   type OrchestratorConfig,
   type ProjectConfig,
@@ -292,7 +293,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isFixedOrchestratorReservationError(err: unknown, sessionId: string): boolean {
-  return err instanceof Error && err.message.includes(`Orchestrator session "${sessionId}" already exists`);
+  return (
+    err instanceof Error &&
+    err.message.includes(`Orchestrator session "${sessionId}" already exists`)
+  );
 }
 
 async function getTmuxForegroundCommand(sessionName: string): Promise<string | null> {
@@ -310,9 +314,7 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
 }
 
 /** Parse lifecycle from raw metadata for writeMetadata (restore path). */
-function parseLifecycleFromRaw(
-  raw: Record<string, string>,
-): CanonicalSessionLifecycle | undefined {
+function parseLifecycleFromRaw(raw: Record<string, string>): CanonicalSessionLifecycle | undefined {
   const source = raw["lifecycle"] ?? raw["statePayload"];
   if (!source) return undefined;
   try {
@@ -365,6 +367,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   interface ActiveSessionRecord {
     sessionName: string;
     raw: Record<string, string>;
+    createdAt?: Date;
     modifiedAt?: Date;
   }
 
@@ -442,11 +445,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // previous launch ran far enough to write to ~/.kimi/sessions. A failed
     // launch (e.g. the --agent-file YAML crash) leaves no session to resume,
     // and falling back to a fresh getLaunchCommand is the only sensible choice.
-    return (
-      agentName === "claude-code" ||
-      agentName === "codex" ||
-      agentName === "opencode"
-    );
+    return agentName === "claude-code" || agentName === "codex" || agentName === "opencode";
   }
 
   function applyMetadataUpdatesToRaw(
@@ -520,10 +519,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessions: Session[];
     expiresAt: number;
   } | null = null;
+  let sessionCacheRefreshPromise: Promise<Session[]> | null = null;
+  let sessionCacheGeneration = 0;
+  let sessionCacheRefreshCount = 0;
   const ensureOrchestratorPromises = new Map<string, Promise<Session>>();
+  const boundedEnrichmentPromises = new Map<
+    string,
+    Promise<{
+      session: Session | null;
+      timedOut: boolean;
+      metadataUpdates: Partial<Record<string, string>>;
+    }>
+  >();
+  const boundedEnrichmentCooldowns = new Map<string, number>();
+  const BOUNDED_ENRICHMENT_RETRY_COOLDOWN_MS = 15_000;
 
   function invalidateCache(): void {
+    sessionCacheGeneration += 1;
     sessionCache = null;
+    sessionCacheRefreshPromise = null;
   }
 
   function repairSingleSessionMetadataOnRead(
@@ -593,7 +607,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const duplicatePRAttachments = new Map<string, ActiveSessionRecord[]>();
 
     for (const record of repaired) {
-      if (!record.raw["lifecycle"] && (!record.raw["statePayload"] || record.raw["stateVersion"] !== "2")) {
+      if (
+        !record.raw["lifecycle"] &&
+        (!record.raw["statePayload"] || record.raw["stateVersion"] !== "2")
+      ) {
         const lifecycle = cloneLifecycle(
           parseCanonicalLifecycle(record.raw, {
             sessionId: record.sessionName,
@@ -675,7 +692,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return repaired;
   }
 
-  function loadActiveSessionRecords(projectId: string, project: ProjectConfig): ActiveSessionRecord[] {
+  function loadActiveSessionRecords(
+    projectId: string,
+    project: ProjectConfig,
+  ): ActiveSessionRecord[] {
     const sessionsDir = getProjectSessionsDir(projectId);
     if (!existsSync(sessionsDir)) return [];
 
@@ -683,14 +703,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const raw = readMetadataRaw(sessionsDir, sessionName);
       if (!raw) return [];
 
+      let createdAt: Date | undefined;
       let modifiedAt: Date | undefined;
       try {
-        modifiedAt = statSync(join(sessionsDir, `${sessionName}.json`)).mtime;
+        const stats = statSync(join(sessionsDir, `${sessionName}.json`));
+        createdAt = stats.birthtime;
+        modifiedAt = stats.mtime;
       } catch {
         void 0;
       }
 
-      return [{ sessionName, raw, modifiedAt } satisfies ActiveSessionRecord];
+      return [{ sessionName, raw, createdAt, modifiedAt } satisfies ActiveSessionRecord];
     });
 
     return repairSessionMetadataOnRead(sessionsDir, records, project.sessionPrefix);
@@ -831,9 +854,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
-      const tmuxName = project.path
-        ? generateSessionName(project.sessionPrefix, num)
-        : undefined;
+      const tmuxName = project.path ? generateSessionName(project.sessionPrefix, num) : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
         return { num, sessionId, tmuxName };
@@ -907,19 +928,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionsDir: string,
     effectiveAgentName: string,
     sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
-  ): Promise<void> {
-    if (effectiveAgentName !== "opencode") return;
-    if (asValidOpenCodeSessionId(session.metadata["opencodeSessionId"])) return;
+    timeoutMs = OPENCODE_DISCOVERY_TIMEOUT_MS,
+    metadataUpdates?: Partial<Record<string, string>>,
+  ): Promise<boolean> {
+    if (effectiveAgentName !== "opencode") return false;
+    if (asValidOpenCodeSessionId(session.metadata["opencodeSessionId"])) return false;
+    if (timeoutMs <= 0) return true;
 
-    const discovered = await discoverOpenCodeSessionIdByTitle(
-      sessionName,
-      OPENCODE_DISCOVERY_TIMEOUT_MS,
-      sessionListPromise,
+    const discovered = await awaitWithEnrichmentDeadline(
+      discoverOpenCodeSessionIdByTitle(sessionName, timeoutMs, sessionListPromise),
+      Date.now() + timeoutMs,
     );
-    if (!discovered) return;
+    if (discovered === ENRICHMENT_TIMED_OUT) return true;
+    if (!discovered) return false;
 
     session.metadata["opencodeSessionId"] = discovered;
+    if (metadataUpdates) {
+      metadataUpdates["opencodeSessionId"] = discovered;
+    }
     updateMetadata(sessionsDir, sessionName, { opencodeSessionId: discovered });
+    return false;
   }
 
   function findSessionRecord(sessionId: SessionId): LocatedSession | null {
@@ -955,6 +983,165 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return located;
   }
 
+  const ENRICHMENT_TIMED_OUT = Symbol("enrichment_timed_out");
+
+  function remainingEnrichmentMs(deadlineMs: number | undefined): number | undefined {
+    if (deadlineMs === undefined) return undefined;
+    return deadlineMs - Date.now();
+  }
+
+  function isEnrichmentDeadlineExpired(deadlineMs: number | undefined): boolean {
+    const remainingMs = remainingEnrichmentMs(deadlineMs);
+    return remainingMs !== undefined && remainingMs <= 0;
+  }
+
+  function pruneExpiredBoundedEnrichmentCooldowns(now = Date.now()): void {
+    for (const [key, retryAfter] of boundedEnrichmentCooldowns) {
+      if (retryAfter <= now) {
+        boundedEnrichmentCooldowns.delete(key);
+      }
+    }
+  }
+
+  function setBoundedEnrichmentCooldown(key: string): void {
+    pruneExpiredBoundedEnrichmentCooldowns();
+    const retryAfter = Date.now() + BOUNDED_ENRICHMENT_RETRY_COOLDOWN_MS;
+    boundedEnrichmentCooldowns.set(key, retryAfter);
+    const timer = setTimeout(() => {
+      if (boundedEnrichmentCooldowns.get(key) === retryAfter) {
+        boundedEnrichmentCooldowns.delete(key);
+      }
+    }, BOUNDED_ENRICHMENT_RETRY_COOLDOWN_MS);
+    timer.unref?.();
+  }
+
+  async function awaitWithEnrichmentDeadline<T>(
+    promise: Promise<T>,
+    deadlineMs: number | undefined,
+  ): Promise<T | typeof ENRICHMENT_TIMED_OUT> {
+    const remainingMs = remainingEnrichmentMs(deadlineMs);
+    if (remainingMs === undefined) return promise;
+    if (remainingMs <= 0) return ENRICHMENT_TIMED_OUT;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<typeof ENRICHMENT_TIMED_OUT>((resolve) => {
+      timeoutId = setTimeout(() => resolve(ENRICHMENT_TIMED_OUT), remainingMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  function cloneRuntimeHandleForEnrichment(handle: RuntimeHandle | null): RuntimeHandle | null {
+    return handle
+      ? {
+          ...handle,
+          data: { ...handle.data },
+        }
+      : null;
+  }
+
+  function cloneAgentInfoForEnrichment(info: Session["agentInfo"]): Session["agentInfo"] {
+    return info
+      ? {
+          ...info,
+          cost: info.cost ? { ...info.cost } : undefined,
+          metadata: info.metadata ? { ...info.metadata } : undefined,
+        }
+      : null;
+  }
+
+  function changedMetadataUpdates(
+    current: Record<string, string>,
+    updates: Partial<Record<string, string>>,
+  ): Partial<Record<string, string>> {
+    const changed: Partial<Record<string, string>> = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) continue;
+      if (value === "") {
+        if (current[key] !== undefined) changed[key] = value;
+        continue;
+      }
+      if (current[key] !== value) changed[key] = value;
+    }
+    return changed;
+  }
+
+  function cachedAgentInfoFromMetadata(agentName: string, session: Session): Session["agentInfo"] {
+    if (agentName !== "codex") return null;
+
+    const model = session.metadata["codexModel"]?.trim();
+    const threadId = session.metadata["codexThreadId"]?.trim();
+    if (!model) return null;
+
+    return {
+      summary: model ? `Codex session (${model})` : null,
+      summaryIsFallback: true,
+      agentSessionId: threadId || session.id,
+      metadata: {
+        ...(threadId ? { codexThreadId: threadId } : {}),
+        ...(model ? { codexModel: model } : {}),
+      },
+    };
+  }
+
+  function cloneActivitySignalForEnrichment(
+    signal: Session["activitySignal"],
+  ): Session["activitySignal"] {
+    return {
+      ...signal,
+      timestamp: signal.timestamp ? new Date(signal.timestamp) : undefined,
+    };
+  }
+
+  function cloneSessionForEnrichment(session: Session): Session {
+    return {
+      ...session,
+      activitySignal: cloneActivitySignalForEnrichment(session.activitySignal),
+      lifecycle: cloneLifecycle(session.lifecycle),
+      pr: session.pr ? { ...session.pr } : null,
+      runtimeHandle: cloneRuntimeHandleForEnrichment(session.runtimeHandle),
+      agentInfo: cloneAgentInfoForEnrichment(session.agentInfo),
+      createdAt: new Date(session.createdAt),
+      lastActivityAt: new Date(session.lastActivityAt),
+      restoredAt: session.restoredAt ? new Date(session.restoredAt) : undefined,
+      metadata: { ...session.metadata },
+    };
+  }
+
+  function applyEnrichmentResult(
+    session: Session,
+    enriched: Session,
+    metadataUpdates: Partial<Record<string, string>>,
+  ): void {
+    session.activity = enriched.activity;
+    session.activitySignal = cloneActivitySignalForEnrichment(enriched.activitySignal);
+
+    const enrichedLifecycle = cloneLifecycle(enriched.lifecycle);
+    const nextLifecycle = cloneLifecycle(session.lifecycle);
+    nextLifecycle.runtime = enrichedLifecycle.runtime;
+    if (enrichedLifecycle.session.reason === "runtime_lost") {
+      nextLifecycle.session = enrichedLifecycle.session;
+      session.status = enriched.status;
+    }
+    session.lifecycle = nextLifecycle;
+
+    if (!session.runtimeHandle && enriched.runtimeHandle) {
+      session.runtimeHandle = cloneRuntimeHandleForEnrichment(enriched.runtimeHandle);
+    }
+    session.agentInfo = cloneAgentInfoForEnrichment(enriched.agentInfo);
+    if (enriched.lastActivityAt > session.lastActivityAt) {
+      session.lastActivityAt = new Date(enriched.lastActivityAt);
+    }
+
+    session.metadata = applyMetadataUpdates(session.metadata, metadataUpdates);
+  }
+
   /**
    * Ensure session has a runtime handle (fabricate one if missing) and enrich
    * with live runtime state + activity detection. Used by both list() and get().
@@ -967,14 +1154,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     effectiveAgentName: string,
     plugins: ReturnType<typeof resolvePlugins>,
     sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
-  ): Promise<void> {
-    await ensureOpenCodeSessionMapping(
+    options?: {
+      deadlineMs?: number;
+      metadataUpdates?: Partial<Record<string, string>>;
+      preferCachedAgentInfo?: boolean;
+    },
+  ): Promise<boolean> {
+    const mappingTimeoutMs = remainingEnrichmentMs(options?.deadlineMs);
+    if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
+    const mappingTimedOut = await ensureOpenCodeSessionMapping(
       session,
       sessionName,
       sessionsDir,
       effectiveAgentName,
       sessionListPromise,
+      mappingTimeoutMs,
+      options?.metadataUpdates,
     );
+    if (mappingTimedOut) return true;
+
+    if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
 
     const tmuxNameFromMetadata = session.metadata["tmuxName"]?.trim();
     const hasTmuxNameFromMetadata =
@@ -993,7 +1192,135 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         data: {},
       };
     }
-    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata, sessionsDir);
+    return enrichSessionWithRuntimeState(
+      session,
+      plugins,
+      handleFromMetadata,
+      sessionsDir,
+      options,
+    );
+  }
+
+  async function ensureHandleAndEnrichWithin(
+    session: Session,
+    sessionName: string,
+    sessionsDir: string,
+    project: ProjectConfig,
+    effectiveAgentName: string,
+    plugins: ReturnType<typeof resolvePlugins>,
+    timeoutMs: number,
+    sessionListPromise?: Promise<OpenCodeSessionListEntry[]>,
+    options?: { dedupeKey?: string; preferCachedAgentInfo?: boolean },
+  ): Promise<void> {
+    const dedupeKey = options?.dedupeKey;
+    pruneExpiredBoundedEnrichmentCooldowns();
+    if (dedupeKey) {
+      const retryAfter = boundedEnrichmentCooldowns.get(dedupeKey);
+      if (retryAfter !== undefined) {
+        if (retryAfter > Date.now()) return;
+        boundedEnrichmentCooldowns.delete(dedupeKey);
+      }
+    }
+
+    let startedEnrichment = false;
+    const baseSession = cloneSessionForEnrichment(session);
+    let enrichPromise = dedupeKey ? boundedEnrichmentPromises.get(dedupeKey) : undefined;
+    if (!enrichPromise) {
+      startedEnrichment = true;
+      const enrichmentSession = cloneSessionForEnrichment(baseSession);
+      const deadlineMs = Date.now() + timeoutMs;
+      const metadataUpdates: Partial<Record<string, string>> = {};
+      const trackedPromise: Promise<{
+        session: Session | null;
+        timedOut: boolean;
+        metadataUpdates: Partial<Record<string, string>>;
+      }> = ensureHandleAndEnrich(
+        enrichmentSession,
+        sessionName,
+        sessionsDir,
+        project,
+        effectiveAgentName,
+        plugins,
+        sessionListPromise,
+        { deadlineMs, metadataUpdates, preferCachedAgentInfo: options?.preferCachedAgentInfo },
+      )
+        .then((timedOut) => ({ session: enrichmentSession, timedOut, metadataUpdates }))
+        .catch(
+          (
+            err,
+          ): {
+            session: null;
+            timedOut: boolean;
+            metadataUpdates: Partial<Record<string, string>>;
+          } => {
+            recordActivityEvent({
+              projectId: session.projectId,
+              sessionId: sessionName,
+              source: "session-manager",
+              kind: "session.enrichment_failed",
+              level: "warn",
+              summary: `session enrichment failed: ${sessionName}`,
+              data: { reason: err instanceof Error ? err.message : String(err) },
+            });
+            return { session: null, timedOut: false, metadataUpdates };
+          },
+        )
+        .finally(() => {
+          if (dedupeKey && boundedEnrichmentPromises.get(dedupeKey) === trackedPromise) {
+            boundedEnrichmentPromises.delete(dedupeKey);
+          }
+        });
+      enrichPromise = trackedPromise;
+      if (dedupeKey) {
+        boundedEnrichmentPromises.set(dedupeKey, trackedPromise);
+      }
+    }
+
+    let enrichTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const enrichTimeout = new Promise<"timeout">((resolve) => {
+      enrichTimeoutId = setTimeout(() => resolve("timeout"), timeoutMs + 50);
+    });
+
+    try {
+      const outcome = await Promise.race([
+        enrichPromise.then((result) => ({ type: "complete" as const, result })),
+        enrichTimeout,
+      ]);
+      const recordTimeout = () => {
+        if (dedupeKey && boundedEnrichmentPromises.get(dedupeKey) === enrichPromise) {
+          boundedEnrichmentPromises.delete(dedupeKey);
+        }
+        if (dedupeKey) {
+          setBoundedEnrichmentCooldown(dedupeKey);
+        }
+        if (startedEnrichment) {
+          recordActivityEvent({
+            projectId: session.projectId,
+            sessionId: sessionName,
+            source: "session-manager",
+            kind: "session.enrichment_timeout",
+            level: "warn",
+            summary: `session enrichment timed out: ${sessionName}`,
+            data: { timeoutMs },
+          });
+        }
+      };
+
+      if (outcome === "timeout") {
+        recordTimeout();
+      } else if (outcome.result.session) {
+        applyEnrichmentResult(session, outcome.result.session, outcome.result.metadataUpdates);
+        if (outcome.result.timedOut) {
+          recordTimeout();
+        } else if (dedupeKey) {
+          boundedEnrichmentCooldowns.delete(dedupeKey);
+        }
+      }
+    } finally {
+      if (enrichTimeoutId) {
+        clearTimeout(enrichTimeoutId);
+      }
+    }
   }
 
   /**
@@ -1007,7 +1334,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
     sessionsDir: string,
-  ): Promise<void> {
+    options?: {
+      deadlineMs?: number;
+      metadataUpdates?: Partial<Record<string, string>>;
+      preferCachedAgentInfo?: boolean;
+    },
+  ): Promise<boolean> {
     // Check runtime liveness first — for all statuses except "spawning".
     // Skip spawning sessions because tmux may not be fully initialized yet,
     // and a false-negative from isAlive() would permanently mark the session
@@ -1024,7 +1356,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       session.status !== "spawning"
     ) {
       try {
-        const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+        if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
+        const alive = await awaitWithEnrichmentDeadline(
+          plugins.runtime.isAlive(session.runtimeHandle),
+          options?.deadlineMs,
+        );
+        if (alive === ENRICHMENT_TIMED_OUT) {
+          session.lifecycle.runtime.state = "probe_failed";
+          session.lifecycle.runtime.reason = "probe_error";
+          session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
+          session.activitySignal = createActivitySignal("probe_failure", {
+            source: "runtime",
+            detail: "timeout",
+          });
+          return true;
+        }
         if (!alive) {
           session.lifecycle.runtime.state = "missing";
           session.lifecycle.runtime.reason =
@@ -1048,7 +1394,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             activity: "exited",
             source: "runtime",
           });
-          return;
+          return false;
         }
       } catch {
         // Can't check liveness — continue to activity detection
@@ -1067,7 +1413,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     session.activitySignal = createActivitySignal("unavailable");
     if (plugins.agent) {
       try {
-        const detected = await plugins.agent.getActivityState(session, config.readyThresholdMs);
+        if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
+        const detected = await awaitWithEnrichmentDeadline(
+          plugins.agent.getActivityState(session, config.readyThresholdMs),
+          options?.deadlineMs,
+        );
+        if (detected === ENRICHMENT_TIMED_OUT) {
+          session.activitySignal = createActivitySignal("probe_failure", {
+            source: "native",
+            detail: "timeout",
+          });
+          return true;
+        }
         if (detected !== null) {
           session.activitySignal = classifyActivitySignal(detected, "native");
           session.activity = detected.state;
@@ -1084,10 +1441,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         session.activitySignal = createActivitySignal("probe_failure", { source: "native" });
       }
 
+      if (options?.preferCachedAgentInfo) {
+        const cachedInfo = cachedAgentInfoFromMetadata(plugins.agent.name, session);
+        if (cachedInfo) {
+          session.agentInfo = cachedInfo;
+          return false;
+        }
+      }
+
       // Enrich with live agent session info (summary, cost).
       let info: Awaited<ReturnType<Agent["getSessionInfo"]>>;
       try {
-        info = await plugins.agent.getSessionInfo(session);
+        if (isEnrichmentDeadlineExpired(options?.deadlineMs)) return true;
+        const infoResult = await awaitWithEnrichmentDeadline(
+          plugins.agent.getSessionInfo(session),
+          options?.deadlineMs,
+        );
+        if (infoResult === ENRICHMENT_TIMED_OUT) {
+          return true;
+        }
+        info = infoResult;
       } catch {
         // Can't get session info — keep existing values
         info = null;
@@ -1095,9 +1468,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       if (info) {
         session.agentInfo = info;
-        const metadataUpdates = info.metadata ?? {};
+        const metadataUpdates = changedMetadataUpdates(session.metadata, info.metadata ?? {});
         if (Object.keys(metadataUpdates).length > 0) {
           try {
+            if (options?.metadataUpdates) {
+              Object.assign(options.metadataUpdates, metadataUpdates);
+            }
             updateMetadata(sessionsDir, session.id, metadataUpdates);
             session.metadata = applyMetadataUpdates(session.metadata, metadataUpdates);
             invalidateCache();
@@ -1107,6 +1483,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
     }
+    return false;
   }
 
   // Define methods as local functions so `this` is not needed
@@ -1791,7 +2168,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return null;
   }
 
-  async function ensureOrchestratorInternal(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
+  async function ensureOrchestratorInternal(
+    orchestratorConfig: OrchestratorSpawnConfig,
+  ): Promise<Session> {
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
@@ -1803,10 +2182,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
         project.orchestratorSessionStrategy,
       );
-      if (
-        orchestratorSessionStrategy === "delete" ||
-        orchestratorSessionStrategy === "ignore"
-      ) {
+      if (orchestratorSessionStrategy === "delete" || orchestratorSessionStrategy === "ignore") {
         await kill(sessionId, { purgeOpenCode: orchestratorSessionStrategy === "delete" });
         deleteMetadata(getProjectSessionsDir(orchestratorConfig.projectId), sessionId);
         return spawnOrchestrator(orchestratorConfig);
@@ -1859,124 +2235,198 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return promise;
   }
 
-  async function list(projectId?: string): Promise<Session[]> {
+  function sessionFromActiveRecord(
+    record: ActiveSessionRecord,
+    projectId: string,
+    project: ProjectConfig,
+  ): Session {
+    return metadataToSession(
+      record.sessionName,
+      record.raw,
+      projectId,
+      project.sessionPrefix,
+      record.createdAt,
+      record.modifiedAt,
+    );
+  }
+
+  function loadStoredSessions(projectId?: string): Session[] {
+    return Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
+      if (projectId && entryProjectId !== projectId) return [];
+      return loadActiveSessionRecords(entryProjectId, project).map((record) =>
+        sessionFromActiveRecord(record, entryProjectId, project),
+      );
+    });
+  }
+
+  async function listStored(projectId?: string): Promise<Session[]> {
+    return loadStoredSessions(projectId);
+  }
+
+  async function list(
+    projectId?: string,
+    options?: { preferCachedAgentInfo?: boolean },
+  ): Promise<Session[]> {
     const allSessions = Object.entries(config.projects).flatMap(([entryProjectId, project]) => {
       if (projectId && entryProjectId !== projectId) return [];
       return loadActiveSessionRecords(entryProjectId, project).map((record) => ({
         sessionName: record.sessionName,
         projectId: entryProjectId,
         raw: record.raw,
+        createdAt: record.createdAt,
+        modifiedAt: record.modifiedAt,
       }));
     });
     let openCodeSessionListPromise: Promise<OpenCodeSessionListEntry[]> | undefined;
 
-    const tasks = allSessions.map(async ({ sessionName, projectId: sessionProjectId, raw }) => {
-      const project = config.projects[sessionProjectId];
-      if (!project) return null;
+    const tasks = allSessions.map(
+      async ({ sessionName, projectId: sessionProjectId, raw, createdAt, modifiedAt }) => {
+        const project = config.projects[sessionProjectId];
+        if (!project) return null;
 
-      const sessionsDir = getProjectSessionsDir(sessionProjectId);
+        const sessionsDir = getProjectSessionsDir(sessionProjectId);
 
-      let createdAt: Date | undefined;
-      let modifiedAt: Date | undefined;
-      try {
-        const metaPath = join(sessionsDir, `${sessionName}.json`);
-        const stats = statSync(metaPath);
-        createdAt = stats.birthtime;
-        modifiedAt = stats.mtime;
-      } catch {
-        // If stat fails, timestamps will fall back to current time
-      }
+        const session = metadataToSession(
+          sessionName,
+          raw,
+          sessionProjectId,
+          project.sessionPrefix,
+          createdAt,
+          modifiedAt,
+        );
+        const selection = resolveSelectionForSession(project, sessionName, raw);
+        const effectiveAgentName = selection.agentName;
+        const plugins = resolvePlugins(project, effectiveAgentName);
+        const sessionListPromise =
+          effectiveAgentName === "opencode"
+            ? (openCodeSessionListPromise ??= fetchOpenCodeSessionList())
+            : undefined;
 
-      const session = metadataToSession(
-        sessionName,
-        raw,
-        sessionProjectId,
-        project.sessionPrefix,
-        createdAt,
-        modifiedAt,
-      );
-      const selection = resolveSelectionForSession(project, sessionName, raw);
-      const effectiveAgentName = selection.agentName;
-      const plugins = resolvePlugins(project, effectiveAgentName);
-      const sessionListPromise =
-        effectiveAgentName === "opencode"
-          ? (openCodeSessionListPromise ??= fetchOpenCodeSessionList())
-          : undefined;
+        await ensureHandleAndEnrichWithin(
+          session,
+          sessionName,
+          sessionsDir,
+          project,
+          effectiveAgentName,
+          plugins,
+          OPENCODE_DISCOVERY_TIMEOUT_MS + 2_000,
+          sessionListPromise,
+          {
+            dedupeKey: `list:${options?.preferCachedAgentInfo ? "cached" : "fresh"}:${sessionsDir}\0${sessionName}`,
+            preferCachedAgentInfo: options?.preferCachedAgentInfo,
+          },
+        );
 
-      let enrichTimeoutId: ReturnType<typeof setTimeout> | null = null;
-      const enrichTimeout = new Promise<void>((resolve) => {
-        enrichTimeoutId = setTimeout(resolve, OPENCODE_DISCOVERY_TIMEOUT_MS + 2_000);
-      });
-      const enrichPromise = ensureHandleAndEnrich(
-        session,
-        sessionName,
-        sessionsDir,
-        project,
-        effectiveAgentName,
-        plugins,
-        sessionListPromise,
-      ).catch(() => {});
-      try {
-        await Promise.race([enrichPromise, enrichTimeout]);
-      } finally {
-        if (enrichTimeoutId) {
-          clearTimeout(enrichTimeoutId);
+        // Persist lifecycle to disk when enrichment detected a dead runtime.
+        // enrichSessionWithRuntimeState updates the in-memory lifecycle but
+        // doesn't write to disk — without this, the stale "alive" state persists
+        // and the dashboard shows terminated sessions on the active sidebar.
+        if (
+          session.lifecycle &&
+          (session.lifecycle.runtime.state === "missing" ||
+            session.lifecycle.runtime.state === "exited") &&
+          session.lifecycle.session.state !== "terminated" &&
+          session.lifecycle.session.state !== "done"
+        ) {
+          try {
+            const persisted = buildUpdatedLifecycle(sessionName, raw, (next) => {
+              next.session.state = "terminated";
+              next.session.reason = "runtime_lost";
+              next.session.terminatedAt = new Date().toISOString();
+              next.session.lastTransitionAt = next.session.terminatedAt;
+              next.runtime.state = session.lifecycle!.runtime.state;
+              next.runtime.reason = session.lifecycle!.runtime.reason;
+              next.runtime.lastObservedAt = new Date().toISOString();
+            });
+            updateMetadata(sessionsDir, sessionName, lifecycleMetadataUpdates(raw, persisted));
+            session.lifecycle = persisted;
+            session.status = deriveLegacyStatus(persisted);
+          } catch {
+            // Persist failed — in-memory state is still correct for this request
+          }
         }
-      }
 
-      // Persist lifecycle to disk when enrichment detected a dead runtime.
-      // enrichSessionWithRuntimeState updates the in-memory lifecycle but
-      // doesn't write to disk — without this, the stale "alive" state persists
-      // and the dashboard shows terminated sessions on the active sidebar.
-      if (
-        session.lifecycle &&
-        (session.lifecycle.runtime.state === "missing" ||
-          session.lifecycle.runtime.state === "exited") &&
-        session.lifecycle.session.state !== "terminated" &&
-        session.lifecycle.session.state !== "done"
-      ) {
-        try {
-          const persisted = buildUpdatedLifecycle(sessionName, raw, (next) => {
-            next.session.state = "terminated";
-            next.session.reason = "runtime_lost";
-            next.session.terminatedAt = new Date().toISOString();
-            next.session.lastTransitionAt = next.session.terminatedAt;
-            next.runtime.state = session.lifecycle!.runtime.state;
-            next.runtime.reason = session.lifecycle!.runtime.reason;
-            next.runtime.lastObservedAt = new Date().toISOString();
-          });
-          updateMetadata(sessionsDir, sessionName, lifecycleMetadataUpdates(raw, persisted));
-          session.lifecycle = persisted;
-          session.status = deriveLegacyStatus(persisted);
-        } catch {
-          // Persist failed — in-memory state is still correct for this request
-        }
-      }
-
-      return session;
-    });
+        return session;
+      },
+    );
 
     const resolved = await Promise.all(tasks);
     return resolved.filter((session): session is Session => session !== null);
   }
 
-  async function listCached(projectId?: string): Promise<Session[]> {
+  function filterSessionCache(projectId?: string): Session[] {
+    if (!sessionCache) return [];
+    return projectId
+      ? sessionCache.sessions.filter((session) => session.projectId === projectId)
+      : sessionCache.sessions;
+  }
+
+  function refreshSessionCache(): Promise<Session[]> {
+    if (sessionCacheRefreshPromise) return sessionCacheRefreshPromise;
+    const generation = sessionCacheGeneration;
+    sessionCacheRefreshCount += 1;
+    // Most background refreshes use cached Codex metadata to keep passive
+    // dashboard reads cheap. Periodically run a live agent-info pass so cached
+    // dashboards converge from fallback Codex summaries to real session info.
+    const preferCachedAgentInfo = sessionCacheRefreshCount % 4 !== 0;
+    sessionCacheRefreshPromise = list(undefined, { preferCachedAgentInfo })
+      .then((sessions) => {
+        if (sessionCacheGeneration === generation) {
+          sessionCache = {
+            sessions,
+            expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+          };
+        }
+        return sessions;
+      })
+      .finally(() => {
+        if (sessionCacheGeneration === generation) {
+          sessionCacheRefreshPromise = null;
+        }
+      });
+    return sessionCacheRefreshPromise;
+  }
+
+  function refreshSessionCacheInBackground(): void {
+    void refreshSessionCache().catch((err) => {
+      recordActivityEvent({
+        source: "session-manager",
+        kind: "session.cache_refresh_failed",
+        level: "warn",
+        summary: "session cache refresh failed",
+        data: { reason: err instanceof Error ? err.message : String(err) },
+      });
+    });
+  }
+
+  async function listCached(
+    projectId?: string,
+    options?: { staleWhileRevalidate?: boolean },
+  ): Promise<Session[]> {
     if (sessionCache && Date.now() < sessionCache.expiresAt) {
-      return projectId
-        ? sessionCache.sessions.filter((session) => session.projectId === projectId)
-        : sessionCache.sessions;
+      return filterSessionCache(projectId);
     }
 
-    const sessions = await list();
+    if (sessionCache) {
+      if (options?.staleWhileRevalidate) {
+        refreshSessionCacheInBackground();
+        return filterSessionCache(projectId);
+      }
+      const sessions = await refreshSessionCache();
+      return projectId ? sessions.filter((session) => session.projectId === projectId) : sessions;
+    }
+
+    const sessions = loadStoredSessions();
     sessionCache = {
       sessions,
       expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
     };
+    refreshSessionCacheInBackground();
 
     return projectId ? sessions.filter((session) => session.projectId === projectId) : sessions;
   }
 
-  async function get(sessionId: SessionId): Promise<Session | null> {
+  async function get(sessionId: SessionId, options?: SessionGetOptions): Promise<Session | null> {
     // Try to find the session in any project's sessions directory
     for (const [projectId, project] of Object.entries(config.projects)) {
       const sessionsDir = getProjectSessionsDir(projectId);
@@ -2013,14 +2463,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const selection = resolveSelectionForSession(project, sessionId, repaired.raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
-      await ensureHandleAndEnrich(
-        session,
-        sessionId,
-        sessionsDir,
-        project,
-        effectiveAgentName,
-        plugins,
-      );
+      if (options?.enrichTimeoutMs !== undefined) {
+        await ensureHandleAndEnrichWithin(
+          session,
+          sessionId,
+          sessionsDir,
+          project,
+          effectiveAgentName,
+          plugins,
+          options.enrichTimeoutMs,
+          undefined,
+          { dedupeKey: `get:${options.enrichTimeoutMs}:${sessionsDir}\0${sessionId}` },
+        );
+      } else {
+        await ensureHandleAndEnrich(
+          session,
+          sessionId,
+          sessionsDir,
+          project,
+          effectiveAgentName,
+          plugins,
+        );
+      }
 
       return session;
     }
@@ -2267,8 +2731,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           continue;
         }
 
-        const cleanupAgent = resolveSelectionForSession(project, terminatedId, terminatedRaw).agentName;
-        const mappedOpenCodeSessionId = asValidOpenCodeSessionId(terminatedRaw["opencodeSessionId"]);
+        const cleanupAgent = resolveSelectionForSession(
+          project,
+          terminatedId,
+          terminatedRaw,
+        ).agentName;
+        const mappedOpenCodeSessionId = asValidOpenCodeSessionId(
+          terminatedRaw["opencodeSessionId"],
+        );
         if (cleanupAgent === "opencode" && terminatedRaw["opencodeCleanedAt"]) {
           pushSkipped(projectKey, terminatedId);
           continue;
@@ -2639,7 +3109,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
-        otherRaw["branch"] === pr.branch && (otherRaw["prAutoDetect"] ?? "on") !== "off" && otherRaw["prAutoDetect"] !== "false";
+        otherRaw["branch"] === pr.branch &&
+        (otherRaw["prAutoDetect"] ?? "on") !== "off" &&
+        otherRaw["prAutoDetect"] !== "false";
 
       if (samePr || sameBranch) {
         conflictingSessions.add(sessionName);
@@ -2689,9 +3161,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
         prAutoDetect: "false",
-        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
-          ? { status: "working" }
-          : {}),
+        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "") ? { status: "working" } : {}),
         ...lifecycleMetadataUpdates(previousRaw, previousLifecycle),
       });
       invalidateCache();
@@ -3032,6 +3502,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     ensureOrchestrator,
     restore,
     list,
+    listStored,
     listCached,
     invalidateCache,
     get,

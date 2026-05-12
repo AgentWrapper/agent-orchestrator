@@ -17,6 +17,7 @@ import { stripControlChars, validateIdentifier } from "@/lib/validation";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 
 const AGENT_REPORT_AUDIT_TIMEOUT_MS = 1000;
+const SESSION_GET_ENRICH_TIMEOUT_MS = 3000;
 const METADATA_ENRICH_TIMEOUT_MS = 3000;
 /** Max length of the user-set display name. Matches the spawn-time derivation cap. */
 const DISPLAY_NAME_MAX_LENGTH = 80;
@@ -28,7 +29,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const { id } = await params;
     const { config, registry, sessionManager } = await getServices();
 
-    const coreSession = await sessionManager.get(id);
+    const coreSession = await sessionManager.get(id, {
+      enrichTimeoutMs: SESSION_GET_ENRICH_TIMEOUT_MS,
+    });
     if (!coreSession) {
       return jsonWithCorrelation({ error: "Session not found" }, { status: 404 }, correlationId);
     }
@@ -45,16 +48,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       await settlesWithin(auditPromise, AGENT_REPORT_AUDIT_TIMEOUT_MS);
     }
 
+    // PR enrichment reads already-loaded session metadata, so do not gate it
+    // behind slower tracker/agent enrichment. This mirrors the list route and
+    // keeps PR display fields stable if metadata enrichment times out.
+    if (coreSession.pr) {
+      enrichSessionPR(dashboardSession);
+    }
+
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await settlesWithin(
       enrichSessionsMetadata([coreSession], [dashboardSession], config, registry),
       METADATA_ENRICH_TIMEOUT_MS,
     );
-
-    // Enrich PR from session metadata (written by CLI lifecycle)
-    if (coreSession.pr) {
-      enrichSessionPR(dashboardSession);
-    }
 
     recordApiObservation({
       config,
@@ -75,7 +80,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       config: undefined,
       sessionManager: undefined,
     }));
-    const session = sessionManager ? await sessionManager.get(id).catch(() => null) : null;
+    const session = sessionManager
+      ? await sessionManager
+          .get(id, { enrichTimeoutMs: SESSION_GET_ENRICH_TIMEOUT_MS })
+          .catch(() => null)
+      : null;
     if (config) {
       recordApiObservation({
         config,

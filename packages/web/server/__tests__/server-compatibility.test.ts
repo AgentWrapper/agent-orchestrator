@@ -54,10 +54,9 @@ describe("start-all.ts", () => {
 
   it("kills child process trees during shutdown", () => {
     expect(source).toMatch(/killProcessTree/);
-    expect(source).toMatch(/detached:\s*process\.platform\s*!==\s*["']win32["']/);
+    expect(source).toMatch(/detached:\s*!isWindows\(\)/);
   });
 });
-
 
 describe("OrchestratorConfig compatibility", () => {
   it("OrchestratorConfig does not have dataDir property", () => {

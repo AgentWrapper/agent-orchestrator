@@ -62,7 +62,7 @@ async function projectHasNonTerminalSession(
   projectId: string,
 ): Promise<boolean> {
   const sm = await getSessionManager(config);
-  const sessions = await sm.list(projectId);
+  const sessions = await sm.listStored(projectId);
   return sessions.some((session) => !isTerminalSession(session));
 }
 
