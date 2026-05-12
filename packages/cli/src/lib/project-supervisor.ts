@@ -40,16 +40,7 @@ function isMissingConfigError(error: unknown): boolean {
   );
 }
 
-/**
- * Load config for the project supervisor.
- *
- * There are two separate things reading config:
- * - Dashboard (Next.js web server): loadDashboardConfig() — tries global config, falls back to local.
- * - Project supervisor (CLI process): loadConfig(getGlobalConfigPath()) only — no fallback.
- *
- * This function mirrors the dashboard fallback so the supervisor can poll projects
- * even when the global config (~/.agent-orchestrator/config.yaml) does not exist yet.
- */
+/** Load the supervisor config: prefer the global registry, fall back to local discovery. */
 function loadSupervisorConfig(): OrchestratorConfig {
   const globalConfigPath = getGlobalConfigPath();
   try {
