@@ -9,6 +9,12 @@ const mockSetHealth = vi.fn();
 const activeWorkers = new Set<string>();
 
 vi.mock("@aoagents/ao-core", () => ({
+  ConfigNotFoundError: class ConfigNotFoundError extends Error {
+    constructor(message = "No agent-orchestrator.yaml found.") {
+      super(message);
+      this.name = "ConfigNotFoundError";
+    }
+  },
   createCorrelationId: () => "correlation-id",
   createProjectObserver: () => ({ setHealth: (...args: unknown[]) => mockSetHealth(...args) }),
   getGlobalConfigPath: () => "/tmp/global-config.yaml",
@@ -263,6 +269,62 @@ describe("project-supervisor", () => {
       stop: expect.any(Function),
       reconcileNow: expect.any(Function),
     });
+    handle.stop();
+  });
+
+  it("falls back to local config when the global config is missing (ENOENT)", async () => {
+    sessionsByProject.set("app", [makeSession("app")]);
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      }
+      return makeConfig(["app"]);
+    });
+
+    await reconcileProjectSupervisor();
+
+    expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
+    expect(mockLoadConfig).toHaveBeenCalledWith();
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: "/tmp/global-config.yaml" }),
+      "app",
+      undefined,
+    );
+    expect(activeWorkers.has("app")).toBe(true);
+  });
+
+  it("rethrows non-missing-config errors from the global config load", async () => {
+    mockLoadConfig.mockImplementation(() => {
+      throw new Error("invalid yaml");
+    });
+
+    await expect(reconcileProjectSupervisor()).rejects.toThrow("invalid yaml");
+    expect(mockLoadConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("exits cleanly when neither global nor local config exists", async () => {
+    const { ConfigNotFoundError } = await import("@aoagents/ao-core");
+    mockLoadConfig
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      })
+      .mockImplementationOnce(() => {
+        throw new ConfigNotFoundError();
+      });
+
+    const handle = await startProjectSupervisor(1_000);
+
+    expect(handle).toEqual({
+      stop: expect.any(Function),
+      reconcileNow: expect.any(Function),
+    });
+    expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
     handle.stop();
   });
 

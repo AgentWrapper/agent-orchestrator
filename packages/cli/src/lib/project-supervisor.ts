@@ -29,7 +29,7 @@ export interface ReconcileProjectSupervisorOptions {
   intervalMs?: number;
 }
 
-function isMissingGlobalConfigError(error: unknown): boolean {
+function isMissingConfigError(error: unknown): boolean {
   if (error instanceof ConfigNotFoundError) return true;
   return (
     error instanceof Error &&
@@ -55,10 +55,7 @@ function loadSupervisorConfig(): OrchestratorConfig {
   try {
     return loadConfig(globalConfigPath);
   } catch (error) {
-    if (
-      (error instanceof Error && "code" in error && error.code === "ENOENT") ||
-      error instanceof ConfigNotFoundError
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return loadConfig();
     }
     throw error;
@@ -169,7 +166,7 @@ export async function startProjectSupervisor(
         try {
           await reconcileProjectSupervisor({ intervalMs });
         } catch (error) {
-          if (isMissingGlobalConfigError(error)) return;
+          if (isMissingConfigError(error)) return;
           if (!options.swallowErrors) throw error;
           // Best-effort background loop: transient config/state errors should not crash ao start.
         }
