@@ -93,7 +93,7 @@ release.yml:                                  Polls gh release list
 
 canary.yml:                                   Same cron, detects prereleases
   changeset version --snapshot                Publishes with --tag nightly
-  commit snapshot (orphan) + tag
+  commit snapshot bump + tag
   gh release create --prerelease
 ```
 
@@ -106,7 +106,7 @@ This repo requires **no additional secrets** beyond the automatic `GITHUB_TOKEN`
 ### How releases are cut
 
 - **Stable**: merge the "chore: version packages" PR opened by `changesets/action`. `release.yml` tags the bumped packages and creates a `vX.Y.Z` GitHub release. The AO cron detects the new release and publishes to npm `@latest`.
-- **Nightly**: `canary.yml` runs on cron (23:30 IST Fri–Tue) or via `workflow_dispatch`. It snapshots versions to `0.0.0-nightly-<sha>`-style, tags, and creates a prerelease GitHub release. The AO cron detects the new prerelease and publishes to npm `@nightly`.
+- **Nightly**: `canary.yml` runs on cron (23:30 IST Fri–Tue) or via `workflow_dispatch`. It snapshots versions to `X.Y.Z-nightly-<sha>` format (e.g., `0.6.1-nightly-7c46dc92`), tags, and creates a prerelease GitHub release. The AO cron detects the new prerelease and publishes to npm `@nightly`.
 
 There is no path from this repo that calls `npm publish` directly.
 

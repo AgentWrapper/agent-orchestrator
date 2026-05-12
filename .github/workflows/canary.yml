@@ -4,8 +4,8 @@ name: Canary
 #
 # Nightly canary creates snapshot versions, tags, and a GitHub prerelease.
 # npm publishing is handled by a private cron job (AO) that polls GitHub
-# releases and publishes when a new tag is ahead of the current npm
-# nightly version.
+# releases and publishes when a new prerelease tag is ahead of the current
+# npm nightly version.
 #
 # No NPM_TOKEN or publisher dispatch secrets are needed in this repo.
 # The only secret used is GITHUB_TOKEN (automatic).
@@ -27,13 +27,11 @@ concurrency:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   canary:
     name: Publish canary
     runs-on: ubuntu-latest
-    environment: release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,11 +48,11 @@ jobs:
       # explicit `workflow_dispatch` nightly right after the stable
       # release would otherwise be suppressed — which we don't want.
       #
-      # The previous-nightly tag points at the *orphan snapshot commit*
-      # created by the "Commit snapshot version bumps" step below, not
-      # at the main HEAD it was cut from. The snapshot commit's first
-      # parent is the source main HEAD, so `${LAST_TAG}^` is the right
-      # anchor to compare against `GITHUB_SHA` (main HEAD at this run).
+      # The previous-nightly tag points at the snapshot commit created
+      # by the "Commit snapshot version bumps" step below. The snapshot
+      # commit's first parent is the source main HEAD, so `${LAST_TAG}^`
+      # is the right anchor to compare against `GITHUB_SHA` (main HEAD
+      # at this run).
       #
       # `workflow_dispatch` always proceeds — recovery path for partial
       # failures. A human triggered the run, they want it to run.
@@ -124,10 +122,10 @@ jobs:
       # the umbrella tag we push below would point at the pre-snapshot
       # HEAD, so when the npm publisher checks out the tag it would see
       # the un-bumped versions and either publish wrong version numbers
-      # or fail trying to republish an existing stable.
+      # or fail trying to republish an existing version.
       #
-      # The commit is NEVER pushed back to main — only the tag below is
-      # pushed, and the orphan commit travels with it as part of the
+      # The commit is NEVER pushed to main — only the tag below is
+      # pushed, and the snapshot commit travels with it as part of the
       # tag's reachable history. `[skip ci]` is defensive in case any
       # future change ever pushes this commit to a branch.
       - name: Commit snapshot version bumps
@@ -135,7 +133,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add packages/*/package.json packages/plugins/*/package.json .changeset/
           git diff --cached --quiet || git commit -m 'chore: snapshot version bump [skip ci]'
 
       # Push the umbrella `vX.Y.Z` tag pointing at the snapshot commit.
