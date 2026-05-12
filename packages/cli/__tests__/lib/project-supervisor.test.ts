@@ -296,6 +296,18 @@ describe("project-supervisor", () => {
     expect(activeWorkers.has("app")).toBe(true);
   });
 
+  it("rethrows ENOENT from a nested file referenced by the global config", async () => {
+    mockLoadConfig.mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT"), {
+        code: "ENOENT",
+        path: "/tmp/some-referenced-file.yaml",
+      });
+    });
+
+    await expect(reconcileProjectSupervisor()).rejects.toThrow("ENOENT");
+    expect(mockLoadConfig).toHaveBeenCalledTimes(1);
+  });
+
   it("rethrows non-missing-config errors from the global config load", async () => {
     mockLoadConfig.mockImplementation(() => {
       throw new Error("invalid yaml");

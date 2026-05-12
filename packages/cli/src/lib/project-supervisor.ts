@@ -46,7 +46,13 @@ function loadSupervisorConfig(): OrchestratorConfig {
   try {
     return loadConfig(globalConfigPath);
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT" &&
+      "path" in error &&
+      error.path === globalConfigPath
+    ) {
       return loadConfig();
     }
     throw error;
