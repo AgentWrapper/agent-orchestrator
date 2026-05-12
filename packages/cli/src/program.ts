@@ -17,6 +17,7 @@ import { registerProjectCommand } from "./commands/project.js";
 import { registerMigrateStorage } from "./commands/migrate-storage.js";
 import { registerCompletion } from "./commands/completion.js";
 import { registerEvents } from "./commands/events.js";
+import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
 
 export function createProgram(): Command {
@@ -48,6 +49,13 @@ export function createProgram(): Command {
   registerMigrateStorage(program);
   registerCompletion(program);
   registerEvents(program);
+
+  program
+    .command("config-help")
+    .description("Show config schema and guide for creating agent-orchestrator.yaml")
+    .action(() => {
+      console.log(getConfigInstruction());
+    });
 
   return program;
 }
