@@ -144,11 +144,10 @@ describe("manifest", () => {
 });
 
 describe("create", () => {
-  it("uses amp as process name and post-launch prompt mode", () => {
+  it("uses amp as process name", () => {
     const agent = create();
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe(pluginName);
-    expect(agent.promptDelivery).toBe("post-launch");
   });
 
   it("exports plugin module shape", () => {
@@ -191,7 +190,29 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe(`amp threads continue '${VALID_AMP_THREAD_ID}'`);
   });
 
-  it("does not include prompt flags in launch command", () => {
+  it("pipes task prompts into interactive Amp launches", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        prompt: "Do work",
+      }),
+    );
+    expect(cmd).toContain("node -e ");
+    expect(cmd).toContain("'Do work' | amp");
+    expect(cmd).not.toContain("-x");
+    expect(cmd).not.toContain("--execute");
+  });
+
+  it("pipes system prompt and task prompt into Amp launches", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        prompt: "Do work",
+        systemPrompt: "You are helpful",
+      }),
+    );
+    expect(cmd).toContain("'You are helpful' 'Do work' | amp");
+  });
+
+  it("uses system prompt file when provided", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         prompt: "Do work",
@@ -199,9 +220,7 @@ describe("getLaunchCommand", () => {
         systemPromptFile: "/tmp/prompt.md",
       }),
     );
-    expect(cmd).toBe("amp");
-    expect(cmd).not.toContain("-x");
-    expect(cmd).not.toContain("--execute");
+    expect(cmd).toContain("'--file' '/tmp/prompt.md' 'Do work' | amp");
   });
 });
 
@@ -213,8 +232,8 @@ describe("getEnvironment", () => {
     expect(env["AO_SESSION_ID"]).toBe("sess-1");
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
     expect(env["NO_ANIMATION"]).toBe("1");
-    expect(env["PATH"]).toBeTruthy();
-    expect(env["GH_PATH"]).toBeTruthy();
+    expect(env["PATH"]).toBeUndefined();
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 
   it("includes AO_ISSUE_ID when provided", () => {
@@ -252,6 +271,20 @@ describe("isProcessRunning", () => {
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("returns false for tmux handles on Windows without shelling out", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+      expect(mockExecFileAsync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("returns true when process handle pid is alive", async () => {

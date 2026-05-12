@@ -2,13 +2,12 @@ import {
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
-  buildAgentPath,
+  isWindows,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
   setupPathWrapperWorkspace,
-  PREFERRED_GH_PATH,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -55,6 +54,42 @@ function asAmpThreadReference(value: unknown): string | undefined {
   return trimmed;
 }
 
+function buildAmpPromptInputCommand(config: AgentLaunchConfig): string | null {
+  const args: string[] = [];
+  if (config.systemPromptFile) {
+    args.push("--file", config.systemPromptFile);
+  } else if (config.systemPrompt) {
+    args.push(config.systemPrompt);
+  }
+
+  if (config.prompt) {
+    args.push(config.prompt);
+  }
+
+  if (args.length === 0) return null;
+
+  const script = [
+    'const fs=require("node:fs");',
+    "const parts=[];",
+    "for(let i=1;i<process.argv.length;i+=1){",
+    'if(process.argv[i]==="--file"){',
+    'parts.push(fs.readFileSync(process.argv[i+1],"utf8"));',
+    "i+=1;",
+    "}else{",
+    "parts.push(process.argv[i]);",
+    "}",
+    "}",
+    'process.stdout.write(parts.filter(Boolean).join("\\n\\n"));',
+  ].join("");
+  return `node -e ${[script, ...args].map((arg) => shellEscape(arg)).join(" ")}`;
+}
+
+function buildAmpLaunchCommand(baseCommand: string, config: AgentLaunchConfig): string {
+  const promptInputCommand = buildAmpPromptInputCommand(config);
+  if (!promptInputCommand) return baseCommand;
+  return `${promptInputCommand} | ${baseCommand}`;
+}
+
 const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`,
   "g",
@@ -91,16 +126,15 @@ function createAmpAgent(): Agent {
   return {
     name: pluginName,
     processName: pluginName,
-    promptDelivery: "post-launch",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const threadId = asAmpThreadReference(
         (config.projectConfig.agentConfig as AmpAgentConfig | undefined)?.ampThreadId,
       );
       if (!threadId) {
-        return "amp";
+        return buildAmpLaunchCommand("amp", config);
       }
-      return `amp threads continue ${shellEscape(threadId)}`;
+      return buildAmpLaunchCommand(`amp threads continue ${shellEscape(threadId)}`, config);
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -110,8 +144,6 @@ function createAmpAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
       env["NO_ANIMATION"] = "1";
 
       return env;
@@ -156,6 +188,7 @@ function createAmpAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],

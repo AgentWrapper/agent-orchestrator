@@ -464,9 +464,6 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
-  /** Whether prompts are delivered through the launch command or after the process starts. */
-  readonly promptDelivery?: "inline" | "post-launch";
-
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 
