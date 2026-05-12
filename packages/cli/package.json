@@ -56,7 +56,7 @@
     "@aoagents/ao-plugin-workspace-clone": "workspace:*",
     "@aoagents/ao-plugin-workspace-worktree": "workspace:*",
     "@aoagents/ao-web": "workspace:*",
-    "@clack/prompts": "^0.9.1",
+    "@clack/prompts": "^1.4.0",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
     "ora": "^8.1.0",
