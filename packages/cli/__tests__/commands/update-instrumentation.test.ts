@@ -35,6 +35,8 @@ vi.mock("../../src/lib/update-check.js", () => ({
   invalidateCache: () => mockInvalidateCache(),
   getCurrentVersion: () => mockGetCurrentVersion(),
   getUpdateCommand: (...args: unknown[]) => mockGetUpdateCommand(...args),
+  readCachedUpdateInfo: vi.fn(() => undefined),
+  resolveUpdateChannel: vi.fn(() => "stable"),
 }));
 
 const { mockPromptConfirm } = vi.hoisted(() => ({
@@ -43,6 +45,14 @@ const { mockPromptConfirm } = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/prompts.js", () => ({
   promptConfirm: (...args: unknown[]) => mockPromptConfirm(...args),
+}));
+
+vi.mock("../../src/lib/running-state.js", () => ({
+  getRunning: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../../src/lib/create-session-manager.js", () => ({
+  getSessionManager: vi.fn(),
 }));
 
 const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }));
@@ -56,6 +66,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof AoCore>();
   return {
     ...actual,
+    getGlobalConfigPath: () => "/tmp/__ao_update_instrumentation_no_global_config__",
     recordActivityEvent: vi.fn(),
   };
 });
