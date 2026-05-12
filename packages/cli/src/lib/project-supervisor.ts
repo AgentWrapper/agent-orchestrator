@@ -4,6 +4,7 @@ import {
   isTerminalSession,
   createCorrelationId,
   createProjectObserver,
+  ConfigNotFoundError,
   type OrchestratorConfig,
   type ProjectObserver,
 } from "@aoagents/ao-core";
@@ -29,6 +30,7 @@ export interface ReconcileProjectSupervisorOptions {
 }
 
 function isMissingGlobalConfigError(error: unknown): boolean {
+  if (error instanceof ConfigNotFoundError) return true;
   return (
     error instanceof Error &&
     "code" in error &&
@@ -36,6 +38,31 @@ function isMissingGlobalConfigError(error: unknown): boolean {
     "path" in error &&
     error.path === getGlobalConfigPath()
   );
+}
+
+/**
+ * Load config for the project supervisor.
+ *
+ * There are two separate things reading config:
+ * - Dashboard (Next.js web server): loadDashboardConfig() — tries global config, falls back to local.
+ * - Project supervisor (CLI process): loadConfig(getGlobalConfigPath()) only — no fallback.
+ *
+ * This function mirrors the dashboard fallback so the supervisor can poll projects
+ * even when the global config (~/.agent-orchestrator/config.yaml) does not exist yet.
+ */
+function loadSupervisorConfig(): OrchestratorConfig {
+  const globalConfigPath = getGlobalConfigPath();
+  try {
+    return loadConfig(globalConfigPath);
+  } catch (error) {
+    if (
+      (error instanceof Error && "code" in error && error.code === "ENOENT") ||
+      error instanceof ConfigNotFoundError
+    ) {
+      return loadConfig();
+    }
+    throw error;
+  }
 }
 
 function reportProjectSupervisorError(
@@ -69,7 +96,7 @@ async function projectHasNonTerminalSession(
 export async function reconcileProjectSupervisor(
   options: ReconcileProjectSupervisorOptions = {},
 ): Promise<void> {
-  const config = loadConfig(getGlobalConfigPath());
+  const config = loadSupervisorConfig();
   const observer = createProjectObserver(config, "project-supervisor");
   const configuredProjectIds = new Set(Object.keys(config.projects));
   const activeProjectIds = new Set(listLifecycleWorkers());
