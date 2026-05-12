@@ -1,5 +1,51 @@
 # @aoagents/ao-plugin-runtime-tmux
 
+## 0.7.0
+
+### Minor Changes
+
+- 0f5ae0b: feat: native Windows support
+
+  AO now runs natively on Windows. The default runtime on Windows is `process`
+  (ConPTY via `node-pty` + named pipes — no tmux, no WSL); the dashboard,
+  agents (claude-code, codex, kimicode, aider, opencode, cursor), `ao doctor`,
+  and `ao update` all work out of the box. Each session gets a small detached
+  pty-host helper that wraps a ConPTY behind `\\.\pipe\ao-pty-<sessionId>`,
+  registered so `ao stop` can reach it.
+
+  A new cross-platform abstraction layer (`packages/core/src/platform.ts`)
+  centralises every platform branch behind helpers like `isWindows()`,
+  `getDefaultRuntime()`, `getShell()`, `killProcessTree()`, `findPidByPort()`,
+  and `getEnvDefaults()`. Path comparison uses `pathsEqual` /
+  `canonicalCompareKey` to handle NTFS case-insensitivity. PATH wrappers for
+  agent plugins (`gh`, `git`) ship as `.cjs` + `.cmd` shims on Windows;
+  `script-runner` runs `.ps1` siblings of `.sh` scripts via PowerShell. New
+  `ao-doctor.ps1` / `ao-update.ps1` shipped.
+
+  `ao open` is now cross-platform: it sources sessions from `sm.list()`
+  instead of `tmux list-sessions` (so `runtime-process` sessions on Windows
+  appear), and the open action branches per OS — `open-iterm-tab` stays the
+  macOS path, native handling on Windows and Linux.
+
+  Behaviour on macOS and Linux is unchanged. Every Windows path is gated
+  behind `isWindows()`; `runtime-tmux` and the bash hook flows are untouched.
+
+  See `docs/CROSS_PLATFORM.md` for the developer reference (helper inventory,
+  EPERM-vs-ESRCH gotcha, PowerShell-vs-bash differences, pre-merge checklist).
+  The Windows runtime architecture (pty-host, pipe protocol, registry, sweep,
+  mux WS Windows branch) is documented in `docs/ARCHITECTURE.md`.
+
+### Patch Changes
+
+- 845fffd: Tmux sessions no longer die when the agent process inside them exits. When you Ctrl-C the agent in a web terminal, the pane now drops to an interactive `$SHELL` in the workspace dir instead of nuking the tmux session and leaving the dashboard in a phantom "runtime lost" state. The lifecycle manager still detects the agent exit (via `agent.isProcessRunning`) and transitions the session to `agent_process_exited`, but the runtime stays usable so you can run shell commands or manually re-launch the agent.
+
+  Also: the mux-websocket re-attach loop now checks `tmux has-session` before retrying after a PTY exit. When the tmux session is genuinely gone (e.g. `ao stop`), it skips the three doomed `attach-session` spawns from #1640 and notifies the dashboard immediately. (#1756)
+
+- Updated dependencies [0f5ae0b]
+- Updated dependencies [fe33bb7]
+- Updated dependencies [7c46dc9]
+  - @aoagents/ao-core@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-agent-cursor",
-  "version": "0.1.4",
+  "version": "0.7.0",
   "description": "Agent plugin: Cursor CLI",
   "license": "MIT",
   "type": "module",

@@ -1,5 +1,113 @@
 # @aoagents/ao-cli
 
+## 0.7.0
+
+### Minor Changes
+
+- 0f5ae0b: feat: native Windows support
+
+  AO now runs natively on Windows. The default runtime on Windows is `process`
+  (ConPTY via `node-pty` + named pipes — no tmux, no WSL); the dashboard,
+  agents (claude-code, codex, kimicode, aider, opencode, cursor), `ao doctor`,
+  and `ao update` all work out of the box. Each session gets a small detached
+  pty-host helper that wraps a ConPTY behind `\\.\pipe\ao-pty-<sessionId>`,
+  registered so `ao stop` can reach it.
+
+  A new cross-platform abstraction layer (`packages/core/src/platform.ts`)
+  centralises every platform branch behind helpers like `isWindows()`,
+  `getDefaultRuntime()`, `getShell()`, `killProcessTree()`, `findPidByPort()`,
+  and `getEnvDefaults()`. Path comparison uses `pathsEqual` /
+  `canonicalCompareKey` to handle NTFS case-insensitivity. PATH wrappers for
+  agent plugins (`gh`, `git`) ship as `.cjs` + `.cmd` shims on Windows;
+  `script-runner` runs `.ps1` siblings of `.sh` scripts via PowerShell. New
+  `ao-doctor.ps1` / `ao-update.ps1` shipped.
+
+  `ao open` is now cross-platform: it sources sessions from `sm.list()`
+  instead of `tmux list-sessions` (so `runtime-process` sessions on Windows
+  appear), and the open action branches per OS — `open-iterm-tab` stays the
+  macOS path, native handling on Windows and Linux.
+
+  Behaviour on macOS and Linux is unchanged. Every Windows path is gated
+  behind `isWindows()`; `runtime-tmux` and the bash hook flows are untouched.
+
+  See `docs/CROSS_PLATFORM.md` for the developer reference (helper inventory,
+  EPERM-vs-ESRCH gotcha, PowerShell-vs-bash differences, pre-merge checklist).
+  The Windows runtime architecture (pty-host, pipe protocol, registry, sweep,
+  mux WS Windows branch) is documented in `docs/ARCHITECTURE.md`.
+
+- fe33bb7: Worker sessions now learn how to message the orchestrator that spawned them. When a project has an orchestrator running, the worker's system prompt gains a "Talking to the Orchestrator" section with the literal `ao send <prefix>-orchestrator "<message>"` command (rendered at prompt-build time, no env var, no shell-syntax variants). `ao send` itself now auto-prefixes outgoing messages with `[from $AO_SESSION_ID]` when invoked from inside an AO session, so the receiver always knows who's writing — symmetric across worker→orchestrator, orchestrator→worker, and worker→worker. Humans running `ao send` from a normal terminal stay unprefixed. (#1786)
+- 7c46dc9: feat(release): weekly release train — channels, onboarding, dashboard banner, cron
+
+  Ships the full release pipeline described in `release-process.html`:
+  - **Cron-driven nightly canary.** `.github/workflows/canary.yml` triggers via
+    `schedule: '0 18 * * 5,6,0,1,2'` (23:30 IST Fri–Tue) plus `workflow_dispatch`.
+    Bake window (Wed–Thu) pauses scheduled nightlies; the captain re-cuts via
+    workflow_dispatch when a fix lands. Stable `release.yml` publishes via
+    `changesets/action`. `.changeset/config.json` adds the snapshot template
+    (`{tag}-{commit}`). `@aoagents/ao-web` stays in the linked group and ships
+    alongside `@aoagents/ao-cli` (it's a workspace:_ runtime dep, so marking it
+    private would 404 every `npm install -g @aoagents/ao` after publish).
+    `scripts/check-publishable-deps.mjs` runs in both release.yml and canary.yml
+    before the publish step and fails CI if a publishable package depends on a
+    `private: true` package via workspace:_.
+  - **Update channels.** New `updateChannel` field in the global config schema
+    (`stable | nightly | manual`, default `manual` so existing users see no
+    surprise installs). `update-check.ts` reads `dist-tags[channel]` from the
+    npm registry, compares prerelease versions segment-by-segment so SHA-suffixed
+    nightlies sort correctly, and skips notices entirely on `manual`.
+  - **Soft auto-install + active-session guard.** On stable/nightly, `ao update`
+    skips the confirm prompt and just installs. Before installing it lists
+    sessions and refuses with `N session(s) active. Run \`ao stop\` first.`if
+any are in`working`/`idle`/`needs_input`/`stuck`. Same guard duplicated
+in `POST /api/update` so the dashboard returns a structured 409.
+  - **Onboarding question.** `ao start` prompts once for the channel if unset;
+    dismissal persists `manual`. `ao config set updateChannel <value>` (and
+    `installMethod`) lets users change it later.
+  - **Dashboard banner.** `GET /api/version` reads the same cache file as the
+    CLI. `UpdateBanner` (Tailwind only, `var(--color-*)` tokens) appears at the
+    top of the dashboard when `isOutdated`. Click POSTs to `/api/update`;
+    dismissal persists per-version in `localStorage`.
+  - **Bun + Homebrew detection.** New install-method classifiers for
+    `~/.bun/install/global/` (auto-installs `bun add -g @aoagents/ao@<channel>`)
+    and `/Cellar/ao/` (notice only — `brew upgrade ao` to avoid clobbering
+    brew's symlinks). `installMethod` config field overrides path detection.
+
+  Supersedes #1525 (incorporates the canary + release infrastructure with the
+  cron / no-stale-SHA-guard / no-merged-PR-comment modifications called out in
+  the design doc).
+
+### Patch Changes
+
+- Updated dependencies [845fffd]
+- Updated dependencies [0f5ae0b]
+- Updated dependencies [fe33bb7]
+- Updated dependencies [7c46dc9]
+- Updated dependencies [71326bc]
+- Updated dependencies [a33b2ba]
+  - @aoagents/ao-plugin-runtime-tmux@0.7.0
+  - @aoagents/ao-web@0.7.0
+  - @aoagents/ao-core@0.7.0
+  - @aoagents/ao-plugin-runtime-process@0.7.0
+  - @aoagents/ao-plugin-agent-claude-code@0.7.0
+  - @aoagents/ao-plugin-agent-codex@0.7.0
+  - @aoagents/ao-plugin-agent-aider@0.7.0
+  - @aoagents/ao-plugin-agent-opencode@0.7.0
+  - @aoagents/ao-plugin-workspace-worktree@0.7.0
+  - @aoagents/ao-plugin-workspace-clone@0.7.0
+  - @aoagents/ao-plugin-tracker-github@0.7.0
+  - @aoagents/ao-plugin-tracker-linear@0.7.0
+  - @aoagents/ao-plugin-scm-github@0.7.0
+  - @aoagents/ao-plugin-notifier-desktop@0.7.0
+  - @aoagents/ao-plugin-notifier-slack@0.7.0
+  - @aoagents/ao-plugin-notifier-webhook@0.7.0
+  - @aoagents/ao-plugin-notifier-composio@0.7.0
+  - @aoagents/ao-plugin-terminal-iterm2@0.7.0
+  - @aoagents/ao-plugin-terminal-web@0.7.0
+  - @aoagents/ao-plugin-agent-cursor@0.7.0
+  - @aoagents/ao-plugin-agent-kimicode@0.7.0
+  - @aoagents/ao-plugin-notifier-discord@0.7.0
+  - @aoagents/ao-plugin-notifier-openclaw@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
