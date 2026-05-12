@@ -3,9 +3,13 @@ import type { ChildProcess } from "node:child_process";
 
 const mockSpawn = vi.hoisted(() => vi.fn());
 
-vi.mock("node:child_process", () => ({
-  spawn: mockSpawn,
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: mockSpawn,
+  };
+});
 
 import { preventIdleSleep } from "../../src/lib/prevent-sleep.js";
 
@@ -159,16 +163,103 @@ describe("preventIdleSleep", () => {
     });
   });
 
-  describe("on non-macOS platforms", () => {
-    it("returns null on Linux", () => {
+  describe("on Linux", () => {
+    beforeEach(() => {
       setPlatform("linux");
+    });
+
+    it("spawns systemd-inhibit with --what=idle --mode=block and a pid watchdog", () => {
+      const mockChild = {
+        pid: 9999,
+        unref: vi.fn(),
+        on: vi.fn(),
+        kill: vi.fn(),
+      } as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      const handle = preventIdleSleep(12345);
+
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      const [cmd, args, opts] = mockSpawn.mock.calls[0]!;
+      expect(cmd).toBe("systemd-inhibit");
+      expect(args).toEqual([
+        "--what=idle",
+        "--who=Agent Orchestrator",
+        "--why=Active agent session running",
+        "--mode=block",
+        "sh",
+        "-c",
+        "while kill -0 12345 2>/dev/null; do sleep 5; done",
+      ]);
+      expect(opts).toEqual({ stdio: "ignore", detached: true });
+      expect(mockChild.unref).toHaveBeenCalled();
+      expect(handle).not.toBeNull();
+    });
+
+    it("defaults to current process pid", () => {
+      const mockChild = {
+        pid: 9999,
+        unref: vi.fn(),
+        on: vi.fn(),
+        kill: vi.fn(),
+      } as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      preventIdleSleep();
+
+      const args = mockSpawn.mock.calls[0]![1] as string[];
+      expect(args[args.length - 1]).toBe(
+        `while kill -0 ${process.pid} 2>/dev/null; do sleep 5; done`,
+      );
+    });
+
+    it("release function kills the systemd-inhibit process", () => {
+      const mockChild = {
+        pid: 9999,
+        unref: vi.fn(),
+        on: vi.fn(),
+        kill: vi.fn(),
+      } as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      const handle = preventIdleSleep();
+      handle?.release();
+
+      expect(mockChild.kill).toHaveBeenCalled();
+    });
+
+    it("returns null when systemd-inhibit is missing (no pid)", () => {
+      const mockChild = {
+        pid: undefined,
+        unref: vi.fn(),
+        on: vi.fn(),
+        kill: vi.fn(),
+      } as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
 
       const handle = preventIdleSleep();
 
       expect(handle).toBeNull();
-      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockChild.unref).not.toHaveBeenCalled();
     });
 
+    it("registers async error handler for ENOENT on non-systemd systems", () => {
+      const onMock = vi.fn();
+      const mockChild = {
+        pid: 9999,
+        unref: vi.fn(),
+        on: onMock,
+        kill: vi.fn(),
+      } as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      preventIdleSleep();
+
+      expect(onMock).toHaveBeenCalledWith("error", expect.any(Function));
+    });
+  });
+
+  describe("on unsupported platforms", () => {
     it("returns null on Windows", () => {
       setPlatform("win32");
 

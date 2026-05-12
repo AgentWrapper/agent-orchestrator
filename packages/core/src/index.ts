@@ -276,6 +276,7 @@ export {
 export {
   isWindows,
   isMac,
+  isLinux,
   getDefaultRuntime,
   getShell,
   killProcessTree,

@@ -1191,9 +1191,11 @@ describe("Config Validation - Power Config", () => {
       },
     });
 
-    // Default is true on darwin, false elsewhere
+    // Default is true on darwin and linux, false elsewhere
     expect(config.power).toBeDefined();
-    expect(config.power!.preventIdleSleep).toBe(process.platform === "darwin");
+    expect(config.power!.preventIdleSleep).toBe(
+      process.platform === "darwin" || process.platform === "linux",
+    );
   });
 
   it("accepts explicit power.preventIdleSleep: true", () => {

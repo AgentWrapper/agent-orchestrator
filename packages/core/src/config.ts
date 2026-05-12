@@ -25,7 +25,7 @@ import {
   type OrchestratorConfig,
 } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
-import { getDefaultRuntime } from "./platform.js";
+import { getDefaultRuntime, isMac, isLinux } from "./platform.js";
 import {
   getGlobalConfigPath,
   isCanonicalGlobalConfigPath,
@@ -307,11 +307,12 @@ const InstalledPluginConfigSchema = z
 const PowerConfigSchema = z
   .object({
     /**
-     * Prevent macOS idle sleep while AO is running.
-     * Uses `caffeinate -i -w <pid>` to hold an assertion.
-     * Defaults to true on macOS, no-op on other platforms.
+     * Prevent idle sleep while AO is running.
+     * macOS: `caffeinate -i -w <pid>`.
+     * Linux: `systemd-inhibit --what=idle --mode=block` with a pid watchdog.
+     * Defaults to true on macOS and Linux, no-op on other platforms.
      */
-    preventIdleSleep: z.boolean().default(process.platform === "darwin"),
+    preventIdleSleep: z.boolean().default(isMac() || isLinux()),
   })
   .default({});
 
