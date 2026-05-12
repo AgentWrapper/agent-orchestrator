@@ -1,0 +1,109 @@
+packages/web/server/__tests__/tmux-utils.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 9-16,367-404
+.changeset/rename-worker-sessions.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-5
+packages/cli/src/lib/update-check.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 10,16,34,38-41,51-53,83-90,115,122,134,170-185,213-214,221-225,232-241,270-312,337-341,343,348,353-356,366-392,398-399,427-428,432-442
+packages/web/src/components/Dashboard.tsx
+  s_716542aec5f41c::t_9cb32c322c3bdf 28,125,177-181,199-203,375-393,487,506-516,727-730,792-800
+packages/core/src/prompt-builder.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 15,97-104,201-216
+packages/web/src/lib/format.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 53-70,73-78,81,84-88,91
+skills/README.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-91
+packages/core/src/types.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 1841-1850,1853-1860
+AGENTS.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 32-51
+packages/plugins/runtime-tmux/src/__tests__/index.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 101-102,105-113,160,176-177,180-188,193-211,232-237,362
+packages/web/server/mux-websocket.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 12-18,377-383,387-408
+packages/web/src/__tests__/helpers.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 208
+CLAUDE.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 366-378
+packages/plugins/runtime-tmux/src/index.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 37-54,57,99-100,102-104
+packages/web/src/components/__tests__/Dashboard.doneBar.test.tsx
+  s_716542aec5f41c::t_9cb32c322c3bdf 63,67
+packages/core/src/__tests__/prompt-builder.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 75-104
+.changeset/keep-tmux-session-alive-after-agent-exit.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-8
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  s_716542aec5f41c::t_9cb32c322c3bdf 69,72-74,157-158,249-251,253-254,257,259,268,292-294
+.changeset/restore-preserves-existing-branch.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-5
+packages/cli/src/commands/doctor.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 19-25,86-91,167,221-222,246-247,249-250,401-402,409-416
+packages/web/src/app/manifest.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 15,17,23,25
+packages/plugins/workspace-worktree/src/index.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 138-142,148,173-271,559,563-564,566-572
+packages/core/src/__tests__/metadata.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 153-212
+skills/bug-triage/scripts/push_fix_to_github.py
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-121
+packages/integration-tests/src/workspace-worktree.integration.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 209-478
+packages/core/src/metadata.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 177-186,231,294-295
+packages/web/server/__tests__/mux-websocket.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 7,10,37,316-372
+packages/plugins/workspace-worktree/src/__tests__/index.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 716-719,747-750,776-1050
+packages/web/src/app/api/sessions/[id]/route.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 2-7,16,21-22,40-44,96-203
+.changeset/orchestrator-session-id-env.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-6
+packages/cli/__tests__/lib/update-check.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 16-31,63,81-88,155-157,163-165,171-173,179-181,188-190,197-199,229,331,348,362,375,400-447,465-467,503-551,659,664,722,779-885,932,942-971
+packages/web/src/app/manifest.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 11,13,19,21
+packages/web/src/__tests__/api-routes.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 8,213-227,231-234,378-381,439-442,477-480,489-492,556-558,564-569,635-637,681-682,706-708,714,757-857,1183-1185
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  s_716542aec5f41c::t_9cb32c322c3bdf 83-85,482,551-723
+packages/core/src/session-manager.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 1251-1257,1264
+packages/web/src/lib/types.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 109-114
+packages/cli/__tests__/commands/send.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 71,90-95,103-104,287-380
+packages/cli/__tests__/commands/doctor.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 14-15,30-31,43-46,61,63-64,231-233
+packages/cli/src/commands/send.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 138-148
+packages/web/src/lib/serialize.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 184
+packages/web/src/app/globals.css
+  ai_agent 4539-4585,5820-5821,7695-7724
+.github/workflows/ci.yml
+  s_716542aec5f41c::t_9cb32c322c3bdf 33-34
+packages/web/server/tmux-utils.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 8,12,15-16,134-170
+skills/bug-triage/SKILL.md
+  s_716542aec5f41c::t_9cb32c322c3bdf 1-311
+packages/web/src/lib/__tests__/format.test.ts
+  s_716542aec5f41c::t_9cb32c322c3bdf 32,117,199-244,268,288-290,294
+packages/web/src/components/ProjectSidebar.tsx
+  s_716542aec5f41c::t_9cb32c322c3bdf 173-178,300-369,786-802,804-838,840,843,847-880,882-909
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "81d9617c99e545ac95238a15995b799428246684",
+  "prompts": {},
+  "sessions": {
+    "s_716542aec5f41c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4291117e-5f04-4542-9fa9-c9d569f8591d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
