@@ -7,11 +7,13 @@
  *   - `ao doctor` (version freshness check)
  */
 
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { getCliVersion } from "../options/version.js";
 
 // ---------------------------------------------------------------------------
@@ -29,10 +31,14 @@ export interface UpdateInfo {
   checkedAt: string | null;
 }
 
-interface CacheData {
+export interface CacheData {
   latestVersion: string;
   checkedAt: string;
   currentVersionAtCheck: string;
+  installMethod?: InstallMethod;
+  isOutdated?: boolean;
+  currentRevisionAtCheck?: string;
+  latestRevisionAtCheck?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +48,9 @@ interface CacheData {
 const REGISTRY_URL = "https://registry.npmjs.org/@aoagents%2Fao/latest";
 const FETCH_TIMEOUT_MS = 3000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_GIT_REMOTE = "origin";
+const DEFAULT_GIT_BRANCH = "main";
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Install detection
@@ -71,6 +80,14 @@ function readPackageName(packageJsonPath: string): string | null {
   }
 }
 
+function getSourceRepoRoot(resolvedPath: string): string {
+  return resolve(dirname(resolvedPath), "../../../../");
+}
+
+export function getCurrentRepoRoot(): string {
+  return getSourceRepoRoot(fileURLToPath(import.meta.url));
+}
+
 export function isAgentOrchestratorRepoRoot(root: string): boolean {
   if (!existsSync(resolve(root, ".git"))) {
     return false;
@@ -95,16 +112,14 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
     // Note: /.pnpm/ alone is NOT a global signal — pnpm creates node_modules/.pnpm/
     // for local installs too. Only pnpm/global paths indicate a global install.
     const isPnpmGlobal =
-      resolvedPath.includes("/pnpm/global/") ||
-      resolvedPath.includes("\\pnpm\\global\\");
+      resolvedPath.includes("/pnpm/global/") || resolvedPath.includes("\\pnpm\\global\\");
 
     if (isPnpmGlobal) {
       return "pnpm-global";
     }
 
     const isNpmGlobal =
-      resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\");
+      resolvedPath.includes("/lib/node_modules/") || resolvedPath.includes("\\lib\\node_modules\\");
 
     if (isNpmGlobal) {
       return "npm-global";
@@ -116,7 +131,7 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
 
   // Running from a source checkout → git install
   // Walk up from packages/cli/dist/lib/ (or src/lib/) to repo root
-  const repoRoot = resolve(dirname(resolvedPath), "../../../../");
+  const repoRoot = getSourceRepoRoot(resolvedPath);
   if (isAgentOrchestratorRepoRoot(repoRoot)) {
     return "git";
   }
@@ -152,6 +167,22 @@ export function getCurrentVersion(): string {
 // Update command mapping
 // ---------------------------------------------------------------------------
 
+export interface GitUpdateTarget {
+  remote: string;
+  branch: string;
+  ref: string;
+}
+
+export function getGitUpdateTarget(): GitUpdateTarget {
+  const remote = process.env["AO_UPDATE_GIT_REMOTE"] || DEFAULT_GIT_REMOTE;
+  const branch = process.env["AO_UPDATE_GIT_BRANCH"] || DEFAULT_GIT_BRANCH;
+  return { remote, branch, ref: `${remote}/${branch}` };
+}
+
+export function getGitUpdateRef(): string {
+  return getGitUpdateTarget().ref;
+}
+
 export function getUpdateCommand(method: InstallMethod): string {
   switch (method) {
     case "git":
@@ -179,18 +210,33 @@ function getCachePath(): string {
   return join(getCacheDir(), "update-check.json");
 }
 
-/** Read cached update info. Returns null if missing, expired, corrupt, or version-mismatched. */
-export function readCachedUpdateInfo(): CacheData | null {
+/** Read cached update info. Returns null if missing, expired, corrupt, version-mismatched, or install-method-mismatched. */
+export function readCachedUpdateInfo(installMethod = detectInstallMethod()): CacheData | null {
   try {
     const raw = readFileSync(getCachePath(), "utf-8");
     const data = JSON.parse(raw) as CacheData;
 
     if (!data.latestVersion || !data.checkedAt) return null;
 
+    // Legacy cache entries predate install-method scoping, so treat them as unsafe
+    // for every install method rather than guessing which update channel produced them.
+    if (!data.installMethod) return null;
+    if (data.installMethod !== installMethod) return null;
+
     // Cache is stale if user upgraded since the check
     const currentVersion = getCurrentVersion();
     if (data.currentVersionAtCheck && data.currentVersionAtCheck !== currentVersion) {
       return null;
+    }
+
+    if (installMethod === "git" && data.currentRevisionAtCheck) {
+      try {
+        if (runGit(["rev-parse", "HEAD"], getCurrentRepoRoot()) !== data.currentRevisionAtCheck) {
+          return null;
+        }
+      } catch {
+        return null;
+      }
     }
 
     // Cache expired
@@ -222,6 +268,49 @@ export function invalidateCache(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Git fetch
+// ---------------------------------------------------------------------------
+
+export interface GitLatestState {
+  ref: string;
+  headRevision: string;
+  latestRevision: string;
+  isBehind: boolean;
+}
+
+function runGit(args: string[], cwd: string): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+export async function fetchGitLatestState(
+  repoRoot = getCurrentRepoRoot(),
+): Promise<GitLatestState | null> {
+  try {
+    const { remote, branch, ref } = getGitUpdateTarget();
+
+    await execFileAsync("git", ["fetch", remote, branch], { cwd: repoRoot });
+    const headRevision = runGit(["rev-parse", "HEAD"], repoRoot);
+    const latestRevision = runGit(["rev-parse", ref], repoRoot);
+
+    let isBehind = false;
+    try {
+      runGit(["merge-base", "--is-ancestor", "HEAD", ref], repoRoot);
+      isBehind = headRevision !== latestRevision;
+    } catch {
+      isBehind = false;
+    }
+
+    return { ref, headRevision, latestRevision, isBehind };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Registry fetch
 // ---------------------------------------------------------------------------
 
@@ -245,19 +334,26 @@ export async function fetchLatestVersion(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 /** Check for updates, using cache when fresh and fetching when stale. */
-export async function checkForUpdate(opts?: { force?: boolean }): Promise<UpdateInfo> {
+export async function checkForUpdate(opts?: {
+  force?: boolean;
+  installMethod?: InstallMethod;
+  repoRoot?: string;
+}): Promise<UpdateInfo> {
   const currentVersion = getCurrentVersion();
-  const installMethod = detectInstallMethod();
+  const installMethod = opts?.installMethod ?? detectInstallMethod();
   const recommendedCommand = getUpdateCommand(installMethod);
 
   // Try cache first (unless forced)
   if (!opts?.force) {
-    const cached = readCachedUpdateInfo();
+    const cached = readCachedUpdateInfo(installMethod);
     if (cached) {
       return {
         currentVersion,
         latestVersion: cached.latestVersion,
-        isOutdated: isVersionOutdated(currentVersion, cached.latestVersion),
+        isOutdated:
+          cached.installMethod === "git"
+            ? cached.isOutdated === true
+            : isVersionOutdated(currentVersion, cached.latestVersion),
         installMethod,
         recommendedCommand,
         checkedAt: cached.checkedAt,
@@ -265,15 +361,42 @@ export async function checkForUpdate(opts?: { force?: boolean }): Promise<Update
     }
   }
 
-  // Fetch from registry
-  const latestVersion = await fetchLatestVersion();
   const now = new Date().toISOString();
+
+  if (installMethod === "git") {
+    const gitState = await fetchGitLatestState(opts?.repoRoot);
+    if (gitState) {
+      writeCache({
+        latestVersion: gitState.ref,
+        checkedAt: now,
+        currentVersionAtCheck: currentVersion,
+        installMethod,
+        isOutdated: gitState.isBehind,
+        currentRevisionAtCheck: gitState.headRevision,
+        latestRevisionAtCheck: gitState.latestRevision,
+      });
+    }
+
+    return {
+      currentVersion,
+      latestVersion: gitState?.ref ?? null,
+      isOutdated: gitState?.isBehind ?? false,
+      installMethod,
+      recommendedCommand,
+      checkedAt: gitState ? now : null,
+    };
+  }
+
+  // npm/pnpm/unknown installs use the npm registry as their update channel.
+  const latestVersion = await fetchLatestVersion();
 
   if (latestVersion) {
     writeCache({
       latestVersion,
       checkedAt: now,
       currentVersionAtCheck: currentVersion,
+      installMethod,
+      isOutdated: isVersionOutdated(currentVersion, latestVersion),
     });
   }
 
@@ -301,15 +424,22 @@ export function maybeShowUpdateNotice(): void {
   const skipArgs = ["update", "doctor", "--version", "-V", "--help", "-h"];
   if (process.argv.some((arg) => skipArgs.includes(arg))) return;
 
-  const cached = readCachedUpdateInfo();
+  const installMethod = detectInstallMethod();
+  const cached = readCachedUpdateInfo(installMethod);
   if (!cached) return;
 
   const currentVersion = getCurrentVersion();
-  if (!isVersionOutdated(currentVersion, cached.latestVersion)) return;
+  const isOutdated =
+    installMethod === "git"
+      ? cached.isOutdated === true
+      : isVersionOutdated(currentVersion, cached.latestVersion);
+  if (!isOutdated) return;
 
-  process.stderr.write(
-    `\nUpdate available: ${currentVersion} → ${cached.latestVersion} — Run: ao update\n\n`,
-  );
+  const message =
+    installMethod === "git"
+      ? `\nUpdate available from ${cached.latestVersion} — Run: ${getUpdateCommand(installMethod)}\n\n`
+      : `\nUpdate available: ${currentVersion} → ${cached.latestVersion} — Run: ${getUpdateCommand(installMethod)}\n\n`;
+  process.stderr.write(message);
 }
 
 /**

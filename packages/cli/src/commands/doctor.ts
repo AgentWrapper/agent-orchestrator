@@ -16,7 +16,13 @@ import {
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
-import { getCurrentVersion, isVersionOutdated, readCachedUpdateInfo } from "../lib/update-check.js";
+import {
+  detectInstallMethod,
+  getCurrentVersion,
+  getUpdateCommand,
+  isVersionOutdated,
+  readCachedUpdateInfo,
+} from "../lib/update-check.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — match the PASS / WARN / FAIL style of ao-doctor.sh
@@ -77,7 +83,12 @@ function collectPluginReferences(config: OrchestratorConfig): PluginReference[] 
   addPluginReference(refs, "runtime", config.defaults.runtime, "defaults.runtime");
   addPluginReference(refs, "agent", config.defaults.agent, "defaults.agent");
   addPluginReference(refs, "workspace", config.defaults.workspace, "defaults.workspace");
-  addPluginReference(refs, "agent", config.defaults.orchestrator?.agent, "defaults.orchestrator.agent");
+  addPluginReference(
+    refs,
+    "agent",
+    config.defaults.orchestrator?.agent,
+    "defaults.orchestrator.agent",
+  );
   addPluginReference(refs, "agent", config.defaults.worker?.agent, "defaults.worker.agent");
 
   for (const notifierName of config.defaults.notifiers ?? []) {
@@ -153,10 +164,7 @@ async function checkPluginResolution(
   ];
 
   for (const slot of slots) {
-    loadedBySlot.set(
-      slot,
-      new Set(registry.list(slot).map((manifest) => manifest.name)),
-    );
+    loadedBySlot.set(slot, new Set(registry.list(slot).map((manifest) => manifest.name)));
   }
 
   const references = collectPluginReferences(config);
@@ -210,7 +218,8 @@ function readOpenClawHealth(config: OrchestratorConfig): OpenClawHealthSummary |
     return {
       lastSuccessAt: typeof parsed.lastSuccessAt === "string" ? parsed.lastSuccessAt : null,
       lastFailureAt: typeof parsed.lastFailureAt === "string" ? parsed.lastFailureAt : null,
-      lastFailureError: typeof parsed.lastFailureError === "string" ? parsed.lastFailureError : null,
+      lastFailureError:
+        typeof parsed.lastFailureError === "string" ? parsed.lastFailureError : null,
       totalSent: typeof parsed.totalSent === "number" ? parsed.totalSent : 0,
       totalFailed: typeof parsed.totalFailed === "number" ? parsed.totalFailed : 0,
     };
@@ -234,9 +243,11 @@ async function checkOpenClawNotifier(
     "http://127.0.0.1:18789";
   // Resolve ${ENV_VAR} placeholders written by `ao setup openclaw` — the config
   // stores the literal string "${OPENCLAW_HOOKS_TOKEN}" which is truthy but wrong.
-  const rawToken = typeof openclawConfig["token"] === "string" ? openclawConfig["token"] : undefined;
+  const rawToken =
+    typeof openclawConfig["token"] === "string" ? openclawConfig["token"] : undefined;
   const envVarMatch = rawToken?.match(/^\$\{([^}]+)\}$/);
-  const token = (envVarMatch ? process.env[envVarMatch[1]] : rawToken) ?? process.env["OPENCLAW_HOOKS_TOKEN"];
+  const token =
+    (envVarMatch ? process.env[envVarMatch[1]] : rawToken) ?? process.env["OPENCLAW_HOOKS_TOKEN"];
 
   const installation = await detectOpenClawInstallation(url);
   if (installation.state === "running") {
@@ -387,15 +398,22 @@ function checkVersionFreshness(): void {
   console.log("Version:");
 
   const current = getCurrentVersion();
-  const cached = readCachedUpdateInfo();
+  const installMethod = detectInstallMethod();
+  const cached = readCachedUpdateInfo(installMethod);
 
   if (!cached) {
     pass(`ao v${current} installed (run any ao command to check for updates)`);
     return;
   }
 
-  if (isVersionOutdated(current, cached.latestVersion)) {
-    warn(`ao v${current} is outdated (latest: v${cached.latestVersion}). Run: ao update`);
+  const isOutdated =
+    installMethod === "git"
+      ? cached.isOutdated === true
+      : isVersionOutdated(current, cached.latestVersion);
+
+  if (isOutdated) {
+    const latest = installMethod === "git" ? cached.latestVersion : `v${cached.latestVersion}`;
+    warn(`ao v${current} is outdated (latest: ${latest}). Run: ${getUpdateCommand(installMethod)}`);
   } else {
     pass(`ao v${current} is the latest version`);
   }

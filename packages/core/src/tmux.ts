@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 /** Run a tmux command and return stdout. */
 function tmux(...args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("tmux", args, { timeout: 10_000 }, (error, stdout, stderr) => {
+    execFile("tmux", args, { timeout: 10_000, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         // tmux exits non-zero for many benign cases (no sessions, etc.)
         reject(new Error(`tmux ${args[0]} failed: ${stderr || error.message}`));
@@ -72,47 +72,6 @@ export async function hasSession(sessionName: string): Promise<boolean> {
     return true;
   } catch {
     return false;
-  }
-}
-
-export interface NewSessionOptions {
-  /** Session name */
-  name: string;
-  /** Working directory */
-  cwd: string;
-  /** Initial command to run */
-  command?: string;
-  /** Environment variables to set */
-  environment?: Record<string, string>;
-  /** Window width/height */
-  width?: number;
-  height?: number;
-}
-
-/** Create a new tmux session (detached). */
-export async function newSession(opts: NewSessionOptions): Promise<void> {
-  const args = ["new-session", "-d", "-s", opts.name, "-c", opts.cwd];
-
-  // Add environment variables
-  if (opts.environment) {
-    for (const [key, value] of Object.entries(opts.environment)) {
-      args.push("-e", `${key}=${value}`);
-    }
-  }
-
-  // Window size
-  if (opts.width) {
-    args.push("-x", String(opts.width));
-  }
-  if (opts.height) {
-    args.push("-y", String(opts.height));
-  }
-
-  await tmux(...args);
-
-  // Send the initial command if provided
-  if (opts.command) {
-    await sendKeys(opts.name, opts.command);
   }
 }
 

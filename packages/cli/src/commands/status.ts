@@ -15,6 +15,7 @@ import {
   type AgentReportAuditEntry,
   isOrchestratorSession,
   isTerminalSession,
+  isWindows,
   loadConfig,
   getProjectSessionsDir,
   readAgentReportAuditTrailAsync,
@@ -112,10 +113,16 @@ async function gatherSessionInfo(
     if (liveBranch) branch = liveBranch;
   }
 
-  // Get last activity time from tmux
-  const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-  const activityTs = await getTmuxActivity(tmuxTarget);
-  const lastActivity = activityTs ? formatAge(activityTs) : "-";
+  // Get last activity time — use enriched session data on Windows (no tmux),
+  // fall back to tmux display-message on Unix for backward compat.
+  let lastActivity: string;
+  if (isWindows()) {
+    lastActivity = session.lastActivityAt ? formatAge(session.lastActivityAt.getTime()) : "-";
+  } else {
+    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
+    const activityTs = await getTmuxActivity(tmuxTarget);
+    lastActivity = activityTs ? formatAge(activityTs) : "-";
+  }
 
   // Get agent's auto-generated summary via introspection
   let claudeSummary: string | null = null;
@@ -560,6 +567,10 @@ export function registerStatus(program: Command): void {
 }
 
 async function showFallbackStatus(): Promise<void> {
+  if (isWindows()) {
+    console.log(chalk.dim("No agent-orchestrator config found. Run `ao start` first."));
+    return;
+  }
   const allTmux = await getTmuxSessions();
   if (allTmux.length === 0) {
     console.log(chalk.dim("No tmux sessions found."));

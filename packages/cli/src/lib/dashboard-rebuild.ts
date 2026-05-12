@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { normalize, resolve } from "node:path";
 import ora from "ora";
+import { findPidByPort, isWindows, killProcessTree } from "@aoagents/ao-core";
 import { exec, execSilent } from "./shell.js";
 
 /**
@@ -31,18 +32,18 @@ export function assertDashboardRebuildSupported(webDir: string): void {
 
 /**
  * Find the PID of a process listening on the given port.
- * Returns null if no process is found.
+ * Returns null if no process is found. Cross-platform via core's findPidByPort.
  */
 export async function findRunningDashboardPid(port: number): Promise<string | null> {
-  const lsofOutput = await execSilent("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-  if (!lsofOutput) return null;
-
-  const pid = lsofOutput.split("\n")[0]?.trim();
-  if (!pid || !/^\d+$/.test(pid)) return null;
-  return pid;
+  return findPidByPort(port);
 }
 
+/**
+ * Find the working directory of a process. Unix only (uses lsof).
+ * Returns null on Windows or when lookup fails — callers must tolerate that.
+ */
 async function getProcessCwd(pid: string): Promise<string | null> {
+  if (isWindows()) return null;
   const output = await execSilent("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"]);
   if (!output) return null;
 
@@ -52,7 +53,12 @@ async function getProcessCwd(pid: string): Promise<string | null> {
 }
 
 /**
- * Find live dashboard server PIDs whose current working directory is webDir.
+ * Find live dashboard server PIDs serving from webDir for the given ports.
+ *
+ * On Unix we cross-check each port-listening PID's cwd against webDir so we
+ * only kill OUR dashboard. On Windows there's no cheap cwd lookup, so we
+ * fall back to "anything on these ports" — acceptable because rebuild is
+ * always invoked against a known dashboard port.
  */
 export async function findRunningDashboardPidsForWebDir(
   webDir: string,
@@ -62,6 +68,11 @@ export async function findRunningDashboardPidsForWebDir(
   const pids = new Set<string>();
 
   for (const port of ports) {
+    if (isWindows()) {
+      const pid = await findPidByPort(port);
+      if (pid) pids.add(pid);
+      continue;
+    }
     const output = await execSilent("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
     if (!output) continue;
     for (const rawPid of output.split("\n")) {
@@ -90,9 +101,9 @@ export async function stopRunningDashboardsForWebDir(
   );
   for (const pid of pids) {
     try {
-      process.kill(Number(pid), "SIGTERM");
+      await killProcessTree(Number(pid), "SIGTERM");
     } catch {
-      // Process already exited (ESRCH) — that's fine.
+      // Process already exited — that's fine.
     }
   }
 
@@ -108,7 +119,7 @@ export async function stopRunningDashboardsForWebDir(
 export async function waitForPortFree(port: number, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const pid = await findRunningDashboardPid(port);
+    const pid = await findPidByPort(port);
     if (!pid) return;
     await new Promise((r) => setTimeout(r, 200));
   }

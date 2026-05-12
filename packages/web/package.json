@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-web",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Web dashboard for agent-orchestrator",
   "type": "module",
   "files": [
@@ -34,6 +34,7 @@
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
     "@aoagents/ao-plugin-agent-kimicode": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
+    "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-github": "workspace:*",

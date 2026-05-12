@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@aoagents/ao-core";
+import { isWindows, loadConfig } from "@aoagents/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
+import { forwardSignalsToChild } from "../lib/shell.js";
 import {
   clearStaleCacheIfNeeded,
   isInstalledUnderNodeModules,
@@ -54,6 +55,7 @@ export function registerDashboard(program: Command): void {
       const child = spawn("node", [startScript], {
         cwd: webDir,
         stdio: ["inherit", "inherit", "pipe"],
+        detached: !isWindows(),
         env,
       });
 
@@ -75,6 +77,14 @@ export function registerDashboard(program: Command): void {
         console.error(chalk.dim(String(err)));
         process.exit(1);
       });
+
+      // On Unix the child is spawned with detached:true (own process group) so
+      // Ctrl+C only reaches the parent's process group, not the dashboard's.
+      // Forward SIGINT/SIGTERM so the child group is cleaned up on exit.
+      const pid = child.pid;
+      if (!isWindows() && pid) {
+        forwardSignalsToChild(pid, child);
+      }
 
       let openAbort: AbortController | undefined;
 

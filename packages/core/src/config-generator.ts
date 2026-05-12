@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { generateSessionPrefix } from "./paths.js";
+import { getDefaultRuntime } from "./platform.js";
 
 // Main is the canonical config-schema contract; schema evolution must remain
 // forward-compatible and additive for older CLIs that stamp this URL.
@@ -283,7 +284,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
   return withConfigSchema({
     port,
     defaults: {
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
       notifiers: [],

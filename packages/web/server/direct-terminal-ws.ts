@@ -17,7 +17,7 @@ export interface DirectTerminalServer {
  * Create the direct terminal WebSocket server.
  * Separated from listen() so tests can control lifecycle.
  */
-export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalServer {
+export function createDirectTerminalServer(tmuxPath?: string | null): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
 
   let muxWss: WebSocketServer | null = null;
@@ -95,11 +95,20 @@ const isMainModule =
   process.argv[1]?.endsWith("direct-terminal-ws.js");
 
 if (isMainModule) {
+  const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
+
+  // On Windows, findTmux() returns null — mux-websocket.ts handles this by
+  // using named pipe relay to PTY hosts instead of tmux attach.
   const TMUX = findTmux();
-  console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
+  if (TMUX) {
+    console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
+  } else if (process.platform === "win32") {
+    console.log(`[DirectTerminal] Windows mode — using named pipe relay to PTY hosts`);
+  } else {
+    console.log(`[DirectTerminal] No tmux available — terminal relay may be limited`);
+  }
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
-  const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
 
   server.listen(PORT, () => {
     console.log(`[DirectTerminal] WebSocket server listening on port ${PORT}`);

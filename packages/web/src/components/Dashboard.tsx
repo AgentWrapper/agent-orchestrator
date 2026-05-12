@@ -25,6 +25,7 @@ import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { BottomSheet } from "./BottomSheet";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -121,7 +122,7 @@ function DoneCard({
           </a>
         ) : null}
         <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
-        {canRestore ? (
+        {canRestore && !isMerged ? (
           <button
             type="button"
             className="done-card__restore"
@@ -173,9 +174,11 @@ function DashboardInner({
     return sessions.filter((s) => s.projectId === projectId);
   }, [sessions, projectId]);
   const connectionStatus: "connected" | "reconnecting" | "disconnected" =
-    mux?.status === "disconnected" ? "disconnected"
-    : mux?.status === "connected" ? "connected"
-    : "reconnecting";
+    mux?.status === "disconnected"
+      ? "disconnected"
+      : mux?.status === "connected"
+        ? "connected"
+        : "reconnecting";
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
   const ssrLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
   // Live WS error takes precedence; fall back to SSR load error when live data hasn't resolved it.
@@ -193,6 +196,11 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [collapsedZones, setCollapsedZones] = useState<Set<AttentionLevel>>(
+    () => new Set<AttentionLevel>(["done", "working"]),
+  );
+  const [previewSession, setPreviewSession] = useState<DashboardSession | null>(null);
+  const [bottomSheetMode, setBottomSheetMode] = useState<"preview" | "confirm-kill">("preview");
   const debugParam = searchParams.get("debug");
   const showDebugBundleButton =
     !isMobile &&
@@ -364,6 +372,25 @@ function DashboardInner({
     },
     [killSession],
   );
+  const handlePreview = useCallback((session: DashboardSession) => {
+    setPreviewSession(session);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleRequestKill = useCallback(() => {
+    setBottomSheetMode("confirm-kill");
+  }, []);
+
+  const handleBottomSheetClose = useCallback(() => {
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleBottomSheetConfirmKill = useCallback(() => {
+    if (previewSession) void killSession(previewSession.id);
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, [previewSession, killSession]);
 
   const handleMerge = useCallback(
     async (prNumber: number) => {
@@ -457,9 +484,7 @@ function DashboardInner({
       <span className="font-semibold text-[var(--color-status-error)]">
         Orchestrator failed to load
       </span>
-      <span className="break-words text-[var(--color-text-secondary)]">
-        {visibleLoadError}
-      </span>
+      <span className="break-words text-[var(--color-text-secondary)]">{visibleLoadError}</span>
       <span className="text-[var(--color-text-secondary)]">
         Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is
         valid, then run <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.
@@ -478,6 +503,17 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const handleZoneToggle = (level: AttentionLevel) => {
+    setCollapsedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  };
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setMobileMenuOpen((current) => !current);
@@ -688,6 +724,10 @@ function DashboardInner({
                           onKill={handleKill}
                           onMerge={handleMerge}
                           onRestore={handleRestore}
+                          compactMobile={isMobile}
+                          collapsed={isMobile && collapsedZones.has(level)}
+                          onToggle={isMobile ? handleZoneToggle : undefined}
+                          onPreview={isMobile ? handlePreview : undefined}
                         />
                       ))}
                     </div>
@@ -749,6 +789,15 @@ function DashboardInner({
             </main>
           </div>
         </div>
+        <BottomSheet
+          session={previewSession}
+          mode={bottomSheetMode}
+          onCancel={handleBottomSheetClose}
+          onConfirm={handleBottomSheetConfirmKill}
+          onRequestKill={handleRequestKill}
+          onMerge={handleMerge}
+          isMergeReady={previewSession ? attentionLevels[previewSession.id] === "merge" : false}
+        />
       </>
     </SidebarContext.Provider>
   );
