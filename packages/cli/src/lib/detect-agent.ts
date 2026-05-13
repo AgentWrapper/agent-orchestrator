@@ -22,6 +22,7 @@ const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
   { name: "kimicode", pkg: "@aoagents/ao-plugin-agent-kimicode" },
   { name: "grok", pkg: "@aoagents/ao-plugin-agent-grok" },
   { name: "opencode", pkg: "@aoagents/ao-plugin-agent-opencode" },
+  { name: "mistral", pkg: "@aoagents/ao-plugin-agent-mistral" },
 ];
 
 /**

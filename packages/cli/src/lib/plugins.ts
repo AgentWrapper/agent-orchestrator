@@ -6,6 +6,7 @@ import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
 import grokPlugin from "@aoagents/ao-plugin-agent-grok";
 import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
+import mistralPlugin from "@aoagents/ao-plugin-agent-mistral";
 import githubSCMPlugin from "@aoagents/ao-plugin-scm-github";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
@@ -16,6 +17,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   kimicode: kimicodePlugin,
   grok: grokPlugin,
   opencode: opencodePlugin,
+  mistral: mistralPlugin,
 };
 
 const scmPlugins: Record<string, { create(): SCM }> = {
