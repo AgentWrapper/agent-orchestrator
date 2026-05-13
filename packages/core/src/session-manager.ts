@@ -35,6 +35,7 @@ import {
   type ClaimPRResult,
   type KillOptions,
   type KillResult,
+  type KillTreeResult,
   type LifecycleKillReason,
   type OrchestratorConfig,
   type ProjectConfig,
@@ -1416,6 +1417,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
         displayName,
+        ...(spawnConfig.parentSessionId ? { parentSessionId: spawnConfig.parentSessionId } : {}),
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -2142,6 +2144,53 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       data: { reason: killReason },
     });
     return { cleaned: true, alreadyTerminated: false };
+  }
+
+  async function killTree(
+    rootSessionId: SessionId,
+    options?: KillOptions,
+  ): Promise<KillTreeResult> {
+    // 1. Kill the root session
+    const rootResult = await kill(rootSessionId, options);
+
+    // 2. Find all descendants by scanning sessions once, then traversing via
+    // parent -> children lookups instead of repeated full-array scans.
+    const allSessions = await list();
+    const descendants: Array<{ id: SessionId; result: KillResult }> = [];
+    const errors: Array<{ id: SessionId; error: string }> = [];
+    const childrenByParent = new Map<SessionId, SessionId[]>();
+
+    for (const session of allSessions) {
+      if (!session.parentSessionId) continue;
+      const children = childrenByParent.get(session.parentSessionId) ?? [];
+      children.push(session.id);
+      childrenByParent.set(session.parentSessionId, children);
+    }
+
+    // Build descendant set via BFS (handles nested orchestrators)
+    // Recursively collect all descendants (children, grandchildren, etc.)
+    const toKill: SessionId[] = [];
+    const queue = [...(childrenByParent.get(rootSessionId) ?? [])];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      toKill.push(current);
+      queue.push(...(childrenByParent.get(current) ?? []));
+    }
+
+    // Kill in reverse order (deepest descendants first)
+    for (const sessionId of toKill.reverse()) {
+      try {
+        const result = await kill(sessionId, options);
+        descendants.push({ id: sessionId, result });
+      } catch (err) {
+        errors.push({
+          id: sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return { root: rootResult, descendants, errors };
   }
 
   async function cleanup(
@@ -3036,6 +3085,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     invalidateCache,
     get,
     kill,
+    killTree,
     cleanup,
     send,
     claimPR,

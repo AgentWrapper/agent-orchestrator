@@ -649,22 +649,12 @@ describe("API Routes", () => {
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
 
       expect(res.status).toBe(200);
-      expect(enrichSpy).toHaveBeenCalledTimes(3);
+      expect(enrichSpy).toHaveBeenCalledTimes(2);
       expect(enrichSpy.mock.calls[0]).toEqual([
         expect.objectContaining({ id: "worker-live" }),
-        expect.anything(),
-        sessionsWithPRs[0]!.pr,
       ]);
       expect(enrichSpy.mock.calls[1]).toEqual([
         expect.objectContaining({ id: "worker-killed" }),
-        expect.anything(),
-        sessionsWithPRs[1]!.pr,
-        { cacheOnly: true },
-      ]);
-      expect(enrichSpy.mock.calls[2]).toEqual([
-        expect.objectContaining({ id: "worker-killed" }),
-        expect.anything(),
-        sessionsWithPRs[1]!.pr,
       ]);
 
       metadataSpy.mockRestore();
@@ -719,8 +709,6 @@ describe("API Routes", () => {
       expect(enrichSpy).toHaveBeenCalledTimes(1);
       expect(enrichSpy.mock.calls[0]).toEqual([
         expect.objectContaining({ id: "worker-open-pr" }),
-        expect.anything(),
-        sessionWithOpenPR[0]!.pr,
       ]);
 
       metadataSpy.mockRestore();

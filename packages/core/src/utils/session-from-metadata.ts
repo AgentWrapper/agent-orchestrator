@@ -93,6 +93,7 @@ export function sessionFromMetadata(
     lastActivityAt: options.lastActivityAt ?? new Date(),
     restoredAt:
       options.restoredAt ?? (meta["restoredAt"] ? new Date(meta["restoredAt"]) : undefined),
+    parentSessionId: meta["parentSessionId"] || null,
     metadata: meta,
   };
 }

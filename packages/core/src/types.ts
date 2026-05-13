@@ -320,6 +320,9 @@ export interface Session {
 
   /** Metadata key-value pairs */
   metadata: Record<string, string>;
+
+  /** ID of the parent session that spawned this one (undefined for legacy/top-level sessions) */
+  parentSessionId?: SessionId | null;
 }
 
 export function isOrchestratorSession(
@@ -364,6 +367,8 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** ID of the parent (orchestrator) session that is spawning this worker */
+  parentSessionId?: SessionId;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
@@ -1820,6 +1825,8 @@ export interface SessionManager {
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
+  /** Kill a session and all its descendants (children, grandchildren, etc.) */
+  killTree(rootSessionId: SessionId, options?: KillOptions): Promise<KillTreeResult>;
   cleanup(
     projectId?: string,
     options?: { dryRun?: boolean; purgeOpenCode?: boolean },
@@ -1854,6 +1861,16 @@ export interface ClaimPRResult {
 /** Type guard to check if a SessionManager supports OpenCode-specific remap operation */
 export function isOpenCodeSessionManager(sm: SessionManager): sm is OpenCodeSessionManager {
   return typeof (sm as OpenCodeSessionManager).remap === "function";
+}
+
+/** Result of a cascading kill-tree operation */
+export interface KillTreeResult {
+  /** The root session that was killed */
+  root: KillResult;
+  /** All descendant sessions that were killed (child-first order) */
+  descendants: Array<{ id: SessionId; result: KillResult }>;
+  /** Sessions that failed to kill (does not abort the cascade) */
+  errors: Array<{ id: SessionId; error: string }>;
 }
 
 export interface CleanupResult {

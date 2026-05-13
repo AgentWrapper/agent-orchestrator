@@ -506,6 +506,11 @@ export function createMockSessionManager(): OpenCodeSessionManager {
     remap: vi.fn().mockResolvedValue("app-1"),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue({ cleaned: true, alreadyTerminated: false }),
+    killTree: vi.fn().mockResolvedValue({
+      root: { cleaned: true, alreadyTerminated: false },
+      descendants: [],
+      errors: [],
+    }),
     cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),
     send: vi.fn().mockResolvedValue(undefined),
     claimPR: vi.fn().mockResolvedValue({
