@@ -15,6 +15,7 @@
       "@aoagents/ao-plugin-agent-aider",
       "@aoagents/ao-plugin-agent-opencode",
       "@aoagents/ao-plugin-agent-cursor",
+      "@aoagents/ao-plugin-agent-gemini",
       "@aoagents/ao-plugin-agent-kimicode",
       "@aoagents/ao-plugin-workspace-worktree",
       "@aoagents/ao-plugin-workspace-clone",

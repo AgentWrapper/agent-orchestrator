@@ -366,6 +366,12 @@ const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
     args: ["install", "-g", "opencode-ai"],
   },
   {
+    id: "gemini",
+    label: "Gemini CLI",
+    cmd: "npm",
+    args: ["install", "-g", "@google/gemini-cli"],
+  },
+  {
     id: "kimicode",
     label: "Kimi Code",
     cmd: "uv",
