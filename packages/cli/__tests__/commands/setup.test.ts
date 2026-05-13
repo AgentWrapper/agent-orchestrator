@@ -84,9 +84,22 @@ const { mockClack } = vi.hoisted(() => ({
 vi.mock("@aoagents/ao-core", () => ({
   CONFIG_SCHEMA_URL:
     "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+  DEFAULT_DASHBOARD_NOTIFICATION_LIMIT: 50,
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
+  getDashboardNotificationStorePath: (configPath: string) =>
+    `${configPath}.dashboard-notifications.jsonl`,
   isCanonicalGlobalConfigPath: (configPath: string | undefined) =>
     configPath === join(homedir(), ".agent-orchestrator", "config.yaml"),
+  normalizeDashboardNotificationLimit: (value: unknown) => {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim().length > 0
+          ? Number.parseInt(value, 10)
+          : 50;
+    return Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 50;
+  },
+  readDashboardNotificationsFromFile: () => [],
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -225,6 +238,53 @@ describe("notifier routing helpers", () => {
       warning: ["slack"],
       info: ["slack"],
     });
+  });
+});
+
+describe("setup dashboard command", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockFindConfigFile.mockReturnValue("/tmp/agent-orchestrator.yaml");
+    mockReadFileSync.mockReturnValue(MINIMAL_CONFIG);
+    mockWriteFileSync.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("writes dashboard notifier config with the urgent-action routing default", async () => {
+    const program = createProgram();
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "setup",
+      "dashboard",
+      "--non-interactive",
+      "--limit",
+      "75",
+    ]);
+
+    const written = String(mockWriteFileSync.mock.calls[0][1]);
+    const parsed = parseYaml(written) as {
+      notifiers?: Record<string, { plugin?: string; limit?: number }>;
+      notificationRouting?: Record<string, string[]>;
+    };
+
+    expect(parsed.notifiers?.["dashboard"]).toEqual({ plugin: "dashboard", limit: 75 });
+    expect(parsed.notificationRouting?.urgent).toContain("dashboard");
+    expect(parsed.notificationRouting?.action).toContain("dashboard");
+    expect(parsed.notificationRouting?.warning ?? []).not.toContain("dashboard");
+    expect(parsed.notificationRouting?.info ?? []).not.toContain("dashboard");
+  });
+
+  it("prints status without mutating config", async () => {
+    const program = createProgram();
+
+    await program.parseAsync(["node", "test", "setup", "dashboard", "--status"]);
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 });
 
@@ -454,7 +514,9 @@ describe("setup composio command", () => {
       .mockResolvedValueOnce("enter-url")
       .mockResolvedValueOnce("write");
     mockClack.password.mockResolvedValueOnce("ak_interactive");
-    mockClack.text.mockResolvedValueOnce("https://discord.com/api/webhooks/1234567890/webhook-token");
+    mockClack.text.mockResolvedValueOnce(
+      "https://discord.com/api/webhooks/1234567890/webhook-token",
+    );
     const program = createProgram();
 
     await program.parseAsync(["node", "test", "setup", "composio"]);
@@ -640,16 +702,20 @@ projects:
       authScheme: "BEARER_TOKEN",
       credentials: { token: "bot-token" },
     });
-    expect(mockConnectedAccountsInitiate).toHaveBeenCalledWith("ao-existing", "auth_discord_created", {
-      allowMultiple: true,
-      config: {
-        authScheme: "BEARER_TOKEN",
-        val: {
-          status: "ACTIVE",
-          token: "bot-token",
+    expect(mockConnectedAccountsInitiate).toHaveBeenCalledWith(
+      "ao-existing",
+      "auth_discord_created",
+      {
+        allowMultiple: true,
+        config: {
+          authScheme: "BEARER_TOKEN",
+          val: {
+            status: "ACTIVE",
+            token: "bot-token",
+          },
         },
       },
-    });
+    );
 
     const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = parseYaml(writtenYaml) as {
@@ -1001,7 +1067,9 @@ projects:
       .mockResolvedValueOnce("enter-url")
       .mockResolvedValueOnce("write");
     mockClack.password.mockResolvedValueOnce("ak_interactive");
-    mockClack.text.mockResolvedValueOnce("https://discord.com/api/webhooks/1234567890/webhook-token");
+    mockClack.text.mockResolvedValueOnce(
+      "https://discord.com/api/webhooks/1234567890/webhook-token",
+    );
     const program = createProgram();
 
     await program.parseAsync(["node", "test", "setup", "composio-discord"]);
@@ -1036,9 +1104,7 @@ projects:
       .mockResolvedValueOnce("create-account")
       .mockResolvedValueOnce("write");
     mockClack.text.mockResolvedValueOnce("1234567890");
-    mockClack.password
-      .mockResolvedValueOnce("ak_interactive")
-      .mockResolvedValueOnce("bot-token");
+    mockClack.password.mockResolvedValueOnce("ak_interactive").mockResolvedValueOnce("bot-token");
     const program = createProgram();
 
     await program.parseAsync(["node", "test", "setup", "composio-discord-bot"]);

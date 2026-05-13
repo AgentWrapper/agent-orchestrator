@@ -112,6 +112,10 @@ notifiers:
     plugin: desktop
     # Run 'ao setup desktop' on macOS to use AO Notifier.app
     # backend: ao-app
+  dashboard:
+    plugin: dashboard
+    # Run 'ao setup dashboard' to retain notifications in the web dashboard
+    # limit: 50
   slack:
     plugin: slack
     # Requires SLACK_WEBHOOK_URL env var

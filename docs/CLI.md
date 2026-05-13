@@ -12,6 +12,7 @@ ao stop                                # Stop everything (dashboard, orchestrato
 ao status                              # Overview of all sessions
 ao status --watch                      # Live-updating terminal status view
 ao dashboard                           # Open web dashboard in browser
+ao setup dashboard                     # Configure dashboard notification retention/routing
 ao setup desktop                       # Install/configure native macOS desktop notifications
 ao notify test --to desktop            # Send a manual notifier test without starting AO
 ao completion zsh                      # Print the zsh completion script

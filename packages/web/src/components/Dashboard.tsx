@@ -23,6 +23,7 @@ import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
+import { DashboardNotificationButton } from "./DashboardNotificationButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
@@ -173,9 +174,11 @@ function DashboardInner({
     return sessions.filter((s) => s.projectId === projectId);
   }, [sessions, projectId]);
   const connectionStatus: "connected" | "reconnecting" | "disconnected" =
-    mux?.status === "disconnected" ? "disconnected"
-    : mux?.status === "connected" ? "connected"
-    : "reconnecting";
+    mux?.status === "disconnected"
+      ? "disconnected"
+      : mux?.status === "connected"
+        ? "connected"
+        : "reconnecting";
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
   const ssrLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
   // Live WS error takes precedence; fall back to SSR load error when live data hasn't resolved it.
@@ -457,9 +460,7 @@ function DashboardInner({
       <span className="font-semibold text-[var(--color-status-error)]">
         Orchestrator failed to load
       </span>
-      <span className="break-words text-[var(--color-text-secondary)]">
-        {visibleLoadError}
-      </span>
+      <span className="break-words text-[var(--color-text-secondary)]">{visibleLoadError}</span>
       <span className="text-[var(--color-text-secondary)]">
         Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is
         valid, then run <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.
@@ -540,6 +541,7 @@ function DashboardInner({
             {showDebugBundleButton ? <CopyDebugBundleButton projectId={projectId} /> : null}
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
+              <DashboardNotificationButton />
               {!allProjectsView && orchestratorHref ? (
                 <Link
                   href={orchestratorHref}

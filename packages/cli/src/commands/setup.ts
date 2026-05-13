@@ -5,6 +5,11 @@ import {
   type DesktopSetupOptions,
 } from "../lib/desktop-setup.js";
 import {
+  DashboardSetupError,
+  runDashboardSetupAction,
+  type DashboardSetupOptions,
+} from "../lib/dashboard-setup.js";
+import {
   WebhookSetupError,
   runWebhookSetupAction,
   type WebhookSetupOptions,
@@ -43,6 +48,27 @@ import {
 
 export function registerSetup(program: Command): void {
   const setup = program.command("setup").description("Set up integrations with external services");
+
+  setup
+    .command("dashboard")
+    .description("Configure dashboard notification retention and routing")
+    .option("--limit <count>", "Number of latest notifications to retain for the dashboard")
+    .option("--routing-preset <preset>", "Routing preset: urgent-only | urgent-action | all")
+    .option("--refresh", "Refresh/reconfigure dashboard notifier config")
+    .option("--non-interactive", "Skip prompts")
+    .option("--force", "Replace a conflicting notifiers.dashboard entry")
+    .option("--status", "Show dashboard notifier setup status")
+    .action(async (opts: DashboardSetupOptions) => {
+      try {
+        await runDashboardSetupAction(opts);
+      } catch (err) {
+        if (err instanceof DashboardSetupError) {
+          console.error(err.message);
+          process.exit(err.exitCode);
+        }
+        throw err;
+      }
+    });
 
   setup
     .command("desktop")
@@ -104,7 +130,10 @@ export function registerSetup(program: Command): void {
     .option("--routing-preset <preset>", "Routing preset: urgent-only | urgent-action | all")
     .option("--refresh", "Refresh/reconfigure Slack notifier config")
     .option("--no-test", "Skip the setup test Slack message")
-    .option("--non-interactive", "Skip prompts and require --webhook-url unless --refresh can reuse config")
+    .option(
+      "--non-interactive",
+      "Skip prompts and require --webhook-url unless --refresh can reuse config",
+    )
     .option("--force", "Replace a conflicting notifiers.slack entry")
     .option("--status", "Show Slack notifier setup status and probe the endpoint")
     .action(async (opts: SlackSetupOptions) => {
@@ -131,7 +160,10 @@ export function registerSetup(program: Command): void {
     .option("--routing-preset <preset>", "Routing preset: urgent-only | urgent-action | all")
     .option("--refresh", "Refresh/reconfigure Discord notifier config")
     .option("--no-test", "Skip the setup test Discord message")
-    .option("--non-interactive", "Skip prompts and require --webhook-url unless --refresh can reuse config")
+    .option(
+      "--non-interactive",
+      "Skip prompts and require --webhook-url unless --refresh can reuse config",
+    )
     .option("--force", "Replace a conflicting notifiers.discord entry")
     .option("--status", "Show Discord notifier setup status and probe the endpoint")
     .action(async (opts: DiscordSetupOptions) => {
@@ -281,12 +313,12 @@ export function registerSetup(program: Command): void {
     .command("openclaw")
     .description("Connect AO notifications to an OpenClaw gateway")
     .option("--url <url>", "OpenClaw webhook URL (e.g. http://127.0.0.1:18789/hooks/agent)")
-    .option("--token <token>", "Remote/manual fallback token; local setup should read hooks.token from OpenClaw config")
-    .option("--openclaw-config-path <path>", "OpenClaw config path that contains hooks.token")
     .option(
-      "--routing-preset <preset>",
-      "Routing preset: urgent-only | urgent-action | all",
+      "--token <token>",
+      "Remote/manual fallback token; local setup should read hooks.token from OpenClaw config",
     )
+    .option("--openclaw-config-path <path>", "OpenClaw config path that contains hooks.token")
+    .option("--routing-preset <preset>", "Routing preset: urgent-only | urgent-action | all")
     .option(
       "--non-interactive",
       "Skip prompts — auto-detects OpenClaw if --url not provided and reads token from OpenClaw config",

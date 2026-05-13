@@ -1,5 +1,29 @@
 import type { AttentionLevel } from "./types";
 
+export interface DashboardNotificationEvent {
+  id: string;
+  type: string;
+  priority: string;
+  sessionId: string;
+  projectId: string;
+  timestamp: string;
+  message: string;
+  data: Record<string, unknown>;
+}
+
+export interface DashboardNotificationAction {
+  label: string;
+  url?: string;
+  callbackEndpoint?: string;
+}
+
+export interface DashboardNotificationRecord {
+  id: string;
+  receivedAt: string;
+  event: DashboardNotificationEvent;
+  actions?: DashboardNotificationAction[];
+}
+
 // ── Client → Server ──
 
 export type ClientMessage =
@@ -8,7 +32,7 @@ export type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: "sessions"[] };
+  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
 
 // ── Server → Client ──
 
@@ -19,6 +43,13 @@ export type ServerMessage =
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
   | { ch: "sessions"; type: "error"; error: string }
+  | {
+      ch: "notifications";
+      type: "snapshot" | "append";
+      notifications: DashboardNotificationRecord[];
+      limit: number;
+    }
+  | { ch: "notifications"; type: "error"; error: string }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 

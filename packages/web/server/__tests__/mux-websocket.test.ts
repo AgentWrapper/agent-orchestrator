@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendDashboardNotification, type OrchestratorEvent } from "@aoagents/ao-core";
 import type { SessionBroadcaster as SessionBroadcasterType } from "../mux-websocket";
 
 // vi.mock factories run before module-level statements. Hoist the mock
@@ -35,7 +39,8 @@ vi.mock("../tmux-utils.js", () => ({
   resolveTmuxSession: () => "ao-177",
 }));
 
-const { SessionBroadcaster, TerminalManager } = await import("../mux-websocket");
+const { NotificationBroadcaster, SessionBroadcaster, TerminalManager } =
+  await import("../mux-websocket");
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -259,6 +264,101 @@ describe("SessionBroadcaster", () => {
       // Should only have 1 fetch (initial snapshot)
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("NotificationBroadcaster", () => {
+  let tempDir: string | null = null;
+  let configPath: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    tempDir = mkdtempSync(join(tmpdir(), "ao-notification-broadcaster-"));
+    configPath = join(tempDir, "agent-orchestrator.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "projects: {}",
+        "notifiers:",
+        "  dashboard:",
+        "    plugin: dashboard",
+        "    limit: 2",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = null;
+  });
+
+  function makeEvent(id: string): OrchestratorEvent {
+    return {
+      id,
+      type: "session.needs_input",
+      priority: "action",
+      sessionId: "worker-1",
+      projectId: "demo",
+      timestamp: new Date("2026-05-13T12:00:00.000Z"),
+      message: `Event ${id}`,
+      data: {},
+    };
+  }
+
+  function appendEvent(id: string, receivedAt: string): void {
+    appendDashboardNotification(configPath, makeEvent(id), undefined, {
+      receivedAt: new Date(receivedAt),
+      limit: 2,
+    });
+  }
+
+  it("sends an immediate dashboard notification snapshot", () => {
+    appendEvent("evt-1", "2026-05-13T12:00:01.000Z");
+    const broadcaster = new NotificationBroadcaster(configPath);
+    const callback = vi.fn();
+
+    const unsubscribe = broadcaster.subscribe(callback);
+
+    expect(callback).toHaveBeenCalledWith(
+      [expect.objectContaining({ event: expect.objectContaining({ id: "evt-1" }) })],
+      "snapshot",
+      2,
+    );
+
+    unsubscribe();
+  });
+
+  it("does not let a new subscriber suppress appends for existing subscribers", () => {
+    appendEvent("evt-1", "2026-05-13T12:00:01.000Z");
+    const broadcaster = new NotificationBroadcaster(configPath);
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const unsubscribeFirst = broadcaster.subscribe(first);
+    appendEvent("evt-2", "2026-05-13T12:00:02.000Z");
+    const unsubscribeSecond = broadcaster.subscribe(second);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(first).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ event: expect.objectContaining({ id: "evt-2" }) })],
+      "append",
+      2,
+    );
+    expect(second).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ event: expect.objectContaining({ id: "evt-1" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ id: "evt-2" }) }),
+      ],
+      "snapshot",
+      2,
+    );
+
+    unsubscribeFirst();
+    unsubscribeSecond();
   });
 });
 

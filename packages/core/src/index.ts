@@ -164,10 +164,7 @@ export {
   resetOpenCodeSessionListCache,
 } from "./opencode-shared.js";
 export type { OpenCodeSessionListEntry } from "./opencode-shared.js";
-export {
-  getWorkspaceAgentsMdPath,
-  writeWorkspaceOpenCodeAgentsMd,
-} from "./opencode-agents-md.js";
+export { getWorkspaceAgentsMdPath, writeWorkspaceOpenCodeAgentsMd } from "./opencode-agents-md.js";
 export { writeOpenCodeConfig } from "./opencode-config.js";
 export {
   getOrchestratorSessionId,
@@ -273,6 +270,22 @@ export {
 } from "./paths.js";
 
 export { normalizeOriginUrl, relativeSubdir, deriveStorageKey } from "./storage-key.js";
+
+export {
+  DEFAULT_DASHBOARD_NOTIFICATION_LIMIT,
+  MAX_DASHBOARD_NOTIFICATION_LIMIT,
+  appendDashboardNotification,
+  appendDashboardNotificationRecord,
+  createDashboardNotificationRecord,
+  getDashboardNotificationStorePath,
+  normalizeDashboardNotificationLimit,
+  readDashboardNotifications,
+  readDashboardNotificationsFromFile,
+  writeDashboardNotificationsToFile,
+  type DashboardNotificationRecord,
+  type SerializedDashboardAction,
+  type SerializedDashboardEvent,
+} from "./dashboard-notifications.js";
 
 // Global config — Option C hybrid architecture (global registry + local behavior)
 export {

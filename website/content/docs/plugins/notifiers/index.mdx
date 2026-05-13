@@ -1,11 +1,12 @@
 ---
 title: Notifiers overview
-description: Who gets pinged when an agent needs you. Six notifiers ship; pick one or stack several.
+description: Who gets pinged when an agent needs you. Seven notifiers ship; pick one or stack several.
 ---
 
 Notifiers deliver AO events — session stuck, PR opened, review requested, CI failed — to wherever you actually pay attention.
 
 <PluginGrid>
+  <PluginCard name="Dashboard" logo="web" href="/docs/plugins/notifiers/dashboard" description="Retained notifications inside the AO dashboard." />
   <PluginCard name="Desktop" logo="apple" href="/docs/plugins/notifiers/desktop" description="Native macOS/Linux notifications. No-op on Windows." />
   <PluginCard name="Discord" logo="discord" href="/docs/plugins/notifiers/discord" description="Discord webhook with rich embeds." />
   <PluginCard name="Slack" logo="slack" href="/docs/plugins/notifiers/slack" description="Slack incoming webhook." />

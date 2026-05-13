@@ -58,6 +58,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "scm", name: "gitlab", pkg: "@aoagents/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@aoagents/ao-plugin-notifier-composio" },
+  { slot: "notifier", name: "dashboard", pkg: "@aoagents/ao-plugin-notifier-dashboard" },
   { slot: "notifier", name: "desktop", pkg: "@aoagents/ao-plugin-notifier-desktop" },
   { slot: "notifier", name: "discord", pkg: "@aoagents/ao-plugin-notifier-discord" },
   { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
@@ -142,9 +143,12 @@ function prepareConfig(
   // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
   // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
   // here IS the loading path, not a stray user config value.
-  const isBuiltin = !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
+  const isBuiltin =
+    !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
   if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
-    const loadingMethod = rawConfig.package ? `npm package "${rawConfig.package}"` : `built-in plugin "${name}"`;
+    const loadingMethod = rawConfig.package
+      ? `npm package "${rawConfig.package}"`
+      : `built-in plugin "${name}"`;
     throw new Error(
       `In ${slot} "${sourceId}": "path" field conflicts with reserved plugin loading field. ` +
         `You're loading via ${loadingMethod}, but also have a "path" field which would be stripped. ` +
@@ -485,7 +489,9 @@ export function createPluginRegistry(): PluginRegistry {
 
         const specifier = resolvePluginSpecifier(plugin, config);
         if (!specifier) {
-          process.stderr.write(`[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`);
+          process.stderr.write(
+            `[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`,
+          );
           continue;
         }
 
@@ -520,7 +526,9 @@ export function createPluginRegistry(): PluginRegistry {
             this.register(mod);
           }
         } catch (error) {
-          process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
+          process.stderr.write(
+            `[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`,
+          );
         }
       }
     },
