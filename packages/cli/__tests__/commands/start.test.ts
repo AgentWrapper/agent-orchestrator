@@ -282,6 +282,7 @@ import { registerStart, registerStop, autoCreateConfig } from "../../src/command
 let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let origGlobalConfigEnv: string | undefined;
 
 function createSpawnChild(options?: {
   /** Emit `error` instead of `close`. */
@@ -319,6 +320,14 @@ function createSpawnChild(options?: {
 
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
+
+  // Sandbox AO_GLOBAL_CONFIG into tmpDir so any code path that calls
+  // registerProjectInGlobalConfig (e.g. autoCreateConfig since PR #1766)
+  // cannot leak entries into the developer's real ~/.agent-orchestrator/config.yaml.
+  // Per-suite overrides further down still work — they save/restore against
+  // this value, and afterEach below restores the original.
+  origGlobalConfigEnv = process.env["AO_GLOBAL_CONFIG"];
+  process.env["AO_GLOBAL_CONFIG"] = join(tmpDir, "global-config.yaml");
 
   program = new Command();
   program.exitOverride();
@@ -437,6 +446,8 @@ beforeEach(async () => {
 afterEach(() => {
   if (cwdSpy) cwdSpy.mockRestore();
   rmSync(tmpDir, { recursive: true, force: true });
+  if (origGlobalConfigEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+  else process.env["AO_GLOBAL_CONFIG"] = origGlobalConfigEnv;
   vi.restoreAllMocks();
 });
 
