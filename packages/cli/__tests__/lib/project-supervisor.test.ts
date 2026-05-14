@@ -229,7 +229,7 @@ describe("project-supervisor", () => {
       },
     });
 
-    const startPromise = startProjectSupervisor(1_000);
+    const startPromise = startProjectSupervisor({ intervalMs: 1_000 });
     await vi.waitFor(() => expect(releaseList).toBeDefined());
 
     stopProjectSupervisor();
@@ -248,7 +248,7 @@ describe("project-supervisor", () => {
       throw new Error("bad config");
     });
 
-    await expect(startProjectSupervisor(1_000)).rejects.toThrow("bad config");
+    await expect(startProjectSupervisor({ intervalMs: 1_000 })).rejects.toThrow("bad config");
   });
 
   it("allows startup when the global config does not exist yet", async () => {
@@ -263,7 +263,7 @@ describe("project-supervisor", () => {
       throw error;
     });
 
-    const handle = await startProjectSupervisor(1_000);
+    const handle = await startProjectSupervisor({ intervalMs: 1_000 });
 
     expect(handle).toEqual({
       stop: expect.any(Function),
@@ -294,6 +294,152 @@ describe("project-supervisor", () => {
       undefined,
     );
     expect(activeWorkers.has("app")).toBe(true);
+  });
+
+  it("uses the caller-provided configPath as the local fallback when global is missing", async () => {
+    sessionsByProject.set("app", [makeSession("app")]);
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      }
+      if (path === "/some/repo/agent-orchestrator.yaml") {
+        return makeConfig(["app"]);
+      }
+      throw new Error(`unexpected loadConfig path: ${path}`);
+    });
+
+    await reconcileProjectSupervisor({ configPath: "/some/repo/agent-orchestrator.yaml" });
+
+    expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
+    expect(mockLoadConfig).toHaveBeenCalledWith("/some/repo/agent-orchestrator.yaml");
+    // No bare cwd-walk when the caller resolved a path for us.
+    expect(mockLoadConfig).not.toHaveBeenCalledWith();
+    expect(activeWorkers.has("app")).toBe(true);
+  });
+
+  it("ignores the caller-provided configPath when the global config is healthy", async () => {
+    sessionsByProject.set("app", [makeSession("app")]);
+    // Both paths would return a valid config — assert we only ever consult
+    // the global path. The configPath is the fallback, not an override.
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") return makeConfig(["app"]);
+      if (path === "/repo/agent-orchestrator.yaml") {
+        throw new Error("supervisor should not consult configPath when global is healthy");
+      }
+      throw new Error(`unexpected loadConfig path: ${path}`);
+    });
+
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+
+    expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
+    expect(mockLoadConfig).not.toHaveBeenCalledWith("/repo/agent-orchestrator.yaml");
+    expect(activeWorkers.has("app")).toBe(true);
+  });
+
+  it("preserves workers across a global→fallback transition (multi-tick)", async () => {
+    // Tick 1: global exists with {alpha, beta, gamma} — supervisor attaches
+    // all three. Tick 2: global has been deleted; the local fallback config
+    // (passed-in configPath) lists only {alpha}. Without the source-aware
+    // detach skip, the second tick would kill beta and gamma even though
+    // they're still running real sessions.
+    sessionsByProject.set("alpha", [makeSession("alpha")]);
+    sessionsByProject.set("beta", [makeSession("beta")]);
+    sessionsByProject.set("gamma", [makeSession("gamma")]);
+
+    // Tick 1: global is the source.
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") return makeConfig(["alpha", "beta", "gamma"]);
+      throw new Error(`unexpected path on tick 1: ${path}`);
+    });
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+    expect(activeWorkers.has("alpha")).toBe(true);
+    expect(activeWorkers.has("beta")).toBe(true);
+    expect(activeWorkers.has("gamma")).toBe(true);
+
+    // Tick 2: global deleted, fallback has a narrower view.
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      }
+      if (path === "/repo/agent-orchestrator.yaml") return makeConfig(["alpha"]);
+      throw new Error(`unexpected path on tick 2: ${path}`);
+    });
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+
+    // All three workers must survive — fallback isn't authoritative for removal.
+    expect(activeWorkers.has("alpha")).toBe(true);
+    expect(activeWorkers.has("beta")).toBe(true);
+    expect(activeWorkers.has("gamma")).toBe(true);
+    expect(mockRemoveProjectFromRunning).not.toHaveBeenCalledWith("beta");
+    expect(mockRemoveProjectFromRunning).not.toHaveBeenCalledWith("gamma");
+  });
+
+  it("does detach when global is restored after a fallback period (symmetric flip)", async () => {
+    // Documents intentional current behavior: when source flips back to
+    // "global", the detach pass treats the global config as authoritative,
+    // so projects not listed there ARE detached — including any that were
+    // attached during a prior fallback window. The reviewer's guidance was
+    // scoped to the fallback direction; protecting the symmetric flip would
+    // require per-worker source tracking and is out of scope here.
+    sessionsByProject.set("local-only", [makeSession("local-only")]);
+    sessionsByProject.set("from-global", [makeSession("from-global")]);
+
+    // Tick 1: no global, fallback attaches local-only.
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      }
+      if (path === "/repo/agent-orchestrator.yaml") return makeConfig(["local-only"]);
+      throw new Error(`unexpected path on tick 1: ${path}`);
+    });
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+    expect(activeWorkers.has("local-only")).toBe(true);
+
+    // Tick 2: global appears (e.g. another `ao start <url>` wrote it),
+    // listing only "from-global". Source = "global" → detach pass runs.
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") return makeConfig(["from-global"]);
+      throw new Error(`unexpected path on tick 2: ${path}`);
+    });
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+
+    expect(activeWorkers.has("from-global")).toBe(true);
+    expect(activeWorkers.has("local-only")).toBe(false);
+    expect(mockRemoveProjectFromRunning).toHaveBeenCalledWith("local-only");
+  });
+
+  it("does not detach unrelated active workers when operating from local fallback", async () => {
+    // Simulates: daemon already supervising "other-project" (registered via
+    // a prior reconcile against a global config that has since been deleted).
+    // The current reconcile sees only "cwd-project" in the local fallback —
+    // it must NOT treat "other-project" as removed.
+    activeWorkers.add("other-project");
+    sessionsByProject.set("cwd-project", [makeSession("cwd-project")]);
+    mockLoadConfig.mockImplementation((path?: string) => {
+      if (path === "/tmp/global-config.yaml") {
+        throw Object.assign(new Error("ENOENT"), {
+          code: "ENOENT",
+          path: "/tmp/global-config.yaml",
+        });
+      }
+      return makeConfig(["cwd-project"]);
+    });
+
+    await reconcileProjectSupervisor({ configPath: "/repo/agent-orchestrator.yaml" });
+
+    expect(activeWorkers.has("other-project")).toBe(true);
+    expect(mockRemoveProjectFromRunning).not.toHaveBeenCalledWith("other-project");
+    // Attach pass still runs for the configured cwd project.
+    expect(activeWorkers.has("cwd-project")).toBe(true);
   });
 
   it("rethrows ENOENT from a nested file referenced by the global config", async () => {
@@ -330,7 +476,7 @@ describe("project-supervisor", () => {
         throw new ConfigNotFoundError();
       });
 
-    const handle = await startProjectSupervisor(1_000);
+    const handle = await startProjectSupervisor({ intervalMs: 1_000 });
 
     expect(handle).toEqual({
       stop: expect.any(Function),
@@ -343,7 +489,7 @@ describe("project-supervisor", () => {
   it("forwards the supervisor interval to lifecycle workers it starts", async () => {
     sessionsByProject.set("app", [makeSession("app")]);
 
-    const handle = await startProjectSupervisor(1_234);
+    const handle = await startProjectSupervisor({ intervalMs: 1_234 });
 
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: "/tmp/global-config.yaml" }),
@@ -354,7 +500,7 @@ describe("project-supervisor", () => {
   });
 
   it("reconcileNow waits for a queued reconcile when one is already running", async () => {
-    const handle = await startProjectSupervisor(1_000);
+    const handle = await startProjectSupervisor({ intervalMs: 1_000 });
     let firstRelease: (() => void) | undefined;
     let secondRelease: (() => void) | undefined;
     let listCalls = 0;

@@ -921,7 +921,7 @@ async function runStartup(
   if (shouldStartLifecycle) {
     try {
       spinner.start("Starting project supervisor");
-      await startProjectSupervisor();
+      await startProjectSupervisor({ configPath: config.configPath });
       spinner.succeed("Lifecycle project supervisor started");
     } catch (err) {
       spinner.fail("Project supervisor failed to start");
