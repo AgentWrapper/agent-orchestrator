@@ -116,6 +116,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     ...base,
     ...overrides,
+    prs: overrides.prs ?? (overrides.pr ? [overrides.pr] : []),
     lifecycle: overrides.lifecycle ?? lifecycle,
   };
 }

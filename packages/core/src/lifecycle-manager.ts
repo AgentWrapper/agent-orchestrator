@@ -554,16 +554,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         reposByPlugin.set(pluginKey, new Set());
       }
       reposByPlugin.get(pluginKey)!.add(project.repo);
-
-      if (!session.pr) continue;
-
-      const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-      if (seenPRKeys.has(prKey)) continue;
-      seenPRKeys.add(prKey);
-
-      const pluginPRs = prsByPlugin.get(pluginKey);
-      if (pluginPRs) {
-        pluginPRs.push(session.pr);
+      if (session.prs.length === 0) continue;
+      // Loop over all PRs in the session — supports multi-repo sessions
+      // where an agent opened PRs on multiple repos.
+      for (const pr of session.prs) {
+        const actualPRRepo = `${pr.owner}/${pr.repo}`;
+        if (actualPRRepo !== project.repo) {
+          reposByPlugin.get(pluginKey)!.add(actualPRRepo);
+        }
+        const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+        if (seenPRKeys.has(prKey)) continue;
+        seenPRKeys.add(prKey);
+        const pluginPRs = prsByPlugin.get(pluginKey);
+        if (pluginPRs) {
+          pluginPRs.push(pr);
+        }
       }
     }
 
@@ -682,9 +687,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         continue;
       if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator"))
         continue;
+      // Skip detectPR only if we already have a PR on the configured project repo.
+      // This allows detecting additional PRs on different repos (multi-repo support).
+      const trackedRepos = new Set(session.prs.map((p) => `${p.owner}/${p.repo}`));
+      const projectRepoForDetect = config.projects[session.projectId]?.repo;
       if (
-        session.pr &&
-        !(session.lifecycle.pr.state === "closed" && session.pr.branch !== session.branch)
+        session.prs.length > 0 &&
+        projectRepoForDetect &&
+        trackedRepos.has(projectRepoForDetect) &&
+        !(session.lifecycle.pr.state === "closed")
       ) {
         continue;
       }
@@ -701,9 +712,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       try {
         const detectedPR = await scm.detectPR(session, project);
         if (detectedPR) {
-          session.pr = detectedPR;
+          // Track by owner/repo/number — allows multiple PRs on the same repo
+          // in the same session (e.g. agent opens PR #10 and PR #11 both on acme/main-app).
+          // Only skip if we already have this exact PR number on this exact repo.
+          // If the existing PR on the same repo is closed, replace it with the new one.
+          const alreadyTracked = session.prs.some(
+            (p) =>
+              p.owner === detectedPR.owner &&
+              p.repo === detectedPR.repo &&
+              p.number === detectedPR.number
+          );
+          if (!alreadyTracked) {
+            // Remove any closed PRs on the same repo before adding the new one.
+            // Open PRs on the same repo are kept — multiple open PRs per repo are valid.
+            session.prs = session.prs
+              .filter(
+                (p) =>
+                  !(
+                    p.owner === detectedPR.owner &&
+                    p.repo === detectedPR.repo &&
+                    session.lifecycle.pr.state === "closed"
+                  )
+              )
+              .concat(detectedPR);
+          }
+          // pr is always the primary (first) PR
+          session.pr = session.prs[0] ?? detectedPR;
           const sessionsDir = getProjectSessionsDir(session.projectId);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          const allPrUrls = session.prs.map((p) => p.url).join(",");
+          updateMetadata(sessionsDir, session.id, {
+            pr: session.pr.url,
+            prs: allPrUrls,
+          });
           recordActivityEvent({
             projectId: session.projectId,
             sessionId: session.id,
