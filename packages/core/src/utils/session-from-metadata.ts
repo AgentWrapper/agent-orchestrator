@@ -1,5 +1,6 @@
 import type {
   ActivitySignal,
+  PRInfo,
   RuntimeHandle,
   Session,
   SessionId,
@@ -63,6 +64,31 @@ export function sessionFromMetadata(
   const prUrl = lifecycle.pr.url ?? meta["pr"];
   const prIsDraft = meta[AGENT_REPORT_METADATA_KEYS.PR_IS_DRAFT] === "true";
 
+  // Build a PRInfo object from a single URL string
+  const buildPRInfo = (url: string): PRInfo => {
+    const parsed = parsePrFromUrl(url);
+    return {
+      number: lifecycle.pr.number ?? parsed?.number ?? 0,
+      url,
+      title: "",
+      owner: parsed?.owner ?? "",
+      repo: parsed?.repo ?? "",
+      branch: meta["branch"] ?? "",
+      baseBranch: "",
+      isDraft: prIsDraft,
+    };
+  };
+
+  // Build prs[] from metadata.
+  // New sessions write "prs" as comma-separated URLs for all PRs.
+  // Old sessions only have a single "pr" field — wrap it for backwards compat.
+  const prsRaw = meta["prs"];
+  const prs: PRInfo[] = prsRaw
+    ? prsRaw.split(",").map((u) => buildPRInfo(u.trim())).filter((p) => Boolean(p.url))
+    : prUrl
+      ? [buildPRInfo(prUrl)]
+      : [];
+
   return {
     id: sessionId,
     projectId: meta["project"] ?? options.projectId ?? "",
@@ -72,21 +98,8 @@ export function sessionFromMetadata(
     lifecycle,
     branch: meta["branch"] || null,
     issueId: meta["issue"] || null,
-    pr: prUrl
-      ? (() => {
-          const parsed = parsePrFromUrl(prUrl);
-          return {
-            number: lifecycle.pr.number ?? parsed?.number ?? 0,
-            url: prUrl,
-            title: "",
-            owner: parsed?.owner ?? "",
-            repo: parsed?.repo ?? "",
-            branch: meta["branch"] ?? "",
-            baseBranch: "",
-            isDraft: prIsDraft,
-          };
-        })()
-      : null,
+    pr: prs[0] ?? null,
+    prs,
     workspacePath: meta["worktree"] || options.workspacePathFallback || null,
     runtimeHandle: lifecycle.runtime.handle ?? runtimeHandle,
     agentInfo: meta["summary"] ? { summary: meta["summary"], agentSessionId: null } : null,
