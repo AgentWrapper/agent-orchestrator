@@ -422,9 +422,6 @@ export function classifyAoOrphanCommand(command: string): string | null {
   ) {
     return "lifecycle-worker";
   }
-  if (normalized.includes("ao-messaging/") && normalized.includes("/ao-msg-watch.mjs")) {
-    return "ao-msg-watch";
-  }
   if (normalized.includes("next-server")) {
     return "next-server";
   }

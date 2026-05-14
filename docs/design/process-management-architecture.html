@@ -502,19 +502,6 @@
               </td>
             </tr>
             <tr>
-              <td><code>.ao-messaging/*/ao-msg-watch.mjs</code> watchers</td>
-              <td>Historical/generated messaging helper</td>
-              <td>
-                Legacy or externally generated watcher pattern; no current source-tree spawner
-                found.
-              </td>
-              <td>
-                Current messaging sends through <code>SessionManager.send()</code> and runtime/tmux
-                delivery. This pattern remains in orphan detection only to reap previously leaked
-                processes observed in the field.
-              </td>
-            </tr>
-            <tr>
               <td>Agent runtime/session processes</td>
               <td>Runtime plugins and session manager</td>
               <td>Session-scoped.</td>
@@ -562,10 +549,7 @@
    ├─ dashboard launcher (managed)
    │  ├─ next-server (managed by launcher)
    │  └─ direct-terminal-ws / mux ws (managed by launcher)
-   └─ lifecycle-worker &lt;project&gt; (daemon service)
-
-Historical orphan pattern still reaped if found:
-node .../.ao-messaging/.../ao-msg-watch.mjs</code></pre>
+   └─ lifecycle-worker &lt;project&gt; (daemon service)</code></pre>
       </section>
 
       <section class="card">
@@ -683,12 +667,6 @@ node .../.ao-messaging/.../ao-msg-watch.mjs</code></pre>
         <ul>
           <li><code>node .../@aoagents/ao-web@*/dist-server/...</code></li>
           <li><code>node .../ao lifecycle-worker ...</code></li>
-          <li>
-            <code>node .../ao-messaging/.../ao-msg-watch.mjs</code>
-            <span class="muted"
-              >(historical/generated watcher pattern; not used by current send path)</span
-            >
-          </li>
           <li><code>node ...next-server...</code></li>
         </ul>
         <p>
