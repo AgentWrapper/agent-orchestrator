@@ -15,6 +15,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -170,6 +171,7 @@ function createAiderAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === "indeterminate") return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // Process is running - check for activity signals
@@ -210,7 +212,7 @@ function createAiderAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
           // ps -eo is Unix-only; guard against stale tmux handles on Windows
@@ -230,6 +232,7 @@ function createAiderAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return "indeterminate";
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)aider(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -259,7 +262,7 @@ function createAiderAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return "indeterminate";
       }
     },
 

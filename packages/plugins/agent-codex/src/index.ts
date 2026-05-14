@@ -16,6 +16,7 @@ import {
   type ActivityDetection,
   type CostEstimate,
   type PluginModule,
+  type ProcessProbeResult,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
@@ -599,6 +600,7 @@ function createCodexAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === "indeterminate") return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       if (!session.workspacePath) return null;
@@ -700,7 +702,7 @@ function createCodexAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
           // ps -eo is Unix-only; guard against stale tmux handles on Windows
@@ -720,6 +722,7 @@ function createCodexAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return "indeterminate";
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)codex(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -749,7 +752,7 @@ function createCodexAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return "indeterminate";
       }
     },
 

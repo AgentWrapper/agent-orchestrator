@@ -102,8 +102,9 @@ export async function validateSession(
   let agentActivity: ActivityState | null = null;
   if (agent && runtimeHandle) {
     try {
-      agentProcessRunning = await agent.isProcessRunning(runtimeHandle);
-      processProbeSucceeded = true;
+      const processProbe = await agent.isProcessRunning(runtimeHandle);
+      agentProcessRunning = processProbe === true;
+      processProbeSucceeded = processProbe !== "indeterminate";
     } catch {
       agentProcessRunning = false;
       processProbeSucceeded = false;

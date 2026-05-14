@@ -458,6 +458,9 @@ export interface AttachInfo {
  * Agent adapter for a specific AI coding tool.
  * Knows how to launch, detect activity, and extract session info.
  */
+
+export type ProcessProbeResult = boolean | "indeterminate";
+
 export interface Agent {
   readonly name: string;
 
@@ -483,8 +486,14 @@ export interface Agent {
    */
   getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
 
-  /** Check if agent process is running (given runtime handle) */
-  isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
+  /**
+   * Check if agent process is running (given runtime handle).
+   *
+   * Returns "indeterminate" when the probe could not reliably determine
+   * liveness (for example, `ps`/`tmux` timed out or failed). Callers must
+   * treat that as no verdict, not as a missing process.
+   */
+  isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult>;
 
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;

@@ -1,5 +1,16 @@
 # @aoagents/ao-plugin-agent-codex
 
+## 0.8.0
+
+### Minor Changes
+
+- Distinguish indeterminate agent process probes from definitive process-missing results, and raise ps probe timeouts to avoid bulk runtime_lost terminations when ps or tmux cannot return a reliable verdict.
+
+### Patch Changes
+
+- Updated dependencies
+  - @aoagents/ao-core@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

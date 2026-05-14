@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-cli",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "CLI for agent-orchestrator — the `ao` command",
   "license": "MIT",
   "type": "module",

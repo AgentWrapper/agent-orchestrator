@@ -41,6 +41,7 @@ import {
   type CICheck,
   type ReviewComment,
   type ReviewSummary,
+  type ProcessProbeResult,
 } from "./types.js";
 import {
   buildLifecycleMetadataPatch,
@@ -387,6 +388,8 @@ interface DeterminedStatus {
   status: SessionStatus;
   evidence: string;
   detectingAttempts: number;
+  /** True when probes produced no reliable verdict and lifecycle metadata must remain untouched. */
+  skipMetadataWrite?: boolean;
   /** ISO timestamp when detecting first started. */
   detectingStartedAt?: string;
   /** Hash of evidence for unchanged-evidence detection. */
@@ -396,6 +399,14 @@ interface DeterminedStatus {
 interface ProbeResult {
   state: "alive" | "dead" | "unknown";
   failed: boolean;
+  indeterminate?: boolean;
+}
+
+function processProbeResultToProbeResult(result: ProcessProbeResult): ProbeResult {
+  if (result === "indeterminate") {
+    return { state: "unknown", failed: false, indeterminate: true };
+  }
+  return { state: result ? "alive" : "dead", failed: false };
 }
 
 function splitEvidenceSignals(evidence: string): string[] {
@@ -1062,8 +1073,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
             try {
               const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-              processProbe = { state: processAlive ? "alive" : "dead", failed: false };
-              if (!processAlive) {
+              processProbe = processProbeResultToProbeResult(processAlive);
+              if (processAlive === false) {
                 lifecycle.runtime.state = "exited";
                 lifecycle.runtime.reason = "process_missing";
                 lifecycle.runtime.lastObservedAt = nowIso;
@@ -1129,14 +1140,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (
       processProbe.state === "unknown" &&
+      !processProbe.indeterminate &&
       session.runtimeHandle &&
       canProbeRuntimeIdentity &&
       agent
     ) {
       try {
         const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-        processProbe = { state: processAlive ? "alive" : "dead", failed: false };
-        if (!processAlive) {
+        processProbe = processProbeResultToProbeResult(processAlive);
+        if (processAlive === false) {
           lifecycle.runtime.state = "exited";
           lifecycle.runtime.reason = "process_missing";
           lifecycle.runtime.lastObservedAt = nowIso;
@@ -1157,6 +1169,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           },
         });
       }
+    }
+
+    if (processProbe.indeterminate) {
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "agent",
+        kind: "agent.process_probe_failed",
+        level: "warn",
+        summary: `agent.isProcessRunning indeterminate for ${session.id}`,
+        data: {
+          agentName,
+          reason: "probe_indeterminate",
+        },
+      });
+      return {
+        status: session.status,
+        evidence: session.metadata["lifecycleEvidence"] ?? "process_probe_indeterminate",
+        detectingAttempts: currentDetectingAttempts,
+        detectingStartedAt: currentDetectingStartedAt,
+        detectingEvidenceHash: currentDetectingEvidenceHash,
+        skipMetadataWrite: true,
+      };
     }
 
     const probeDecision = resolveProbeDecision({
@@ -2293,6 +2328,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const previousLifecycle = cloneLifecycle(session.lifecycle);
     const previousPRState = session.lifecycle.pr.state;
     const assessment = await determineStatus(session);
+    if (assessment.skipMetadataWrite) {
+      states.set(session.id, oldStatus);
+      return;
+    }
     const newStatus = assessment.status;
     const lifecycleChanged = session.metadata["lifecycle"] !== JSON.stringify(session.lifecycle);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;

@@ -697,6 +697,36 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 
+  it("leaves lifecycle metadata untouched when process probe is indeterminate", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue("indeterminate");
+
+    const session = makeSession({
+      status: "working",
+      workspacePath: null,
+      metadata: {
+        lifecycleEvidence: "previous_evidence",
+        detectingAttempts: "2",
+      },
+    });
+    const lifecycle = JSON.stringify(session.lifecycle);
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: {
+        lifecycle,
+        lifecycleEvidence: "previous_evidence",
+        detectingAttempts: "2",
+      },
+    });
+    const before = readMetadataRaw(env.sessionsDir, "app-1");
+
+    await lm.check("app-1");
+
+    expect(readMetadataRaw(env.sessionsDir, "app-1")).toEqual(before);
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
   it("does not mark a session stuck from terminal-only idle evidence without a timestamp", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
