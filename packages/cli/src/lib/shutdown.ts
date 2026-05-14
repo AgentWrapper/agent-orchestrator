@@ -19,6 +19,21 @@ import { stopAllLifecycleWorkers } from "./lifecycle-service.js";
 import { stopProjectSupervisor } from "./project-supervisor.js";
 import { unregister, writeLastStop } from "./running-state.js";
 
+// Late import to avoid circular deps — start.ts re-exports stopConfigWatcher.
+let _stopConfigWatcher: (() => Promise<void>) | null = null;
+async function stopConfigWatcher(): Promise<void> {
+  if (!_stopConfigWatcher) {
+    try {
+      const mod = await import("../commands/start.js");
+      _stopConfigWatcher = mod.stopConfigWatcher;
+    } catch {
+      // Config watcher may not be available (e.g. during tests) — ignore.
+      return;
+    }
+  }
+  await _stopConfigWatcher();
+}
+
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface ShutdownContext {
@@ -115,6 +130,12 @@ export function installShutdownHandlers(ctx: ShutdownContext): void {
         await stopBunTmpJanitor();
       } catch {
         // Best-effort cleanup.
+      }
+      try {
+        // Stop the config file watcher if it's running.
+        await stopConfigWatcher();
+      } catch {
+        // Best-effort — never block shutdown.
       }
       process.exit(exitCode);
     })();

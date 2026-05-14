@@ -32,6 +32,7 @@ import {
   loadLocalProjectConfigDetailed,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
+  ConfigWatcher,
   type OrchestratorConfig,
   type LocalProjectConfig,
   type ProjectConfig,
@@ -107,6 +108,19 @@ import { projectSessionUrl } from "../lib/routes.js";
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+// Module-level reference to the active config watcher so the shutdown path
+// can stop it. Only set once per process (single-instance enforced by
+// running.json + startup lock).
+let activeConfigWatcher: InstanceType<typeof ConfigWatcher> | null = null;
+
+/** Stop the config watcher if one is running. Called during graceful shutdown. */
+export async function stopConfigWatcher(): Promise<void> {
+  if (activeConfigWatcher) {
+    await activeConfigWatcher.stop();
+    activeConfigWatcher = null;
+  }
+}
 
 function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
   const localConfig = loadLocalProjectConfigDetailed(projectPath);
@@ -1606,6 +1620,33 @@ export function registerStart(program: Command): void {
           // graceful shutdown: kill sessions, record last-stop state for
           // restore, unregister, then exit. See lib/shutdown.ts.
           installShutdownHandlers({ configPath: config.configPath, projectId });
+
+          // ── Config hot-reload watcher (c12) ──
+          // Watches agent-orchestrator.yaml for changes and validates
+          // the reloaded config with existing Zod schemas. Invalid
+          // changes are rejected; the last-known-good config is kept.
+          const configWatcher = new ConfigWatcher({
+            configPath: config.configPath,
+            onChange: (event) => {
+              console.log(
+                chalk.dim(
+                  `[config] Reloaded ${event.configPath} — changes applied for new sessions`,
+                ),
+              );
+            },
+            onError: (error) => {
+              console.warn(
+                chalk.yellow(
+                  `[config] Reload failed, keeping current config: ${error.message}`,
+                ),
+              );
+            },
+          });
+          await configWatcher.start();
+          // Store reference so the shutdown path can stop the watcher.
+          // The watcher uses an unref'd file watcher internally, so it
+          // won't keep the process alive on its own.
+          activeConfigWatcher = configWatcher;
         } catch (err) {
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);

@@ -17,6 +17,14 @@ export {
   findConfig,
   findConfigFile,
 } from "./config.js";
+
+// Config hot-reload — c12-backed file watcher
+export {
+  ConfigWatcher,
+  type ConfigChangeEvent,
+  type ConfigChangeHandler,
+  type ConfigWatcherOptions,
+} from "./config-watcher.js";
 export { isPortfolioEnabled } from "./feature-flags.js";
 
 // Plugin registry
