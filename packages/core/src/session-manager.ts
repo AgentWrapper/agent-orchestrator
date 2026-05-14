@@ -1523,12 +1523,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
       invalidateCache();
 
+      if (
+        plugins.agent.promptDelivery === "post-launch" &&
+        typeof taskPrompt === "string" &&
+        taskPrompt.trim()
+      ) {
+        await plugins.runtime.sendMessage(handle, taskPrompt);
+      }
+
       // Past this point every resource that needed an undo is on disk in its
       // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Prompt is delivered inline via the agent's launch command (positional argument).
-      // No post-launch polling needed — the prompt is part of process invocation.
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,

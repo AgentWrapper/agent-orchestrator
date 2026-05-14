@@ -53,6 +53,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/agent-opencode/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-agent-droid",
+        replacement: resolve(__dirname, "../plugins/agent-droid/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-workspace-worktree",
         replacement: resolve(__dirname, "../plugins/workspace-worktree/src/index.ts"),
       },

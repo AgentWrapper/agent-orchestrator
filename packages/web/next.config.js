@@ -13,6 +13,7 @@ const nextConfig = {
     "@aoagents/ao-plugin-agent-claude-code",
     "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
+    "@aoagents/ao-plugin-agent-droid",
     "@aoagents/ao-plugin-runtime-tmux",
     "@aoagents/ao-plugin-scm-github",
     "@aoagents/ao-plugin-tracker-github",
