@@ -1,5 +1,14 @@
 # @aoagents/ao-plugin-agent-cursor
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [0f5ae0b]
+- Updated dependencies [fe33bb7]
+- Updated dependencies [7c46dc9]
+  - @aoagents/ao-core@0.7.0
+
 ## 0.1.4
 
 ### Patch Changes

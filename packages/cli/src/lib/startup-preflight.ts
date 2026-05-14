@@ -12,22 +12,21 @@
  * `runStartup` runs once at process start.
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import {
   getAoBaseDir,
+  getDefaultRuntime,
   getGlobalConfigPath,
   inventoryHashDirs,
+  isWindows,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
 import { execSilent } from "./shell.js";
 import { detectOpenClawInstallation } from "./openclaw-probe.js";
 import { applyOpenClawCredentials } from "./credential-resolver.js";
 import { preventIdleSleep } from "./prevent-sleep.js";
-import {
-  askYesNo,
-  tryInstallWithAttempts,
-  type InstallAttempt,
-} from "./install-helpers.js";
+import { askYesNo, tryInstallWithAttempts, type InstallAttempt } from "./install-helpers.js";
 
 function gitInstallAttempts(): InstallAttempt[] {
   if (process.platform === "darwin") {
@@ -112,12 +111,86 @@ export async function ensureGit(context: string): Promise<void> {
 }
 
 /**
+ * On Windows, attempt to rewrite `runtime: tmux` -> `runtime: process` in the
+ * project's agent-orchestrator.yaml after asking the user. Uses a targeted
+ * line replace (not a yaml round-trip) so comments and quoting are preserved.
+ *
+ * Returns `true` on a successful rewrite. The caller is responsible for
+ * mutating the in-memory config (or reloading) so the rest of preflight
+ * sees the new runtime.
+ */
+async function offerWindowsRuntimeSwitch(configPath: string): Promise<boolean> {
+  console.log(chalk.yellow("\n⚠ tmux runtime is not supported on Windows."));
+  console.log(chalk.dim(`  Config: ${configPath}`));
+  console.log(
+    chalk.dim(
+      "  AO can rewrite `runtime: tmux` -> `runtime: process` in this file.\n" +
+        "  If the file is git-tracked, you'll see this as a local change.",
+    ),
+  );
+
+  const accept = await askYesNo("Switch this project to runtime: process?", true, false);
+  if (!accept) return false;
+
+  let original: string;
+  try {
+    original = readFileSync(configPath, "utf-8");
+  } catch (err) {
+    console.error(
+      chalk.red(`  ✗ Could not read config: ${err instanceof Error ? err.message : String(err)}`),
+    );
+    return false;
+  }
+
+  // Match the runtime line whether quoted or unquoted, and preserve any
+  // trailing comment. Anchored multiline so we don't accidentally rewrite
+  // e.g. a string value on another line.
+  const runtimeLineRe = /^([ \t]*runtime:[ \t]*)(?:'tmux'|"tmux"|tmux)([ \t]*(?:#.*)?)$/m;
+  if (!runtimeLineRe.test(original)) {
+    console.error(
+      chalk.red("  ✗ Could not locate `runtime: tmux` line in config; aborting rewrite."),
+    );
+    return false;
+  }
+  const rewritten = original.replace(runtimeLineRe, "$1process$2");
+
+  try {
+    writeFileSync(configPath, rewritten, "utf-8");
+  } catch (err) {
+    console.error(
+      chalk.red(`  ✗ Failed to write config: ${err instanceof Error ? err.message : String(err)}`),
+    );
+    return false;
+  }
+  console.log(chalk.green("  ✓ Updated runtime to process"));
+  return true;
+}
+
+/**
  * Ensure tmux is available — interactive install with user consent if missing.
  * Called from runtimePreflight() so all `ao start` paths are covered.
+ *
+ * On Windows, tmux cannot run; instead, offer to rewrite the project config
+ * to `runtime: process`. Returns `{ switchedToProcess: true }` if the rewrite
+ * succeeded so the caller can update the in-memory config.
  */
-export async function ensureTmux(): Promise<void> {
+export async function ensureTmux(configPath?: string): Promise<{ switchedToProcess: boolean }> {
+  if (isWindows()) {
+    if (configPath) {
+      const switched = await offerWindowsRuntimeSwitch(configPath);
+      if (switched) return { switchedToProcess: true };
+    }
+    console.error(chalk.red("\n✗ tmux runtime is not supported on Windows.\n"));
+    console.log(
+      chalk.bold("  Set ") +
+        chalk.cyan("runtime: process") +
+        chalk.bold(" in agent-orchestrator.yaml, then re-run ao start.\n"),
+    );
+    process.exit(1);
+  }
+
   const hasTmux = (await execSilent("tmux", ["-V"])) !== null;
-  if (hasTmux) return;
+  if (hasTmux) return { switchedToProcess: false };
 
   console.log(chalk.yellow('⚠ tmux is required for runtime "tmux".'));
   const shouldInstall = await askYesNo("Install tmux now?", true, false);
@@ -128,7 +201,7 @@ export async function ensureTmux(): Promise<void> {
     );
     if (installed) {
       console.log(chalk.green("  ✓ tmux installed successfully"));
-      return;
+      return { switchedToProcess: false };
     }
   }
 
@@ -209,9 +282,17 @@ export async function warnAboutOpenClawStatus(config: OrchestratorConfig): Promi
  * for the lifetime of the process.
  */
 export async function runtimePreflight(config: OrchestratorConfig): Promise<void> {
-  const runtime = config.defaults?.runtime ?? "tmux";
+  const runtime = config.defaults?.runtime ?? getDefaultRuntime();
   if (runtime === "tmux") {
-    await ensureTmux();
+    const result = await ensureTmux(config.configPath);
+    if (result.switchedToProcess) {
+      // Mutate in-memory config so the rest of startup uses the new runtime.
+      // Disk has already been updated; subsequent loadConfig() calls will
+      // see the same value.
+      const defaults = config.defaults ?? {};
+      defaults.runtime = "process";
+      config.defaults = defaults;
+    }
   }
   warnAboutLegacyStorage();
   await warnAboutOpenClawStatus(config);

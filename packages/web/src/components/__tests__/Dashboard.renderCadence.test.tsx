@@ -56,7 +56,15 @@ describe("Dashboard render cadence", () => {
   beforeEach(() => {
     renderCounts.clear();
     currentMuxSessions = [];
-    global.fetch = vi.fn();
+    // Stub /api/version so UpdateBanner stays hidden and doesn't trigger
+    // an extra render that would inflate the cadence counts under test.
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/version")) {
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
+      }
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    });
   });
 
   it("rerenders only the changed session card for same-membership snapshots", async () => {
@@ -94,7 +102,16 @@ describe("Dashboard render cadence", () => {
 
     expect(renderCounts.get("session-1")).toBe(2);
     expect(renderCounts.get("session-2")).toBe(1);
-    expect(fetch).not.toHaveBeenCalled();
+    // The Dashboard mounts UpdateBanner which fetches /api/version once.
+    // We assert that no OTHER endpoints were touched — that's what the
+    // cadence test really cares about (no per-card refetch).
+    const otherCalls = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input]) => {
+        const url = typeof input === "string" ? input : (input as URL).toString();
+        return !url.includes("/api/version");
+      });
+    expect(otherCalls).toHaveLength(0);
   });
 
   it("does not rerender any card when snapshot data is identical", async () => {

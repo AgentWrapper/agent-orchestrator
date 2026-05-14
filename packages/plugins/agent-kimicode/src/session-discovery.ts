@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { Session } from "@aoagents/ao-core";
 
 // =============================================================================
@@ -142,6 +142,13 @@ function kimiWorkspaceHash(workspacePath: string): string {
  */
 async function resolveWorkspacePath(workspacePath: string): Promise<string> {
   try {
+    // Stat first because Node's realpath() on Windows silently
+    // canonicalizes non-existent paths (e.g. "/workspace/test"
+    // becomes "D:\workspace\test") instead of throwing ENOENT
+    // like POSIX does. That divergence breaks any caller that
+    // hashes the result and expects parity with a separately-
+    // computed hash of the raw input.
+    await stat(workspacePath);
     return await realpath(workspacePath);
   } catch {
     return workspacePath;
@@ -169,7 +176,10 @@ async function isInsideKimiSessions(candidate: string): Promise<boolean> {
   } catch {
     return false;
   }
-  const rootWithSep = rootReal.endsWith("/") ? rootReal : rootReal + "/";
+  // Use the platform separator. realpath() returns native paths
+  // (backslashes on Windows), so a hardcoded "/" check would never
+  // match and every session candidate would be rejected.
+  const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
   return candReal === rootReal || candReal.startsWith(rootWithSep);
 }
 

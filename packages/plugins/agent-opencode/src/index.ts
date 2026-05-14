@@ -7,6 +7,7 @@ import {
   getActivityFallbackState,
   recordTerminalActivity,
   asValidOpenCodeSessionId,
+  isWindows,
   getCachedOpenCodeSessionList,
   getOpenCodeChildEnv,
   ensureOpenCodeTmpDir,
@@ -343,6 +344,8 @@ function createOpenCodeAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux and ps are Unix-only; guard before any tmux calls on Windows.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -442,7 +445,14 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("opencode", ["version"], { stdio: "ignore", env: getOpenCodeChildEnv() });
+    execFileSync("opencode", ["version"], {
+      stdio: "ignore",
+      // On Windows, execFileSync cannot resolve .cmd shim extensions without
+      // invoking the shell; windowsHide:true suppresses the conhost popup.
+      shell: isWindows(),
+      windowsHide: true,
+      env: getOpenCodeChildEnv(),
+    });
     return true;
   } catch {
     return false;

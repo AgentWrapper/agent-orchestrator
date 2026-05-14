@@ -302,6 +302,17 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Platform adapter — centralized cross-platform branching
+export {
+  isWindows,
+  isMac,
+  getDefaultRuntime,
+  getShell,
+  killProcessTree,
+  findPidByPort,
+  getEnvDefaults,
+} from "./platform.js";
+
 export { normalizeOriginUrl, relativeSubdir, deriveStorageKey } from "./storage-key.js";
 
 export {
@@ -328,6 +339,7 @@ export {
   isCanonicalGlobalConfigPath,
   loadGlobalConfig,
   saveGlobalConfig,
+  createDefaultGlobalConfig,
   loadLocalProjectConfig,
   LocalProjectConfigSchema,
   loadLocalProjectConfigDetailed,
@@ -347,7 +359,24 @@ export type {
   LocalProjectConfig,
   LocalProjectConfigLoadResult,
   RegisterProjectOptions,
+  UpdateChannel,
+  InstallMethodOverride,
 } from "./global-config.js";
+export { UpdateChannelSchema, InstallMethodOverrideSchema } from "./global-config.js";
+
+// Channel-aware semver comparison shared by the CLI's update-check and the
+// dashboard's /api/version route.
+export { isVersionOutdated } from "./version-compare.js";
+
+// Cache-layer primitives for the update pipeline. Both the CLI and the
+// dashboard's /api/version route read the same cache file; centralising the
+// path + shape here prevents drift.
+export {
+  getUpdateCheckCachePath,
+  readUpdateCheckCacheRaw,
+  getInstalledAoVersion,
+} from "./update-cache.js";
+export type { UpdateCheckCacheRaw } from "./update-cache.js";
 
 export { loadEffectiveProjectConfig, iterateAllProjects } from "./project-resolver.js";
 
@@ -423,9 +452,17 @@ export type {
 
 export { atomicWriteFileSync } from "./atomic-write.js";
 
+export {
+  registerWindowsPtyHost,
+  unregisterWindowsPtyHost,
+  getWindowsPtyHosts,
+  clearWindowsPtyHostRegistry,
+  type WindowsPtyHostEntry,
+} from "./windows-pty-registry.js";
+
 // Activity event logging — structured diagnostic event trail
 export { recordActivityEvent, droppedEventCount } from "./activity-events.js";
-export { isActivityEventsFtsEnabled } from "./events-db.js";
+export { isActivityEventsFtsEnabled, closeDb } from "./events-db.js";
 export type {
   ActivityEventInput,
   ActivityEventKind,

@@ -18,7 +18,9 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   git --version
   ```
 
-- **tmux** (for tmux runtime) - Terminal multiplexer for session management
+- **Terminal runtime** — varies by OS:
+
+  **On macOS / Linux:** `tmux` is required (it's the default runtime).
 
   ```bash
   tmux -V
@@ -32,6 +34,8 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   # Install on Fedora/RHEL
   sudo dnf install tmux
   ```
+
+  **On Windows:** tmux is **not** required. AO uses native ConPTY via the `runtime-process` plugin (the default on Windows). PowerShell 7+ is recommended; if you have Git Bash and prefer bash semantics for shell-out commands, set `AO_SHELL=bash` in your environment. WSL is not required.
 
 - **GitHub CLI** (for GitHub integration) - Required for PR creation, issue management
 
@@ -147,7 +151,7 @@ If a config already exists, the new project is appended. If not, one is created 
 - **Project type** — language, framework, test runner, package manager
 - **Agent runtime** — which AI agents are installed (Claude Code, Codex, Aider, OpenCode)
 - **Free port** — if configured port is busy, auto-finds the next available
-- **tmux** — warns if not installed
+- **tmux** — warns if not installed (skipped on Windows; AO uses ConPTY there and tmux is not required)
 - **GitHub CLI** — checks `gh auth status`
 
 ### Manual Configuration
@@ -192,7 +196,7 @@ Agent Orchestrator has 8 plugin slots. All are swappable:
 
 | Slot          | Purpose              | Default       | Alternatives                                    |
 | ------------- | -------------------- | ------------- | ----------------------------------------------- |
-| **Runtime**   | How sessions run     | `tmux`        | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
+| **Runtime**   | How sessions run     | `tmux` (macOS/Linux) / `process` (Windows; ConPTY via node-pty) | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
 | **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
 | **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
 | **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
@@ -288,7 +292,7 @@ Override defaults per project:
 ```yaml
 projects:
   frontend:
-    runtime: tmux
+    runtime: tmux       # default on macOS/Linux; on Windows use `process`
     agent: claude-code
     workspace: worktree
 
@@ -403,7 +407,7 @@ ao doctor
 ao doctor --fix
 ```
 
-`ao doctor` reports deterministic PASS/WARN/FAIL checks for PATH and launcher resolution, required binaries, tmux and GitHub CLI health, stale AO temp files, config support directories, and core build/runtime sanity. `--fix` only applies safe fixes such as creating missing AO support directories, refreshing the local launcher link, and removing stale AO temp files.
+`ao doctor` reports deterministic PASS/WARN/FAIL checks for PATH and launcher resolution, required binaries, terminal-runtime health (tmux on Unix; PowerShell / `runtime-process` on Windows), GitHub CLI health, stale AO temp files, config support directories, and core build/runtime sanity. It runs and is supported on Windows. `--fix` only applies safe fixes such as creating missing AO support directories, refreshing the local launcher link, and removing stale AO temp files.
 
 ### Run `ao update`
 
@@ -414,7 +418,7 @@ git switch main
 ao update
 ```
 
-`ao update` is intentionally conservative: it requires a clean working tree on `main`, fast-forwards from `origin/main`, reinstalls dependencies, clean-rebuilds the critical core/CLI/web packages, refreshes the launcher with `npm link`, and runs CLI smoke tests. Use `ao update --skip-smoke` to stop after rebuild, or `ao update --smoke-only` to rerun just the smoke checks.
+`ao update` is intentionally conservative: it requires a clean working tree on `main`, fast-forwards from `origin/main`, reinstalls dependencies, clean-rebuilds the critical core/CLI/web packages, refreshes the launcher with `npm link`, and runs CLI smoke tests. Works on macOS, Linux, and Windows (Windows uses the bundled `ao-update.ps1` script automatically). Use `ao update --skip-smoke` to stop after rebuild, or `ao update --smoke-only` to rerun just the smoke checks.
 
 ### "No agent-orchestrator.yaml found"
 
@@ -432,7 +436,7 @@ cp examples/simple-github.yaml agent-orchestrator.yaml
 
 ### "tmux not found"
 
-**Problem:** tmux is not installed (required for tmux runtime).
+**Problem:** tmux is not installed (required for the tmux runtime — the default on macOS and Linux).
 
 **Solution:**
 
@@ -446,6 +450,8 @@ sudo apt install tmux
 # Fedora/RHEL
 sudo dnf install tmux
 ```
+
+**On Windows:** this error should not appear in normal use. If it does, your config has `runtime: tmux` set explicitly. Switch to `runtime: process` (or remove the override — `process` is the Windows default), and AO will use ConPTY natively without tmux.
 
 ### "gh auth failed"
 
@@ -682,7 +688,7 @@ notifiers:
 A session is an isolated workspace where an agent works on a single issue. Each session has:
 
 - Its own git worktree or clone
-- Its own tmux session (or Docker container, etc.)
+- Its own runtime session — a tmux session on macOS/Linux, a ConPTY pty-host process on Windows (or a Docker container, etc.)
 - Its own metadata (branch, PR, status)
 - Its own event log
 

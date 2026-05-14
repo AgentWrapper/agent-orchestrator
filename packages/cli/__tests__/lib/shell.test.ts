@@ -1,11 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockExecFile } = vi.hoisted(() => ({
+const { mockExecFile, mockKillProcessTree } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
+  mockKillProcessTree: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("node:child_process", () => ({
   execFile: mockExecFile,
+}));
+
+vi.mock("@aoagents/ao-core", () => ({
+  killProcessTree: mockKillProcessTree,
 }));
 
 import {
@@ -16,7 +23,12 @@ import {
   gh,
   getTmuxSessions,
   getTmuxActivity,
+  forwardSignalsToChild,
 } from "../../src/lib/shell.js";
+
+function makeFakeChild(): ChildProcess {
+  return new EventEmitter() as unknown as ChildProcess;
+}
 
 beforeEach(() => {
   mockExecFile.mockReset();
@@ -180,5 +192,68 @@ describe("getTmuxActivity", () => {
     mockSuccess("not-a-number\n");
     const result = await getTmuxActivity("session-1");
     expect(result).toBeNull();
+  });
+});
+
+describe("forwardSignalsToChild", () => {
+  afterEach(() => {
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
+    mockKillProcessTree.mockClear();
+  });
+
+  it("registers SIGINT and SIGTERM listeners on the process", () => {
+    const child = makeFakeChild();
+    const before = process.listenerCount("SIGINT");
+    forwardSignalsToChild(1234, child);
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    expect(process.listenerCount("SIGTERM")).toBe(before + 1);
+  });
+
+  it("is idempotent — calling twice for the same child registers only one handler per signal", () => {
+    const child = makeFakeChild();
+    const before = process.listenerCount("SIGINT");
+    forwardSignalsToChild(1234, child);
+    forwardSignalsToChild(1234, child);
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    expect(process.listenerCount("SIGTERM")).toBe(before + 1);
+  });
+
+  it("allows independent registration for different child objects", () => {
+    const childA = makeFakeChild();
+    const childB = makeFakeChild();
+    const before = process.listenerCount("SIGINT");
+    forwardSignalsToChild(1234, childA);
+    forwardSignalsToChild(5678, childB);
+    expect(process.listenerCount("SIGINT")).toBe(before + 2);
+    expect(process.listenerCount("SIGTERM")).toBe(before + 2);
+  });
+
+  it("removes SIGTERM handler when SIGINT fires", () => {
+    const child = makeFakeChild();
+    forwardSignalsToChild(1234, child);
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    process.emit("SIGINT");
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore - 1);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(1234, "SIGTERM");
+  });
+
+  it("removes SIGINT handler when SIGTERM fires", () => {
+    const child = makeFakeChild();
+    forwardSignalsToChild(1234, child);
+    const sigintBefore = process.listenerCount("SIGINT");
+    process.emit("SIGTERM");
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore - 1);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(1234, "SIGTERM");
+  });
+
+  it("removes both signal handlers when child exits normally", () => {
+    const child = makeFakeChild();
+    forwardSignalsToChild(1234, child);
+    const sigintBefore = process.listenerCount("SIGINT");
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    child.emit("exit", 0, null);
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore - 1);
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore - 1);
   });
 });

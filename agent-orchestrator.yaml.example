@@ -31,8 +31,9 @@ port: 3000
 #                                   # that is still active at merge time. Default 5 min.
 
 # Default plugins (these are the defaults — you can omit this section)
+# runtime defaults to 'tmux' on Linux/macOS, 'process' on Windows
 defaults:
-  runtime: tmux           # tmux | process
+  # runtime: tmux         # tmux (Linux/macOS default) | process (Windows default)
   agent: claude-code      # claude-code | codex | aider | opencode | cursor | kimicode
   # orchestrator:
   #   agent: claude-code

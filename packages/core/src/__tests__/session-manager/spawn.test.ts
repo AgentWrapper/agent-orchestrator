@@ -28,7 +28,7 @@ import {
   makeHandle,
   type TestContext,
 } from "../test-utils.js";
-import { installMockOpencode, installMockGit } from "./opencode-helpers.js";
+import { installMockOpencode, installMockGit, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -73,7 +73,7 @@ describe("spawn", () => {
     expect(mockWorkspace.create).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "my-app",
-        worktreeDir: expect.stringContaining("projects/my-app/worktrees"),
+        worktreeDir: expect.stringMatching(/projects[\\/]my-app[\\/]worktrees/),
       }),
     );
     // Verify agent launch command was requested
@@ -181,7 +181,9 @@ describe("spawn", () => {
 
     const call = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(call?.environment?.PATH).not.toBe("/should/not/win");
-    expect(call?.environment?.PATH).toContain(".ao/bin");
+    // Use platform-aware path so the assertion works on both POSIX and Windows
+    // (where buildAgentPath joins with backslashes via path.join).
+    expect(call?.environment?.PATH).toContain(join(".ao", "bin"));
     expect(call?.environment?.GH_PATH).not.toBe("/should/not/win");
     expect(call?.environment?.GH_PATH).toBe("/usr/local/bin/gh");
   });
@@ -429,7 +431,7 @@ describe("spawn", () => {
 
   it("skips remote session branches when allocating a fresh session id", async () => {
     const mockGitBin = installMockGit(tmpDir, ["session/app-22"]);
-    process.env.PATH = `${mockGitBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
     mkdirSync(config.projects["my-app"]!.path, { recursive: true });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -624,7 +626,7 @@ describe("spawn", () => {
   it("deletes old issue mappings and starts fresh when opencodeIssueSessionStrategy is delete", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-issue.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const opencodeAgent: Agent = {
       ...mockAgent,
@@ -1798,7 +1800,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1861,7 +1863,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1910,7 +1912,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1962,7 +1964,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -2012,7 +2014,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,

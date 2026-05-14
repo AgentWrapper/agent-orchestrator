@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
 
-const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
-  vi.hoisted(() => ({
-    mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
-    mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
-    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
-  }));
+const {
+  mockAppendActivityEntry,
+  mockReadLastActivityEntry,
+  mockRecordTerminalActivity,
+  mockIsWindows,
+} = vi.hoisted(() => ({
+  mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+  mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  // Default to false so tests exercise the Unix path even when run on Windows.
+  // Tests that need to verify Windows-specific branches override with mockReturnValueOnce.
+  mockIsWindows: vi.fn(() => false),
+}));
 
 const mockExecFileAsync = vi.fn();
 
@@ -17,6 +24,14 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     appendActivityEntry: mockAppendActivityEntry,
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
+    isWindows: mockIsWindows,
+    // Force POSIX-form shellEscape in tests so assertions are platform-stable.
+    // (The real shellEscape picks PowerShell '' on Windows vs POSIX '\''.)
+    shellEscape: (arg: string) => "'" + arg.replace(/'/g, "'\\''") + "'",
+    // buildAgentPath is platform-aware (path separator + ~/.ao/bin path).
+    // Force a POSIX-form result for stable PATH assertions.
+    buildAgentPath: (existing: string | undefined) =>
+      ["~/.ao/bin", existing ?? ""].filter(Boolean).join(":"),
   };
 });
 

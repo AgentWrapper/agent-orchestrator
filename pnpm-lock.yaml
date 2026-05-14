@@ -497,6 +497,9 @@ importers:
       '@aoagents/ao-core':
         specifier: workspace:*
         version: link:../../core
+      node-pty:
+        specifier: ^1.0.0
+        version: 1.1.0
     devDependencies:
       '@types/node':
         specifier: ^25.2.3
@@ -691,6 +694,9 @@ importers:
       '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
+      '@aoagents/ao-plugin-runtime-process':
+        specifier: workspace:*
+        version: link:../plugins/runtime-process
       '@aoagents/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux
@@ -6364,8 +6370,7 @@ snapshots:
       semver: 7.7.4
     optional: true
 
-  node-addon-api@7.1.1:
-    optional: true
+  node-addon-api@7.1.1: {}
 
   node-gyp@12.2.0:
     dependencies:
@@ -6385,7 +6390,6 @@ snapshots:
   node-pty@1.1.0:
     dependencies:
       node-addon-api: 7.1.1
-    optional: true
 
   node-releases@2.0.37: {}
 

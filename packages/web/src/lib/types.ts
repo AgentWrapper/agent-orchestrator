@@ -106,6 +106,12 @@ export interface DashboardSession {
    * remain identifiable even when PR/issue enrichment is unavailable.
    */
   displayName: string | null;
+  /**
+   * True when `displayName` was explicitly set by the user via the rename UI.
+   * Auto-derived spawn-time values leave this false. {@link getSessionTitle}
+   * uses it to decide whether `displayName` should beat live PR/issue titles.
+   */
+  displayNameUserSet: boolean;
   summary: string | null;
   /** True when the summary is a low-quality fallback (e.g. truncated spawn prompt) */
   summaryIsFallback: boolean;

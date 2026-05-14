@@ -22,10 +22,12 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
+import { UpdateBanner } from "./UpdateBanner";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { DashboardNotificationButton } from "./DashboardNotificationButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { BottomSheet } from "./BottomSheet";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -122,7 +124,7 @@ function DoneCard({
           </a>
         ) : null}
         <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
-        {canRestore ? (
+        {canRestore && !isMerged ? (
           <button
             type="button"
             className="done-card__restore"
@@ -196,6 +198,11 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [collapsedZones, setCollapsedZones] = useState<Set<AttentionLevel>>(
+    () => new Set<AttentionLevel>(["done", "working"]),
+  );
+  const [previewSession, setPreviewSession] = useState<DashboardSession | null>(null);
+  const [bottomSheetMode, setBottomSheetMode] = useState<"preview" | "confirm-kill">("preview");
   const debugParam = searchParams.get("debug");
   const showDebugBundleButton =
     !isMobile &&
@@ -367,6 +374,25 @@ function DashboardInner({
     },
     [killSession],
   );
+  const handlePreview = useCallback((session: DashboardSession) => {
+    setPreviewSession(session);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleRequestKill = useCallback(() => {
+    setBottomSheetMode("confirm-kill");
+  }, []);
+
+  const handleBottomSheetClose = useCallback(() => {
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleBottomSheetConfirmKill = useCallback(() => {
+    if (previewSession) void killSession(previewSession.id);
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, [previewSession, killSession]);
 
   const handleMerge = useCallback(
     async (prNumber: number) => {
@@ -479,6 +505,17 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const handleZoneToggle = (level: AttentionLevel) => {
+    setCollapsedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  };
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setMobileMenuOpen((current) => !current);
@@ -492,6 +529,7 @@ function DashboardInner({
       value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen: mobileMenuOpen }}
     >
       <>
+        <UpdateBanner />
         <ConnectionBar status={connectionStatus} />
         <div className="dashboard-app-shell">
           <header className="dashboard-app-header">
@@ -690,6 +728,10 @@ function DashboardInner({
                           onKill={handleKill}
                           onMerge={handleMerge}
                           onRestore={handleRestore}
+                          compactMobile={isMobile}
+                          collapsed={isMobile && collapsedZones.has(level)}
+                          onToggle={isMobile ? handleZoneToggle : undefined}
+                          onPreview={isMobile ? handlePreview : undefined}
                         />
                       ))}
                     </div>
@@ -751,6 +793,15 @@ function DashboardInner({
             </main>
           </div>
         </div>
+        <BottomSheet
+          session={previewSession}
+          mode={bottomSheetMode}
+          onCancel={handleBottomSheetClose}
+          onConfirm={handleBottomSheetConfirmKill}
+          onRequestKill={handleRequestKill}
+          onMerge={handleMerge}
+          isMergeReady={previewSession ? attentionLevels[previewSession.id] === "merge" : false}
+        />
       </>
     </SidebarContext.Provider>
   );

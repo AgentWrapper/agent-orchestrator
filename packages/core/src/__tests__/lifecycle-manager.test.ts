@@ -1280,12 +1280,21 @@ describe("check (single session)", () => {
 
     try {
       lm.start(60_000);
-      await vi.waitFor(() => {
-        const adoptedCount = [sessionA.branch, sessionB.branch].filter(
-          (branch) => branch === "shared-branch",
-        ).length;
-        expect(adoptedCount).toBe(1);
-      });
+      // Poll for the cycle to finish — Windows fs is slower, a fixed 25ms wait
+      // can race past the lifecycle list() call before adoption resolves.
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        if (vi.mocked(mockSessionManager.list).mock.calls.length >= 1) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      const adoptedCount = [sessionA.branch, sessionB.branch].filter(
+        (branch) => branch === "shared-branch",
+      ).length;
+      expect(adoptedCount).toBe(1);
       expect(mockSessionManager.list).toHaveBeenCalledTimes(1);
     } finally {
       lm.stop();

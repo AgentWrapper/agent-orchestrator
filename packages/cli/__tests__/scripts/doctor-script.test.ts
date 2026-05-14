@@ -91,7 +91,10 @@ function createHealthyPath(binDir: string): void {
   createFakeBinary(binDir, "ao", 'printf "/fake/ao\\n" >/dev/null\nexit 0');
 }
 
-describe("ao-doctor.sh", () => {
+// Skipped on Windows: bash is required to execute the doctor script and is not
+// guaranteed to be available without Git for Windows. The Windows code path
+// (Git Bash auto-detection in runRepoScript) is exercised at runtime, not here.
+describe.skipIf(process.platform === "win32")("ao-doctor.sh", () => {
   it("reports a healthy install as PASS", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-script-"));
     const fakeRepo = createHealthyRepo(tempRoot);

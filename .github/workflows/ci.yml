@@ -10,6 +10,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Minimal token scope — all jobs only checkout, install, build, and test.
+# None of them push code, comment on PRs, or call mutating GitHub APIs.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
@@ -36,15 +41,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Build all non-web packages
-      - run: pnpm -r --filter '!@aoagents/ao-web' build
+      - run: pnpm -r --filter "!@aoagents/ao-web" build
       # Typecheck all non-web packages
-      - run: pnpm -r --filter '!@aoagents/ao-web' typecheck
+      - run: pnpm -r --filter "!@aoagents/ao-web" typecheck
       # Build web (Next.js build includes its own typecheck)
       - run: pnpm --filter @aoagents/ao-web build
 
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -53,12 +62,23 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@aoagents/ao-web' build
+      - run: pnpm -r --filter "!@aoagents/ao-web" build
+      # Verify node-pty's Windows prebuild loads cleanly before any test that
+      # depends on it. A broken prebuild fails this step in seconds with a
+      # clear "node-pty" stack rather than a buried integration-test failure.
+      - name: Verify node-pty prebuild (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/plugins/runtime-process
+        run: node -e "const p=require('node-pty');const t=p.spawn('cmd.exe',['/c','exit'],{cols:80,rows:24});t.onExit(({exitCode})=>process.exit(exitCode));setTimeout(()=>process.exit(2),5000)"
       - run: pnpm test
 
   test-web:
-    name: Test (Web)
-    runs-on: ubuntu-latest
+    name: Test Web (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -66,11 +86,18 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      # tmux is the Linux/macOS terminal runtime backing direct-terminal-ws
+      # integration tests. Windows uses runtime-process + named pipes (covered
+      # by mux-websocket-windows.test.ts) — those tmux tests self-skip.
       - name: Install tmux
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Start tmux server
+        if: runner.os == 'Linux'
         run: tmux start-server
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter '!@aoagents/ao-web' build
-      - name: Run web server tests (unit + integration)
-        run: pnpm --filter @aoagents/ao-web exec vitest run server/__tests__/
+      - run: pnpm -r --filter "!@aoagents/ao-web" build
+      # Full web suite — components, hooks, libs, app routes, and server tests.
+      # Previously this job was scoped to server/__tests__/ only; broadening it
+      # closes a long-standing coverage gap on both Linux and Windows.
+      - run: pnpm --filter @aoagents/ao-web test

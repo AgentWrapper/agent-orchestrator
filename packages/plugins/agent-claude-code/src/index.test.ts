@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { join as pathJoin } from "node:path";
 import {
   createActivitySignal,
   type Session,
@@ -14,22 +15,26 @@ const {
   mockExecFileAsync,
   mockReaddir,
   mockReadFile,
+  mockReadFileSync,
   mockStat,
   mockHomedir,
   mockWriteFile,
   mockMkdir,
   mockChmod,
   mockExistsSync,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockReaddir: vi.fn(),
   mockReadFile: vi.fn(),
+  mockReadFileSync: vi.fn(() => ""),
   mockStat: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockChmod: vi.fn().mockResolvedValue(undefined),
   mockExistsSync: vi.fn().mockReturnValue(false),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:child_process", () => {
@@ -50,11 +55,20 @@ vi.mock("node:fs/promises", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
+  readFileSync: mockReadFileSync,
 }));
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
+
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    isWindows: mockIsWindows,
+  };
+});
 
 import {
   create,
@@ -63,6 +77,7 @@ import {
   resetPsCache,
   toClaudeProjectPath,
   METADATA_UPDATER_SCRIPT,
+  METADATA_UPDATER_SCRIPT_NODE,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -148,6 +163,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
+  // Default: non-Windows so existing tests are unaffected
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("toClaudeProjectPath", () => {
@@ -175,8 +192,10 @@ describe("toClaudeProjectPath", () => {
     );
   });
 
-  it("strips Windows drive colons and folds backslashes", () => {
-    expect(toClaudeProjectPath("C:\\Users\\dev\\foo")).toBe("C-Users-dev-foo");
+  it("encodes Windows drive colons and backslashes as dashes", () => {
+    // Verified on-disk: Claude Code on Windows produces `C--Users-dev-foo`
+    // (the colon position is a dash, not stripped). See commit 582c5373.
+    expect(toClaudeProjectPath("C:\\Users\\dev\\foo")).toBe("C--Users-dev-foo");
   });
 
   it("collapses any other non-alphanumeric character into a dash", () => {
@@ -290,6 +309,17 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("/tmp/prompt.md");
     expect(cmd).not.toMatch(/\s-p\s/);
     expect(cmd).toContain("-- 'Do the task'");
+  });
+
+  it("inlines systemPromptFile content on Windows instead of $(cat ...)", () => {
+    mockIsWindows.mockReturnValueOnce(true);
+    mockReadFileSync.mockReturnValueOnce("You are a helpful assistant.");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "C:\\prompts\\system.md", prompt: "Do the task" }),
+    );
+    expect(cmd).toContain("--append-system-prompt");
+    expect(cmd).toContain("You are a helpful assistant.");
+    expect(cmd).not.toContain("$(cat");
   });
 });
 
@@ -417,6 +447,15 @@ describe("isProcessRunning", () => {
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
+
+  it("returns false for tmux handle on Windows without spawning ps", async () => {
+    mockIsWindows.mockReturnValue(true);
+    // ps should never be called — getCachedProcessList guards against Windows
+    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
+    mockIsWindows.mockReturnValue(false);
+  });
 });
 
 // =========================================================================
@@ -540,7 +579,7 @@ describe("getSessionInfo", () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
       await agent.getSessionInfo(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
       expect(mockReaddir).toHaveBeenCalledWith(
-        "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3",
+        pathJoin("/mock/home", ".claude", "projects", "-Users-dev--worktrees-ao-ao-3"),
       );
     });
 
@@ -553,7 +592,12 @@ describe("getSessionInfo", () => {
         }),
       );
       expect(mockReaddir).toHaveBeenCalledWith(
-        "/mock/home/.claude/projects/-Users-dev--agent-orchestrator-projects-graph-isomorphism-d185b44d56-worktrees-gi-orchestrator",
+        pathJoin(
+          "/mock/home",
+          ".claude",
+          "projects",
+          "-Users-dev--agent-orchestrator-projects-graph-isomorphism-d185b44d56-worktrees-gi-orchestrator",
+        ),
       );
     });
   });
@@ -952,12 +996,160 @@ describe("hook setup — relative path (symlink-safe)", () => {
     );
     expect(scriptWrite).toBeDefined();
     expect(scriptWrite![0]).toBe(
-      "/Users/equinox/.worktrees/integrator/integrator-5/.claude/metadata-updater.sh",
+      pathJoin("/Users/equinox/.worktrees/integrator/integrator-5", ".claude", "metadata-updater.sh"),
     );
   });
 
   it("skips postLaunchSetup when workspacePath is null", async () => {
     await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
     expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks on win32 — Node.js hook script
+// =========================================================================
+describe("setupWorkspaceHooks on win32", () => {
+  const agent = create();
+
+  /** Extract the hook command written to settings.json */
+  function getWrittenHookCommand(): string {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    const parsed = JSON.parse(settingsWrite![1] as string);
+    return parsed.hooks.PostToolUse[0].hooks[0].command;
+  }
+
+  /** Get the content written to the hook script file */
+  function getWrittenScriptContent(ext: string): string | undefined {
+    const scriptWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith(ext),
+    );
+    return scriptWrite ? (scriptWrite[1] as string) : undefined;
+  }
+
+  beforeEach(() => {
+    mockIsWindows.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("writes a Node.js hook script instead of bash on Windows", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    // The .cjs file must have been written (.cjs forces CJS mode in ESM workspaces)
+    const cjsContent = getWrittenScriptContent("metadata-updater.cjs");
+    expect(cjsContent).toBeDefined();
+    expect(cjsContent).toContain("#!/usr/bin/env node");
+
+    // Must not contain bash-isms
+    expect(cjsContent).not.toContain("#!/usr/bin/env bash");
+    expect(cjsContent).not.toContain("jq");
+    expect(cjsContent).not.toContain("grep");
+    expect(cjsContent).not.toContain("sed");
+
+    // The .sh and .js files must NOT have been written
+    const shContent = getWrittenScriptContent("metadata-updater.sh");
+    expect(shContent).toBeUndefined();
+    const jsContent = getWrittenScriptContent("metadata-updater.js");
+    expect(jsContent).toBeUndefined();
+  });
+
+  it("uses node command in settings.json hook command on Windows", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const hookCommand = getWrittenHookCommand();
+    expect(hookCommand).toBe("node .claude/metadata-updater.cjs");
+    expect(hookCommand).not.toContain(".sh");
+  });
+
+  it("skips chmod on win32", async () => {
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    expect(mockChmod).not.toHaveBeenCalled();
+  });
+
+  it("exports METADATA_UPDATER_SCRIPT_NODE with Node.js shebang", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("#!/usr/bin/env node");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("jq");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("grep");
+    expect(METADATA_UPDATER_SCRIPT_NODE).not.toContain("sed");
+  });
+
+  it("Node.js hook script handles gh pr create detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("gh");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("create");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("updateMetadataKey");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr_open");
+  });
+
+  it("Node.js hook script handles git checkout -b detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("checkout");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("-b");
+  });
+
+  it("Node.js hook script handles gh pr merge detection", () => {
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("pr\\s+merge");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("merged");
+  });
+
+  it("Node.js hook script validates AO_DATA_DIR against allowed directories", () => {
+    // Must contain the allowlist check mirroring ao-metadata-helper.sh and
+    // the Node.js wrappers in agent-workspace-hooks.ts (C-1 security fix)
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("allowedBases");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("realpathSync");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain(".ao");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain(".agent-orchestrator");
+    expect(METADATA_UPDATER_SCRIPT_NODE).toContain("os.tmpdir");
+  });
+
+  it("does not add duplicate hook entry when called twice on Windows", async () => {
+    // First call creates the hook
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    // Simulate second call: settings.json now contains the .cjs hook
+    const firstSettings = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(firstSettings).toBeDefined();
+    mockReadFile.mockResolvedValueOnce(firstSettings![1] as string);
+    vi.clearAllMocks();
+    mockIsWindows.mockReturnValue(true);
+
+    // Second call — should UPDATE the existing hook, not add a duplicate
+    await agent.setupWorkspaceHooks!(
+      "C:\\\\Users\\\\dev\\\\workspace",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const secondSettings = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(secondSettings).toBeDefined();
+    const parsed = JSON.parse(secondSettings![1] as string);
+    const hookEntries = parsed.hooks.PostToolUse as Array<{ hooks: Array<{ command: string }> }>;
+    // Count all hook commands matching our metadata updater
+    const metadataHooks = hookEntries.flatMap((e) => e.hooks).filter(
+      (h) => h.command.includes("metadata-updater"),
+    );
+    // Must be exactly 1 — no duplicates
+    expect(metadataHooks).toHaveLength(1);
   });
 });

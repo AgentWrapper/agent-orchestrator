@@ -1764,13 +1764,26 @@ export interface SessionMetadata {
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**
-   * Stable human-readable display name derived from task context at spawn time.
-   * Populated from issue title, user prompt, or orchestrator system prompt —
-   * whichever was available when the session was created. Used by the dashboard
-   * as a fallback above humanized branch names so sessions are identifiable
-   * even when PR/issue enrichment is unavailable.
+   * Human-readable display name for the session.
+   *
+   * Populated automatically at spawn time from the best available task context
+   * (issue title, user prompt, or orchestrator system prompt). Can be
+   * overwritten later via the dashboard rename UI — the session ID (`ao-N`)
+   * remains the canonical identifier; only display surfaces are affected.
+   *
+   * Whether this value should beat PR/issue titles in the dashboard depends
+   * on `displayNameUserSet` — auto-derived values stay below live tracker
+   * signals, user-set values win over them.
    */
   displayName?: string;
+  /**
+   * Set to `true` when the user explicitly renamed the session via the
+   * dashboard. The dashboard fallback chain promotes `displayName` above
+   * PR/issue titles only when this flag is true, so an auto-derived spawn-time
+   * `displayName` doesn't shadow a live PR title for sessions the user never
+   * touched.
+   */
+  displayNameUserSet?: boolean;
 }
 
 // =============================================================================

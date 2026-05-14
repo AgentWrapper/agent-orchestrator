@@ -68,3 +68,4 @@ agent-orchestrator.yaml
 # OS-specific files
 .DS_Store
 Thumbs.db
+package-lock.json
