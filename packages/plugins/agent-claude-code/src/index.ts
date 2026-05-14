@@ -173,6 +173,31 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
+    # Append to prs field (comma-separated list of all PR URLs for this session).
+    # Supports multiple PRs per session — same repo or different repos.
+    existing_prs=""
+    if is_json_metadata; then
+      if command -v jq &>/dev/null; then
+        existing_prs=$(jq -r '.prs // empty' "$metadata_file" 2>/dev/null || echo "")
+      else
+        existing_prs=$(node -e "
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+          process.stdout.write(d.prs || '');
+        " "$metadata_file" 2>/dev/null || echo "")
+      fi
+    fi
+    if [[ -z "$existing_prs" ]]; then
+      new_prs="$pr_url"
+    else
+      # Only append if not already present
+      if [[ "$existing_prs" != *"$pr_url"* ]]; then
+        new_prs="$existing_prs,$pr_url"
+      else
+        new_prs="$existing_prs"
+      fi
+    fi
+    update_metadata_key "prs" "$new_prs"
     update_metadata_key "status" "pr_open"
     echo '{"systemMessage": "Updated metadata: PR created at '"$pr_url"'"}'
     exit 0

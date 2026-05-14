@@ -529,6 +529,21 @@ case "\$1/\$2" in
       if [[ -n "\$pr_url" ]]; then
         update_ao_metadata pr "\$pr_url"
         update_ao_metadata agentReportedPrUrl "\$pr_url"
+        # Append to prs field (comma-separated list of all PR URLs for this session).
+        # Supports multiple PRs per session — same repo or different repos.
+        _ao_meta_f="\${AO_DATA_DIR}/\${AO_SESSION}.json"
+        [[ -f "\$_ao_meta_f" ]] || _ao_meta_f="\${AO_DATA_DIR}/\${AO_SESSION}"
+        existing_prs="\$(jq -r '.prs // empty' "\$_ao_meta_f" 2>/dev/null || echo "")"
+        if [[ -z "\$existing_prs" ]]; then
+          new_prs="\$pr_url"
+        else
+          if [[ "\$existing_prs" != *"\$pr_url"* ]]; then
+            new_prs="\$existing_prs,\$pr_url"
+          else
+            new_prs="\$existing_prs"
+          fi
+        fi
+        update_ao_metadata prs "\$new_prs"
       fi
       pr_number="\$(printf '%s' "\$pr_url" | grep -Eo '[0-9]+$' | head -1)"
       if [[ -n "\$pr_number" ]]; then
@@ -777,8 +792,34 @@ if (key === "pr/create" || key === "pr/merge") {
     if (key === "pr/create") {
       const match = output.match(/https:\\/\\/github\\.com\\/[^/]+\\/[^/]+\\/pull\\/[0-9]+/);
       if (match) {
-        updateAoMetadata("pr", match[0]);
+        const prUrl = match[0];
+        updateAoMetadata("pr", prUrl);
         updateAoMetadata("status", "pr_open");
+        // Append to prs field — supports multiple PRs per session
+        let existingPrs = "";
+        try {
+          const aoDir = process.env["AO_DATA_DIR"] || "";
+          const aoSession = process.env["AO_SESSION"] || "";
+          if (aoDir && aoSession) {
+            let metaFile = path.join(aoDir, aoSession + ".json");
+            if (!fs.existsSync(metaFile)) metaFile = path.join(aoDir, aoSession);
+            if (fs.existsSync(metaFile)) {
+              const raw = fs.readFileSync(metaFile, "utf8");
+              if (metaFile.endsWith(".json")) {
+                existingPrs = JSON.parse(raw).prs || "";
+              } else {
+                const line = raw.split("\\n").find(l => l.startsWith("prs="));
+                existingPrs = line ? line.slice(4) : "";
+              }
+            }
+          }
+        } catch {}
+        const newPrs = existingPrs
+          ? existingPrs.includes(prUrl)
+            ? existingPrs
+            : existingPrs + "," + prUrl
+          : prUrl;
+        updateAoMetadata("prs", newPrs);
       }
     } else if (key === "pr/merge") {
       updateAoMetadata("status", "merged");
