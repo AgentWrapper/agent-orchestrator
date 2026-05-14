@@ -195,7 +195,7 @@ describe("list", () => {
     vi.useRealTimers();
   });
 
-  it("marks dead runtimes as killed", async () => {
+  it("routes dead runtimes through detecting (no single-shot terminal latch)", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -220,8 +220,54 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const sessions = await sm.list();
 
-    expect(sessions[0].status).toBe("killed");
-    expect(sessions[0].activity).toBe("exited");
+    // A single dead probe must NOT latch to "killed" or "exited" — that
+    // destroys recoverable state when the next probe disagrees (#1454).
+    // Lifecycle is updated to detecting/runtime_lost and the lifecycle manager
+    // confirms with multiple observations before any escalation.
+    expect(sessions[0].status).toBe("detecting");
+    expect(sessions[0].lifecycle.session.state).toBe("detecting");
+    expect(sessions[0].lifecycle.session.reason).toBe("runtime_lost");
+    expect(sessions[0].lifecycle.runtime.state).toBe("missing");
+    // Stale activity signal must be cleared — once the runtime is missing,
+    // the cached "active"/"ready" is no longer trustworthy and would render
+    // misleadingly alongside `detecting` in the dashboard.
+    expect(sessions[0].activitySignal.state).toBe("unavailable");
+  });
+
+  it("persists detecting (not terminated) to disk after single dead probe (#1454)", async () => {
+    // Regression: the persistence block that follows enrichSessionWithRuntimeState
+    // was writing `session.state = "terminated"` to disk, immediately overwriting
+    // the in-memory "detecting" fix. Verify the on-disk lifecycle is "detecting".
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    await sm.list();
+
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    const lifecycle = JSON.parse(raw!["lifecycle"]);
+    expect(lifecycle.session.state).toBe("detecting");
+    expect(lifecycle.session.reason).toBe("runtime_lost");
+    expect(lifecycle.session.terminatedAt).toBeNull();
+    expect(lifecycle.runtime.state).toBe("missing");
   });
 
   it("detects activity using agent-native mechanism", async () => {
@@ -336,8 +382,9 @@ describe("list", () => {
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0].runtimeHandle?.id).toBe(expectedTmuxName);
-    expect(sessions[0].status).toBe("killed");
-    expect(sessions[0].activity).toBe("exited");
+    // Single dead probe goes to detecting, not killed (#1454).
+    expect(sessions[0].status).toBe("detecting");
+    expect(sessions[0].lifecycle.session.reason).toBe("runtime_lost");
     expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
   });
 

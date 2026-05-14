@@ -1051,17 +1051,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             session.lifecycle.session.state = "detecting";
             session.lifecycle.session.reason = "runtime_lost";
             session.lifecycle.session.lastTransitionAt = new Date().toISOString();
+            // Mirror the lifecycle into the legacy status so dashboard surfaces
+            // that still read `session.status` don't show a stale `working` /
+            // `pr_open`. Don't latch to "killed" — a single dead probe is not
+            // terminal evidence (#1454). The lifecycle manager confirms with
+            // multiple observations before any escalation.
+            if (!TERMINAL_SESSION_STATUSES.has(session.status)) {
+              session.status = "detecting";
+            }
           }
-          // Process is confirmed dead — set activity to exited.
-          // Only update status to "killed" if not already in a terminal state.
-          if (!TERMINAL_SESSION_STATUSES.has(session.status)) {
-            session.status = "killed";
-          }
-          session.activity = "exited";
-          session.activitySignal = createActivitySignal("valid", {
-            activity: "exited",
-            source: "runtime",
-          });
+          // Clear any stale activity signal — once the runtime is missing,
+          // the previously-cached activity (e.g. "active") is no longer
+          // trustworthy and would render misleadingly alongside `detecting`.
+          session.activitySignal = createActivitySignal("unavailable");
           return;
         }
       } catch {
@@ -1941,7 +1943,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // Persist lifecycle to disk when enrichment detected a dead runtime.
       // enrichSessionWithRuntimeState updates the in-memory lifecycle but
       // doesn't write to disk — without this, the stale "alive" state persists
-      // and the dashboard shows terminated sessions on the active sidebar.
+      // and the dashboard shows a stale working/pr_open status.
+      // Write "detecting" (not "terminated") — a single dead probe is not
+      // terminal evidence (#1454). The lifecycle manager confirms with multiple
+      // observations before any escalation.
       if (
         session.lifecycle &&
         (session.lifecycle.runtime.state === "missing" ||
@@ -1951,10 +1956,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ) {
         try {
           const persisted = buildUpdatedLifecycle(sessionName, raw, (next) => {
-            next.session.state = "terminated";
+            next.session.state = "detecting";
             next.session.reason = "runtime_lost";
-            next.session.terminatedAt = new Date().toISOString();
-            next.session.lastTransitionAt = next.session.terminatedAt;
+            next.session.lastTransitionAt = new Date().toISOString();
             next.runtime.state = session.lifecycle!.runtime.state;
             next.runtime.reason = session.lifecycle!.runtime.reason;
             next.runtime.lastObservedAt = new Date().toISOString();

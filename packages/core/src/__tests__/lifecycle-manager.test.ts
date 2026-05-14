@@ -574,7 +574,7 @@ describe("check (single session)", () => {
     expect(plugins.agent.getActivityState).not.toHaveBeenCalled();
   });
 
-  it("detects killed state when runtime is dead", async () => {
+  it("routes a single dead probe through detecting (no terminal latch)", async () => {
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "idle" });
     vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(false);
@@ -584,7 +584,13 @@ describe("check (single session)", () => {
     });
 
     await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("killed");
+    // A single observation of dead+dead+no-fresh-activity must not latch the
+    // session to a terminal state — the next probe may disagree, and there's
+    // no inverse transition out of `terminated` (#1454). Route through
+    // detecting; the standard escalation surfaces persistent failures as stuck.
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_dead");
   });
 
   it("detects killed state when getActivityState returns exited", async () => {
@@ -599,7 +605,35 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
-  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+  it("revives a previously-detecting session when probes recover (#1454 regression)", async () => {
+    // Reproduces the issue scenario: poll N sees dead+dead, poll N+1 sees the
+    // runtime alive again. Before the fix, poll N latched the session to
+    // `terminated`/`runtime_lost` and there was no inverse transition. Now
+    // poll N marks it `detecting` and poll N+1 walks back to a live state.
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValueOnce(false);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValueOnce({ state: "idle" });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValueOnce(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("detecting");
+
+    // Next poll: probes agree the session is alive again.
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "active",
+      timestamp: new Date(),
+    });
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("routes terminal-fallback dead+dead through detecting (no terminal latch)", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
@@ -610,7 +644,9 @@ describe("check (single session)", () => {
     });
 
     await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("killed");
+    // Same as above but via the terminal fallback path — single dead+dead
+    // observation must not be terminal (#1454).
+    expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
   it("enters detecting when runtime is dead but recent activity is still fresh", async () => {
@@ -762,9 +798,13 @@ describe("check (single session)", () => {
 
     await lm.check("app-1");
 
-    expect(lm.getStates().get("app-1")).toBe("killed");
+    // Stale activity correctly fails the recent-liveness check, so we land on
+    // the dead+dead branch — but that branch must not be terminal on a single
+    // observation (#1454). The evidence still carries the stale activity tag.
+    expect(lm.getStates().get("app-1")).toBe("detecting");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=stale");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_dead");
   });
 
   it("records explicit probe-failure activity evidence", async () => {

@@ -335,12 +335,21 @@ export function resolveProbeDecision(input: ProbeDecisionInput): LifecycleDecisi
     input.processProbe.state === "dead" &&
     !recentActivitySupportsLiveness
   ) {
-    return createLifecycleDecision({
-      status: SESSION_STATUS.KILLED,
+    // Don't latch to a terminal state on a single poll. A transient probe miss
+    // (one missed `ps` window, one tmux race, one slow native API call) used to
+    // walk the session straight to `terminated`/`runtime_lost` with no inverse
+    // transition — leaving live sessions permanently dead in metadata. Route
+    // through `detecting` instead; the standard escalation will surface
+    // persistent failures as `stuck`, which is still recoverable. Manual kills
+    // (`ao session kill`) and the explicit `done` path remain the only ways to
+    // reach a terminal state.
+    return createDetectingDecision({
+      currentAttempts: input.currentAttempts,
+      idleWasBlocked: input.idleWasBlocked,
       evidence: `runtime_dead process_dead ${input.activityEvidence}`,
-      detecting: { attempts: 0 },
-      sessionState: "terminated",
-      sessionReason: "runtime_lost",
+      reason: "runtime_lost",
+      detectingStartedAt: input.detectingStartedAt,
+      previousEvidenceHash: input.previousEvidenceHash,
     });
   }
 
