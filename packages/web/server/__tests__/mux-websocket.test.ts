@@ -216,37 +216,6 @@ describe("SessionBroadcaster", () => {
   });
 
   describe("fetchSnapshot", () => {
-    it("retries once when the session patch fetch aborts", async () => {
-      const patches = [makePatch("s1")];
-      mockFetch
-        .mockRejectedValueOnce(new DOMException("The operation was aborted.", "AbortError"))
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ sessions: patches }),
-        });
-
-      const callback = vi.fn();
-      broadcaster.subscribe(callback);
-      await vi.advanceTimersByTimeAsync(10);
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(callback).toHaveBeenCalledWith(patches);
-    });
-
-    it("does not surface raw AbortError wording after retry exhaustion", async () => {
-      mockFetch.mockRejectedValue(new DOMException("The operation was aborted.", "AbortError"));
-
-      const callback = vi.fn();
-      const onError = vi.fn();
-      broadcaster.subscribe(callback, onError);
-      await vi.advanceTimersByTimeAsync(10);
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(callback).not.toHaveBeenCalled();
-      expect(onError).toHaveBeenCalledWith("Session refresh timed out; retrying automatically.");
-      expect(onError.mock.calls[0]?.[0]).not.toMatch(/aborted|AbortError/i);
-    });
-
     it("returns null on fetch failure", async () => {
       mockFetch.mockRejectedValueOnce(new Error("network error"));
 

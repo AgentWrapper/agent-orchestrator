@@ -143,23 +143,10 @@ export class SessionBroadcaster {
     }
   }
 
-  private isAbortLikeError(err: unknown): boolean {
-    if (err instanceof DOMException) {
-      return err.name === "AbortError";
-    }
-    if (err instanceof Error) {
-      const message = err.message.toLowerCase();
-      // Match known stringified forms of AbortError only; avoid broad substring
-      // checks that catch unrelated error messages containing "aborted".
-      return message === "the operation was aborted." || message.includes("aborterror");
-    }
-    return false;
-  }
-
-  private async fetchSnapshotAttempt(): Promise<{
+  /** One-shot HTTP fetch of the current session list. */
+  private async fetchSnapshot(): Promise<{
     sessions: SessionPatch[] | null;
     error: string | null;
-    aborted: boolean;
   }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -167,39 +154,20 @@ export class SessionBroadcaster {
       const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
         signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (!res.ok) {
         const msg = `Session fetch failed: HTTP ${res.status}`;
         console.warn(`[SessionBroadcaster] ${msg}`);
-        return { sessions: null, error: msg, aborted: false };
+        return { sessions: null, error: msg };
       }
       const data = (await res.json()) as { sessions?: SessionPatch[] };
-      return { sessions: data.sessions ?? null, error: null, aborted: false };
+      return { sessions: data.sessions ?? null, error: null };
     } catch (err) {
-      const aborted = controller.signal.aborted || this.isAbortLikeError(err);
-      const msg = aborted
-        ? "Session refresh timed out; retrying automatically."
-        : err instanceof Error
-          ? err.message
-          : String(err);
-      console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
-      return { sessions: null, error: msg, aborted };
-    } finally {
       clearTimeout(timeoutId);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+      return { sessions: null, error: msg };
     }
-  }
-
-  /** One-shot HTTP fetch of the current session list. */
-  private async fetchSnapshot(): Promise<{
-    sessions: SessionPatch[] | null;
-    error: string | null;
-  }> {
-    const first = await this.fetchSnapshotAttempt();
-    if (!first.aborted) {
-      return { sessions: first.sessions, error: first.error };
-    }
-
-    const retry = await this.fetchSnapshotAttempt();
-    return { sessions: retry.sessions, error: retry.error };
   }
 
   private disconnect(): void {

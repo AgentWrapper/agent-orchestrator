@@ -377,10 +377,7 @@ export function getActivitySignalReasonLabel(session: DashboardSession): string 
 }
 
 export function isDashboardSessionTerminated(session: DashboardSession): boolean {
-  if (session.lifecycle) {
-    return session.lifecycle.sessionState === "terminated";
-  }
-  return session.status === "killed" || session.status === "terminated";
+  return session.lifecycle?.sessionState === "terminated";
 }
 
 export function isDashboardSessionDone(session: DashboardSession): boolean {
@@ -393,9 +390,10 @@ export function isDashboardSessionDone(session: DashboardSession): boolean {
   }
   if (
     session.status === "merged" ||
+    session.status === "killed" ||
     session.status === "cleanup" ||
     session.status === "done" ||
-    isDashboardSessionTerminated(session)
+    session.status === "terminated"
   ) {
     return true;
   }
