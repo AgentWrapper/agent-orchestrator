@@ -15,6 +15,7 @@ import {
   getNotifierRoutingState,
   promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
+  type ClackPrompts,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
 
@@ -41,8 +42,6 @@ interface ResolvedDashboardSetup {
   limit: number;
   routingPreset?: NotifierRoutingPreset;
 }
-
-type ClackPrompts = typeof import("@clack/prompts");
 
 export class DashboardSetupError extends Error {
   constructor(

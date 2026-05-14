@@ -1,10 +1,34 @@
+import type {
+  cancel,
+  confirm,
+  intro,
+  isCancel,
+  log,
+  outro,
+  password,
+  select,
+  spinner,
+  text,
+} from "@clack/prompts";
+
 export const NOTIFICATION_PRIORITIES = ["urgent", "action", "warning", "info"] as const;
 
 export type NotificationPriority = (typeof NOTIFICATION_PRIORITIES)[number];
 export type NotifierRoutingPreset = "urgent-only" | "urgent-action" | "all";
 export type NotifierRoutingSelection = NotifierRoutingPreset | "preserve" | "back";
 
-type ClackPrompts = typeof import("@clack/prompts");
+export interface ClackPrompts {
+  cancel: typeof cancel;
+  confirm: typeof confirm;
+  intro: typeof intro;
+  isCancel: typeof isCancel;
+  log: typeof log;
+  outro: typeof outro;
+  password: typeof password;
+  select: typeof select;
+  spinner: typeof spinner;
+  text: typeof text;
+}
 
 const ROUTING_PRESET_PRIORITIES: Record<NotifierRoutingPreset, readonly NotificationPriority[]> = {
   "urgent-only": ["urgent"],

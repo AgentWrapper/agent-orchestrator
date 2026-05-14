@@ -11,6 +11,7 @@ import {
   promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
   routingLabel,
+  type ClackPrompts,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
 import {
@@ -54,8 +55,6 @@ interface ResolvedOpenClawSetup {
   shouldSendTest: boolean;
   tokenSource: TokenInfo["source"];
 }
-
-type ClackPrompts = typeof import("@clack/prompts");
 
 const DEFAULT_OPENCLAW_CONFIG_PATH = join(homedir(), ".openclaw", "openclaw.json");
 const DISPLAY_OPENCLAW_CONFIG_PATH = "~/.openclaw/openclaw.json";

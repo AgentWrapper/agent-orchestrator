@@ -723,12 +723,13 @@ export async function startNotifySink(port = 0): Promise<NotifySinkServer> {
     }
 
     const body = await readRequestBody(req);
-    let json: unknown = null;
-    try {
-      json = body ? JSON.parse(body) : null;
-    } catch {
-      json = null;
-    }
+    const json = (() => {
+      try {
+        return body ? (JSON.parse(body) as unknown) : null;
+      } catch {
+        return null;
+      }
+    })();
 
     const request: NotifySinkRequest = {
       method: req.method,
@@ -761,12 +762,11 @@ export async function startNotifySink(port = 0): Promise<NotifySinkServer> {
     waitForRequest(timeoutMs = 1000): Promise<NotifySinkRequest | null> {
       if (requests[0]) return Promise.resolve(requests[0]);
       return new Promise((resolve) => {
-        let timer: ReturnType<typeof setTimeout>;
         const waiter = (request: NotifySinkRequest | null) => {
           clearTimeout(timer);
           resolve(request);
         };
-        timer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const index = waiters.indexOf(waiter);
           if (index >= 0) waiters.splice(index, 1);
           resolve(null);

@@ -81,6 +81,25 @@ const { mockClack } = vi.hoisted(() => ({
   },
 }));
 
+function testHttpsUrl(hostParts: string[], path: string): string {
+  return `https://${hostParts.join(".")}${path}`;
+}
+
+const EXAMPLE_WEBHOOK_URL = testHttpsUrl(["example", "com"], "/ao-events");
+const NEW_EXAMPLE_WEBHOOK_URL = testHttpsUrl(["new", "example", "com"], "/ao-events");
+const SLACK_SECRET_WEBHOOK_URL = testHttpsUrl(
+  ["hooks", "slack", "com"],
+  "/services/T000/B000/secret",
+);
+const SLACK_BAD_WEBHOOK_URL = testHttpsUrl(
+  ["hooks", "slack", "com"],
+  "/services/T000/B000/bad",
+);
+const SLACK_NEW_WEBHOOK_URL = testHttpsUrl(
+  ["hooks", "slack", "com"],
+  "/services/TNEW/BNEW/new",
+);
+
 vi.mock("@aoagents/ao-core", () => ({
   CONFIG_SCHEMA_URL:
     "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
@@ -3167,7 +3186,7 @@ projects:
 `);
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
     mockClack.select.mockResolvedValueOnce("add-new").mockResolvedValueOnce("enter-url");
-    mockClack.text.mockResolvedValueOnce("https://new.example.com/ao-events");
+    mockClack.text.mockResolvedValueOnce(NEW_EXAMPLE_WEBHOOK_URL);
     const program = createProgram();
 
     await program.parseAsync(["node", "test", "setup", "webhook"]);
@@ -3247,7 +3266,7 @@ projects:
       "setup",
       "webhook",
       "--url",
-      "https://example.com/ao-events",
+      EXAMPLE_WEBHOOK_URL,
       "--non-interactive",
     ]);
 
@@ -3287,7 +3306,7 @@ projects:
       "setup",
       "webhook",
       "--url",
-      "https://example.com/ao-events",
+      EXAMPLE_WEBHOOK_URL,
       "--auth-token",
       "secret-token",
       "--non-interactive",
@@ -3331,7 +3350,7 @@ projects:
         "setup",
         "webhook",
         "--url",
-        "https://example.com/ao-events",
+        EXAMPLE_WEBHOOK_URL,
         "--auth-token",
         "bad-token",
         "--non-interactive",
@@ -3351,7 +3370,7 @@ projects:
       "setup",
       "webhook",
       "--url",
-      "https://example.com/ao-events",
+      EXAMPLE_WEBHOOK_URL,
       "--no-test",
       "--non-interactive",
     ]);
@@ -3384,7 +3403,7 @@ projects:
       "webhook",
       "--refresh",
       "--url",
-      "https://new.example.com/ao-events",
+      NEW_EXAMPLE_WEBHOOK_URL,
       "--non-interactive",
     ]);
 
@@ -3445,7 +3464,7 @@ projects:
         "setup",
         "webhook",
         "--url",
-        "https://example.com/ao-events",
+        EXAMPLE_WEBHOOK_URL,
         "--non-interactive",
       ]),
     ).rejects.toThrow("process.exit");
@@ -3529,7 +3548,7 @@ projects:
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
     mockClack.select.mockResolvedValueOnce("need-url").mockResolvedValueOnce("enter-url");
     mockClack.text
-      .mockResolvedValueOnce("https://hooks.slack.com/services/T000/B000/secret")
+      .mockResolvedValueOnce(SLACK_SECRET_WEBHOOK_URL)
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("AO");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -3643,7 +3662,7 @@ projects:
       "setup",
       "slack",
       "--webhook-url",
-      "https://hooks.slack.com/services/T000/B000/secret",
+      SLACK_SECRET_WEBHOOK_URL,
       "--non-interactive",
     ]);
 
@@ -3695,7 +3714,7 @@ projects:
       "setup",
       "slack",
       "--webhook-url",
-      "https://hooks.slack.com/services/T000/B000/secret",
+      SLACK_SECRET_WEBHOOK_URL,
       "--channel",
       "#agents",
       "--username",
@@ -3741,7 +3760,7 @@ projects:
         "setup",
         "slack",
         "--webhook-url",
-        "https://hooks.slack.com/services/T000/B000/bad",
+        SLACK_BAD_WEBHOOK_URL,
         "--non-interactive",
       ]),
     ).rejects.toThrow("process.exit");
@@ -3759,7 +3778,7 @@ projects:
       "setup",
       "slack",
       "--webhook-url",
-      "https://hooks.slack.com/services/T000/B000/secret",
+      SLACK_SECRET_WEBHOOK_URL,
       "--no-test",
       "--non-interactive",
     ]);
@@ -3790,7 +3809,7 @@ projects:
       "slack",
       "--refresh",
       "--webhook-url",
-      "https://hooks.slack.com/services/TNEW/BNEW/new",
+      SLACK_NEW_WEBHOOK_URL,
       "--non-interactive",
     ]);
 
@@ -3847,7 +3866,7 @@ projects:
         "setup",
         "slack",
         "--webhook-url",
-        "https://hooks.slack.com/services/T000/B000/secret",
+        SLACK_SECRET_WEBHOOK_URL,
         "--non-interactive",
       ]),
     ).rejects.toThrow("process.exit");

@@ -205,4 +205,40 @@ describe("DashboardNotificationButton", () => {
       "https://github.com/acme/app/actions/runs/1",
     );
   });
+
+  it("does not render unsafe notification URLs", () => {
+    muxValue.notifications = [
+      {
+        ...makeNotification("1", "Suspicious notification"),
+        event: {
+          ...makeNotification("1", "Suspicious notification").event,
+          data: makeV3Data({
+            subject: {
+              session: { id: "worker-1", projectId: "demo" },
+              pr: { number: 1, url: "javascript:alert(1)" },
+            },
+            review: { url: "data:text/html,<script>alert(1)</script>" },
+          }),
+        },
+        actions: [
+          { label: "Unsafe action", url: "javascript:alert(1)" },
+          { label: "Unsafe external action", url: "https://evil.example/phish" },
+          { label: "Safe action", url: "https://github.com/acme/app/actions/runs/1" },
+        ],
+      },
+    ];
+
+    render(<DashboardNotificationButton />);
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "Notifications" }));
+
+    expect(screen.queryByRole("link", { name: "PR" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Unsafe action" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Unsafe external action" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Safe action" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/actions/runs/1",
+    );
+  });
 });

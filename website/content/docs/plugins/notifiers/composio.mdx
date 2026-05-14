@@ -37,7 +37,7 @@ You can also run the scriptable Slack setup directly:
 
 ```bash
 export COMPOSIO_API_KEY=ak_...
-ao setup composio-slack --user-id ao-agent --channel "#agents" --non-interactive
+ao setup composio-slack --user-id aoagent --channel "#agents" --non-interactive
 ```
 
 All Composio setup commands accept `--routing-preset urgent-only`,
@@ -99,7 +99,7 @@ notifiers:
   composio:
     plugin: composio
     defaultApp: slack # slack | discord | gmail
-    userId: ao-agent # Composio user id
+    userId: aoagent # Composio user id
     connectedAccountId: ca_... # preferred when available
     channelName: "#agents" # Slack
     emailTo: alerts@example.com # required when defaultApp=gmail
@@ -110,27 +110,27 @@ notifiers:
     defaultApp: discord
     mode: webhook
     webhookUrl: https://discord.com/api/webhooks/...
-    userId: ao-agent
+    userId: aoagent
 
   composio-discord-bot:
     plugin: composio
     defaultApp: discord
     mode: bot
     channelId: "1234567890"
-    userId: ao-agent
+    userId: aoagent
     connectedAccountId: ca_...
 
   composio-mail:
     plugin: composio
     defaultApp: gmail
     emailTo: alerts@example.com
-    userId: ao-agent
+    userId: aoagent
     connectedAccountId: ca_...
 
   composio-slack:
     plugin: composio
     defaultApp: slack
-    userId: ao-agent
+    userId: aoagent
     connectedAccountId: ca_...
     channelName: "#agents"
 ```
@@ -141,7 +141,7 @@ notifiers:
 | -------------------- | --------------- | ---------------------- | -------------------------------------------------------------------- |
 | `defaultApp`         | ✓               | `slack`                | Which Composio app to target: `slack`, `discord`, or `gmail`         |
 | `mode`               | Discord only    | auto                   | `webhook` uses Discord webhooks; `bot` uses bot channel messages     |
-| `userId`             | optional        | `ao-agent`             | Composio user id for connected-account lookup                        |
+| `userId`             | optional        | `aoagent`              | Composio user id for connected-account lookup                        |
 | `entityId`           | optional        | —                      | Backward-compatible alias for `userId`                               |
 | `authConfigId`       | setup only      | —                      | Existing Composio Gmail auth config used by `--connect`              |
 | `connectedAccountId` | Slack/Gmail/bot | —                      | Specific connected account to use; not used for Discord webhook mode |

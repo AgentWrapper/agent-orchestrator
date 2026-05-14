@@ -239,7 +239,7 @@ function copyBundledApp(targetAppPath = getInstalledNotifierAppPath()): string {
 }
 
 function requestPermission(appPath: string): void {
-  let result: JsonRecord | null = null;
+  let result: JsonRecord | null;
 
   try {
     const output = execFileSync(getNotifierExecutablePath(appPath), ["--request-permission"], {

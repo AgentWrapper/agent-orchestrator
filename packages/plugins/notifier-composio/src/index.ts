@@ -1,13 +1,13 @@
-import { getNotificationDataV3 } from "@aoagents/ao-core";
-import type {
-  NotificationCICheck,
-  NotificationDataV3,
-  PluginModule,
-  Notifier,
-  OrchestratorEvent,
-  NotifyAction,
-  NotifyContext,
-  EventPriority,
+import {
+  getNotificationDataV3,
+  type NotificationCICheck,
+  type NotificationDataV3,
+  type PluginModule,
+  type Notifier,
+  type OrchestratorEvent,
+  type NotifyAction,
+  type NotifyContext,
+  type EventPriority,
 } from "@aoagents/ao-core";
 
 export const manifest = {

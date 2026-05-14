@@ -9,6 +9,7 @@ import {
   promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
   routingLabel,
+  type ClackPrompts,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
 
@@ -99,7 +100,6 @@ export interface ComposioMailSetupOptions {
   routingPreset?: string;
 }
 
-type ClackPrompts = typeof import("@clack/prompts");
 type ComposioAppChoice = "slack" | "discord-webhook" | "discord-bot" | "gmail";
 
 interface ResolvedApiKey {

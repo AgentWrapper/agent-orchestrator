@@ -7,6 +7,11 @@ import { projectSessionPath } from "@/lib/routes";
 import { useMuxOptional } from "@/providers/MuxProvider";
 
 const READ_STORAGE_KEY = "ao.dashboard.notifications.read.v1";
+const TRUSTED_EXTERNAL_ORIGINS: Record<string, string> = {
+  "github.com": "https://github.com",
+  "gitlab.com": "https://gitlab.com",
+  "linear.app": "https://linear.app",
+};
 
 type NotificationView = "all" | "unread";
 
@@ -59,29 +64,16 @@ function getSubjectPR(notification: DashboardNotificationRecord): Record<string,
   return subject ? recordField(subject, "pr") : null;
 }
 
-function sanitizeExternalUrl(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return parsed.toString();
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function getPRUrl(notification: DashboardNotificationRecord): string | null {
   const pr = getSubjectPR(notification);
-  return sanitizeExternalUrl(pr ? stringField(pr, "url") : null);
+  return pr ? stringField(pr, "url") : null;
 }
 
 function getReviewUrl(notification: DashboardNotificationRecord): string | null {
   const data = notificationDataV3(notification);
   if (!data) return null;
   const review = recordField(data, "review");
-  return sanitizeExternalUrl(review ? stringField(review, "url") : null);
+  return review ? stringField(review, "url") : null;
 }
 
 function normalizeActionText(value: string): string {
@@ -89,14 +81,42 @@ function normalizeActionText(value: string): string {
 }
 
 function canonicalUrl(value: string | null | undefined): string | null {
-  if (!value || value.trim().length === 0) return null;
+  const safeHref = safeExternalHref(value);
+  if (!safeHref) return null;
+
   try {
-    const url = new URL(value);
+    const url = new URL(safeHref);
     url.hash = "";
     const pathname = url.pathname.replace(/\/+$/, "");
     return `${url.origin}${pathname}${url.search}`;
   } catch {
-    return value.trim().replace(/\/+$/, "");
+    return null;
+  }
+}
+
+function safeExternalHref(value: string | null | undefined): string | null {
+  if (!value || value.trim().length === 0) return null;
+
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:") return null;
+
+    const origin = TRUSTED_EXTERNAL_ORIGINS[url.hostname.toLowerCase()];
+    if (!origin) return null;
+
+    const safePath = url.pathname.split("/").map(encodePathSegment).join("/");
+    const safeSearch = new URLSearchParams(url.searchParams).toString();
+    return `${origin}${safePath}${safeSearch ? `?${safeSearch}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
+function encodePathSegment(segment: string): string {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
   }
 }
 
@@ -204,17 +224,15 @@ function NotificationItem({
 }) {
   const { event } = notification;
   const sessionHref = projectSessionPath(event.projectId, event.sessionId);
-  const prUrl = getPRUrl(notification);
-  const reviewUrl = getReviewUrl(notification);
+  const prUrl = safeExternalHref(getPRUrl(notification));
+  const reviewUrl = safeExternalHref(getReviewUrl(notification));
   const escalationCause = getEscalationCause(notification);
   const successLabel = successNotificationLabel(notification);
   const label = successLabel ?? event.priority;
   const urlActions = (notification.actions ?? [])
     .map((action) => {
-      const sanitizedUrl = sanitizeExternalUrl(
-        typeof action.url === "string" ? action.url.trim() : null,
-      );
-      return sanitizedUrl ? { label: action.label, url: sanitizedUrl } : null;
+      const safeUrl = safeExternalHref(action.url);
+      return safeUrl ? { label: action.label, url: safeUrl } : null;
     })
     .filter((action): action is { label: string; url: string } => action !== null)
     .filter((action) => !shouldHideRedundantAction(action, { prUrl, reviewUrl }));

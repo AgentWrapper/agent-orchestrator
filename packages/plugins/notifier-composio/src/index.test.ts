@@ -66,7 +66,7 @@ describe("notifier-composio", () => {
   afterEach(() => {
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value !== undefined) process.env[key] = value;
-      else delete process.env[key];
+      else Reflect.deleteProperty(process.env, key);
     }
   });
 

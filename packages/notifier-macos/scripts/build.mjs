@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
+import console from "node:console";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 

@@ -86,6 +86,13 @@ function collectNotifierRegistrations(
 ): NotifierRegistration[] {
   const orderedMatches = new Map<string, Record<string, unknown>>();
   const notifierEntries = Object.entries(config.notifiers ?? {});
+  const defaultNotifiers = Array.isArray(config.defaults?.notifiers)
+    ? config.defaults.notifiers
+    : [];
+  const routingNotifiers = Object.values(config.notificationRouting ?? {})
+    .flatMap((value) => (Array.isArray(value) ? value : []));
+  const isReferencedByName =
+    defaultNotifiers.includes(pluginName) || routingNotifiers.includes(pluginName);
 
   const exactMatch = config.notifiers?.[pluginName];
   if (
@@ -101,6 +108,10 @@ function collectNotifierRegistrations(
     if (matchesNotifierPlugin(pluginName, notifierId, notifierConfig)) {
       orderedMatches.set(notifierId, notifierConfig);
     }
+  }
+
+  if (orderedMatches.size === 0 && isReferencedByName) {
+    orderedMatches.set(pluginName, {});
   }
 
   return [...orderedMatches.entries()].map(([registrationName, rawConfig]) => ({

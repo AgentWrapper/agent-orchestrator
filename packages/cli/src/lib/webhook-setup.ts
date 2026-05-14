@@ -7,6 +7,7 @@ import {
   getNotifierRoutingState,
   promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
+  type ClackPrompts,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
 
@@ -46,8 +47,6 @@ interface ResolvedWebhookSetup {
   shouldSendTest: boolean;
   routingPreset?: NotifierRoutingPreset;
 }
-
-type ClackPrompts = typeof import("@clack/prompts");
 
 export class WebhookSetupError extends Error {
   constructor(
