@@ -46,6 +46,7 @@ function getDoneStatusInfo(session: DashboardSession): {
 } {
   const activity = session.activity;
   const status = session.status;
+  // TODO(#1821): session.prs[] contains all PRs; display uses primary PR only for now
   const prState = session.lifecycle?.prState ?? session.pr?.state;
 
   if (prState === "merged" || status === "merged") {
@@ -164,6 +165,8 @@ function SessionCardView({
 
   const level = getAttentionLevel(session);
   const pr = session.pr;
+  const prs = session.prs ?? [];
+  const hasMultiplePRs = prs.length > 1;
 
   const handleQuickReply = async (message: string): Promise<boolean> => {
     const trimmedMessage = message.trim();
@@ -349,7 +352,20 @@ function SessionCardView({
               {session.branch}
             </span>
           )}
-          {pr && (
+          {prs.length > 0 ? (
+            prs.map((p) => (
+              <a
+                key={p.number}
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="done-meta-chip font-[var(--font-mono)] font-bold text-[var(--color-text-primary)] no-underline underline-offset-2 hover:underline"
+              >
+                #{p.number}
+              </a>
+            ))
+          ) : pr ? (
             <a
               href={pr.url}
               target="_blank"
@@ -359,7 +375,7 @@ function SessionCardView({
             >
               #{pr.number}
             </a>
-          )}
+          ) : null}
           {pr &&
             !rateLimited &&
             (prUnenriched ? (
@@ -592,7 +608,20 @@ function SessionCardView({
               ·
             </span>
           ) : null}
-          {pr && (
+          {prs.length > 0 ? (
+            prs.map((p) => (
+              <a
+                key={p.number}
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="card__pr"
+              >
+                #{p.number}
+              </a>
+            ))
+          ) : pr ? (
             <a
               href={pr.url}
               target="_blank"
@@ -602,7 +631,7 @@ function SessionCardView({
             >
               #{pr.number}
             </a>
-          )}
+          ) : null}
           {pr &&
             !rateLimited &&
             (prUnenriched ? (

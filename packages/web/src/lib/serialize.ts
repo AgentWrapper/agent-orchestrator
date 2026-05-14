@@ -192,6 +192,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
           state: normalizeDashboardPRState(session.lifecycle.pr.state),
         }
       : null,
+    prs: (session.prs ?? []).map((p) => basicPRToDashboard(p)),
     metadata: session.metadata,
     agentReportAudit: [],
   });

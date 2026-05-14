@@ -55,15 +55,18 @@ export function SessionEndedSummary({
     session.lifecycle?.session.lastTransitionAt ??
     session.lastActivityAt;
   const runtimeLabel = session.lifecycle?.runtime.label ?? "Unavailable";
-  const prLabel = pr
-    ? pr.state === "merged"
+  const prs = session.prs ?? [];
+  const primaryPR = prs[0] ?? pr;
+  const prLabel = primaryPR
+    ? primaryPR.state === "merged"
       ? "Merged"
-      : pr.state === "closed"
+      : primaryPR.state === "closed"
         ? "Closed"
-        : pr.mergeability.mergeable
+        : primaryPR.mergeability.mergeable
           ? "Open, merge-ready"
           : "Open"
     : "No PR";
+  const prCount = prs.length;
 
   return (
     <section className="session-ended-summary" aria-label="Session ended summary">
@@ -105,7 +108,7 @@ export function SessionEndedSummary({
               <strong>{runtimeLabel}</strong>
             </div>
             <div className="session-ended-summary__fact">
-              <span>PR</span>
+              <span>{prCount > 1 ? `PRs (${prCount})` : "PR"}</span>
               <strong>{prLabel}</strong>
             </div>
           </div>
@@ -120,7 +123,23 @@ export function SessionEndedSummary({
                 Restore session
               </button>
             ) : null}
-            {pr ? (
+            {prs.length > 0 ? (
+              prs.map((p) => (
+                <a
+                  key={p.number}
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={
+                    isRestorable
+                      ? "session-ended-summary__secondary"
+                      : "session-ended-summary__primary"
+                  }
+                >
+                  Open PR #{p.number}
+                </a>
+              ))
+            ) : pr ? (
               <a
                 href={pr.url}
                 target="_blank"
