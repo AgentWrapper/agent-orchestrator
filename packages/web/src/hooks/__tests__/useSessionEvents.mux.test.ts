@@ -49,9 +49,77 @@ describe("useSessionEvents - mux", () => {
     );
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        "/api/sessions?project=proj",
+        "/api/sessions?fresh=true&project=proj",
         expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
       );
+    });
+  });
+
+  it("triggers fresh refresh when mux attention changes without status changes", async () => {
+    const initialSessions = [s1];
+    const muxSessions = [
+      {
+        id: "s1",
+        status: "working",
+        activity: "active",
+        attentionLevel: "merge" as const,
+        lastActivityAt: now,
+      },
+    ];
+    renderHook(() =>
+      useSessionEvents({
+        initialSessions,
+        project: "proj",
+        muxSessions,
+        attentionZones: "simple",
+      }),
+    );
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/sessions?fresh=true&project=proj",
+        expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
+      );
+    });
+  });
+
+  it("keeps server attention from a fresh refresh", async () => {
+    const refreshed = { ...s1, attentionLevel: "merge" } as unknown as DashboardSession;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ sessions: [refreshed] }),
+      } as unknown as Response),
+    );
+
+    const initialSessions = [s1];
+    const muxSessions = [
+      {
+        id: "s1",
+        status: "working",
+        activity: "active",
+        attentionLevel: "working" as const,
+        lastActivityAt: now,
+      },
+      {
+        id: "s2",
+        status: "working",
+        activity: "active",
+        attentionLevel: "working" as const,
+        lastActivityAt: now,
+      },
+    ];
+    const { result } = renderHook(() =>
+      useSessionEvents({
+        initialSessions,
+        project: "proj",
+        muxSessions,
+        attentionZones: "simple",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.attentionLevels.s1).toBe("merge");
     });
   });
 

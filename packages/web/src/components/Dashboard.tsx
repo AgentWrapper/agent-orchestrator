@@ -264,10 +264,11 @@ function DashboardInner({
       done: [],
     };
     for (const session of displaySessions) {
-      zones[getAttentionLevel(session, attentionZones)].push(session);
+      const liveLevel = attentionLevels[session.id] ?? getAttentionLevel(session, attentionZones);
+      zones[liveLevel].push(session);
     }
     return zones;
-  }, [displaySessions, attentionZones]);
+  }, [displaySessions, attentionLevels, attentionZones]);
 
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
@@ -298,7 +299,8 @@ function DashboardInner({
       };
 
       for (const session of projectSessions) {
-        counts[getAttentionLevel(session, attentionZones)]++;
+        const liveLevel = attentionLevels[session.id] ?? getAttentionLevel(session, attentionZones);
+        counts[liveLevel]++;
       }
 
       return {
@@ -310,7 +312,14 @@ function DashboardInner({
         counts,
       };
     });
-  }, [activeOrchestrators, allProjectsView, attentionZones, projects, sessionsByProject]);
+  }, [
+    activeOrchestrators,
+    allProjectsView,
+    attentionZones,
+    projects,
+    sessionsByProject,
+    attentionLevels,
+  ]);
 
   const handleSend = useCallback(
     async (sessionId: string, message: string) => {
