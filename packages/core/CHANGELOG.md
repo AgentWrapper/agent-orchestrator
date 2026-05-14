@@ -1,5 +1,11 @@
 # @aoagents/ao-core
 
+## 0.9.0
+
+### Minor Changes
+
+- Add managed daemon child tracking so `ao stop` and `ao start` shutdown signals reap dashboard, websocket, lifecycle-worker, and messaging watcher children instead of leaving PPID=1 orphans.
+
 ## 0.8.0
 
 ### Minor Changes

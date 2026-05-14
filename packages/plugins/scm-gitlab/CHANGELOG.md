@@ -1,5 +1,12 @@
 # @aoagents/ao-plugin-scm-gitlab
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @aoagents/ao-core@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes

@@ -1,5 +1,27 @@
 # @aoagents/ao-web
 
+## 0.9.0
+
+### Minor Changes
+
+- Add managed daemon child tracking so `ao stop` and `ao start` shutdown signals reap dashboard, websocket, lifecycle-worker, and messaging watcher children instead of leaving PPID=1 orphans.
+
+### Patch Changes
+
+- Updated dependencies
+  - @aoagents/ao-core@0.9.0
+  - @aoagents/ao-plugin-agent-claude-code@0.9.0
+  - @aoagents/ao-plugin-agent-codex@0.9.0
+  - @aoagents/ao-plugin-agent-cursor@0.9.0
+  - @aoagents/ao-plugin-agent-kimicode@0.9.0
+  - @aoagents/ao-plugin-agent-opencode@0.9.0
+  - @aoagents/ao-plugin-runtime-process@0.9.0
+  - @aoagents/ao-plugin-runtime-tmux@0.9.0
+  - @aoagents/ao-plugin-scm-github@0.9.0
+  - @aoagents/ao-plugin-tracker-github@0.9.0
+  - @aoagents/ao-plugin-tracker-linear@0.9.0
+  - @aoagents/ao-plugin-workspace-worktree@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes
