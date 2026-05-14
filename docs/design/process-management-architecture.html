@@ -503,11 +503,15 @@
             </tr>
             <tr>
               <td><code>.ao-messaging/*/ao-msg-watch.mjs</code> watchers</td>
-              <td>Messaging/session helpers</td>
-              <td>Long-running per-project or per-session watcher.</td>
+              <td>Historical/generated messaging helper</td>
               <td>
-                Covered by AO orphan detection and should use the managed-child interface when
-                spawned by daemon-owned code.
+                Legacy or externally generated watcher pattern; no current source-tree spawner
+                found.
+              </td>
+              <td>
+                Current messaging sends through <code>SessionManager.send()</code> and runtime/tmux
+                delivery. This pattern remains in orphan detection only to reap previously leaked
+                processes observed in the field.
               </td>
             </tr>
             <tr>
@@ -544,7 +548,9 @@
           </div>
           <div class="node">
             <h3>Managed children</h3>
-            <p>Dashboard launcher, project supervisors, lifecycle and watcher subprocesses.</p>
+            <p>
+              Dashboard launcher, project supervisors, and daemon-owned infrastructure children.
+            </p>
           </div>
           <div class="node">
             <h3>Grandchildren</h3>
@@ -556,8 +562,10 @@
    ├─ dashboard launcher (managed)
    │  ├─ next-server (managed by launcher)
    │  └─ direct-terminal-ws / mux ws (managed by launcher)
-   ├─ lifecycle-worker &lt;project&gt; (daemon service)
-   └─ .ao-messaging/.../ao-msg-watch.mjs (watcher/helper)</code></pre>
+   └─ lifecycle-worker &lt;project&gt; (daemon service)
+
+Historical orphan pattern still reaped if found:
+node .../.ao-messaging/.../ao-msg-watch.mjs</code></pre>
       </section>
 
       <section class="card">
@@ -675,7 +683,12 @@
         <ul>
           <li><code>node .../@aoagents/ao-web@*/dist-server/...</code></li>
           <li><code>node .../ao lifecycle-worker ...</code></li>
-          <li><code>node .../ao-messaging/.../ao-msg-watch.mjs</code></li>
+          <li>
+            <code>node .../ao-messaging/.../ao-msg-watch.mjs</code>
+            <span class="muted"
+              >(historical/generated watcher pattern; not used by current send path)</span
+            >
+          </li>
           <li><code>node ...next-server...</code></li>
         </ul>
         <p>
