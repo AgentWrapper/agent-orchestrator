@@ -190,8 +190,8 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
     if [[ -z "$existing_prs" ]]; then
       new_prs="$pr_url"
     else
-      # Only append if not already present
-      if [[ "$existing_prs" != *"$pr_url"* ]]; then
+      # Only append if not already present (exact comma-delimited match to avoid /pull/1 matching /pull/10)
+      if ! echo ",$existing_prs," | grep -qF ",$pr_url,"; then
         new_prs="$existing_prs,$pr_url"
       else
         new_prs="$existing_prs"

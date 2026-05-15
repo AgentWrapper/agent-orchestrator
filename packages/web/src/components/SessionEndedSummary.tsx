@@ -126,7 +126,7 @@ export function SessionEndedSummary({
             {prs.length > 0 ? (
               prs.map((p) => (
                 <a
-                  key={p.number}
+                  key={p.url}
                   href={p.url}
                   target="_blank"
                   rel="noopener noreferrer"

@@ -541,7 +541,7 @@ case "\$1/\$2" in
         if [[ -z "\$existing_prs" ]]; then
           new_prs="\$pr_url"
         else
-          if [[ "\$existing_prs" != *"\$pr_url"* ]]; then
+          if ! echo ",\$existing_prs," | grep -qF ",\$pr_url,"; then
             new_prs="\$existing_prs,\$pr_url"
           else
             new_prs="\$existing_prs"
@@ -819,7 +819,7 @@ if (key === "pr/create" || key === "pr/merge") {
           }
         } catch {}
         const newPrs = existingPrs
-          ? existingPrs.includes(prUrl)
+          ? existingPrs.split(",").map((u) => u.trim()).includes(prUrl)
             ? existingPrs
             : existingPrs + "," + prUrl
           : prUrl;

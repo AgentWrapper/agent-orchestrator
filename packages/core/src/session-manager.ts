@@ -3186,7 +3186,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     const existingPrs = raw["prs"] ?? "";
     const newPrs =
-      existingPrs && !existingPrs.includes(pr.url)
+      existingPrs && !existingPrs.split(",").map((u) => u.trim()).includes(pr.url)
         ? existingPrs + "," + pr.url
         : existingPrs || pr.url;
     updateMetadata(sessionsDir, sessionId, {

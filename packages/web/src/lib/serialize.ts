@@ -391,9 +391,11 @@ export function enrichSessionPR(
   if (dashboard.prs && dashboard.prs.length > 1) {
     for (let i = 1; i < dashboard.prs.length; i++) {
       const metaKey = `prEnrichment_${i}`;
+      const reviewMetaKey = `prReviewComments_${i}`;
       const secondaryData = readPREnrichmentFromMetadata({
         ...dashboard.metadata,
         prEnrichment: dashboard.metadata[metaKey] ?? "",
+        prReviewComments: dashboard.metadata[reviewMetaKey] ?? "",
       });
       if (!secondaryData) continue;
       const secondaryPR = dashboard.prs[i];

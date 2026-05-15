@@ -1309,6 +1309,50 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             : false;
 
         if (cachedData) {
+          // When session has multiple PRs, aggregate enrichment across all of them.
+          // ci_failed if ANY fails; approved/merged only when ALL pass.
+          if (session.prs.length > 1) {
+            const allEnrichments = session.prs
+              .map((p) => prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`))
+              .filter((e): e is PREnrichmentData => e !== undefined);
+
+            if (allEnrichments.length === session.prs.length) {
+              const aggregated: PREnrichmentData = {
+                ciStatus: allEnrichments.some((e) => e.ciStatus === "failing")
+                  ? "failing"
+                  : allEnrichments.every((e) => e.ciStatus === "passing")
+                    ? "passing"
+                    : "pending",
+                reviewDecision: allEnrichments.some(
+                  (e) => e.reviewDecision === "changes_requested",
+                )
+                  ? "changes_requested"
+                  : allEnrichments.every((e) => e.reviewDecision === "approved")
+                    ? "approved"
+                    : "pending",
+                state: allEnrichments.every((e) => e.state === "merged")
+                  ? "merged"
+                  : allEnrichments.some((e) => e.state === "open")
+                    ? "open"
+                    : "closed",
+                mergeable: allEnrichments.every((e) => e.mergeable),
+                blockers: [...new Set(allEnrichments.flatMap((e) => e.blockers ?? []))],
+                title: cachedData.title,
+                additions: cachedData.additions,
+                deletions: cachedData.deletions,
+                isDraft: cachedData.isDraft,
+                hasConflicts: allEnrichments.some((e) => e.hasConflicts),
+                isBehind: allEnrichments.some((e) => e.isBehind),
+              };
+              return commit(
+                resolvePREnrichmentDecision(aggregated, {
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
+          }
           return commit(
             resolvePREnrichmentDecision(cachedData, {
               shouldEscalateIdleToStuck,
@@ -1848,6 +1892,46 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       if (session.metadata["prReviewComments"] !== reviewBlob) {
         updateSessionMetadata(session, { prReviewComments: reviewBlob });
+      }
+
+      // Persist per-PR review comment blobs for secondary PRs so the dashboard
+      // can enrich them independently (prReviewComments_1, prReviewComments_2, …).
+      for (let i = 1; i < session.prs.length; i++) {
+        const secondaryPR = session.prs[i];
+        if (!secondaryPR) continue;
+        let secondaryThreads: ReviewComment[] = [];
+        let secondaryReviews: ReviewSummary[] = [];
+        try {
+          if (scm.getReviewThreads) {
+            const result = await scm.getReviewThreads(secondaryPR);
+            secondaryThreads = result.threads;
+            secondaryReviews = result.reviews;
+          } else {
+            secondaryThreads = await scm.getPendingComments(secondaryPR);
+          }
+        } catch {
+          continue;
+        }
+        const secondaryUnresolved = secondaryThreads.filter((c) => !c.isBot);
+        const secondaryBlob = JSON.stringify({
+          unresolvedThreads: secondaryUnresolved.length,
+          unresolvedComments: secondaryUnresolved.map((c) => ({
+            url: c.url,
+            path: c.path ?? "",
+            author: c.author,
+            body: c.body,
+          })),
+          reviews: secondaryReviews.map((r) => ({
+            author: r.author,
+            state: r.state,
+            body: r.body,
+          })),
+          commentsUpdatedAt: new Date().toISOString(),
+        });
+        const reviewMetaKey = `prReviewComments_${i}`;
+        if (session.metadata[reviewMetaKey] !== secondaryBlob) {
+          updateSessionMetadata(session, { [reviewMetaKey]: secondaryBlob });
+        }
       }
     }
 
