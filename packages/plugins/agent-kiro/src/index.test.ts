@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentLaunchConfig, RuntimeHandle, Session } from "@aoagents/ao-core";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as {
@@ -18,12 +21,14 @@ const {
   mockRecordTerminalActivity,
   mockSetupPathWrapperWorkspace,
   mockExecFileAsync,
+  mockIsWindows,
   mockWhichSync,
 } = vi.hoisted(() => ({
   mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
   mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
   mockExecFileAsync: vi.fn(),
+  mockIsWindows: vi.fn().mockReturnValue(false),
   mockWhichSync: vi.fn(),
 }));
 
@@ -31,6 +36,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
+    isWindows: mockIsWindows,
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
@@ -128,6 +134,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockWhichSync.mockReset();
   mockExecFileAsync.mockReset();
+  mockIsWindows.mockReset();
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("manifest", () => {
@@ -143,11 +151,10 @@ describe("manifest", () => {
 });
 
 describe("create", () => {
-  it("uses kiro-cli as process name and post-launch prompt mode", () => {
-    const agent = create() as ReturnType<typeof create> & { promptDelivery?: string };
+  it("uses kiro-cli as process name", () => {
+    const agent = create();
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe("kiro-cli");
-    expect(agent.promptDelivery).toBe("post-launch");
   });
 
   it("exports plugin module shape", () => {
@@ -190,18 +197,55 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe(`kiro-cli chat --resume-id '${KIRO_SESSION_ID}'`);
   });
 
-  it("does not include prompt flags in launch command", () => {
+  it("passes task prompt as Kiro chat positional input without prompt flags", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
-        prompt: "Do work",
-        systemPrompt: "You are helpful",
-        systemPromptFile: "/tmp/prompt.md",
+        prompt: "Fix Bob's issue",
       }),
     );
-    expect(cmd).toBe("kiro-cli chat");
+    expect(cmd).toBe("kiro-cli chat 'Fix Bob'\\''s issue'");
     expect(cmd).not.toContain("-p");
     expect(cmd).not.toContain("--prompt");
-    expect(cmd).not.toContain("Do work");
+  });
+
+  it("combines system prompt text with task prompt as Kiro input", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        systemPrompt: "Follow AO rules",
+        prompt: "Fix the bug",
+      }),
+    );
+    expect(cmd).toBe("kiro-cli chat 'Follow AO rules\n\nFix the bug'");
+  });
+
+  it("reads systemPromptFile and combines it with task prompt as Kiro input", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "ao-kiro-test-"));
+    try {
+      const systemPromptFile = join(tmp, "system.md");
+      writeFileSync(systemPromptFile, "Use repo instructions\n", "utf8");
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({
+          systemPromptFile,
+          prompt: "Fix the bug",
+        }),
+      );
+      expect(cmd).toBe("kiro-cli chat 'Use repo instructions\n\nFix the bug'");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("passes prompt when restoring from configured Kiro session id", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        prompt: "Continue the task",
+        projectConfig: {
+          ...makeLaunchConfig().projectConfig,
+          agentConfig: { kiroSessionId: KIRO_SESSION_ID },
+        },
+      }),
+    );
+    expect(cmd).toBe(`kiro-cli chat --resume-id '${KIRO_SESSION_ID}' 'Continue the task'`);
   });
 });
 
@@ -253,6 +297,13 @@ describe("isProcessRunning", () => {
     });
 
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("returns false without POSIX tmux checks on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalled();
   });
 
   it("returns true when process handle pid is alive", async () => {

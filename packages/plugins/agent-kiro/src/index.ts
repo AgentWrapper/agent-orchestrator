@@ -5,6 +5,7 @@ import {
   buildAgentPath,
   checkActivityLogState,
   getActivityFallbackState,
+  isWindows,
   readLastActivityEntry,
   recordTerminalActivity,
   setupPathWrapperWorkspace,
@@ -22,6 +23,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import which from "which";
@@ -57,6 +59,32 @@ const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`,
   "g",
 );
+
+function readSystemPromptFile(systemPromptFile: string | undefined): string | null {
+  if (!systemPromptFile) return null;
+  try {
+    return readFileSync(systemPromptFile, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function buildInitialInput(config: AgentLaunchConfig): string | null {
+  const parts = [
+    readSystemPromptFile(config.systemPromptFile) ?? config.systemPrompt,
+    config.prompt,
+  ]
+    .map((part) => (typeof part === "string" ? part.trim() : ""))
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  return parts.join("\n\n");
+}
+
+function appendInitialInput(command: string, config: AgentLaunchConfig): string {
+  const input = buildInitialInput(config);
+  if (!input) return command;
+  return `${command} ${shellEscape(input)}`;
+}
 
 function classifyKiroTerminalOutput(terminalOutput: string): ActivityState {
   const normalizedOutput = terminalOutput.replaceAll(ANSI_ESCAPE_RE, "").trim();
@@ -94,19 +122,21 @@ export const manifest = {
 };
 
 function createKiroAgent(): Agent {
-  const agent: Agent & { promptDelivery: "post-launch" } = {
+  return {
     name: pluginName,
     processName: KIRO_EXECUTABLE,
-    promptDelivery: "post-launch",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const sessionId = asValidKiroSessionId(
         (config.projectConfig.agentConfig as KiroAgentConfig | undefined)?.kiroSessionId,
       );
       if (!sessionId) {
-        return `${KIRO_EXECUTABLE} chat`;
+        return appendInitialInput(`${KIRO_EXECUTABLE} chat`, config);
       }
-      return `${KIRO_EXECUTABLE} chat --resume-id ${shellEscape(sessionId)}`;
+      return appendInitialInput(
+        `${KIRO_EXECUTABLE} chat --resume-id ${shellEscape(sessionId)}`,
+        config,
+      );
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -162,6 +192,10 @@ function createKiroAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux and ps are POSIX-only. A stale tmux handle on Windows
+          // (e.g. cross-platform session import) would otherwise throw
+          // and misclassify a live process as exited.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -233,8 +267,6 @@ function createKiroAgent(): Agent {
       await setupPathWrapperWorkspace(session.workspacePath);
     },
   };
-
-  return agent;
 }
 
 export function create(): Agent {
