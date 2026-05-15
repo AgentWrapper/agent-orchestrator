@@ -119,6 +119,8 @@ projects:
     path: ~/my-app
     defaultBranch: main
     sessionPrefix: app
+    # Optional: run orchestrator in the repo root instead of a fresh worktree
+    # orchestratorWorkspaceMode: project
 
 reactions:
   ci-failed:

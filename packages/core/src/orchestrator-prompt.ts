@@ -31,11 +31,34 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
 
   sections.push(`## Non-Negotiable Rules
 
-- Investigations from the orchestrator session are **read-only**. Inspect status, logs, metadata, PR state, and worker output, but do not edit repository files or implement fixes from the orchestrator session.
-- Any code change, test run tied to implementation, git branch work, or PR takeover must be delegated to a **worker session**.
-- The orchestrator session must never own a PR. Never claim a PR into the orchestrator session, and never treat the orchestrator as the worker responsible for implementation.
-- If an investigation discovers follow-up work, either spawn a worker session or direct an existing worker session with clear instructions.
-- **Always use \`ao send\` to communicate with sessions** — never use raw \`tmux send-keys\` or \`tmux capture-pane\`. Direct tmux access bypasses busy detection, retry logic, and input sanitization, and breaks multi-line input for some agents (e.g. Codex).
+The orchestrator owns **coordination and integration**, not implementation. The distinction is whether an action requires writing or fixing code.
+
+### Allowed from the orchestrator
+- **Inspect everything**: status, logs, metadata, PR state, git history, worker pane output, filesystem.
+- **Documentation edits**: TODO tracking, development/*.md, session handovers, skill files, doc-only commits. These are coordination artifacts.
+- **Integration git operations** that promote already-validated worker commits without implementation judgment:
+  - Cherry-pick or fast-forward merge of commits that already exist on a worker branch onto the default branch, **only when the operation applies cleanly with no conflicts**.
+  - Tagging existing commits.
+  - Rewriting local branch pointers that don't touch pushed history.
+  - If a cherry-pick hits a conflict, **STOP and delegate** — conflict resolution is implementation judgment.
+- **Build when necessary** (\`python3 build.py -b\` or equivalent) to produce a binary from a main-state the orchestrator cherry-picked together. Typical case: post-cherry-pick sanity-build to run canonical verification on the combined state before closing the session. No code change involved — the orchestrator is compiling existing source, not editing it. Prefer delegating iterative or >10 min builds to a worker; orchestrator self-builds are for single clean compile+verify.
+- **Benchmark runs**: executing already-built binaries (orchestrator-built or worker-built) with env-var tweaks, collecting ns/day / D_sys / drift / timing output. The orchestrator may own canonical benchmark runs (e.g., 5×10K on a locked-clocks GPU) when no code change is needed.
+- **Validation runs**: executing the project's verification gates (drift, determinism, energy audits, nsys profiling) against built binaries. Report raw data into a doc as the result.
+
+### Must be delegated to a worker
+- **Any source code change, including config and build-system files.** The orchestrator never modifies the codebase directly. Even a one-line fix to unblock a build goes to a worker; if a self-build fails, STOP and delegate rather than "fix and retry."
+- **PR takeover / claim** into the orchestrator session.
+- **Conflict resolution** during cherry-pick/merge.
+- **Anything requiring implementation judgment** (e.g., deciding *how* to fix a failing test, not just running it).
+
+### Never allowed from anywhere in the orchestrator session
+- Destructive or history-rewriting git on shared/pushed branches: force-push, \`git reset --hard\` on the default branch, branch deletion of branches with unmerged work, rebasing pushed history. Delegate or ask the user.
+- Claiming a PR into the orchestrator session.
+
+### Operational notes
+- When directly running benchmarks/validation from the orchestrator, be aware output fills your context. For long-running (>10 min) or output-heavy runs, prefer delegating to a worker to protect orchestrator context.
+- If an investigation discovers follow-up *code* work, spawn a worker or direct an existing one. If it discovers follow-up *coordination* work (docs, cherry-pick, tag, bench), the orchestrator may handle it directly.
+- **Always use \`ao send\` to communicate with sessions** — never raw \`tmux send-keys\` or \`tmux capture-pane\` for messaging. Direct tmux access bypasses busy detection, retry logic, and input sanitization, and breaks multi-line input for some agents (e.g. Codex). Read-only \`tmux capture-pane\` for inspection is fine.
 - When a session might be busy, use \`ao send --no-wait <session> <message>\` to send without waiting for the session to become idle.`);
 
   // Project Info

@@ -988,6 +988,68 @@ describe("spawn", () => {
       expect(mockRuntime.create).not.toHaveBeenCalled();
     });
 
+    it("supports legacy project-root orchestrator mode", async () => {
+      config.projects["my-app"]!.orchestratorWorkspaceMode = "project";
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      expect(session.projectId).toBe("my-app");
+      expect(session.branch).toBe("main");
+      expect(session.workspacePath).toBe(config.projects["my-app"]!.path);
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
+      expect(mockRuntime.create).toHaveBeenCalledWith(
+        expect.objectContaining({ workspacePath: config.projects["my-app"]!.path }),
+      );
+
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
+      expect(meta?.["branch"]).toBe("main");
+      expect(meta?.["worktree"]).toBe(config.projects["my-app"]!.path);
+      expect(meta?.["role"]).toBe("orchestrator");
+    });
+
+    it("allows project-root orchestrator mode without a workspace plugin", async () => {
+      config.projects["my-app"]!.orchestratorWorkspaceMode = "project";
+      const registryNoWorkspace: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryNoWorkspace });
+
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.workspacePath).toBe(config.projects["my-app"]!.path);
+      expect(mockRuntime.create).toHaveBeenCalled();
+    });
+
+    it("reuses an existing project-root orchestrator when strategy is reuse", async () => {
+      config.projects["my-app"]!.orchestratorWorkspaceMode = "project";
+      config.projects["my-app"]!.orchestratorSessionStrategy = "reuse";
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: config.projects["my-app"]!.path,
+        branch: "main",
+        status: "working",
+        role: "orchestrator",
+        project: "my-app",
+        runtimeHandle: JSON.stringify(makeHandle("rt-existing")),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.metadata["orchestratorSessionReused"]).toBe("true");
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
+    });
+
     it("creates orchestrator session with correct ID", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });
 

@@ -72,6 +72,12 @@ projects:
     agentRulesFile: .ao-rules # Or point to a file (relative to project path)
     orchestratorRules: |      # Rules for the orchestrator agent
 
+    # ── Orchestrator workspace mode (optional) ────────────────────
+    orchestratorWorkspaceMode: isolated
+    # Options:
+    #   isolated = dedicated worktree/clone per orchestrator (default)
+    #   project  = run in project.path like legacy AO (single orchestrator)
+
     # ── Orchestrator session strategy (optional) ──────────────────
     # Controls what happens to the orchestrator session on restart.
     orchestratorSessionStrategy: reuse

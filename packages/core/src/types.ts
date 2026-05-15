@@ -1176,6 +1176,13 @@ export interface ProjectConfig {
   /** Rules for the orchestrator agent (stored, reserved for future use) */
   orchestratorRules?: string;
 
+  /**
+   * Where orchestrator sessions run:
+   * - isolated: dedicated workspace plugin instance (default)
+   * - project: run directly in project.path using a single legacy orchestrator session
+   */
+  orchestratorWorkspaceMode?: "isolated" | "project";
+
   orchestratorSessionStrategy?:
     | "reuse"
     | "delete"
