@@ -203,6 +203,7 @@ async function spawnSession(
   agent?: string,
   claimOptions?: SpawnClaimOptions,
   prompt?: string,
+  displayName?: string,
 ): Promise<void> {
   const spinner = ora("Creating session").start();
 
@@ -216,11 +217,18 @@ async function spawnSession(
       throw new Error("Prompt must be at most 4096 characters");
     }
 
+    // Validate display name length
+    const sanitizedDisplayName = displayName?.trim() || undefined;
+    if (sanitizedDisplayName && sanitizedDisplayName.length > 80) {
+      throw new Error("Name must be at most 80 characters");
+    }
+
     const session = await sm.spawn({
       projectId,
       issueId,
       agent,
       prompt: sanitizedPrompt,
+      displayName: sanitizedDisplayName,
     });
 
     let claimedPrUrl: string | null = null;
@@ -280,6 +288,7 @@ export function registerSpawn(program: Command): void {
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--prompt <text>", "Initial prompt/instructions for the agent (use instead of an issue)")
+    .option("--name <text>", "Custom display name for the session (overrides auto-derived name)")
     .action(
       async (
         issue: string | undefined,
@@ -289,6 +298,7 @@ export function registerSpawn(program: Command): void {
           claimPr?: string;
           assignOnGithub?: boolean;
           prompt?: string;
+          name?: string;
         },
         command: Command,
       ) => {
@@ -327,7 +337,7 @@ export function registerSpawn(program: Command): void {
           await runSpawnPreflight(config, projectId, claimOptions);
           await ensureAOPollingProject(projectId);
 
-          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt, opts.name);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);
