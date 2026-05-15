@@ -1497,6 +1497,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     switch (action) {
       case "send-to-agent": {
         if (reactionConfig.message) {
+          // On first trigger, also notify the human so they know a reaction
+          // was dispatched (e.g. "CI failed — agent notified").  Subsequent
+          // retries stay silent until escalation.
+          if (tracker.attempts === 1) {
+            const firstTriggerEvent = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `${reactionKey}: dispatching to agent (${sessionId})`,
+              data: { reactionKey, action: "send-to-agent", attempt: 1 },
+            });
+            await notifyHuman(firstTriggerEvent, reactionConfig.priority ?? "info");
+          }
+
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
             recordActivityEvent({
@@ -2246,8 +2259,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
-        } catch {
-          // Notifier failed — not much we can do
+        } catch (err) {
+          // Log notifier failures so they are visible in observability output
+          // instead of being silently swallowed.
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "notifyHuman",
+            outcome: "failure",
+            correlationId: createCorrelationId("notify-error"),
+            projectId: event.projectId ?? "unknown",
+            sessionId: event.sessionId ?? "unknown",
+            data: {
+              notifier: name,
+              eventType: event.type,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            level: "error",
+          });
         }
       }
     }
