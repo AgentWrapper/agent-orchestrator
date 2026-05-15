@@ -465,6 +465,69 @@ export function writeLocalProjectConfig(
   return configPath;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeRoleBehavior(
+  defaults: Record<string, unknown>,
+  project: Record<string, unknown>,
+  key: "orchestrator" | "worker",
+): Record<string, unknown> | undefined {
+  const defaultRole = isRecord(defaults[key]) ? defaults[key] : undefined;
+  const projectRole = isRecord(project[key]) ? project[key] : undefined;
+  const merged = {
+    ...(defaultRole ?? {}),
+    ...(projectRole ?? {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function buildRepairedLocalProjectConfig(
+  parsed: Record<string, unknown>,
+  project: Record<string, unknown>,
+): Record<string, unknown> {
+  const defaults = isRecord(parsed["defaults"]) ? parsed["defaults"] : {};
+  const defaultBehavior: Record<string, unknown> = {};
+  for (const key of ["runtime", "agent", "workspace"] as const) {
+    if (defaults[key] !== null && defaults[key] !== undefined) {
+      defaultBehavior[key] = defaults[key];
+    }
+  }
+
+  const {
+    name: _name,
+    path: _path,
+    sessionPrefix: _sessionPrefix,
+    projectId: _projectId,
+    source: _source,
+    registeredAt: _registeredAt,
+    displayName: _displayName,
+    orchestrator: _orchestrator,
+    worker: _worker,
+    ...projectBehavior
+  } = project;
+  void _name;
+  void _path;
+  void _sessionPrefix;
+  void _projectId;
+  void _source;
+  void _registeredAt;
+  void _displayName;
+  void _orchestrator;
+  void _worker;
+
+  const behavior = {
+    ...defaultBehavior,
+    ...projectBehavior,
+  };
+  const orchestrator = mergeRoleBehavior(defaults, project, "orchestrator");
+  const worker = mergeRoleBehavior(defaults, project, "worker");
+  if (orchestrator) behavior["orchestrator"] = orchestrator;
+  if (worker) behavior["worker"] = worker;
+  return behavior;
+}
+
 export function repairWrappedLocalProjectConfig(projectId: string, projectPath: string): void {
   const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
   if (localConfigResult.kind !== "old-format" || !localConfigResult.path) {
@@ -494,24 +557,7 @@ export function repairWrappedLocalProjectConfig(projectId: string, projectPath: 
     );
   }
 
-  const {
-    name: _name,
-    path: _path,
-    sessionPrefix: _sessionPrefix,
-    projectId: _projectId,
-    source: _source,
-    registeredAt: _registeredAt,
-    displayName: _displayName,
-    ...behaviorFields
-  } = project;
-  void _name;
-  void _path;
-  void _sessionPrefix;
-  void _projectId;
-  void _source;
-  void _registeredAt;
-  void _displayName;
-
+  const behaviorFields = buildRepairedLocalProjectConfig(parsed, project);
   writeLocalProjectConfig(projectPath, behaviorFields, configPath);
 }
 

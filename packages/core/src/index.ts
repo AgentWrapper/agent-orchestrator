@@ -43,6 +43,44 @@ export {
 export { createInitialCanonicalLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
 export { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
+// AO-local code review store
+export { CodeReviewStore, createCodeReviewStore } from "./code-review-store.js";
+export type {
+  CodeReviewFinding,
+  CodeReviewFindingStatus,
+  CodeReviewRun,
+  CodeReviewRunStatus,
+  CodeReviewRunSummary,
+  CodeReviewSeverity,
+  CodeReviewStoreOptions,
+  CreateCodeReviewFindingInput,
+  CreateCodeReviewRunInput,
+  ListCodeReviewFindingsFilter,
+  ListCodeReviewRunsFilter,
+} from "./code-review-store.js";
+export {
+  CodeReviewRunNotExecutableError,
+  CodeReviewRunNotFoundError,
+  createShellCodeReviewRunner,
+  executeCodeReviewRun,
+  parseReviewerOutput,
+  prepareGitReviewerWorkspace,
+  runCodexCodeReview,
+  triggerCodeReviewForSession,
+} from "./code-review-manager.js";
+export type {
+  CodeReviewRunner,
+  CodeReviewRunnerContext,
+  CodeReviewRunnerFinding,
+  CodeReviewRunnerResult,
+  CodeReviewRequestSource,
+  ExecuteCodeReviewRunInput,
+  ExecuteCodeReviewRunOptions,
+  PrepareCodeReviewWorkspace,
+  TriggerCodeReviewInput,
+  TriggerCodeReviewOptions,
+} from "./code-review-manager.js";
+
 // Lifecycle transitions — centralized transition boundary (#137)
 export {
   applyLifecycleDecision,
@@ -246,6 +284,7 @@ export {
   getProjectDir,
   getProjectSessionsDir,
   getProjectWorktreesDir,
+  getProjectCodeReviewsDir,
   getProjectFeedbackReportsDir,
   getOrchestratorPath,
   getSessionPath,

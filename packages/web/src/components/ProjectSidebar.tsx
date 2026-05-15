@@ -9,7 +9,7 @@ import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle, humanizeBranch } from "@/lib/format";
 import { usePopoverClamp } from "@/hooks/usePopoverClamp";
-import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { projectDashboardPath, projectReviewPath, projectSessionPath } from "@/lib/routes";
 import { ThemeToggle } from "./ThemeToggle";
 import { AddProjectModal } from "./AddProjectModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
@@ -652,6 +652,32 @@ function ProjectSidebarInner({
                       viewBox="0 0 24 24"
                     >
                       <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
+                    </svg>
+                  </Link>
+                ) : null}
+
+                {/* Review button */}
+                {!isDegraded ? (
+                  <Link
+                    href={projectReviewPath(project.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMobileClose?.();
+                    }}
+                    className="project-sidebar__proj-action"
+                    aria-label={`Open ${project.name} reviews`}
+                    title="Reviews"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M9 11l2 2 4-4" />
+                      <path d="M5 4h14v16H5z" />
                     </svg>
                   </Link>
                 ) : null}

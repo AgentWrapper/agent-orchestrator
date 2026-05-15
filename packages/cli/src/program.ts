@@ -5,6 +5,7 @@ import { registerSession } from "./commands/session.js";
 import { registerSend } from "./commands/send.js";
 import { registerAcknowledge, registerReport } from "./commands/report.js";
 import { registerReviewCheck } from "./commands/review-check.js";
+import { registerReview } from "./commands/review.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
@@ -39,6 +40,7 @@ export function createProgram(): Command {
   registerAcknowledge(program);
   registerReport(program);
   registerReviewCheck(program);
+  registerReview(program);
   registerDashboard(program);
   registerOpen(program);
   registerVerify(program);

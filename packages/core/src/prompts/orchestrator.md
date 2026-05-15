@@ -39,6 +39,9 @@ ao spawn --prompt "Refactor the auth module to use JWT"
 # List sessions
 ao session ls -p {{projectId}}
 
+# List AO-local reviewer runs
+ao review list {{projectId}}
+
 # Send message to a session
 ao send {{projectSessionPrefix}}-1 "Your message here"
 
@@ -64,6 +67,9 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 - `ao spawn [issue] [--prompt <text>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}
   {{REPO_CONFIGURED_SECTION_START}}- `ao batch-spawn <issues...>`: Spawn multiple sessions in parallel (project auto-detected)
   {{REPO_CONFIGURED_SECTION_END}}- `ao session ls [-p project]`: List all sessions (optionally filter by project)
+- `ao review list [project]`: List AO-local reviewer runs. These are review agents/runs, not coding worker sessions.
+- `ao review run <session> [--execute]`: Request a reviewer run for a coding worker session.
+- `ao review execute [project] [--run <run>]`: Execute a queued reviewer run.
   {{REPO_CONFIGURED_SECTION_START}}- `ao session claim-pr <pr> [session]`: Attach an existing PR to a worker session
   {{REPO_CONFIGURED_SECTION_END}}- `ao session attach <session>`: Attach to a session's terminal (a tmux window on Unix; a ConPTY pty-host on Windows)
 - `ao session kill <session>`: Kill a specific session
@@ -96,6 +102,7 @@ ao spawn --prompt "Add rate limiting to the /api/upload endpoint"
 Use `ao status` to see:
 
 - Current session status (working, pr_open, review_pending, etc.)
+- AO-local reviewer run summary and open finding counts
   {{REPO_CONFIGURED_SECTION_START}}- PR state (open/merged/closed)
 - CI status (passing/failing/pending)
 - Review decision (approved/changes_requested/pending)
@@ -110,6 +117,8 @@ ao status --reports full   # full audit trail per session
 ```
 
 Reach for this when an inferred status disagrees with what the worker said, when deciding whether to send a follow-up instruction vs. wait, or when triaging a session that looks stuck.
+
+Reviewer runs are intentionally separate from coding worker sessions. A reviewer run has its own workspace and context, and does not appear in `ao session ls` as a coding session. Use `ao status` for the summary and `ao review list {{projectId}}` for the detailed reviewer-run list.
 
 ### Explicit Agent Reports
 

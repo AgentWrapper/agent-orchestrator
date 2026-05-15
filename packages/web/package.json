@@ -36,6 +36,7 @@
     "dev:optimized": "rimraf .next dist-server && next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:review": "tsx e2e/review-board.e2e.ts",
     "test:watch": "vitest",
     "clean": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
     "screenshot": "tsx e2e/screenshot.ts",

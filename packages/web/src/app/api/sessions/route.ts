@@ -10,7 +10,7 @@ import {
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
-import { isDashboardSessionTerminal, type DashboardOrchestratorLink } from "@/lib/types";
+import { type DashboardOrchestratorLink } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
@@ -136,8 +136,8 @@ export async function GET(request: Request) {
     let dashboardSessions = workerSessions.map(sessionToDashboard);
 
     if (activeOnly) {
-      const activeIndices = dashboardSessions
-        .map((session, index) => (!isDashboardSessionTerminal(session) ? index : -1))
+      const activeIndices = workerSessions
+        .map((session, index) => (!isTerminalSession(session) ? index : -1))
         .filter((index) => index !== -1);
       workerSessions = activeIndices.map((index) => workerSessions[index]);
       dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);

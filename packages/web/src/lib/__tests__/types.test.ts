@@ -12,7 +12,9 @@ import {
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
   isDashboardSessionDone,
+  isDashboardRuntimeEnded,
   isDashboardSessionRestorable,
+  isDashboardSessionTerminal,
   type DashboardSession,
   type DashboardPR,
 } from "../types";
@@ -264,6 +266,49 @@ describe("getAttentionLevel", () => {
   });
 
   describe("restore affordances", () => {
+    it("treats exited activity as terminal even when lifecycle runtime is still alive", () => {
+      const session = createSession({
+        status: "review_pending",
+        activity: "exited",
+        lifecycle: {
+          sessionState: "idle",
+          sessionReason: "awaiting_external_review",
+          prState: "open",
+          prReason: "review_pending",
+          runtimeState: "alive",
+          runtimeReason: "process_running",
+          session: {
+            state: "idle",
+            reason: "awaiting_external_review",
+            label: "idle",
+            reasonLabel: "awaiting external review",
+          },
+          pr: {
+            state: "open",
+            reason: "review_pending",
+            label: "open",
+            reasonLabel: "review pending",
+          },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            label: "alive",
+            reasonLabel: "process running",
+          },
+          legacyStatus: "review_pending",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "Waiting for review",
+          guidance: null,
+        },
+      });
+
+      expect(isDashboardSessionTerminal(session)).toBe(true);
+      expect(isDashboardRuntimeEnded(session)).toBe(true);
+      expect(isDashboardSessionRestorable(session)).toBe(true);
+    });
+
     it("should not mark merged sessions as restorable", () => {
       const session = createSession({
         status: "merged",

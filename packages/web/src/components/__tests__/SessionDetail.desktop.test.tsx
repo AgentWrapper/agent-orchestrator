@@ -271,6 +271,60 @@ describe("SessionDetail desktop layout", () => {
     );
   });
 
+  it("does not open a blank terminal when activity exited but lifecycle still reports alive", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-review-ended",
+          projectId: "my-app",
+          status: "review_pending",
+          activity: "exited",
+          summary: "Worker exited after opening a PR",
+          pr: null,
+          lifecycle: {
+            sessionState: "idle",
+            sessionReason: "awaiting_external_review",
+            prState: "open",
+            prReason: "review_pending",
+            runtimeState: "alive",
+            runtimeReason: "process_running",
+            session: {
+              state: "idle",
+              reason: "awaiting_external_review",
+              label: "idle",
+              reasonLabel: "awaiting external review",
+            },
+            pr: {
+              state: "open",
+              reason: "review_pending",
+              label: "open",
+              reasonLabel: "review pending",
+            },
+            runtime: {
+              state: "alive",
+              reason: "process_running",
+              label: "alive",
+              reasonLabel: "process running",
+            },
+            legacyStatus: "review_pending",
+            evidence: null,
+            detectingAttempts: 0,
+            detectingEscalatedAt: null,
+            summary: "Waiting for external review",
+            guidance: null,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Session ended summary" })).toBeInTheDocument();
+    expect(screen.getByText("Terminal ended")).toBeInTheDocument();
+    expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: "Restore" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows restore for restorable orchestrator sessions", () => {
     render(
       <SessionDetail

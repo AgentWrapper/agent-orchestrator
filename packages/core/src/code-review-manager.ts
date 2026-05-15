@@ -1,0 +1,650 @@
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import {
+  type CodeReviewSeverity,
+  createCodeReviewStore,
+  type CodeReviewRun,
+  type CodeReviewRunStatus,
+  type CodeReviewRunSummary,
+  type CodeReviewStore,
+} from "./code-review-store.js";
+import { getProjectCodeReviewsDir } from "./paths.js";
+import {
+  isOrchestratorSession,
+  SessionNotFoundError,
+  type OrchestratorConfig,
+  type ProjectConfig,
+  type Session,
+  type SessionManager,
+} from "./types.js";
+import { getShell, isWindows } from "./platform.js";
+
+const REVIEW_COMMAND_TIMEOUT_MS = 10 * 60_000;
+const REVIEW_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
+
+async function execFileAsync(
+  file: string,
+  args: string[],
+  options: {
+    cwd?: string;
+    timeout?: number;
+    maxBuffer?: number;
+    env?: NodeJS.ProcessEnv;
+    shell?: boolean | string;
+    windowsHide?: boolean;
+  } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  const { execFile } = await import("node:child_process");
+  return promisify(execFile)(file, args, { windowsHide: true, ...options });
+}
+
+export type CodeReviewRequestSource = "cli" | "web" | "system";
+
+export interface TriggerCodeReviewInput {
+  sessionId: string;
+  requestedBy?: CodeReviewRequestSource;
+  status?: CodeReviewRunStatus;
+  summary?: string;
+}
+
+export interface TriggerCodeReviewOptions {
+  config: OrchestratorConfig;
+  sessionManager: SessionManager;
+  storeFactory?: (projectId: string) => CodeReviewStore;
+  resolveTargetSha?: (session: Session) => Promise<string | undefined>;
+  now?: Date;
+}
+
+export interface CodeReviewRunnerFinding {
+  severity?: CodeReviewSeverity;
+  title?: string;
+  body?: string;
+  filePath?: string;
+  startLine?: number;
+  endLine?: number;
+  category?: string;
+  confidence?: number;
+  fingerprint?: string;
+}
+
+export interface CodeReviewRunnerResult {
+  findings?: CodeReviewRunnerFinding[];
+  summary?: string;
+  rawOutput?: string;
+}
+
+export interface CodeReviewRunnerContext {
+  config: OrchestratorConfig;
+  project: ProjectConfig;
+  session: Session;
+  run: CodeReviewRun;
+  workspacePath: string;
+  baseRef: string;
+}
+
+export type CodeReviewRunner = (
+  context: CodeReviewRunnerContext,
+) => Promise<CodeReviewRunnerResult>;
+
+export type PrepareCodeReviewWorkspace = (context: {
+  projectId: string;
+  project: ProjectConfig;
+  session: Session;
+  run: CodeReviewRun;
+}) => Promise<string>;
+
+export interface ExecuteCodeReviewRunOptions {
+  config: OrchestratorConfig;
+  sessionManager: SessionManager;
+  storeFactory?: (projectId: string) => CodeReviewStore;
+  prepareWorkspace?: PrepareCodeReviewWorkspace;
+  runReviewer?: CodeReviewRunner;
+  now?: () => Date;
+  force?: boolean;
+}
+
+export interface ExecuteCodeReviewRunInput {
+  projectId: string;
+  runId: string;
+}
+
+export class CodeReviewRunNotFoundError extends Error {
+  constructor(runId: string) {
+    super(`Code review run not found: ${runId}`);
+    this.name = "CodeReviewRunNotFoundError";
+  }
+}
+
+export class CodeReviewRunNotExecutableError extends Error {
+  readonly runId: string;
+  readonly reviewerSessionId: string;
+  readonly status: CodeReviewRunStatus;
+
+  constructor(run: CodeReviewRun) {
+    super(`Code review run ${run.reviewerSessionId} is ${run.status}, not queued`);
+    this.name = "CodeReviewRunNotExecutableError";
+    this.runId = run.id;
+    this.reviewerSessionId = run.reviewerSessionId;
+    this.status = run.status;
+  }
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parsePrNumber(url: string | undefined): number | undefined {
+  if (!url) return undefined;
+  const match = url.match(/\/pull\/(\d+)(?:\D*$|$)/);
+  if (!match) return undefined;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+function parseFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseSeverity(value: unknown): CodeReviewSeverity {
+  switch (value) {
+    case "error":
+    case "warning":
+    case "info":
+      return value;
+    default:
+      return "warning";
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stripMarkdownJsonFence(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match?.[1]?.trim() ?? trimmed;
+}
+
+function tryParseJsonCandidate(value: string): unknown | null {
+  const candidates = [stripMarkdownJsonFence(value)];
+  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+
+  for (const line of value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .reverse()) {
+    if (line.startsWith("{") || line.startsWith("[")) {
+      candidates.push(line);
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Keep trying looser candidates.
+    }
+  }
+
+  return null;
+}
+
+function normalizeFinding(value: unknown, fallbackIndex: number): CodeReviewRunnerFinding | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const body =
+    typeof record["body"] === "string"
+      ? record["body"].trim()
+      : typeof record["message"] === "string"
+        ? record["message"].trim()
+        : "";
+  if (!body) return null;
+
+  const title =
+    typeof record["title"] === "string" && record["title"].trim()
+      ? record["title"].trim()
+      : `Review finding ${fallbackIndex}`;
+
+  const filePath =
+    typeof record["filePath"] === "string"
+      ? record["filePath"]
+      : typeof record["path"] === "string"
+        ? record["path"]
+        : undefined;
+
+  return {
+    severity: parseSeverity(record["severity"]),
+    title: truncate(title, 160),
+    body: truncate(body, 12_000),
+    filePath,
+    startLine: parseFiniteNumber(record["startLine"] ?? record["line"]),
+    endLine: parseFiniteNumber(record["endLine"]),
+    category: typeof record["category"] === "string" ? record["category"] : undefined,
+    confidence: parseFiniteNumber(record["confidence"]),
+    fingerprint: typeof record["fingerprint"] === "string" ? record["fingerprint"] : undefined,
+  };
+}
+
+export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
+  const trimmed = output.trim();
+  if (!trimmed || /\bno findings?\b/i.test(trimmed)) return [];
+
+  const parsed = tryParseJsonCandidate(trimmed);
+  const parsedRecord = asRecord(parsed);
+  const rawFindings = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsedRecord?.["findings"])
+      ? parsedRecord["findings"]
+      : null;
+
+  if (rawFindings) {
+    return rawFindings
+      .map((finding, index) => normalizeFinding(finding, index + 1))
+      .filter((finding): finding is CodeReviewRunnerFinding => finding !== null);
+  }
+
+  return [
+    {
+      severity: "warning",
+      title: "Reviewer output",
+      body: truncate(trimmed, 12_000),
+    },
+  ];
+}
+
+function allocateReviewerSessionId(existingRuns: CodeReviewRun[], sessionPrefix: string): string {
+  let max = 0;
+  const pattern = new RegExp(`^${escapeRegex(sessionPrefix)}-rev-(\\d+)$`);
+
+  for (const run of existingRuns) {
+    const match = run.reviewerSessionId.match(pattern);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (!Number.isNaN(parsed) && parsed > max) {
+      max = parsed;
+    }
+  }
+
+  return `${sessionPrefix}-rev-${max + 1}`;
+}
+
+const SUPERSEDABLE_RUN_STATUSES: ReadonlySet<CodeReviewRunStatus> = new Set([
+  "queued",
+  "needs_triage",
+  "sent_to_agent",
+  "waiting_update",
+  "clean",
+]);
+
+function markSupersededReviewRuns({
+  store,
+  existingRuns,
+  linkedSessionId,
+  targetSha,
+  now,
+}: {
+  store: CodeReviewStore;
+  existingRuns: CodeReviewRun[];
+  linkedSessionId: string;
+  targetSha: string | undefined;
+  now: Date;
+}): void {
+  if (!targetSha) return;
+
+  for (const run of existingRuns) {
+    if (run.linkedSessionId !== linkedSessionId) continue;
+    if (!run.targetSha || run.targetSha === targetSha) continue;
+    if (!SUPERSEDABLE_RUN_STATUSES.has(run.status)) continue;
+    store.updateRun(run.id, { status: "outdated" }, now);
+  }
+}
+
+async function resolveGitHeadSha(session: Session): Promise<string | undefined> {
+  const cwd = session.workspacePath;
+  if (!cwd) return undefined;
+
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd,
+      timeout: 5_000,
+    });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function git(cwd: string, args: string[], timeout = 30_000): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd, timeout });
+  return stdout.trim();
+}
+
+async function resolveWorkspaceHead(
+  workspacePath: string | null | undefined,
+): Promise<string | undefined> {
+  if (!workspacePath) return undefined;
+  try {
+    return await git(workspacePath, ["rev-parse", "HEAD"], 5_000);
+  } catch {
+    return undefined;
+  }
+}
+
+async function removeReviewerWorktree(repoPath: string, workspacePath: string): Promise<void> {
+  if (!existsSync(workspacePath)) {
+    try {
+      await git(repoPath, ["worktree", "prune"]);
+    } catch {
+      // Best-effort cleanup of stale git metadata before adding the worktree again.
+    }
+    return;
+  }
+
+  try {
+    await git(repoPath, ["worktree", "remove", "--force", workspacePath]);
+    return;
+  } catch {
+    try {
+      await git(repoPath, ["worktree", "prune"]);
+    } catch {
+      // Best-effort before falling back to directory removal.
+    }
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+}
+
+export async function prepareGitReviewerWorkspace({
+  projectId,
+  project,
+  session,
+  run,
+}: {
+  projectId: string;
+  project: ProjectConfig;
+  session: Session;
+  run: CodeReviewRun;
+}): Promise<string> {
+  const workspaceRoot = join(getProjectCodeReviewsDir(projectId), "workspaces");
+  const workspacePath = join(workspaceRoot, run.reviewerSessionId);
+  mkdirSync(workspaceRoot, { recursive: true });
+  await removeReviewerWorktree(project.path, workspacePath);
+
+  const ref = run.targetSha ?? (await resolveWorkspaceHead(session.workspacePath)) ?? "HEAD";
+  await git(project.path, ["worktree", "add", "--detach", workspacePath, ref], 60_000);
+  return workspacePath;
+}
+
+function buildDefaultReviewPrompt(context: CodeReviewRunnerContext): string {
+  return [
+    "You are an AO reviewer agent. Review this repository snapshot for concrete bugs only.",
+    "Do not modify files. Do not publish comments anywhere.",
+    `Review the changes against base ref "${context.baseRef}". Start with: git diff --merge-base ${context.baseRef} HEAD -- .`,
+    "If that diff command fails, inspect git status/log and compare this detached reviewer workspace to the base ref using read-only commands.",
+    `Linked coding worker: ${context.session.id}`,
+    `Reviewer run: ${context.run.reviewerSessionId}`,
+    `Base ref: ${context.baseRef}`,
+    "Return only JSON using this schema:",
+    '{"findings":[{"severity":"warning|error|info","title":"short title","body":"specific issue and fix","filePath":"optional/path","startLine":1,"endLine":1,"confidence":0.8}]}',
+    'If there are no concrete bugs, return {"findings":[]}.',
+  ].join("\n");
+}
+
+async function readOutputFile(path: string): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+export function createShellCodeReviewRunner(command: string): CodeReviewRunner {
+  return async (context) => {
+    const shell = getShell();
+    const { stdout, stderr } = await execFileAsync(shell.cmd, shell.args(command), {
+      cwd: context.workspacePath,
+      timeout: REVIEW_COMMAND_TIMEOUT_MS,
+      maxBuffer: REVIEW_COMMAND_MAX_BUFFER,
+      env: process.env,
+    });
+    return { rawOutput: stdout.trim() || stderr.trim() };
+  };
+}
+
+export function buildCodexCodeReviewArgs(outputFile: string, prompt: string): string[] {
+  return [
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--output-last-message",
+    outputFile,
+    prompt,
+  ];
+}
+
+export async function runCodexCodeReview(
+  context: CodeReviewRunnerContext,
+): Promise<CodeReviewRunnerResult> {
+  const outputFile = join(context.workspacePath, ".ao-code-review-output.json");
+  const prompt = buildDefaultReviewPrompt(context);
+  const args = buildCodexCodeReviewArgs(outputFile, prompt);
+
+  try {
+    const { stdout, stderr } = await execFileAsync("codex", args, {
+      cwd: context.workspacePath,
+      timeout: REVIEW_COMMAND_TIMEOUT_MS,
+      maxBuffer: REVIEW_COMMAND_MAX_BUFFER,
+      env: process.env,
+      shell: isWindows(),
+    });
+    const outputFileContents = await readOutputFile(outputFile);
+    const rawOutput = outputFileContents ?? (stdout.trim() || stderr.trim());
+    return { rawOutput };
+  } catch (error) {
+    const details =
+      error instanceof Error && "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr.trim()
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(`Codex review failed: ${details}`, { cause: error });
+  }
+}
+
+function defaultReviewSummary(session: Session, source: CodeReviewRequestSource): string {
+  const sourceLabel = source === "cli" ? "CLI" : source === "web" ? "dashboard" : "automation";
+  return `Review requested from ${sourceLabel} for ${session.id}.`;
+}
+
+export async function triggerCodeReviewForSession(
+  {
+    config,
+    sessionManager,
+    storeFactory = createCodeReviewStore,
+    resolveTargetSha = resolveGitHeadSha,
+    now = new Date(),
+  }: TriggerCodeReviewOptions,
+  input: TriggerCodeReviewInput,
+): Promise<CodeReviewRunSummary> {
+  const session = await sessionManager.get(input.sessionId);
+  if (!session) {
+    throw new SessionNotFoundError(input.sessionId);
+  }
+
+  const project = config.projects[session.projectId];
+  if (!project) {
+    throw new Error(`Unknown project for session ${session.id}: ${session.projectId}`);
+  }
+
+  const sessionPrefix = project.sessionPrefix ?? session.projectId;
+  const allSessionPrefixes = Object.entries(config.projects).map(
+    ([projectId, projectConfig]) => projectConfig.sessionPrefix ?? projectId,
+  );
+  if (isOrchestratorSession(session, sessionPrefix, allSessionPrefixes)) {
+    throw new Error(`Cannot request code review for orchestrator session: ${session.id}`);
+  }
+
+  const store = storeFactory(session.projectId);
+  const existingRuns = store.listRuns();
+  const reviewerSessionId = allocateReviewerSessionId(existingRuns, sessionPrefix);
+  const prUrl = session.pr?.url ?? session.metadata["pr"];
+  const prNumber = session.pr?.number ?? parsePrNumber(prUrl);
+  const targetSha = await resolveTargetSha(session);
+  const requestedBy = input.requestedBy ?? "system";
+
+  markSupersededReviewRuns({
+    store,
+    existingRuns,
+    linkedSessionId: session.id,
+    targetSha,
+    now,
+  });
+
+  const run = store.createRun(
+    {
+      linkedSessionId: session.id,
+      reviewerSessionId,
+      status: input.status ?? "queued",
+      targetSha,
+      prNumber,
+      prUrl,
+      summary: input.summary ?? defaultReviewSummary(session, requestedBy),
+    },
+    now,
+  );
+
+  return {
+    ...run,
+    findingCount: 0,
+    openFindingCount: 0,
+    dismissedFindingCount: 0,
+    sentFindingCount: 0,
+    resolvedFindingCount: 0,
+  };
+}
+
+function summarizeRun(store: CodeReviewStore, runId: string): CodeReviewRunSummary {
+  const run = store.listRunSummaries().find((entry) => entry.id === runId);
+  if (!run) {
+    throw new CodeReviewRunNotFoundError(runId);
+  }
+  return run;
+}
+
+function getExecutableRun(store: CodeReviewStore, runId: string, force: boolean): CodeReviewRun {
+  const run = store.getRun(runId);
+  if (!run) {
+    throw new CodeReviewRunNotFoundError(runId);
+  }
+
+  if (!force && !["queued", "failed"].includes(run.status)) {
+    throw new CodeReviewRunNotExecutableError(run);
+  }
+
+  return run;
+}
+
+export async function executeCodeReviewRun(
+  {
+    config,
+    sessionManager,
+    storeFactory = createCodeReviewStore,
+    prepareWorkspace = prepareGitReviewerWorkspace,
+    runReviewer = runCodexCodeReview,
+    now = () => new Date(),
+    force = false,
+  }: ExecuteCodeReviewRunOptions,
+  { projectId, runId }: ExecuteCodeReviewRunInput,
+): Promise<CodeReviewRunSummary> {
+  const project = config.projects[projectId];
+  if (!project) {
+    throw new Error(`Unknown project: ${projectId}`);
+  }
+
+  const store = storeFactory(projectId);
+  let run = getExecutableRun(store, runId, force);
+  const session = await sessionManager.get(run.linkedSessionId);
+  if (!session) {
+    throw new SessionNotFoundError(run.linkedSessionId);
+  }
+
+  const startedAt = now();
+  run = store.updateRun(
+    run.id,
+    {
+      status: "preparing",
+      startedAt: run.startedAt ?? startedAt.toISOString(),
+      completedAt: undefined,
+      terminationReason: undefined,
+    },
+    startedAt,
+  );
+
+  try {
+    const workspacePath = await prepareWorkspace({ projectId, project, session, run });
+    run = store.updateRun(
+      run.id,
+      { status: "running", reviewerWorkspacePath: workspacePath },
+      now(),
+    );
+    const baseRef = session.pr?.baseBranch ?? project.defaultBranch;
+    const result = await runReviewer({ config, project, session, run, workspacePath, baseRef });
+    const findings = result.findings ?? parseReviewerOutput(result.rawOutput ?? "");
+
+    for (const finding of findings) {
+      store.createFinding(
+        {
+          runId: run.id,
+          linkedSessionId: run.linkedSessionId,
+          severity: finding.severity ?? "warning",
+          title: finding.title?.trim() || "Review finding",
+          body: finding.body?.trim() || "Reviewer reported an issue without details.",
+          filePath: finding.filePath,
+          startLine: finding.startLine,
+          endLine: finding.endLine,
+          category: finding.category,
+          confidence: finding.confidence,
+          fingerprint: finding.fingerprint,
+        },
+        now(),
+      );
+    }
+
+    const completedAt = now();
+    store.updateRun(
+      run.id,
+      {
+        status: findings.length > 0 ? "needs_triage" : "clean",
+        completedAt: completedAt.toISOString(),
+        summary: result.summary ?? run.summary,
+        terminationReason: undefined,
+      },
+      completedAt,
+    );
+  } catch (error) {
+    const completedAt = now();
+    store.updateRun(
+      run.id,
+      {
+        status: "failed",
+        completedAt: completedAt.toISOString(),
+        terminationReason: error instanceof Error ? error.message : String(error),
+      },
+      completedAt,
+    );
+  }
+
+  return summarizeRun(store, run.id);
+}
