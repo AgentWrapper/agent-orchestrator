@@ -64,18 +64,19 @@ export function sessionFromMetadata(
   const prUrl = lifecycle.pr.url ?? meta["pr"];
   const prIsDraft = meta[AGENT_REPORT_METADATA_KEYS.PR_IS_DRAFT] === "true";
 
-  // Build a PRInfo object from a single URL string
-  const buildPRInfo = (url: string): PRInfo => {
+  // Build a PRInfo object from a single URL string.
+  // isDraft defaults to false for secondary PRs — only the primary PR carries the flag.
+  const buildPRInfo = (url: string, isDraft = false): PRInfo => {
     const parsed = parsePrFromUrl(url);
     return {
-      number: lifecycle.pr.number ?? parsed?.number ?? 0,
+      number: parsed?.number ?? 0,
       url,
       title: "",
       owner: parsed?.owner ?? "",
       repo: parsed?.repo ?? "",
       branch: meta["branch"] ?? "",
       baseBranch: "",
-      isDraft: prIsDraft,
+      isDraft,
     };
   };
 
@@ -84,9 +85,9 @@ export function sessionFromMetadata(
   // Old sessions only have a single "pr" field — wrap it for backwards compat.
   const prsRaw = meta["prs"];
   const prs: PRInfo[] = prsRaw
-    ? prsRaw.split(",").map((u) => buildPRInfo(u.trim())).filter((p) => Boolean(p.url))
+    ? prsRaw.split(",").map((u, i) => buildPRInfo(u.trim(), i === 0 ? prIsDraft : false)).filter((p) => Boolean(p.url))
     : prUrl
-      ? [buildPRInfo(prUrl)]
+      ? [buildPRInfo(prUrl, prIsDraft)]
       : [];
 
   return {

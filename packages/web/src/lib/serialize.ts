@@ -386,6 +386,32 @@ export function enrichSessionPR(
   dashboard.pr.unresolvedThreads = data.unresolvedThreads;
   dashboard.pr.unresolvedComments = data.unresolvedComments;
   dashboard.pr.enriched = true;
+
+  // Enrich secondary PRs from their per-PR metadata blobs (prEnrichment_1, prEnrichment_2, …)
+  if (dashboard.prs && dashboard.prs.length > 1) {
+    for (let i = 1; i < dashboard.prs.length; i++) {
+      const metaKey = `prEnrichment_${i}`;
+      const secondaryData = readPREnrichmentFromMetadata({
+        ...dashboard.metadata,
+        prEnrichment: dashboard.metadata[metaKey] ?? "",
+      });
+      if (!secondaryData) continue;
+      const secondaryPR = dashboard.prs[i];
+      if (!secondaryPR) continue;
+      secondaryPR.state = secondaryData.state;
+      if (secondaryData.title) secondaryPR.title = secondaryData.title;
+      secondaryPR.additions = secondaryData.additions;
+      secondaryPR.deletions = secondaryData.deletions;
+      secondaryPR.ciStatus = secondaryData.ciStatus;
+      secondaryPR.ciChecks = secondaryData.ciChecks;
+      secondaryPR.reviewDecision = secondaryData.reviewDecision;
+      secondaryPR.mergeability = secondaryData.mergeability;
+      secondaryPR.unresolvedThreads = secondaryData.unresolvedThreads;
+      secondaryPR.unresolvedComments = secondaryData.unresolvedComments;
+      secondaryPR.enriched = true;
+    }
+  }
+
   refreshDashboardSessionDerivedFields(dashboard);
   return true;
 }

@@ -56,7 +56,7 @@ export function SessionEndedSummary({
     session.lastActivityAt;
   const runtimeLabel = session.lifecycle?.runtime.label ?? "Unavailable";
   const prs = session.prs ?? [];
-  const primaryPR = prs[0] ?? pr;
+  const primaryPR = pr ?? prs[0];
   const prLabel = primaryPR
     ? primaryPR.state === "merged"
       ? "Merged"

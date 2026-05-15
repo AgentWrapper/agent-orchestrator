@@ -152,7 +152,8 @@ export async function GET(request: Request) {
       // PR enrichment: read from session metadata (written by CLI lifecycle).
       // No GitHub API calls — synchronous metadata read.
       for (let i = 0; i < workerSessions.length; i++) {
-        if (!workerSessions[i]?.pr) continue;
+        const ws = workerSessions[i];
+        if (!ws?.pr && (!ws?.prs || ws.prs.length === 0)) continue;
         enrichSessionPR(dashboardSessions[i]);
       }
     }

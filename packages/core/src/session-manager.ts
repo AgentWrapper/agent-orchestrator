@@ -3184,9 +3184,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       next.pr.url = pr.url;
       next.pr.lastObservedAt = new Date().toISOString();
     });
+    const existingPrs = raw["prs"] ?? "";
+    const newPrs =
+      existingPrs && !existingPrs.includes(pr.url)
+        ? existingPrs + "," + pr.url
+        : existingPrs || pr.url;
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
-      prs: pr.url,
+      prs: newPrs,
       status: deriveLegacyStatus(claimLifecycle),
       branch: pr.branch,
       prAutoDetect: "",

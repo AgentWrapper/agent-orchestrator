@@ -691,11 +691,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // This allows detecting additional PRs on different repos (multi-repo support).
       const trackedRepos = new Set(session.prs.map((p) => `${p.owner}/${p.repo}`));
       const projectRepoForDetect = config.projects[session.projectId]?.repo;
+      const primaryPR = session.prs[0] ?? null;
       if (
         session.prs.length > 0 &&
         projectRepoForDetect &&
         trackedRepos.has(projectRepoForDetect) &&
-        !(session.lifecycle.pr.state === "closed")
+        !(session.lifecycle.pr.state === "closed" && primaryPR?.branch !== session.branch)
       ) {
         continue;
       }
@@ -731,6 +732,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                   !(
                     p.owner === detectedPR.owner &&
                     p.repo === detectedPR.repo &&
+                    p.number !== detectedPR.number &&
                     session.lifecycle.pr.state === "closed"
                   )
               )
@@ -796,36 +798,67 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!session.pr) continue;
       const project = config.projects[session.projectId];
       if (!project) continue;
+      const sessionsDir = getProjectSessionsDir(session.projectId);
 
       const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
       const cached = prEnrichmentCache.get(prKey);
-      if (!cached) continue;
+      if (cached) {
+        const blob = JSON.stringify({
+          state: cached.state,
+          ciStatus: cached.ciStatus,
+          reviewDecision: cached.reviewDecision,
+          mergeable: cached.mergeable,
+          title: cached.title,
+          additions: cached.additions,
+          deletions: cached.deletions,
+          isDraft: cached.isDraft,
+          hasConflicts: cached.hasConflicts,
+          isBehind: cached.isBehind,
+          blockers: cached.blockers,
+          ciChecks: cached.ciChecks?.map((c) => ({
+            name: c.name,
+            status: c.status,
+            url: c.url,
+          })),
+          enrichedAt: new Date().toISOString(),
+        });
+        if (session.metadata["prEnrichment"] !== blob) {
+          updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
+          session.metadata["prEnrichment"] = blob;
+        }
+      }
 
-      const blob = JSON.stringify({
-        state: cached.state,
-        ciStatus: cached.ciStatus,
-        reviewDecision: cached.reviewDecision,
-        mergeable: cached.mergeable,
-        title: cached.title,
-        additions: cached.additions,
-        deletions: cached.deletions,
-        isDraft: cached.isDraft,
-        hasConflicts: cached.hasConflicts,
-        isBehind: cached.isBehind,
-        blockers: cached.blockers,
-        ciChecks: cached.ciChecks?.map((c) => ({
-          name: c.name,
-          status: c.status,
-          url: c.url,
-        })),
-        enrichedAt: new Date().toISOString(),
-      });
-
-      if (session.metadata["prEnrichment"] === blob) continue;
-
-      const sessionsDir = getProjectSessionsDir(session.projectId);
-      updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
-      session.metadata["prEnrichment"] = blob;
+      for (let i = 1; i < session.prs.length; i++) {
+        const secondaryPR = session.prs[i];
+        if (!secondaryPR) continue;
+        const secondaryKey = `${secondaryPR.owner}/${secondaryPR.repo}#${secondaryPR.number}`;
+        const secondaryCached = prEnrichmentCache.get(secondaryKey);
+        if (!secondaryCached) continue;
+        const secondaryBlob = JSON.stringify({
+          state: secondaryCached.state,
+          ciStatus: secondaryCached.ciStatus,
+          reviewDecision: secondaryCached.reviewDecision,
+          mergeable: secondaryCached.mergeable,
+          title: secondaryCached.title,
+          additions: secondaryCached.additions,
+          deletions: secondaryCached.deletions,
+          isDraft: secondaryCached.isDraft,
+          hasConflicts: secondaryCached.hasConflicts,
+          isBehind: secondaryCached.isBehind,
+          blockers: secondaryCached.blockers,
+          ciChecks: secondaryCached.ciChecks?.map((c) => ({
+            name: c.name,
+            status: c.status,
+            url: c.url,
+          })),
+          enrichedAt: new Date().toISOString(),
+        });
+        const metaKey = `prEnrichment_${i}`;
+        if (session.metadata[metaKey] !== secondaryBlob) {
+          updateMetadata(sessionsDir, session.id, { [metaKey]: secondaryBlob });
+          session.metadata[metaKey] = secondaryBlob;
+        }
+      }
     }
   }
 

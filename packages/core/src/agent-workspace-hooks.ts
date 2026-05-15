@@ -533,7 +533,11 @@ case "\$1/\$2" in
         # Supports multiple PRs per session — same repo or different repos.
         _ao_meta_f="\${AO_DATA_DIR}/\${AO_SESSION}.json"
         [[ -f "\$_ao_meta_f" ]] || _ao_meta_f="\${AO_DATA_DIR}/\${AO_SESSION}"
-        existing_prs="\$(jq -r '.prs // empty' "\$_ao_meta_f" 2>/dev/null || echo "")"
+        if head -c1 "\$_ao_meta_f" 2>/dev/null | grep -q '{'; then
+          existing_prs="\$(jq -r '.prs // empty' "\$_ao_meta_f" 2>/dev/null || echo "")"
+        else
+          existing_prs="\$(grep '^prs=' "\$_ao_meta_f" 2>/dev/null | cut -d'=' -f2- || echo "")"
+        fi
         if [[ -z "\$existing_prs" ]]; then
           new_prs="\$pr_url"
         else
@@ -800,7 +804,7 @@ if (key === "pr/create" || key === "pr/merge") {
         try {
           const aoDir = process.env["AO_DATA_DIR"] || "";
           const aoSession = process.env["AO_SESSION"] || "";
-          if (aoDir && aoSession) {
+          if (aoDir && aoSession && /^[a-zA-Z0-9_-]+$/.test(aoSession)) {
             let metaFile = path.join(aoDir, aoSession + ".json");
             if (!fs.existsSync(metaFile)) metaFile = path.join(aoDir, aoSession);
             if (fs.existsSync(metaFile)) {

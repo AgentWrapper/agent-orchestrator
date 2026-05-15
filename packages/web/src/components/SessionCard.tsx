@@ -166,7 +166,6 @@ function SessionCardView({
   const level = getAttentionLevel(session);
   const pr = session.pr;
   const prs = session.prs ?? [];
-  const hasMultiplePRs = prs.length > 1;
 
   const handleQuickReply = async (message: string): Promise<boolean> => {
     const trimmedMessage = message.trim();
