@@ -73,9 +73,9 @@ import {
   stopProjectSupervisor,
 } from "../../src/lib/project-supervisor.js";
 
-function makeConfig(projectIds: string[]) {
+function makeConfig(projectIds: string[], configPath = "/tmp/global-config.yaml") {
   return {
-    configPath: "/tmp/global-config.yaml",
+    configPath,
     projects: Object.fromEntries(projectIds.map((id) => [id, { name: id, path: `/tmp/${id}` }])),
   };
 }
@@ -273,6 +273,12 @@ describe("project-supervisor", () => {
   });
 
   it("falls back to local config when the global config is missing (ENOENT)", async () => {
+    // The local fallback uses a DIFFERENT configPath than the global —
+    // a real bare `loadConfig()` discovers the local file and sets
+    // `config.configPath` to that path. Asserting on the local path here
+    // catches any bug that would propagate the global path through the
+    // fallback (e.g. accidentally returning the global config object).
+    const localConfigPath = "/tmp/cwd/agent-orchestrator.yaml";
     sessionsByProject.set("app", [makeSession("app")]);
     mockLoadConfig.mockImplementation((path?: string) => {
       if (path === "/tmp/global-config.yaml") {
@@ -281,7 +287,7 @@ describe("project-supervisor", () => {
           path: "/tmp/global-config.yaml",
         });
       }
-      return makeConfig(["app"]);
+      return makeConfig(["app"], localConfigPath);
     });
 
     await reconcileProjectSupervisor();
@@ -289,7 +295,7 @@ describe("project-supervisor", () => {
     expect(mockLoadConfig).toHaveBeenCalledWith("/tmp/global-config.yaml");
     expect(mockLoadConfig).toHaveBeenCalledWith();
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.objectContaining({ configPath: "/tmp/global-config.yaml" }),
+      expect.objectContaining({ configPath: localConfigPath }),
       "app",
       undefined,
     );
