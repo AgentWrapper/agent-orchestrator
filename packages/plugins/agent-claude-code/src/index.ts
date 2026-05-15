@@ -186,6 +186,8 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
           process.stdout.write(d.prs || '');
         " "$metadata_file" 2>/dev/null || echo "")
       fi
+    else
+      existing_prs=$(grep '^prs=' "$metadata_file" 2>/dev/null | cut -d'=' -f2- || echo "")
     fi
     if [[ -z "$existing_prs" ]]; then
       new_prs="$pr_url"
