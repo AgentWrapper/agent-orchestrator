@@ -768,7 +768,7 @@ describe("start command — browser open waits for port", () => {
     mockSessionManager.get.mockResolvedValue(null);
     mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
 
-    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+    await program.parseAsync(["node", "test", "start", "--dashboard", "--no-orchestrator"]);
 
     // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
@@ -935,7 +935,7 @@ describe("start command — orchestrator session strategy display", () => {
       },
     ]);
 
-    await program.parseAsync(["node", "test", "start"]);
+    await program.parseAsync(["node", "test", "start", "--dashboard"]);
 
     const output = getLoggedOutput();
     // With one orchestrator and dashboard enabled, shows the session URL instead of tmux attach
@@ -982,7 +982,7 @@ describe("start command — orchestrator session strategy display", () => {
       },
     ]);
 
-    await program.parseAsync(["node", "test", "start"]);
+    await program.parseAsync(["node", "test", "start", "--dashboard"]);
 
     const output = getLoggedOutput();
     // With multiple orchestrators, shows selection message so user can choose or spawn a new one
@@ -1010,7 +1010,7 @@ describe("start command — orchestrator session strategy display", () => {
     mockSessionManager.list.mockResolvedValue([]);
     mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
 
-    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "start", "--dashboard"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)

@@ -937,7 +937,7 @@ async function runStartup(
   }
 
   const sessionId = `${project.sessionPrefix}-orchestrator`;
-  const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
+  const shouldStartLifecycle = opts?.dashboard === true || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
   const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
@@ -950,8 +950,8 @@ async function runStartup(
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
 
-  // Start dashboard (unless --no-dashboard)
-  if (opts?.dashboard !== false) {
+  // Start dashboard (only when --dashboard is passed)
+  if (opts?.dashboard === true) {
     if (!(await isPortAvailable(port))) {
       const newPort = await findFreePort(port + 1);
       if (newPort === null) {
@@ -1049,7 +1049,7 @@ async function runStartup(
       );
       const selected = sortedOrchestrators[0];
       selectedOrchestratorId = selected.id;
-      if (opts?.dashboard !== false && existingOrchestrators.length > 1) {
+      if (opts?.dashboard === true && existingOrchestrators.length > 1) {
         hasExistingOrchestrators = true;
       }
       spinner.succeed(
@@ -1084,7 +1084,7 @@ async function runStartup(
   // Print summary
   console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
-  if (opts?.dashboard !== false) {
+  if (opts?.dashboard === true) {
     console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
   }
 
@@ -1103,7 +1103,7 @@ async function runStartup(
     );
   } else if (opts?.orchestrator !== false && !reused) {
     const orchSessionId = selectedOrchestratorId ?? sessionId;
-    if (opts?.dashboard !== false) {
+    if (opts?.dashboard === true) {
       console.log(
         chalk.cyan("Orchestrator:"),
         `http://localhost:${port}/sessions/${orchSessionId}`,
@@ -1127,7 +1127,7 @@ async function runStartup(
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
-  if (opts?.dashboard !== false) {
+  if (opts?.dashboard === true) {
     openAbort = new AbortController();
     const orchestratorUrl = hasExistingOrchestrators
       ? `http://localhost:${port}/orchestrators?project=${projectId}`
@@ -1185,7 +1185,8 @@ export function registerStart(program: Command): void {
     .description(
       "Start orchestrator agent and dashboard (auto-creates config on first run, adds projects by path/URL)",
     )
-    .option("--no-dashboard", "Skip starting the dashboard server")
+    .option("--dashboard", "Start the dashboard server")
+    .option("--no-dashboard", "Skip starting the dashboard server (default)")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
     .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
