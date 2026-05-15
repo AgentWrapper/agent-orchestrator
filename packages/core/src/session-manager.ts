@@ -1504,6 +1504,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await plugins.agent.postLaunchSetup(session);
       }
 
+      if (plugins.agent.promptDelivery === "post-launch" && taskPrompt) {
+        await plugins.runtime.sendMessage(handle, taskPrompt);
+      }
+
       if (
         plugins.agent.name === "opencode" &&
         opencodeIssueSessionStrategy === "reuse" &&

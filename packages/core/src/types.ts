@@ -475,6 +475,12 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
+  /**
+   * How AO should deliver the initial worker task prompt.
+   * Defaults to inline launch-command delivery.
+   */
+  readonly promptDelivery?: "inline" | "post-launch";
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 
