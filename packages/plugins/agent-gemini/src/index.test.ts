@@ -140,11 +140,10 @@ describe("manifest", () => {
 });
 
 describe("create", () => {
-  it("uses gemini as process name and post-launch prompt mode", () => {
+  it("uses gemini as process name", () => {
     const agent = create();
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe(pluginName);
-    expect(agent.promptDelivery).toBe("post-launch");
   });
 
   it("exports plugin module shape", () => {
@@ -192,7 +191,7 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("gemini --model 'gemini model'");
   });
 
-  it("does not include prompt flags in launch command", () => {
+  it("passes system prompt files and task prompts with Gemini's interactive prompt option", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         prompt: "Do work",
@@ -200,10 +199,16 @@ describe("getLaunchCommand", () => {
         systemPromptFile: "/tmp/prompt.md",
       }),
     );
-    expect(cmd).toBe("gemini");
-    expect(cmd).not.toContain("-p");
-    expect(cmd).not.toContain("--prompt");
-    expect(cmd).not.toContain("--prompt-interactive");
+    expect(cmd).toBe(
+      "gemini --prompt-interactive \"$(cat '/tmp/prompt.md'; printf '\\n\\n'; printf %s 'You are helpful'; printf '\\n\\n'; printf %s 'Do work')\"",
+    );
+    expect(cmd).not.toContain(" -p ");
+    expect(cmd).not.toContain("--prompt ");
+  });
+
+  it("shell-escapes prompt text in interactive launch commands", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Review Bob's PR" }));
+    expect(cmd).toBe("gemini --prompt-interactive \"$(printf %s 'Review Bob'\\''s PR')\"");
   });
 });
 

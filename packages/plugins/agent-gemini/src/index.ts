@@ -53,6 +53,25 @@ function getConfiguredModel(config: AgentLaunchConfig): string | null {
   return projectModel || null;
 }
 
+function addPromptPart(parts: string[], raw: string | undefined): void {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (value) parts.push(`printf %s ${shellEscape(value)}`);
+}
+
+function getPromptArgument(config: AgentLaunchConfig): string | null {
+  const parts: string[] = [];
+  const systemPromptFile =
+    typeof config.systemPromptFile === "string" ? config.systemPromptFile.trim() : "";
+  if (systemPromptFile) {
+    parts.push(`cat ${shellEscape(systemPromptFile)}`);
+  }
+  addPromptPart(parts, config.systemPrompt);
+  addPromptPart(parts, config.prompt);
+
+  if (parts.length === 0) return null;
+  return `"$(${parts.join("; printf '\\n\\n'; ")})"`;
+}
+
 function classifyGeminiTerminalOutput(terminalOutput: string): ActivityState {
   const normalizedOutput = terminalOutput.replaceAll(ANSI_ESCAPE_RE, "").trim();
   if (!normalizedOutput) return "idle";
@@ -76,19 +95,20 @@ export const manifest = {
   displayName: "Gemini",
 };
 
-type GeminiAgent = Agent & { readonly promptDelivery: "post-launch" };
-
-function createGeminiAgent(): GeminiAgent {
+function createGeminiAgent(): Agent {
   return {
     name: pluginName,
     processName: pluginName,
-    promptDelivery: "post-launch",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const args = ["gemini"];
       const model = getConfiguredModel(config);
       if (model) {
         args.push("--model", shellEscape(model));
+      }
+      const promptArgument = getPromptArgument(config);
+      if (promptArgument) {
+        args.push("--prompt-interactive", promptArgument);
       }
       return args.join(" ");
     },
@@ -211,7 +231,7 @@ function createGeminiAgent(): GeminiAgent {
   };
 }
 
-export function create(): GeminiAgent {
+export function create(): Agent {
   return createGeminiAgent();
 }
 
