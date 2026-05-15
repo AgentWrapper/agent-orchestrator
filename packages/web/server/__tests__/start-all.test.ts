@@ -12,6 +12,8 @@ describe("start-all shutdown diagnostics", () => {
     expect(getShutdownGraceMs({})).toBe(15_000);
     expect(getShutdownGraceMs({ AO_SHUTDOWN_GRACE_MS: "30000" })).toBe(30_000);
     expect(getShutdownGraceMs({ AO_SHUTDOWN_GRACE_MS: "nope" })).toBe(15_000);
+    expect(getShutdownGraceMs({ AO_SHUTDOWN_GRACE_MS: "0.5" })).toBe(15_000);
+    expect(getShutdownGraceMs({ AO_SHUTDOWN_GRACE_MS: "1500.9" })).toBe(1_500);
   });
 
   it("keeps shutdown log wording explicit about clean vs safety-fallback exits", () => {
