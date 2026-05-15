@@ -1523,17 +1523,32 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
       invalidateCache();
 
+      // Past this point every resource that needed an undo is on disk in its
+      // final form. Dismiss the stack so nothing below can trigger a rollback.
+      cleanupStack.dismiss();
+
       if (
         plugins.agent.promptDelivery === "post-launch" &&
         typeof taskPrompt === "string" &&
         taskPrompt.trim()
       ) {
-        await plugins.runtime.sendMessage(handle, taskPrompt);
+        try {
+          await plugins.runtime.sendMessage(handle, taskPrompt);
+        } catch (err) {
+          recordActivityEvent({
+            projectId: spawnConfig.projectId,
+            sessionId,
+            source: "session-manager",
+            kind: "session.post_launch_prompt_failed",
+            level: "warn",
+            summary: "post-launch prompt delivery failed",
+            data: {
+              agent: plugins.agent.name,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
       }
-
-      // Past this point every resource that needed an undo is on disk in its
-      // final form. Dismiss the stack so nothing below can trigger a rollback.
-      cleanupStack.dismiss();
 
       recordActivityEvent({
         projectId: spawnConfig.projectId,

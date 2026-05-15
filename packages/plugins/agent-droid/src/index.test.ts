@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  isWindows,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -193,11 +198,6 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("droid");
   });
 
-  it("uses workspace settings when a workspace path is present", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ workspacePath: "/workspace/test" }));
-    expect(cmd).toBe("droid --settings '/workspace/test/.ao/droid/settings.json'");
-  });
-
   it("uses --resume when configured with a droid session id", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
@@ -208,9 +208,7 @@ describe("getLaunchCommand", () => {
         },
       }),
     );
-    expect(cmd).toBe(
-      `droid --settings '/workspace/test/.ao/droid/settings.json' --resume '${VALID_DROID_SESSION_ID}'`,
-    );
+    expect(cmd).toBe(`droid --resume '${VALID_DROID_SESSION_ID}'`);
   });
 
   it("passes supported model, permission, and system-prompt flags", () => {
@@ -223,7 +221,7 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toBe(
-      "droid --settings '/workspace/test/.ao/droid/settings.json' --model 'gpt-5.5' --auto 'low' --append-system-prompt-file '/tmp/system prompt.md'",
+      "droid --model 'gpt-5.5' --auto 'low' --append-system-prompt-file '/tmp/system prompt.md'",
     );
   });
 
@@ -268,14 +266,14 @@ describe("getEnvironment", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when droid is on tmux pane", async () => {
+  it.skipIf(isWindows())("returns true when droid is on tmux pane", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") {
         return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
       }
       if (cmd === "ps") {
         return Promise.resolve({
-          stdout: `  PID TT       ARGS\n  789 ttys003  droid --settings /tmp/settings.json\n`,
+          stdout: `  PID TT       ARGS\n  789 ttys003  droid\n`,
           stderr: "",
         });
       }
@@ -285,7 +283,7 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns false when tmux process missing", async () => {
+  it.skipIf(isWindows())("returns false when tmux process missing", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
       if (cmd === "ps") {
@@ -484,7 +482,7 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
-  it("builds restore command using the session id and workspace settings", async () => {
+  it("builds restore command using the session id", async () => {
     const cmd = await agent.getRestoreCommand?.(
       makeSession({ metadata: { droidSessionId: VALID_DROID_SESSION_ID } }),
       {
@@ -495,9 +493,7 @@ describe("getRestoreCommand", () => {
         sessionPrefix: "my",
       },
     );
-    expect(cmd).toBe(
-      `droid --settings '/workspace/test/.ao/droid/settings.json' --resume '${VALID_DROID_SESSION_ID}'`,
-    );
+    expect(cmd).toBe(`droid --resume '${VALID_DROID_SESSION_ID}'`);
   });
 
   it("returns null without a valid session id", async () => {
@@ -521,7 +517,7 @@ describe("preLaunchSetup", () => {
 
     await agent.preLaunchSetup?.(workspace);
 
-    const settingsPath = join(workspace, ".ao/droid/settings.json");
+    const settingsPath = join(workspace, ".factory/settings.local.json");
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(
       join(workspace, ".ao/droid/session-hook.cjs"),
@@ -540,12 +536,31 @@ describe("setupWorkspaceHooks", () => {
     await agent.setupWorkspaceHooks?.(workspace, { dataDir: "/tmp/sessions" });
 
     expect(mockSetupPathWrapperWorkspace).toHaveBeenCalledWith(workspace);
-    const settingsPath = join(workspace, ".ao/droid/settings.json");
+    const settingsPath = join(workspace, ".factory/settings.local.json");
     const hookPath = join(workspace, ".ao/droid/session-hook.cjs");
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(hookPath);
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(hookPath);
     expect(await readFile(hookPath, "utf8")).toContain("metadata.droidSessionId = droidSessionId");
+  });
+
+  it("preserves existing project-local Droid settings", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "ao-droid-plugin-"));
+    tmpDirs.push(workspace);
+    await mkdir(join(workspace, ".factory"), { recursive: true });
+    await writeFile(
+      join(workspace, ".factory/settings.local.json"),
+      JSON.stringify({ model: "gpt-5.5", hooks: { Stop: [{ hooks: [] }] } }, null, 2),
+    );
+
+    await agent.setupWorkspaceHooks?.(workspace, { dataDir: "/tmp/sessions" });
+
+    const settings = JSON.parse(
+      await readFile(join(workspace, ".factory/settings.local.json"), "utf8"),
+    );
+    expect(settings.model).toBe("gpt-5.5");
+    expect(settings.hooks.Stop).toHaveLength(1);
+    expect(settings.hooks.SessionStart).toHaveLength(1);
   });
 });
 

@@ -22,7 +22,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile, chmod } from "node:fs/promises";
+import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
@@ -40,8 +40,9 @@ const pluginName = packageJson.name.startsWith(PACKAGE_NAME_PREFIX)
   : packageJson.name;
 
 const execFileAsync = promisify(execFile);
-const DROID_SETTINGS_DIR = ".ao/droid";
-const DROID_SETTINGS_FILE = "settings.json";
+const DROID_SETTINGS_DIR = ".factory";
+const DROID_SETTINGS_FILE = "settings.local.json";
+const DROID_SESSION_HOOK_DIR = ".ao/droid";
 const DROID_SESSION_HOOK_FILE = "session-hook.cjs";
 const DROID_SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 const ANSI_ESCAPE_RE = new RegExp(
@@ -65,7 +66,7 @@ function getDroidSettingsPath(workspacePath: string): string {
 }
 
 function getDroidSessionHookPath(workspacePath: string): string {
-  return join(workspacePath, DROID_SETTINGS_DIR, DROID_SESSION_HOOK_FILE);
+  return join(workspacePath, DROID_SESSION_HOOK_DIR, DROID_SESSION_HOOK_FILE);
 }
 
 interface DroidCommandArg {
@@ -94,11 +95,6 @@ function getDroidPermissionArgs(config: AgentLaunchConfig): DroidCommandArg[] {
 
 function getDroidLaunchArgs(config: AgentLaunchConfig): DroidCommandArg[] {
   const args: DroidCommandArg[] = [];
-  const workspacePath = config.workspacePath;
-  if (workspacePath) {
-    args.push(flag("--settings"), value(getDroidSettingsPath(workspacePath)));
-  }
-
   const configuredSessionId = asValidDroidSessionId(
     (config.projectConfig.agentConfig as DroidAgentConfig | undefined)?.droidSessionId,
   );
@@ -198,14 +194,48 @@ process.stdin.on("end", () => {
 `;
 }
 
-function buildDroidSettings(hookScriptPath: string): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hookEntryUsesCommand(entry: unknown, command: string): boolean {
+  if (!isRecord(entry) || !Array.isArray(entry["hooks"])) return false;
+  return entry["hooks"].some(
+    (hook) => isRecord(hook) && typeof hook["command"] === "string" && hook["command"] === command,
+  );
+}
+
+function withDroidHook(existingEvent: unknown, command: string): unknown[] {
+  const existingEntries = Array.isArray(existingEvent) ? existingEvent : [];
+  return [
+    ...existingEntries.filter((entry) => !hookEntryUsesCommand(entry, command)),
+    { hooks: [{ type: "command", command, timeout: 10 }] },
+  ];
+}
+
+async function readDroidSettings(settingsPath: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(await readFile(settingsPath, "utf8"));
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildDroidSettings(
+  existingSettings: Record<string, unknown>,
+  hookScriptPath: string,
+): string {
   const command = `${shellEscape(process.execPath)} ${shellEscape(hookScriptPath)}`;
+  const existingHooks = isRecord(existingSettings["hooks"]) ? existingSettings["hooks"] : {};
   return (
     JSON.stringify(
       {
+        ...existingSettings,
         hooks: {
-          SessionStart: [{ hooks: [{ type: "command", command, timeout: 10 }] }],
-          UserPromptSubmit: [{ hooks: [{ type: "command", command, timeout: 10 }] }],
+          ...existingHooks,
+          SessionStart: withDroidHook(existingHooks["SessionStart"], command),
+          UserPromptSubmit: withDroidHook(existingHooks["UserPromptSubmit"], command),
         },
       },
       null,
@@ -215,12 +245,16 @@ function buildDroidSettings(hookScriptPath: string): string {
 }
 
 async function writeDroidWorkspaceFiles(workspacePath: string): Promise<void> {
+  const hookDir = join(workspacePath, DROID_SESSION_HOOK_DIR);
   const settingsDir = join(workspacePath, DROID_SETTINGS_DIR);
   const hookScriptPath = getDroidSessionHookPath(workspacePath);
+  const settingsPath = getDroidSettingsPath(workspacePath);
+  await mkdir(hookDir, { recursive: true });
   await mkdir(settingsDir, { recursive: true });
   await writeFile(hookScriptPath, buildSessionHookScript(), "utf8");
   await chmod(hookScriptPath, 0o755);
-  await writeFile(getDroidSettingsPath(workspacePath), buildDroidSettings(hookScriptPath), "utf8");
+  const existingSettings = await readDroidSettings(settingsPath);
+  await writeFile(settingsPath, buildDroidSettings(existingSettings, hookScriptPath), "utf8");
 }
 
 export const manifest = {
@@ -359,9 +393,7 @@ function createDroidAgent(): Agent {
       const droidSessionId = asValidDroidSessionId(session.metadata?.droidSessionId);
       if (!droidSessionId) return null;
       const args: DroidCommandArg[] = [];
-      if (session.workspacePath) {
-        args.push(flag("--settings"), value(getDroidSettingsPath(session.workspacePath)));
-      }
+      // Droid's top-level interactive mode resumes with --resume; --session-id is exec-only.
       args.push(flag("--resume"), value(droidSessionId));
       return buildDroidCommand(args);
     },

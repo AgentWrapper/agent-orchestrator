@@ -1113,6 +1113,47 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("does not roll back a post-launch prompt session when sendMessage fails", async () => {
+    const worktreePath = join(getProjectWorktreesDir("my-app"), "app-1");
+    (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: worktreePath,
+      branch: "session/app-1",
+      sessionId: "app-1",
+      projectId: "my-app",
+    });
+    const postLaunchAgent: Agent = {
+      ...mockAgent,
+      promptDelivery: "post-launch",
+      getLaunchCommand: vi.fn().mockReturnValue("droid"),
+    };
+    const runtimeWithSendFailure: Runtime = {
+      ...mockRuntime,
+      sendMessage: vi.fn().mockRejectedValueOnce(new Error("send failed")),
+    };
+    const registryWithPostLaunchAgent: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithSendFailure;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+    await expect(sm.spawn({ projectId: "my-app", prompt: "Fix the bug" })).resolves.toMatchObject({
+      id: "app-1",
+    });
+
+    expect(runtimeWithSendFailure.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      expect.stringContaining("Fix the bug"),
+    );
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    expect(mockWorkspace.destroy).not.toHaveBeenCalledWith(worktreePath);
+    expect(readMetadataRaw(sessionsDir, "app-1")).not.toBeNull();
+  });
+
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
