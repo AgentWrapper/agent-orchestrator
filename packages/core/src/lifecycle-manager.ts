@@ -1899,8 +1899,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (let i = 1; i < session.prs.length; i++) {
         const secondaryPR = session.prs[i];
         if (!secondaryPR) continue;
-        let secondaryThreads: ReviewComment[] = [];
-        let secondaryReviews: ReviewSummary[] = [];
+        let secondaryThreads: ReviewComment[];
+        let secondaryReviews: ReviewSummary[];
         try {
           if (scm.getReviewThreads) {
             const result = await scm.getReviewThreads(secondaryPR);
@@ -1908,6 +1908,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             secondaryReviews = result.reviews;
           } else {
             secondaryThreads = await scm.getPendingComments(secondaryPR);
+            secondaryReviews = [];
           }
         } catch {
           continue;
