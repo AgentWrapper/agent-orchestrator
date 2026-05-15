@@ -475,6 +475,13 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
+  /**
+   * How the initial user prompt is delivered.
+   * Defaults to inline, meaning the agent embeds the prompt in getLaunchCommand().
+   * Use post-launch for interactive CLIs that must start first and receive input over stdin.
+   */
+  readonly promptDelivery?: "inline" | "post-launch";
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 
