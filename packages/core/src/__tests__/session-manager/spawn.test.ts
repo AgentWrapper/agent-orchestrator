@@ -1114,7 +1114,7 @@ describe("spawn", () => {
   });
 
   it("sends prompt after launch when agent requests post-launch delivery", async () => {
-    mockAgent = { ...mockAgent, promptDelivery: "post-launch" };
+    mockAgent = { ...mockAgent, promptDelivery: "post-launch", promptDeliveryDelayMs: 0 };
     vi.mocked(mockRegistry.get).mockImplementation((slot: string) => {
       if (slot === "runtime") return mockRuntime;
       if (slot === "agent") return mockAgent;
@@ -1129,7 +1129,10 @@ describe("spawn", () => {
       makeHandle("rt-1"),
       expect.stringContaining("Fix the bug"),
     );
-  }, 10_000);
+    const deliveredPrompt = vi.mocked(mockRuntime.sendMessage).mock.calls[0]?.[1] ?? "";
+    expect(deliveredPrompt).toContain("Session Lifecycle");
+    expect(deliveredPrompt).toContain("## Project Context");
+  });
 
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });

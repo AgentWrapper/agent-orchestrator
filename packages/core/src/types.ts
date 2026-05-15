@@ -471,6 +471,9 @@ export interface Agent {
    */
   readonly promptDelivery?: "inline" | "post-launch";
 
+  /** Initial delay before first post-launch prompt delivery attempt (default: 3000ms). */
+  readonly promptDeliveryDelayMs?: number;
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 

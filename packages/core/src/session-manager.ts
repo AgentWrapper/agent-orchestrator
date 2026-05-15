@@ -1447,12 +1447,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       if (taskPrompt) {
         if (plugins.agent.promptDelivery === "post-launch") {
+          const postLaunchPrompt = `${systemPrompt}\n\n${taskPrompt}`;
+          const initialDelayMs = plugins.agent.promptDeliveryDelayMs ?? 3_000;
           let promptDelivered = false;
           let lastError: Error | undefined;
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              await sleep(3_000 * attempt);
-              await plugins.runtime.sendMessage(handle, taskPrompt);
+              const delayMs = initialDelayMs * attempt;
+              if (delayMs > 0) await sleep(delayMs);
+              await plugins.runtime.sendMessage(handle, postLaunchPrompt);
               promptDelivered = true;
               break;
             } catch (err) {

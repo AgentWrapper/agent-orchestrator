@@ -19,12 +19,14 @@ const {
   mockSetupPathWrapperWorkspace,
   mockExecFileAsync,
   mockWhichSync,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
   mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
   mockExecFileAsync: vi.fn(),
   mockWhichSync: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
@@ -34,6 +36,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
+    isWindows: mockIsWindows,
   };
 });
 
@@ -128,6 +131,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockWhichSync.mockReset();
   mockExecFileAsync.mockReset();
+  mockIsWindows.mockReset();
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("manifest", () => {
@@ -148,6 +153,7 @@ describe("create", () => {
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe(pluginName);
     expect(agent.promptDelivery).toBe("post-launch");
+    expect(agent.promptDeliveryDelayMs).toBe(0);
   });
 
   it("exports plugin module shape", () => {
@@ -250,6 +256,12 @@ describe("isProcessRunning", () => {
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("short-circuits tmux checks on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalled();
   });
 
   it("returns true when process handle pid is alive", async () => {
