@@ -174,6 +174,16 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     pinnedSummary: raw["pinnedSummary"] as string | undefined,
     userPrompt: raw["userPrompt"] as string | undefined,
     displayName: raw["displayName"] as string | undefined,
+    displayNameUserSet:
+      raw["displayNameUserSet"] === "off" ||
+      raw["displayNameUserSet"] === "false" ||
+      raw["displayNameUserSet"] === false
+        ? false
+        : raw["displayNameUserSet"] === "on" ||
+            raw["displayNameUserSet"] === "true" ||
+            raw["displayNameUserSet"] === true
+          ? true
+          : undefined,
   };
 }
 
@@ -218,7 +228,7 @@ const jsonFields = new Set([
 function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const numberFields = new Set(["dashboardPort", "terminalWsPort", "directTerminalWsPort"]);
-  const booleanFields = new Set(["prAutoDetect"]);
+  const booleanFields = new Set(["prAutoDetect", "displayNameUserSet"]);
 
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === "") continue;
@@ -281,6 +291,8 @@ export function writeMetadata(
   if (metadata.pinnedSummary) data["pinnedSummary"] = metadata.pinnedSummary;
   if (metadata.userPrompt) data["userPrompt"] = metadata.userPrompt;
   if (metadata.displayName) data["displayName"] = metadata.displayName;
+  if (metadata.displayNameUserSet !== undefined)
+    data["displayNameUserSet"] = metadata.displayNameUserSet;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }

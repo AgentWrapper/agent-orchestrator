@@ -98,10 +98,19 @@ describe("runtime.create()", () => {
     expect(handle.runtimeName).toBe("tmux");
     expect(handle.data.workspacePath).toBe("/tmp/workspace");
 
-    // First call: new-session
+    // First call: new-session — launch command has the keep-alive shell tail
+    // appended so the tmux session survives agent exit (issue #1756).
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["new-session", "-d", "-s", "test-session", "-c", "/tmp/workspace", "echo hello"],
+      [
+        "new-session",
+        "-d",
+        "-s",
+        "test-session",
+        "-c",
+        "/tmp/workspace",
+        'echo hello\nexec "${SHELL:-/bin/bash}" -i',
+      ],
       expectedTmuxOptions,
     );
   });
@@ -148,7 +157,7 @@ describe("runtime.create()", () => {
     expect(args).toContain("-e");
     expect(args).toContain("AO_SESSION=env-session");
     expect(args).toContain("FOO=bar");
-    expect(args.at(-1)).toBe("bash");
+    expect(args.at(-1)).toBe('bash\nexec "${SHELL:-/bin/bash}" -i');
   });
 
   it("starts the launch command as the initial tmux pane command", async () => {
@@ -164,15 +173,42 @@ describe("runtime.create()", () => {
       environment: {},
     });
 
-    // First call: new-session passes the launch command as the pane's initial command
+    // First call: new-session passes the launch command as the pane's initial
+    // command, with the keep-alive shell tail appended.
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["new-session", "-d", "-s", "launch-test", "-c", "/tmp/ws", "claude --session abc"],
+      [
+        "new-session",
+        "-d",
+        "-s",
+        "launch-test",
+        "-c",
+        "/tmp/ws",
+        'claude --session abc\nexec "${SHELL:-/bin/bash}" -i',
+      ],
       expectedTmuxOptions,
     );
   });
 
-  it("uses a temp launch script for long launch commands", async () => {
+  it("appends an interactive shell tail so the tmux pane survives agent exit (regression for #1756)", async () => {
+    const runtime = create();
+
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "keep-alive",
+      workspacePath: "/tmp/ws",
+      launchCommand: "claude --session abc",
+      environment: {},
+    });
+
+    const finalArg = (mockExecFileCustom.mock.calls[0][1] as string[]).at(-1)!;
+    expect(finalArg).toContain("claude --session abc");
+    expect(finalArg).toMatch(/exec "\$\{SHELL:-\/bin\/bash\}" -i\s*$/);
+  });
+
+  it("keeps the keep-alive tail in the temp script for long launch commands", async () => {
     const runtime = create();
     const longCommand = "x".repeat(250);
 
@@ -192,6 +228,12 @@ describe("runtime.create()", () => {
       expect.stringContaining(longCommand),
       { encoding: "utf-8", mode: 0o700 },
     );
+
+    // The script body includes the interactive shell tail too — without it
+    // long-command sessions would still nuke tmux on agent exit (#1756).
+    const writeCall = (fs.writeFileSync as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0];
+    expect(writeCall[1]).toMatch(/exec "\$\{SHELL:-\/bin\/bash\}" -i/);
 
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       1,
@@ -317,7 +359,7 @@ describe("runtime.create()", () => {
       "no-env",
       "-c",
       "/tmp/ws",
-      "echo hi",
+      'echo hi\nexec "${SHELL:-/bin/bash}" -i',
     ]);
   });
 });

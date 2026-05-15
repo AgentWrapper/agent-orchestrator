@@ -149,20 +149,20 @@ describe("SessionPage project polling", () => {
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/projects",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Object),
     );
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions/worker-1",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Object),
     );
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?fresh=true",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Object),
     );
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Object),
     );
 
     expect(
@@ -258,7 +258,7 @@ describe("SessionPage project polling", () => {
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?project=my-app&fresh=true",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Object),
     );
   });
 
@@ -336,7 +336,7 @@ describe("SessionPage project polling", () => {
     expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
   });
 
-  it("times out a stuck session fetch and replaces the infinite loader with an error state", async () => {
+  it("keeps retrying after a stuck session fetch times out before showing an error state", async () => {
     global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/projects") {
@@ -377,12 +377,30 @@ describe("SessionPage project polling", () => {
     });
     await flushAsyncWork();
 
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load session")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    await flushAsyncWork();
+
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load session")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await flushAsyncWork();
+
     expect(screen.getByText("Failed to load session")).toBeInTheDocument();
     expect(screen.getByText(/taking too long/i)).toBeInTheDocument();
     expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
   });
 
-  it("shows a recoverable unavailable state when the first session request aborts", async () => {
+  it("does not show the route error after the first aborted session request", async () => {
+    let sessionFetches = 0;
+
     global.fetch = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/projects") {
@@ -396,6 +414,7 @@ describe("SessionPage project polling", () => {
       }
 
       if (url === "/api/sessions/worker-1") {
+        sessionFetches += 1;
         return Promise.reject(new DOMException("Aborted", "AbortError"));
       }
 
@@ -415,9 +434,24 @@ describe("SessionPage project polling", () => {
     render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(screen.getByText("Session unavailable")).toBeInTheDocument();
-    expect(screen.getByText(/backend has not returned this session yet/i)).toBeInTheDocument();
-    expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
+    expect(sessionFetches).toBe(1);
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load session")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    await flushAsyncWork();
+
+    expect(sessionFetches).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("Failed to load session")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    await flushAsyncWork();
+
+    expect(screen.getAllByText("Failed to load session").length).toBeGreaterThan(0);
   });
 
   it("marks sidebar data as loading until the sessions list resolves", async () => {

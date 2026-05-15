@@ -6,7 +6,14 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { findTmux, resolveTmuxSession, resolvePipePath, validateSessionId, SESSION_ID_PATTERN } from "../tmux-utils.js";
+import {
+  findTmux,
+  resolveTmuxSession,
+  resolvePipePath,
+  tmuxHasSession,
+  validateSessionId,
+  SESSION_ID_PATTERN,
+} from "../tmux-utils.js";
 
 // Default fs adapter for resolveTmuxSession tests — empty AO base directory
 // so the on-disk storageKey lookup always misses and we exercise the
@@ -354,6 +361,47 @@ describe("findTmux", () => {
     findTmux(mockExec);
 
     expect(mockExec).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// tmuxHasSession
+// =============================================================================
+
+describe("tmuxHasSession", () => {
+  const TMUX = "/opt/homebrew/bin/tmux";
+
+  it("returns true when has-session resolves", async () => {
+    const mockExec = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+    await expect(tmuxHasSession(TMUX, "ao-104", mockExec)).resolves.toBe(true);
+  });
+
+  it("returns false when has-session rejects (session missing)", async () => {
+    const mockExec = vi
+      .fn()
+      .mockRejectedValue(new Error("can't find session: ao-104"));
+
+    await expect(tmuxHasSession(TMUX, "ao-104", mockExec)).resolves.toBe(false);
+  });
+
+  it("uses the = exact-match prefix to avoid tmux prefix matching", async () => {
+    const mockExec = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+    await tmuxHasSession(TMUX, "ao-1", mockExec);
+
+    expect(mockExec).toHaveBeenCalledWith(
+      TMUX,
+      ["has-session", "-t", "=ao-1"],
+      { timeout: 5000 },
+    );
+  });
+
+  it("returns false when tmuxPath is null without invoking exec", async () => {
+    const mockExec = vi.fn();
+
+    await expect(tmuxHasSession(null, "ao-104", mockExec)).resolves.toBe(false);
+    expect(mockExec).not.toHaveBeenCalled();
   });
 });
 

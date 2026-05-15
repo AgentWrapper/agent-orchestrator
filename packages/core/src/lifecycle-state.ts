@@ -128,6 +128,19 @@ const CanonicalSessionLifecycleSchema = z.object({
 
 type ParsedCanonicalSessionLifecycle = z.infer<typeof CanonicalSessionLifecycleSchema>;
 
+const TERMINAL_CANONICAL_SESSION_STATES: ReadonlySet<CanonicalSessionState> = new Set([
+  "done",
+  "terminated",
+]);
+
+export function clearTerminalMarkersForNonTerminalState(
+  lifecycle: CanonicalSessionLifecycle,
+): void {
+  if (TERMINAL_CANONICAL_SESSION_STATES.has(lifecycle.session.state)) return;
+  lifecycle.session.completedAt = null;
+  lifecycle.session.terminatedAt = null;
+}
+
 function normalizeTimestamp(value: unknown, fallback: string | null = null): string | null {
   if (typeof value !== "string") return fallback;
   const parsed = Date.parse(value);

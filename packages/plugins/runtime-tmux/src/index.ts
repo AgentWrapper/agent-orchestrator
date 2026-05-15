@@ -34,9 +34,27 @@ function assertValidSessionId(id: string): void {
   }
 }
 
+/**
+ * Shell snippet appended after the agent launch command so the tmux pane
+ * (and therefore the tmux session) survives agent exit. Without this, the
+ * pane closes when the agent process exits, the only window goes away, and
+ * the whole tmux session dies — leaving the dashboard with a phantom
+ * "runtime lost" state and the user with no way to do anything in that
+ * workspace (issue #1756).
+ *
+ * `exec` replaces the wrapping sh/bash with the user's interactive shell,
+ * so the lifecycle manager still detects agent termination via
+ * `agent.isProcessRunning` and transitions the session correctly.
+ */
+const KEEP_ALIVE_SHELL = `exec "\${SHELL:-/bin/bash}" -i`;
+
+function withKeepAliveShell(command: string): string {
+  return `${command.replace(/\n+$/, "")}\n${KEEP_ALIVE_SHELL}`;
+}
+
 function writeLaunchScript(command: string): string {
   const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
-  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${command}\n`;
+  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${withKeepAliveShell(command)}\n`;
   writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
   return `bash ${shellEscape(scriptPath)}`;
 }
@@ -78,9 +96,12 @@ export function create(): Runtime {
       // Start the launch command as the pane's initial command instead of
       // typing into a live shell. A dashboard attach can trigger terminal
       // device responses; if those race with tmux send-keys, they become
-      // literal shell input and corrupt the launch path.
+      // literal shell input and corrupt the launch path. The keep-alive
+      // tail is appended in both code paths — see KEEP_ALIVE_SHELL.
       const shellCommand =
-        launchCommand.length > 200 ? writeLaunchScript(launchCommand) : launchCommand;
+        launchCommand.length > 200
+          ? writeLaunchScript(launchCommand)
+          : withKeepAliveShell(launchCommand);
 
       await tmux(
         "new-session",

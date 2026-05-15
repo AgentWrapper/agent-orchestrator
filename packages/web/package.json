@@ -1,8 +1,22 @@
 {
   "name": "@aoagents/ao-web",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Web dashboard for agent-orchestrator",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "directory": "packages/web"
+  },
+  "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
+  "bugs": {
+    "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     ".next/server",
     ".next/static",

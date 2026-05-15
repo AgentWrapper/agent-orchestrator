@@ -70,6 +70,68 @@ ao update
 
 `ao update` fast-forwards the local install repo, reinstalls dependencies, clean-rebuilds `@aoagents/ao-core`, `@aoagents/ao-cli`, and `@aoagents/ao-web`, refreshes the global launcher with `npm link`, and finishes with CLI smoke tests. Use `ao update --skip-smoke` when you only need the rebuild step, or `ao update --smoke-only` when validating an existing install.
 
+## Release Architecture (maintainers only)
+
+AO uses a **two-stage release pipeline**. This public repo handles version bumps, git tags, and GitHub releases. npm publishing runs on a private server (AO cron job) that polls GitHub releases and publishes when a new tag is ahead of the current npm version. Org compliance forbids npm publish credentials in public repositories, so `NPM_TOKEN` never enters this repo.
+
+### Where things happen
+
+| Stage                    | Where                          | Responsibility                                                           |
+| ------------------------ | ------------------------------ | ------------------------------------------------------------------------ |
+| Versioning + GitHub release | This repo (public, CI)      | Changesets version bumps, git tags, `gh release create`                  |
+| npm publish              | Private server (AO cron)       | Detects new GitHub releases → builds → `pnpm changeset publish`         |
+
+The flow on every release:
+
+```
+This repo (public CI)                         Private server (AO cron)
+──────────────────────                        ─────────────────────────
+release.yml:                                  Polls gh release list
+  changeset version                           Detects new vX.Y.Z tag
+  push vX.Y.Z tag                             Compare to npm @latest/@nightly
+  gh release create vX.Y.Z                    If behind → checkout tag → build → publish
+
+canary.yml:                                   Same cron, detects prereleases
+  changeset version --snapshot                Publishes with --tag nightly
+  commit snapshot bump + tag
+  gh release create --prerelease
+```
+
+Each release pushes a single umbrella `vX.Y.Z` git tag pointing at the version-bump commit. We deliberately do **not** run `pnpm changeset tag`, which would emit one tag per publishable package (~27) every release — fine for stable's monthly cadence, noisy on the nightly cadence (~7 000 tags/year). The npm publisher only consumes the umbrella tag, so the per-package tags add no value.
+
+### Secrets
+
+This repo requires **no additional secrets** beyond the automatic `GITHUB_TOKEN`. `NPM_TOKEN` lives only on the private server.
+
+### How releases are cut
+
+- **Stable**: merge the "chore: version packages" PR opened by `changesets/action`. `release.yml` tags the bumped packages and creates a `vX.Y.Z` GitHub release. The AO cron detects the new release and publishes to npm `@latest`.
+- **Nightly**: `canary.yml` runs on cron (23:30 IST Fri–Tue) or via `workflow_dispatch`. It snapshots versions to `X.Y.Z-nightly-<sha>` format (e.g., `0.6.1-nightly-7c46dc92`), tags, and creates a prerelease GitHub release. The AO cron detects the new prerelease and publishes to npm `@nightly`.
+
+There is no path from this repo that calls `npm publish` directly.
+
+### Idempotency
+
+`release.yml` is idempotent: each step (tag push, GitHub release creation) is gated on whether that piece of state already exists, so a re-run after a partial failure picks up only the missing steps.
+
+The AO cron is also idempotent — `pnpm changeset publish` skips packages whose current version is already on the registry, so re-running after a partial publish is safe.
+
+### Recovery
+
+If `release.yml` fails after the GitHub release was created, **re-run the failed workflow**: the state-detection step will see that the tag and release already exist and skip those steps.
+
+If the AO cron fails to publish, it will retry on the next poll cycle (every 15 minutes). No manual intervention needed for transient failures. For persistent issues, check the cron logs on the private server.
+
+## Testing your changes
+
+### Latest main at any time
+
+```bash
+npm install -g @aoagents/ao@nightly
+```
+
+The nightly cron publishes from `main` daily at 23:30 IST (Fri–Tue). The bake window (Wed–Thu) pauses scheduled nightlies; release captains can re-cut a nightly via `workflow_dispatch` if a fix lands during bake.
+
 ---
 
 ## Building a Plugin

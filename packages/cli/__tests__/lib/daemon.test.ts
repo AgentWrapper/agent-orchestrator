@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as AoCore from "@aoagents/ao-core";
 
-const { mockUnregister, mockWaitForExit, mockKillProcessTree } = vi.hoisted(() => ({
-  mockUnregister: vi.fn(),
-  mockWaitForExit: vi.fn(),
-  mockKillProcessTree: vi.fn(),
-}));
+const { mockUnregister, mockWaitForExit, mockKillProcessTree, mockSweepDaemonChildren } =
+  vi.hoisted(() => ({
+    mockUnregister: vi.fn(),
+    mockWaitForExit: vi.fn(),
+    mockKillProcessTree: vi.fn(),
+    mockSweepDaemonChildren: vi.fn(),
+  }));
 
 vi.mock("../../src/lib/running-state.js", () => ({
   unregister: mockUnregister,
@@ -17,6 +19,7 @@ vi.mock("@aoagents/ao-core", async () => {
   return {
     ...actual,
     killProcessTree: mockKillProcessTree,
+    sweepDaemonChildren: mockSweepDaemonChildren,
   };
 });
 
@@ -37,6 +40,13 @@ beforeEach(() => {
   mockWaitForExit.mockReset();
   mockKillProcessTree.mockReset();
   mockKillProcessTree.mockResolvedValue(undefined);
+  mockSweepDaemonChildren.mockReset();
+  mockSweepDaemonChildren.mockResolvedValue({
+    attempted: 0,
+    terminated: 0,
+    forceKilled: 0,
+    failed: 0,
+  });
 });
 
 afterEach(() => {
@@ -93,6 +103,7 @@ describe("killExistingDaemon", () => {
   it("uses killProcessTree(SIGTERM), awaits exit, and unregisters on the happy path", async () => {
     mockWaitForExit.mockResolvedValueOnce(true);
     await killExistingDaemon(fakeRunning);
+    expect(mockSweepDaemonChildren).toHaveBeenCalledWith({ ownerPid: 12345 });
     expect(mockKillProcessTree).toHaveBeenCalledWith(12345, "SIGTERM");
     expect(mockKillProcessTree).toHaveBeenCalledTimes(1);
     expect(mockWaitForExit).toHaveBeenCalledWith(12345, 5000);

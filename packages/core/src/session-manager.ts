@@ -62,6 +62,7 @@ import {
 } from "./metadata.js";
 import {
   buildLifecycleMetadataPatch,
+  clearTerminalMarkersForNonTerminalState,
   cloneLifecycle,
   createInitialCanonicalLifecycle,
   deriveLegacyStatus,
@@ -107,6 +108,7 @@ const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
 // windowsHide:true suppresses the conhost popup that the shell would otherwise flash.
 const EXEC_SHELL_OPTION =
   process.platform === "win32" ? ({ shell: true, windowsHide: true } as const) : ({} as const);
+
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -289,6 +291,20 @@ const ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isAgentProcessNotDefinitelyMissing(
+  agent: Agent,
+  handle: RuntimeHandle,
+): Promise<boolean> {
+  try {
+    return (await agent.isProcessRunning(handle)) !== false;
+  } catch {
+    // Send/restore readiness should only block on a definitive "process missing"
+    // verdict. Probe failures are no verdict, so keep waiting or fall back to
+    // terminal output instead of forcing a restore.
+    return true;
+  }
 }
 
 function isFixedOrchestratorReservationError(err: unknown, sessionId: string): boolean {
@@ -479,6 +495,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }),
     );
     updater(lifecycle);
+    clearTerminalMarkersForNonTerminalState(lifecycle);
     return lifecycle;
   }
 
@@ -1248,12 +1265,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
+      // If an orchestrator session exists on disk for this project, give the
+      // worker the literal command to message it. Existence-on-disk is the
+      // signal: if metadata was ever written for the canonical orchestrator
+      // ID, the orchestrator workflow is in play here.
+      const orchestratorSessionId = `${project.sessionPrefix}-orchestrator`;
+      const orchestratorExists = readMetadataRaw(sessionsDir, orchestratorSessionId) !== null;
+
       const { systemPrompt, taskPrompt } = buildPrompt({
         project,
         projectId: spawnConfig.projectId,
         issueId: spawnConfig.issueId,
         issueContext,
         userPrompt: spawnConfig.prompt,
+        ...(orchestratorExists && { orchestratorSessionId }),
       });
 
       const baseDir = getProjectDir(spawnConfig.projectId);
@@ -2386,7 +2411,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -2433,7 +2458,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -2501,14 +2526,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let [runtimeAlive, processRunning] = await Promise.all([
         runtimePlugin.isAlive(handle).catch(() => true),
-        agentPlugin.isProcessRunning(handle).catch(() => true),
+        isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
       ]);
 
       if (normalized.status === "spawning" && runtimeAlive) {
         await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
         ]);
       }
 

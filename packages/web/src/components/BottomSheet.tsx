@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getAttentionLevel, isPRRateLimited, isPRUnenriched, type DashboardSession } from "@/lib/types";
+import {
+  getAttentionLevel,
+  isDashboardSessionTerminated,
+  isDashboardSessionTerminal,
+  isPRRateLimited,
+  isPRUnenriched,
+  type DashboardSession,
+} from "@/lib/types";
 import { getSessionTitle } from "@/lib/format";
 import { projectSessionPath } from "@/lib/routes";
 
@@ -24,12 +31,10 @@ function formatTagLabel(value: string): string {
 }
 
 function isTag(
-  value:
-    | {
-        label: string;
-        tone: "accent" | "neutral" | "mono";
-      }
-    | null,
+  value: {
+    label: string;
+    tone: "accent" | "neutral" | "mono";
+  } | null,
 ): value is { label: string; tone: "accent" | "neutral" | "mono" } {
   return value !== null;
 }
@@ -76,7 +81,7 @@ export function BottomSheet({
     if (!sheetRef.current) return;
 
     const focusable = sheetRef.current.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     if (focusable.length === 0) return;
 
@@ -122,13 +127,12 @@ export function BottomSheet({
 
   const title = getSessionTitle(session);
   const attention = getAttentionLevel(session);
-  const summary =
-    session.summary && !session.summaryIsFallback ? session.summary : null;
+  const summary = session.summary && !session.summaryIsFallback ? session.summary : null;
   const hasLiveTerminateAction =
-    attention !== "done" && attention !== "merge" && session.status !== "terminated";
+    attention !== "done" && attention !== "merge" && !isDashboardSessionTerminated(session);
   const pr = session.pr;
   const showLivePrData = Boolean(pr && !isPRRateLimited(pr) && !isPRUnenriched(pr));
-  const showTerminalStatePills = attention === "done" || session.status === "terminated" || session.activity === "exited";
+  const showTerminalStatePills = attention === "done" || isDashboardSessionTerminal(session);
   const tags = [
     { label: formatTagLabel(attention), tone: "accent" as const },
     { label: formatTagLabel(session.status), tone: "neutral" as const },
@@ -141,11 +145,7 @@ export function BottomSheet({
   return (
     <>
       {/* Backdrop */}
-      <div
-        className="bottom-sheet-backdrop"
-        onClick={onCancel}
-        aria-hidden="true"
-      />
+      <div className="bottom-sheet-backdrop" onClick={onCancel} aria-hidden="true" />
 
       {/* Sheet */}
       <div
@@ -191,7 +191,9 @@ export function BottomSheet({
               <div className="bottom-sheet__preview-content">
                 <div className="bottom-sheet__preview-header">
                   <span className="bottom-sheet__preview-id">{session.id}</span>
-                  <span className="bottom-sheet__preview-time">{getRelativeTime(session.lastActivityAt)}</span>
+                  <span className="bottom-sheet__preview-time">
+                    {getRelativeTime(session.lastActivityAt)}
+                  </span>
                 </div>
                 <h2 id="bottom-sheet-title" className="bottom-sheet__title">
                   {title}
@@ -207,8 +209,7 @@ export function BottomSheet({
                   {pr ? <span className="bottom-sheet__preview-pr">#{pr.number}</span> : null}
                   {showLivePrData && pr ? (
                     <span className="bottom-sheet__preview-diff">
-                      <span className="bottom-sheet__preview-diff-add">+{pr.additions}</span>
-                      {" "}
+                      <span className="bottom-sheet__preview-diff-add">+{pr.additions}</span>{" "}
                       <span className="bottom-sheet__preview-diff-del">-{pr.deletions}</span>
                     </span>
                   ) : null}
@@ -228,7 +229,7 @@ export function BottomSheet({
                         ? "approved"
                         : pr.reviewDecision === "changes_requested"
                           ? "changes requested"
-                        : "needs review"}
+                          : "needs review"}
                     </span>
                     {showTerminalStatePills ? (
                       <span className="bottom-sheet__tag bottom-sheet__tag--accent">

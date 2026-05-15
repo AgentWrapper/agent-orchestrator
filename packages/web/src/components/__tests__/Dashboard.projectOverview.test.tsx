@@ -19,7 +19,17 @@ describe("Dashboard project overview cards", () => {
           close: vi.fn(),
         }) as unknown as EventSource,
     );
-    global.fetch = vi.fn();
+    // The Dashboard mounts UpdateBanner, which fetches /api/version on its
+    // own. Default that to a no-op response (404) so the banner stays hidden
+    // and doesn't consume `mockImplementationOnce` queued by individual tests
+    // for /api/orchestrators or /api/spawn.
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/version")) {
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
+      }
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    });
   });
 
   it("renders Spawn Orchestrator only for projects without one", () => {
@@ -122,13 +132,22 @@ describe("Dashboard project overview cards", () => {
   });
 
   it("updates the card after spawning an orchestrator", async () => {
+    // Route by URL: UpdateBanner's /api/version stays on the default 404
+    // (banner stays hidden); only /api/orchestrators is held until we resolve.
     let resolveSpawn: ((value: Response) => void) | null = null;
-    vi.mocked(fetch).mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/orchestrators")) {
+        return new Promise<Response>((resolve) => {
           resolveSpawn = resolve;
-        }),
-    );
+        });
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as Response);
+    });
 
     render(
       <Dashboard
@@ -175,10 +194,20 @@ describe("Dashboard project overview cards", () => {
   });
 
   it("shows the API error when spawning fails", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: false,
-      json: async () => ({ error: "Project is paused" }),
-    } as Response);
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/orchestrators")) {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ error: "Project is paused" }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as Response);
+    });
 
     render(
       <Dashboard

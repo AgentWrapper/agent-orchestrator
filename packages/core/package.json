@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-core",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",
   "type": "module",
@@ -103,5 +103,9 @@
     "tslib": "^2.8.1",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

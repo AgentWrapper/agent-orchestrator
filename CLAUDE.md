@@ -363,6 +363,19 @@ All importable from `@aoagents/ao-core` unless noted:
 | `packages/cli/src/lib/running-state.ts` | RunningState + LastStopState management (register/unregister, last-stop read/write) |
 | `packages/web/src/components/ProjectSidebar.tsx` | Sidebar — always shows all projects' sessions |
 
+## Skills
+
+The `skills/` directory contains reusable workflow documents for common tasks. Load them before starting work:
+
+| Skill | When to load |
+|-------|-------------|
+| [`skills/bug-triage/SKILL.md`](skills/bug-triage/SKILL.md) | Triage a bug report — investigate, search duplicates, file GitHub issues, push fix PRs |
+| [`skills/agent-orchestrator/SKILL.md`](skills/agent-orchestrator/SKILL.md) | Architecture and conventions for working on this codebase |
+| [`skills/release-notes/ao-weekly-release/SKILL.md`](skills/release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history |
+| [`skills/social-media/SKILL.md`](skills/social-media/SKILL.md) | Social media post generation |
+
+See [`skills/README.md`](skills/README.md) for how to install skills into other coding agents (Cursor, Copilot, Codex, etc.).
+
 ## Plugin Standards
 
 ### Package Layout
