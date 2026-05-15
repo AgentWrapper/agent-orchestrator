@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 
 const mockSpawn = vi.hoisted(() => vi.fn());
@@ -291,6 +292,26 @@ describe("preventIdleSleep", () => {
       preventIdleSleep();
 
       expect(onMock).toHaveBeenCalledWith("error", expect.any(Function));
+    });
+
+    it("swallows async ENOENT error when systemd-inhibit is missing (pid undefined)", async () => {
+      // Real EventEmitter so emit("error") goes through Node's listener machinery.
+      // Without a registered listener, this would propagate as an uncaught
+      // exception and crash AO on hosts where systemd-inhibit is absent.
+      const emitter = new EventEmitter();
+      const mockChild = Object.assign(emitter, {
+        pid: undefined,
+        unref: vi.fn(),
+        kill: vi.fn(),
+      }) as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      const handle = preventIdleSleep();
+
+      expect(handle).toBeNull();
+      // The error listener must be attached BEFORE the pid check so the
+      // async ENOENT that fires after we return is swallowed.
+      expect(() => emitter.emit("error", new Error("spawn ENOENT"))).not.toThrow();
     });
   });
 

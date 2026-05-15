@@ -99,18 +99,22 @@ function preventIdleSleepLinux(targetPid: number): SleepPreventionHandle | null 
     { stdio: "ignore", detached: true },
   );
 
-  // Synchronous spawn failure (binary missing entirely). The async `error`
-  // event handles the more common ENOENT-from-execvp case below.
+  // Attach the error listener BEFORE the pid check. Node emits `error`
+  // asynchronously when execvp fails (ENOENT — no systemd-inhibit on PATH,
+  // WSL1, some containers, Alpine without elogind); without a listener that
+  // becomes an unhandled error and crashes AO. The pid-undefined branch
+  // below still needs the listener attached because the async `error` event
+  // fires after this function returns.
+  child.on("error", () => {
+    // Non-systemd environment. Nothing to release; silently ignore.
+  });
+
   if (child.pid === undefined) {
     return null;
   }
 
   const inhibitPid = child.pid;
   child.unref();
-  child.on("error", () => {
-    // Non-systemd environment (no systemd-inhibit on PATH — WSL1, some
-    // containers, Alpine without elogind). Nothing to release; silently ignore.
-  });
 
   return {
     release: () => {
