@@ -3184,11 +3184,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       next.pr.url = pr.url;
       next.pr.lastObservedAt = new Date().toISOString();
     });
+    // Stack: push claimed PR to front — it becomes primary (prs[0]) on next load.
+    // Filter out duplicates, keep all other tracked PRs at the back.
     const existingPrs = raw["prs"] ?? "";
-    const newPrs =
-      existingPrs && !existingPrs.split(",").map((u) => u.trim()).includes(pr.url)
-        ? existingPrs + "," + pr.url
-        : existingPrs || pr.url;
+    const otherPrs = existingPrs
+      .split(",")
+      .map((u) => u.trim())
+      .filter((u) => u && u !== pr.url)
+      .join(",");
+    const newPrs = otherPrs ? `${pr.url},${otherPrs}` : pr.url;
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
       prs: newPrs,
