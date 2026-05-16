@@ -55,3 +55,30 @@ export {
   type ConfiguredPipeline,
   type PipelinesConfig,
 } from "./config-schema.js";
+
+export {
+  evaluateTrigger,
+  decideConcurrencyAction,
+  matchesAnyGlob,
+  anyValueMatchesAnyGlob,
+  triggerEventForPREvent,
+  type ConcurrencyAction,
+  type ConcurrencyDecisionContext,
+  type TriggerEvaluationContext,
+} from "./triggers.js";
+
+export {
+  runAutoTriggerPass,
+  readAutoTriggerState,
+  writeAutoTriggerState,
+  autoTriggerStatePath,
+  makeInitialAutoTriggerState,
+  EMPTY_AUTO_TRIGGER_STATE,
+  DEFAULT_QUEUE_MAX_AGE_MS,
+  type AutoTriggerState,
+  type AutoTriggerPassDeps,
+  type AutoTriggerPassResult,
+  type AutoTriggerActionLog,
+  type DispatchInput,
+  type QueuedTrigger,
+} from "./auto-trigger.js";

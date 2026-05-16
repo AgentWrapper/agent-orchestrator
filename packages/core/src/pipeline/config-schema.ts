@@ -15,7 +15,9 @@ import { z } from "zod";
 import { findFirstStageCycle } from "./dag.js";
 import {
   asPipelineId,
+  type ConcurrencyPolicy,
   type Pipeline,
+  type PipelineTrigger,
   type Stage,
   type StageExecutor,
   type StageRoutePredicate,
@@ -75,6 +77,23 @@ const StageRoutesSchema = z.object({
   when: StageRoutePredicateSchema,
 });
 
+const PipelineTriggerEventSchema = z.enum([
+  "pr_opened",
+  "pr_push",
+  "pr_review_requested",
+  "manual",
+]);
+
+const PipelineTriggerSchema = z.object({
+  on: PipelineTriggerEventSchema,
+  branches: z.array(z.string().min(1)).optional(),
+  files: z.array(z.string().min(1)).optional(),
+  labels: z.array(z.string().min(1)).optional(),
+  excludeDrafts: z.boolean().optional(),
+});
+
+const ConcurrencyPolicySchema = z.enum(["cancel_in_progress", "skip", "queue"]);
+
 const StageSchema = z.object({
   name: z.string().min(1),
   trigger: StageTriggerSchema,
@@ -108,6 +127,8 @@ export const ConfiguredPipelineSchema = z
     name: z.string().min(1).optional(),
     stages: z.array(StageSchema).min(1),
     maxConcurrentStages: z.number().int().positive().optional(),
+    triggers: z.array(PipelineTriggerSchema).optional(),
+    concurrency: ConcurrencyPolicySchema.optional(),
   })
   .superRefine((pipeline, ctx) => {
     const stageNames = new Set(pipeline.stages.map((s) => s.name));
@@ -231,12 +252,26 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
     };
   });
 
+  const triggers: PipelineTrigger[] | undefined = configured.triggers
+    ? configured.triggers.map((t) => ({
+        on: t.on,
+        ...(t.branches !== undefined ? { branches: [...t.branches] } : {}),
+        ...(t.files !== undefined ? { files: [...t.files] } : {}),
+        ...(t.labels !== undefined ? { labels: [...t.labels] } : {}),
+        ...(t.excludeDrafts !== undefined ? { excludeDrafts: t.excludeDrafts } : {}),
+      }))
+    : undefined;
+
   return {
     id: asPipelineId(key),
     name: configured.name ?? key,
     stages,
     ...(configured.maxConcurrentStages !== undefined
       ? { maxConcurrentStages: configured.maxConcurrentStages }
+      : {}),
+    ...(triggers !== undefined ? { triggers } : {}),
+    ...(configured.concurrency !== undefined
+      ? { concurrency: configured.concurrency as ConcurrencyPolicy }
       : {}),
   };
 }

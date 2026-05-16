@@ -24,6 +24,7 @@ export type ObservabilityMetricName =
   | "graphql_batch"
   | "kill"
   | "lifecycle_poll"
+  | "pipeline_auto_trigger"
   | "restore"
   | "send"
   | "spawn"

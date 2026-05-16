@@ -141,12 +141,58 @@ export interface Stage {
   routes?: StageRoutes;
 }
 
+/**
+ * Pipeline-level trigger event. Distinct from `StageTriggerEvent` (the per-stage
+ * "when can this stage run within a run" gate) — `PipelineTriggerEvent` controls
+ * "when does a *new run* of the whole pipeline get fired".
+ */
+export type PipelineTriggerEvent = "pr_opened" | "pr_push" | "pr_review_requested" | "manual";
+
+/**
+ * One trigger entry under `Pipeline.triggers`. All filter fields are optional;
+ * when set they narrow the firing condition. A trigger fires only when its
+ * `on` event type matches and every set filter matches.
+ *
+ * `manual` triggers ignore filters — they only fire from `ao pipeline run`.
+ * `manual` is always available regardless of whether it appears in the list.
+ */
+export interface PipelineTrigger {
+  on: PipelineTriggerEvent;
+  /** Glob-match against PR base branch. Empty/missing = match any. */
+  branches?: string[];
+  /** Only fire if the diff touches any of these path globs. Missing = match any. */
+  files?: string[];
+  /** Only fire if the PR has any of these labels. Missing = match any. */
+  labels?: string[];
+  /** Skip draft PRs when true. Default false. */
+  excludeDrafts?: boolean;
+}
+
+/**
+ * What happens when a trigger fires while a run is already in progress for
+ * the same pipeline.
+ *
+ *  - `cancel_in_progress` (default) — kill the active run, start fresh.
+ *  - `skip` — silently ignore the new trigger.
+ *  - `queue` — wait for the active run to terminate, then start.
+ */
+export type ConcurrencyPolicy = "cancel_in_progress" | "skip" | "queue";
+
+export const DEFAULT_CONCURRENCY_POLICY: ConcurrencyPolicy = "cancel_in_progress";
+
 export interface Pipeline {
   id: PipelineId;
   name: string;
   stages: Stage[];
   /** Default 1 in v0; engine enforces serial execution when unset. */
   maxConcurrentStages?: number;
+  /**
+   * Auto-firing triggers for this pipeline. Empty or missing = manual only.
+   * Unrelated to `Stage.trigger`, which controls intra-run stage gating.
+   */
+  triggers?: PipelineTrigger[];
+  /** Concurrency policy when a trigger fires while a run is active. */
+  concurrency?: ConcurrencyPolicy;
 }
 
 // ============================================================================
