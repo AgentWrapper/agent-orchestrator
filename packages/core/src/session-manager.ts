@@ -1019,12 +1019,57 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    */
   const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
 
+  /**
+   * Kill an orphaned tmux session whose agent process has exited.
+   * This prevents the tmux-vs-status count discrepancy reported in #1850.
+   */
+  async function killOrphanedTmuxSession(tmuxSessionId: string): Promise<void> {
+    await execFileAsync("tmux", ["kill-session", "-t", tmuxSessionId], {
+      timeout: 5_000,
+    }).catch(() => {
+      // Session may have already been destroyed — ignore.
+    });
+  }
+
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
     sessionsDir: string,
   ): Promise<void> {
+    // ── Fast-path: skip expensive enrichment for terminal sessions (#1850) ──
+    // Sessions that are already done/killed/merged/etc. are hidden from the
+    // default `ao status` output (status.ts:377-382), so running isAlive(),
+    // getActivityState(), and getSessionInfo() on them is wasted work that
+    // adds seconds per session.  We only check for orphaned tmux sessions.
+    const isTerminal = TERMINAL_SESSION_STATUSES.has(session.status);
+    if (isTerminal) {
+      // Clean up orphaned tmux sessions (Fix #4 from #1850):
+      // For terminal sessions, the agent has exited. If the tmux session is
+      // still alive, it's an orphan — kill it to match `tmux ls` output.
+      if (
+        handleFromMetadata &&
+        session.runtimeHandle &&
+        session.runtimeHandle.runtimeName === "tmux" &&
+        plugins.runtime
+      ) {
+        try {
+          const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+          if (alive) {
+            // Agent exited but tmux session still lingers — kill it.
+            try {
+              await killOrphanedTmuxSession(session.runtimeHandle.id);
+            } catch {
+              // Best-effort; tmux kill-session may fail if race with user.
+            }
+          }
+        } catch {
+          // isAlive probe failed — skip cleanup.
+        }
+      }
+      return; // Skip getActivityState + getSessionInfo for terminal sessions
+    }
+
     // Check runtime liveness first — for all statuses except "spawning".
     // Skip spawning sessions because tmux may not be fully initialized yet,
     // and a false-negative from isAlive() would permanently mark the session

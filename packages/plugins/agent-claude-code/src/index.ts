@@ -626,6 +626,71 @@ let psCache: {
 } | null = null;
 const PS_CACHE_TTL_MS = 5_000;
 
+/**
+ * TTL cache for `tmux list-panes -a` output, indexed by session name.
+ * Same rationale as psCache: listing N sessions would call `tmux list-panes`
+ * N times, each with a 30s timeout. We batch into a single `list-panes -a`
+ * call per TTL window that fetches ALL sessions at once, then split the
+ * output into per-session TTY lists (#1850).
+ */
+let tmuxPaneCache: {
+  /** Per-session TTY output (same format as `tmux list-panes -F #{pane_tty}`) */
+  results: Map<string, string>;
+  timestamp: number;
+  /** In-flight promise so concurrent callers share the batch call */
+  promise: Promise<void>;
+} | null = null;
+const TMUX_PANE_CACHE_TTL_MS = 5_000;
+
+/** Reset the tmux pane cache. Exported for testing only. */
+export function resetTmuxPaneCache(): void {
+  tmuxPaneCache = null;
+}
+
+/**
+ * Fetch ALL tmux panes in one call (`tmux list-panes -a`) and cache the
+ * results indexed by session name.  Concurrent requests within the TTL
+ * window share the same batch call.
+ */
+async function getCachedTmuxPanes(handleId: string): Promise<string | null> {
+  if (isWindows()) return null;
+
+  const now = Date.now();
+
+  // Return cached result if still fresh
+  if (tmuxPaneCache && now - tmuxPaneCache.timestamp < TMUX_PANE_CACHE_TTL_MS) {
+    await tmuxPaneCache.promise;
+    return tmuxPaneCache.results.get(handleId) ?? null;
+  }
+
+  // Start a batch fetch of all sessions' panes
+  const results = new Map<string, string>();
+  const promise = execFileAsync("tmux", [
+    "list-panes",
+    "-a",
+    "-F",
+    "#{session_name}\t#{pane_tty}",
+  ], { timeout: 30_000 })
+    .then(({ stdout }) => {
+      for (const line of stdout.trim().split("\n")) {
+        const tabIdx = line.indexOf("\t");
+        if (tabIdx === -1) continue;
+        const sessionName = line.slice(0, tabIdx);
+        const paneTty = line.slice(tabIdx + 1);
+        // Append to existing entry (multi-pane sessions)
+        const existing = results.get(sessionName);
+        results.set(sessionName, existing ? existing + "\n" + paneTty : paneTty);
+      }
+    })
+    .catch(() => {
+      // tmux not running or no sessions — results stays empty
+    });
+
+  tmuxPaneCache = { results, timestamp: now, promise };
+  await promise;
+  return results.get(handleId) ?? null;
+}
+
 /** Reset the ps cache. Exported for testing only. */
 export function resetPsCache(): void {
   psCache = null;
@@ -679,11 +744,8 @@ async function findClaudeProcess(
     // For tmux runtime, get the pane TTY and find claude on it
     if (handle.runtimeName === "tmux" && handle.id) {
       if (isWindows()) return null;
-      const { stdout: ttyOut } = await execFileAsync(
-        "tmux",
-        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 30_000 },
-      );
+      const ttyOut = await getCachedTmuxPanes(handle.id);
+      if (!ttyOut) return null;
       // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
       const ttys = ttyOut
         .trim()

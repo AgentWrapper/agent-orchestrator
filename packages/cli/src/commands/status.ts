@@ -124,13 +124,21 @@ async function gatherSessionInfo(
     lastActivity = activityTs ? formatAge(activityTs) : "-";
   }
 
-  // Get agent's auto-generated summary via introspection
+  // Get agent's auto-generated summary — reuse enriched agentInfo when
+  // available to avoid a redundant getSessionInfo() call per session (#1850).
+  // session.agentInfo is populated by enrichSessionWithRuntimeState during
+  // sm.list() above.  Only fall back to a live probe if enrichment was skipped
+  // or returned null (e.g. terminal sessions).
   let claudeSummary: string | null = null;
-  try {
-    const introspection = await agent.getSessionInfo(session);
-    claudeSummary = introspection?.summary ?? null;
-  } catch {
-    // Summary extraction failed — not critical
+  if (session.agentInfo?.summary !== undefined && session.agentInfo?.summary !== null) {
+    claudeSummary = session.agentInfo.summary;
+  } else {
+    try {
+      const introspection = await agent.getSessionInfo(session);
+      claudeSummary = introspection?.summary ?? null;
+    } catch {
+      // Summary extraction failed — not critical
+    }
   }
 
   // Use activity from session (already enriched by sessionManager.list())
