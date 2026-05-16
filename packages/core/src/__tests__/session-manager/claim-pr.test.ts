@@ -49,6 +49,7 @@ describe("claimPR", () => {
         branch: "feat/existing-pr",
         baseBranch: "main",
         isDraft: false,
+        isFromFork: false,
       }),
       assignPRToCurrentUser: vi.fn().mockResolvedValue(undefined),
       checkoutPR: vi.fn().mockResolvedValue(true),
@@ -344,6 +345,7 @@ describe("claimPR", () => {
           branch: "feat/first-pr",
           baseBranch: "main",
           isDraft: false,
+          isFromFork: false,
         })
         .mockResolvedValueOnce({
           number: 99,
@@ -354,6 +356,7 @@ describe("claimPR", () => {
           branch: "feat/second-pr",
           baseBranch: "main",
           isDraft: false,
+          isFromFork: false,
         }),
       checkoutPR: vi.fn().mockResolvedValue(true),
     });

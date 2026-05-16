@@ -30,6 +30,7 @@ const pr: PRInfo = {
   branch: "feat/my-feature",
   baseBranch: "main",
   isDraft: false,
+  isFromFork: false,
 };
 
 const project: ProjectConfig = {
@@ -413,6 +414,7 @@ describe("scm-github plugin", () => {
         branch: "feat/my-feature",
         baseBranch: "main",
         isDraft: false,
+        isFromFork: false,
       });
     });
 
@@ -463,6 +465,38 @@ describe("scm-github plugin", () => {
       ]);
       const result = await scm.detectPR(makeSession(), project);
       expect(result?.isDraft).toBe(true);
+    });
+
+    it("flags fork PRs via isCrossRepository", async () => {
+      mockGh([
+        {
+          number: 42,
+          url: "https://github.com/acme/repo/pull/42",
+          title: "fork PR",
+          headRefName: "feat/x",
+          baseRefName: "main",
+          isDraft: false,
+          isCrossRepository: true,
+        },
+      ]);
+      const result = await scm.detectPR(makeSession({ branch: "feat/x" }), project);
+      expect(result?.isFromFork).toBe(true);
+    });
+
+    it("treats absent isCrossRepository as non-fork (isFromFork false)", async () => {
+      mockGh([
+        {
+          number: 42,
+          url: "https://github.com/acme/repo/pull/42",
+          title: "same-repo PR",
+          headRefName: "feat/my-feature",
+          baseRefName: "main",
+          isDraft: false,
+          // isCrossRepository intentionally omitted
+        },
+      ]);
+      const result = await scm.detectPR(makeSession(), project);
+      expect(result?.isFromFork).toBe(false);
     });
 
     it("resolves PR by reference", async () => {

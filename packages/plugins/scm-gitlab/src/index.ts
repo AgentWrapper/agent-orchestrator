@@ -467,6 +467,8 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
             source_branch: string;
             target_branch: string;
             draft: boolean;
+            source_project_id?: number;
+            target_project_id?: number;
           }>
         >(raw, `detectPR for branch "${session.branch}"`);
 
@@ -482,6 +484,10 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
           branch: mr.source_branch,
           baseBranch: mr.target_branch,
           isDraft: mr.draft ?? false,
+          isFromFork:
+            mr.source_project_id !== undefined &&
+            mr.target_project_id !== undefined &&
+            mr.source_project_id !== mr.target_project_id,
         };
       } catch (err) {
         console.warn(`detectPR: failed for branch "${session.branch}": ${(err as Error).message}`);

@@ -44,9 +44,25 @@ const CommandExecutorSchema = z.object({
   cwd: z.string().optional(),
 });
 
+const BuiltinRouterExecutorSchema = z.object({
+  kind: z.literal("builtin/router"),
+  fromStages: z.array(z.string().min(1)).min(1),
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("session"), sessionId: z.string().min(1) }),
+    z.object({ kind: z.literal("self") }),
+  ]),
+});
+
+const BuiltinComposeExecutorSchema = z.object({
+  kind: z.literal("builtin/compose"),
+  fromStages: z.array(z.string().min(1)).min(1),
+});
+
 const StageExecutorSchema = z.discriminatedUnion("kind", [
   AgentExecutorSchema,
   CommandExecutorSchema,
+  BuiltinRouterExecutorSchema,
+  BuiltinComposeExecutorSchema,
 ]);
 
 const TaskSpecSchema = z.object({
@@ -87,6 +103,7 @@ const StageSchema = z.object({
   maxLoopRounds: z.number().int().positive().optional(),
   dependsOn: z.array(z.string().min(1)).optional(),
   routes: StageRoutesSchema.optional(),
+  allowFork: z.boolean().optional(),
 });
 
 /**
@@ -167,6 +184,52 @@ export const ConfiguredPipelineSchema = z
       }
     }
 
+    // fromStages references must point to known stage names and must not
+    // self-reference.  They must also be declared in dependsOn so the DAG
+    // scheduler guarantees the referenced stages are terminal before the
+    // builtin executor reads their artifacts.
+    for (let i = 0; i < pipeline.stages.length; i++) {
+      const stage = pipeline.stages[i];
+      const { executor } = stage;
+      if (executor.kind === "builtin/router" || executor.kind === "builtin/compose") {
+        for (const ref of executor.fromStages) {
+          if (!stageNames.has(ref)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["stages", i, "executor", "fromStages"],
+              message: `Stage "${stage.name}" references unknown stage "${ref}" in fromStages.`,
+            });
+          }
+          if (ref === stage.name) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["stages", i, "executor", "fromStages"],
+              message: `Stage "${stage.name}" cannot reference itself in fromStages.`,
+            });
+          }
+          if (stageNames.has(ref) && ref !== stage.name && !(stage.dependsOn ?? []).includes(ref)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["stages", i, "executor", "fromStages"],
+              message: `Stage "${stage.name}" lists "${ref}" in fromStages but not in dependsOn — execution order is not guaranteed.`,
+            });
+          }
+        }
+      }
+    }
+
+    // allowFork is only meaningful for command stages.
+    for (let i = 0; i < pipeline.stages.length; i++) {
+      const stage = pipeline.stages[i];
+      if (stage.allowFork !== undefined && stage.executor.kind !== "command") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["stages", i, "allowFork"],
+          message: `Stage "${stage.name}" sets allowFork but executor kind "${stage.executor.kind}" ignores it — allowFork is only meaningful for command stages.`,
+        });
+      }
+    }
+
     // Cycle detection over the combined dependsOn + routes-refs graph.
     // Iterative DFS; returns the first cycle found in declaration order so
     // the error reads naturally (e.g. "a → b → c → a"). Trivial self-loops
@@ -191,21 +254,7 @@ export type PipelinesConfig = z.infer<typeof PipelinesConfigSchema>;
 /** Convert a parsed YAML pipeline entry into a runtime Pipeline (branded id). */
 export function configuredPipelineToRuntime(key: string, configured: ConfiguredPipeline): Pipeline {
   const stages = configured.stages.map((stage): Stage => {
-    const executor: StageExecutor =
-      stage.executor.kind === "agent"
-        ? {
-            kind: "agent",
-            plugin: stage.executor.plugin,
-            mode: stage.executor.mode as TaskMode,
-            ...(stage.executor.config !== undefined ? { config: stage.executor.config } : {}),
-          }
-        : {
-            kind: "command",
-            command: stage.executor.command,
-            ...(stage.executor.args !== undefined ? { args: stage.executor.args } : {}),
-            ...(stage.executor.env !== undefined ? { env: stage.executor.env } : {}),
-            ...(stage.executor.cwd !== undefined ? { cwd: stage.executor.cwd } : {}),
-          };
+    const executor: StageExecutor = toRuntimeExecutor(stage.executor);
 
     const routes: StageRoutes | undefined = stage.routes
       ? {
@@ -228,6 +277,7 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
       ...(stage.maxLoopRounds !== undefined ? { maxLoopRounds: stage.maxLoopRounds } : {}),
       ...(stage.dependsOn !== undefined ? { dependsOn: [...stage.dependsOn] } : {}),
       ...(routes ? { routes } : {}),
+      ...(stage.allowFork !== undefined ? { allowFork: stage.allowFork } : {}),
     };
   });
 
@@ -239,4 +289,42 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
       ? { maxConcurrentStages: configured.maxConcurrentStages }
       : {}),
   };
+}
+
+function toRuntimeExecutor(executor: ConfiguredPipeline["stages"][number]["executor"]): StageExecutor {
+  switch (executor.kind) {
+    case "agent":
+      return {
+        kind: "agent",
+        plugin: executor.plugin,
+        mode: executor.mode as TaskMode,
+        ...(executor.config !== undefined ? { config: executor.config } : {}),
+      };
+    case "command":
+      return {
+        kind: "command",
+        command: executor.command,
+        ...(executor.args !== undefined ? { args: executor.args } : {}),
+        ...(executor.env !== undefined ? { env: executor.env } : {}),
+        ...(executor.cwd !== undefined ? { cwd: executor.cwd } : {}),
+      };
+    case "builtin/router":
+      return {
+        kind: "builtin/router",
+        fromStages: [...executor.fromStages],
+        target:
+          executor.target.kind === "session"
+            ? { kind: "session", sessionId: executor.target.sessionId }
+            : { kind: "self" },
+      };
+    case "builtin/compose":
+      return {
+        kind: "builtin/compose",
+        fromStages: [...executor.fromStages],
+      };
+    default: {
+      const exhaustive: never = executor;
+      throw new Error(`Unhandled executor kind: ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }

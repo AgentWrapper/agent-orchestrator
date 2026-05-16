@@ -33,6 +33,7 @@ import {
   type Stage,
   type StageRunId,
 } from "../types.js";
+import { parseFindingsJsonl } from "./findings-parser.js";
 
 export interface AgentExecutorDeps {
   sessionManager: SessionManager;
@@ -235,92 +236,7 @@ function parseFindingsFile(path: string): ArtifactInput[] {
   // engine by dumping its full reasoning trace into findings. Fine for v0.2
   // since the engine and agent are co-located, but stream-and-cap once the
   // engine moves out-of-process or runs untrusted plugins.
-  const body = readFileSync(path, "utf-8");
-  const out: ArtifactInput[] = [];
-  for (const [lineNo, raw] of body.split("\n").entries()) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (err) {
-      throw new Error(`line ${lineNo + 1}: ${err instanceof Error ? err.message : String(err)}`, {
-        cause: err,
-      });
-    }
-    out.push(coerceArtifactInput(parsed, lineNo + 1));
-  }
-  return out;
-}
-
-const VALID_SEVERITIES = ["error", "warning", "info"] as const;
-
-function coerceArtifactInput(value: unknown, lineNo: number): ArtifactInput {
-  if (!value || typeof value !== "object") {
-    throw new Error(`line ${lineNo}: expected object`);
-  }
-  const obj = value as Record<string, unknown>;
-  if (obj["kind"] === "finding") {
-    requireString(obj, "filePath", lineNo);
-    requireNumber(obj, "startLine", lineNo);
-    requireNumber(obj, "endLine", lineNo);
-    requireString(obj, "title", lineNo);
-    requireString(obj, "description", lineNo);
-    requireString(obj, "category", lineNo);
-    requireEnum(obj, "severity", VALID_SEVERITIES, lineNo);
-    requireNumberInRange(obj, "confidence", 0, 1, lineNo);
-    return obj as unknown as ArtifactInput;
-  }
-  if (obj["kind"] === "json") {
-    if (!obj["data"] || typeof obj["data"] !== "object") {
-      throw new Error(`line ${lineNo}: "json" artifact requires object \`data\``);
-    }
-    return obj as unknown as ArtifactInput;
-  }
-  throw new Error(`line ${lineNo}: unknown artifact kind=${JSON.stringify(obj["kind"])}`);
-}
-
-function requireString(obj: Record<string, unknown>, key: string, lineNo: number): void {
-  if (typeof obj[key] !== "string") {
-    throw new Error(`line ${lineNo}: missing string field "${key}"`);
-  }
-}
-
-function requireNumber(obj: Record<string, unknown>, key: string, lineNo: number): void {
-  if (typeof obj[key] !== "number") {
-    throw new Error(`line ${lineNo}: missing numeric field "${key}"`);
-  }
-}
-
-function requireNumberInRange(
-  obj: Record<string, unknown>,
-  key: string,
-  min: number,
-  max: number,
-  lineNo: number,
-): void {
-  const value = obj[key];
-  if (typeof value !== "number" || value < min || value > max) {
-    throw new Error(
-      `line ${lineNo}: field "${key}" must be a number in [${min}, ${max}], got ${JSON.stringify(value)}`,
-    );
-  }
-}
-
-function requireEnum<T extends string>(
-  obj: Record<string, unknown>,
-  key: string,
-  allowed: readonly T[],
-  lineNo: number,
-): void {
-  const value = obj[key];
-  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
-    throw new Error(
-      `line ${lineNo}: field "${key}" must be one of ${allowed
-        .map((v) => `"${v}"`)
-        .join(", ")}, got ${JSON.stringify(value)}`,
-    );
-  }
+  return parseFindingsJsonl(readFileSync(path, "utf-8"));
 }
 
 async function safeKill(sm: SessionManager, sessionId: SessionId): Promise<void> {

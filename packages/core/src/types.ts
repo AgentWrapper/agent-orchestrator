@@ -947,6 +947,13 @@ export interface PRInfo {
   branch: string;
   baseBranch: string;
   isDraft: boolean;
+  /**
+   * True when the PR head is in a different repository than the base
+   * (i.e. opened from a fork). Used by the pipeline command executor to
+   * refuse running untrusted scripts on fork PRs unless the stage opts in
+   * via `Stage.allowFork: true`.
+   */
+  isFromFork: boolean;
 }
 
 export type PRState = "open" | "merged" | "closed";

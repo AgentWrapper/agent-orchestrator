@@ -256,6 +256,293 @@ describe("pipeline DAG — cycle detection (config load)", () => {
   });
 });
 
+describe("pipeline DAG — fromStages validation (config load)", () => {
+  it("rejects a builtin/router whose fromStages references an unknown stage", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/router",
+            fromStages: ["nonexistent"],
+            target: { kind: "self" },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('references unknown stage "nonexistent" in fromStages');
+  });
+
+  it("rejects a builtin/compose whose fromStages references an unknown stage", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["nope"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('references unknown stage "nope" in fromStages');
+  });
+
+  it("rejects a builtin/router whose fromStages self-references", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/router",
+            fromStages: ["b"],
+            target: { kind: "self" },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('"b" cannot reference itself in fromStages');
+  });
+
+  it("rejects a builtin/compose whose fromStages self-references", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["b"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('"b" cannot reference itself in fromStages');
+  });
+
+  it("rejects a builtin/router whose fromStages entry is not in dependsOn", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          executor: {
+            kind: "builtin/router",
+            fromStages: ["a"],
+            target: { kind: "self" },
+          },
+          // no dependsOn — a is not listed
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('"a" in fromStages but not in dependsOn');
+  });
+
+  it("rejects a builtin/compose whose fromStages entry is not in dependsOn", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["a"],
+          },
+          // no dependsOn — a is not listed
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('"a" in fromStages but not in dependsOn');
+  });
+
+  it("accepts a builtin/router where every fromStages entry is in dependsOn and known", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/router",
+            fromStages: ["a"],
+            target: { kind: "self" },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a builtin/compose where every fromStages entry is in dependsOn and known", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["a"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts multi-entry fromStages when every entry is in dependsOn (no off-by-one)", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        makeStage("b"),
+        makeStage("c"),
+        {
+          ...makeStage("merge"),
+          dependsOn: ["a", "b", "c"],
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["a", "b", "c"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects multi-entry fromStages where one of several entries is missing from dependsOn", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        makeStage("b"),
+        makeStage("c"),
+        {
+          ...makeStage("merge"),
+          dependsOn: ["a", "b"], // c missing
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["a", "b", "c"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('"c" in fromStages but not in dependsOn');
+  });
+});
+
+describe("pipeline DAG — allowFork validation (config load)", () => {
+  it("rejects allowFork on an agent executor", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        {
+          ...makeStage("a"),
+          allowFork: true,
+          executor: { kind: "agent", plugin: "codex", mode: "review" },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('sets allowFork but executor kind "agent" ignores it');
+  });
+
+  it("rejects allowFork on a builtin/router executor", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          allowFork: true,
+          executor: {
+            kind: "builtin/router",
+            fromStages: ["a"],
+            target: { kind: "self" },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('sets allowFork but executor kind "builtin/router" ignores it');
+  });
+
+  it("rejects allowFork on a builtin/compose executor", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        makeStage("a"),
+        {
+          ...makeStage("b"),
+          dependsOn: ["a"],
+          allowFork: true,
+          executor: {
+            kind: "builtin/compose",
+            fromStages: ["a"],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join("\n");
+    expect(messages).toContain('sets allowFork but executor kind "builtin/compose" ignores it');
+  });
+
+  it("accepts allowFork on a command executor", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        {
+          ...makeStage("a"),
+          allowFork: true,
+          executor: { kind: "command", command: "make test" },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a stage with no allowFork regardless of executor kind", () => {
+    const result = ConfiguredPipelineSchema.safeParse({
+      stages: [
+        {
+          ...makeStage("a"),
+          executor: { kind: "agent", plugin: "codex", mode: "review" },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("pipeline DAG — parallel scheduling", () => {
   it("starts two independent stages concurrently when maxConcurrentStages=2", () => {
     const pipeline = makePipeline([makeStage("a"), makeStage("b")], 2);

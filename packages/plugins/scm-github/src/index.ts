@@ -112,6 +112,7 @@ function prInfoFromView(
     headRefName: string;
     baseRefName: string;
     isDraft: boolean;
+    isCrossRepository?: boolean;
   },
   projectRepo: string,
 ): PRInfo {
@@ -126,6 +127,7 @@ function prInfoFromView(
     branch: data.headRefName,
     baseBranch: data.baseRefName,
     isDraft: data.isDraft,
+    isFromFork: data.isCrossRepository ?? false,
   };
 }
 
@@ -701,7 +703,7 @@ function createGitHubSCM(): SCM {
           "--head",
           session.branch,
           "--json",
-          "number,url,title,headRefName,baseRefName,isDraft",
+          "number,url,title,headRefName,baseRefName,isDraft,isCrossRepository",
           "--limit",
           "1",
         ]);
@@ -713,6 +715,7 @@ function createGitHubSCM(): SCM {
           headRefName: string;
           baseRefName: string;
           isDraft: boolean;
+          isCrossRepository?: boolean;
         }> = JSON.parse(raw);
 
         if (prs.length === 0) return null;
@@ -742,7 +745,7 @@ function createGitHubSCM(): SCM {
           "--repo",
           repo,
           "--json",
-          "number,url,title,headRefName,baseRefName,isDraft",
+          "number,url,title,headRefName,baseRefName,isDraft,isCrossRepository",
         ]);
 
         const data: {
@@ -752,6 +755,7 @@ function createGitHubSCM(): SCM {
           headRefName: string;
           baseRefName: string;
           isDraft: boolean;
+          isCrossRepository?: boolean;
         } = JSON.parse(raw);
 
         return prInfoFromView(data, repo);
