@@ -25,6 +25,7 @@ export function UpdateBanner() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Hydrate dismissal flag from localStorage on mount.
   useEffect(() => {
@@ -139,16 +140,19 @@ export function UpdateBanner() {
       <div className="flex items-center gap-2">
         {phase === "blocked" ? (
           <code
-            onClick={(e) => {
-              void navigator.clipboard.writeText("ao stop && ao update && ao start");
-              const el = e.currentTarget;
-              el.textContent = "Copied!";
-              setTimeout(() => { el.textContent = "ao stop && ao update && ao start"; }, 1500);
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.click(); }}
+            onClick={() => {
+              navigator.clipboard.writeText("ao stop && ao update && ao start").then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }).catch(() => {/* clipboard unavailable */});
             }}
             title="Click to copy"
             className="cursor-pointer rounded-sm border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-2 py-1 font-[var(--font-mono)] text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated-hover)]"
           >
-            ao stop &amp;&amp; ao update &amp;&amp; ao start
+            {copied ? "Copied!" : "ao stop && ao update && ao start"}
           </code>
         ) : (
           <button
