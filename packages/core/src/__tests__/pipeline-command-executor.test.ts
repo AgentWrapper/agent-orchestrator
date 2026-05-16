@@ -455,41 +455,56 @@ posixDescribe("command executor — startStage (POSIX subprocess)", () => {
     // Regression for round-4 P1: `settle()` used to call `clearTimers()`,
     // which cancelled the SIGKILL escalation timer that `cancel()` had
     // just scheduled. A child that traps SIGTERM and keeps running would
-    // become an orphan because no SIGKILL ever followed. This test sets
-    // up exactly that scenario: a shell that traps SIGTERM and loops,
-    // then cancels and verifies the process eventually dies.
+    // become an orphan because no SIGKILL ever followed.
+    //
+    // This test must distinguish the buggy code from the fixed code by
+    // checking the actual process state, NOT just `handle.done`. Under
+    // the bug, `done` still resolves immediately (settle() is called
+    // synchronously inside cancel()) so any assertion on `done` would
+    // pass either way. We check `process.kill(pid, 0)` instead: it
+    // sends signal 0 (existence probe) and throws ESRCH iff the PID
+    // is dead and reaped.
     const exec = createCommandExecutor();
     const stage = makeCommandStage({
       executor: {
         kind: "command",
         command: "/bin/sh",
         // Trap SIGTERM with an empty handler so default kill is suppressed.
-        // The loop keeps the process alive indefinitely. Only SIGKILL ends it.
+        // The loop keeps the shell alive indefinitely. Only SIGKILL ends it.
         args: ["-c", `trap '' TERM; while :; do sleep 1; done`],
       },
     });
 
     const handle = await exec.startStage(makeInput({ stage }));
     expect(handle.outcome).toBeNull();
-    const childPid = (handle as unknown as { __testChildPid?: number }).__testChildPid;
-    void childPid; // unused but documents intent
+    const childPid = handle.pid;
+    expect(typeof childPid).toBe("number");
+    if (typeof childPid !== "number") throw new Error("unreachable");
+
+    // Sanity: child is alive right now.
+    expect(() => process.kill(childPid, 0)).not.toThrow();
 
     await exec.cancelStage(handle);
+
     // SIGTERM has fired but the child traps it. The SIGKILL escalation
-    // is scheduled at COMMAND_KILL_GRACE_MS (2s). `done` is already
-    // resolved (cancel settles immediately), so wait long enough for
-    // SIGKILL to actually land AND for the close event to fire.
-    await handle.done;
-    // Give the OS / Node event loop a beat to deliver SIGKILL + reap.
+    // is scheduled at COMMAND_KILL_GRACE_MS (2s). Wait past it + buffer
+    // for the OS to deliver the signal and for Node to reap the child.
     await new Promise((r) => setTimeout(r, 3_500));
 
-    // After SIGKILL + reap, the close event should have fired. We can't
-    // easily assert "process is dead" without root visibility, but we
-    // CAN assert that done resolved with the cancelled message, and
-    // that the test itself completed in bounded time (vitest's 5s
-    // default would catch infinite hangs). The real signal: the test
-    // run terminates cleanly — under the bug, the child loop would
-    // outlive the test process and leak into the CI worker.
+    // The real assertion: the child PID must no longer exist. Under the
+    // bug, the shell would still be running its `while :` loop and
+    // `process.kill(pid, 0)` would return without throwing.
+    let stillAlive = false;
+    try {
+      process.kill(childPid, 0);
+      stillAlive = true;
+    } catch (err) {
+      // ESRCH is the expected "no such process" — anything else is a surprise.
+      expect((err as NodeJS.ErrnoException).code).toBe("ESRCH");
+    }
+    expect(stillAlive).toBe(false);
+
+    // And the outcome we already had is the cancelled failure.
     const outcome = await handle.done;
     expect(outcome.status).toBe("failed");
     if (outcome.status !== "failed") throw new Error("unreachable");

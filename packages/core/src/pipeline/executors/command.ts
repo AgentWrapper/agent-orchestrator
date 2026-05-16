@@ -66,7 +66,7 @@ export interface CommandStartInput {
    * non-PR runs (manual triggers, internal pipelines).
    */
   isFromFork?: boolean;
-  /** Loop counter, surfaced as `AO_LOOP_ROUND` in the child env. */
+  /** Loop counter, surfaced as `AO_PIPELINE_LOOP_ROUND` in the child env. */
   loopRound?: number;
 }
 
@@ -85,6 +85,13 @@ export interface RunningCommandStage {
   stageRunId: StageRunId;
   stageName: string;
   startedAt: number;
+  /**
+   * PID of the spawned child process, or `undefined` when the handle
+   * represents a synthetic outcome (fork refusal, kind mismatch, spawn
+   * failure) and never actually spawned anything. Useful for tests and
+   * external observers verifying the child was reaped.
+   */
+  pid?: number;
   /**
    * Set when the child exits, the timeout fires, spawn fails, or refusal
    * triggers. `null` while the child is still running.
@@ -298,6 +305,7 @@ export function createCommandExecutor(deps: CommandExecutorDeps = {}): CommandSt
       stageRunId: input.stageRunId,
       stageName: stage.name,
       startedAt,
+      ...(child.pid !== undefined ? { pid: child.pid } : {}),
       outcome: null,
       done,
       cancel: () => {
