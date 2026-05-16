@@ -179,4 +179,48 @@ describe("SessionTimeline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Runtime" }));
     expect(screen.getByText("Started subprocess")).toBeInTheDocument();
   });
+
+  it("reports filtered counts and empty filter results clearly", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            events: [
+              {
+                id: 1,
+                ts: new Date().toISOString(),
+                tsEpoch: Date.now(),
+                projectId: "proj",
+                sessionId: "filtered-session",
+                source: "lifecycle",
+                kind: "lifecycle.transition",
+                level: "info",
+                summary: "Lifecycle transition",
+                data: null,
+              },
+            ],
+          }),
+        text: () => Promise.resolve(""),
+      } as Response),
+    );
+
+    render(
+      <SessionTimeline
+        session={makeSession({
+          id: "filtered-session",
+          projectId: "proj",
+          agentReportAudit: [],
+        })}
+      />,
+    );
+
+    expect(await screen.findByText("Lifecycle transition")).toBeInTheDocument();
+    expect(screen.getByText("1 timeline event")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "PR/CI" }));
+    expect(screen.getByText("0 of 1 event")).toBeInTheDocument();
+    expect(screen.getByText("No events match this filter.")).toBeInTheDocument();
+  });
 });

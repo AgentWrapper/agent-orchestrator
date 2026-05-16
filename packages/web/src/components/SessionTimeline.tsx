@@ -214,7 +214,9 @@ export function SessionTimeline({ session }: { session: DashboardSession }) {
       ? "Loading timeline"
       : loadState === "error"
         ? "Activity events unavailable"
-        : `${timelineEvents.length} timeline event${timelineEvents.length === 1 ? "" : "s"}`;
+        : filter === "all"
+          ? `${timelineEvents.length} timeline event${timelineEvents.length === 1 ? "" : "s"}`
+          : `${visibleEvents.length} of ${timelineEvents.length} event${timelineEvents.length === 1 ? "" : "s"}`;
 
   return (
     <section className="session-timeline" aria-label="Session timeline">
@@ -243,7 +245,11 @@ export function SessionTimeline({ session }: { session: DashboardSession }) {
       <div className="session-timeline__body">
         {visibleEvents.length === 0 ? (
           <p className="session-timeline__empty">
-            {loadState === "loading" ? "Loading recent session activity..." : "No timeline events."}
+            {loadState === "loading"
+              ? "Loading recent session activity..."
+              : filter === "all"
+                ? "No timeline events."
+                : "No events match this filter."}
           </p>
         ) : (
           <ol className="session-timeline__list">
