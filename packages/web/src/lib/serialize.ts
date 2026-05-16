@@ -7,6 +7,7 @@ import "server-only";
  * (string dates, flattened DashboardPR) suitable for JSON serialization.
  */
 
+import { statSync, utimesSync } from "node:fs";
 import {
   isOrchestratorSession,
   isTerminalSession,
@@ -478,7 +479,10 @@ export async function enrichSessionIssueTitle(
 ): Promise<void> {
   if (!dashboard.issueUrl || !dashboard.issueLabel) return;
 
-  // 1. Check persisted metadata first (survives process restarts, zero network)
+  // 1. Check persisted metadata first (survives process restarts, zero network).
+  // Tradeoff: persisted titles never expire, so renamed issues show stale data.
+  // Acceptable because issue renames are rare and the in-memory TTL cache will
+  // still refresh on the next cold start (metadata only seeds the first read).
   const persisted = dashboard.metadata["issueTitle"];
   if (persisted) {
     dashboard.issueTitle = persisted;
@@ -503,10 +507,17 @@ export async function enrichSessionIssueTitle(
     if (issue.title) {
       dashboard.issueTitle = issue.title;
       issueTitleCache.set(dashboard.issueUrl, issue.title);
-      // Persist to metadata so subsequent requests skip the gh call
+      // Persist to metadata so subsequent requests skip the gh call.
+      // Preserve mtime so SessionManager doesn't treat this as new activity.
       try {
         const sessionsDir = getProjectSessionsDir(dashboard.projectId);
+        const metaFile = `${sessionsDir}/${dashboard.id}.json`;
+        let origMtime: Date | undefined;
+        try { origMtime = statSync(metaFile).mtime; } catch { /* new file */ }
         updateMetadata(sessionsDir, dashboard.id, { issueTitle: issue.title });
+        if (origMtime) {
+          try { utimesSync(metaFile, origMtime, origMtime); } catch { /* best-effort */ }
+        }
       } catch {
         // Best-effort persistence — in-memory cache still prevents repeated calls
       }
