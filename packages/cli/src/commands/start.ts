@@ -661,6 +661,11 @@ async function addProjectToConfig(
   await ensureGit("adding projects");
 
   let projectId = sanitizeProjectId(basename(resolvedPath));
+  if (!projectId) {
+    throw new Error(
+      `Cannot derive a valid project ID from path "${resolvedPath}" — folder name contains only special characters.`,
+    );
+  }
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
