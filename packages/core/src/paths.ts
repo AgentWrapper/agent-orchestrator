@@ -45,11 +45,13 @@ export function generateConfigHash(configPath: string): string {
 /**
  * Generate project ID from project path (basename of the path).
  * Example: ~/repos/integrator → "integrator"
+ * Example: ~/repos/llama.cpp → "llama-cpp"
  *
  * @deprecated New project registrations use generateExternalId() from global-config.ts.
  */
 export function generateProjectId(projectPath: string): string {
-  return basename(projectPath);
+  const raw = basename(projectPath);
+  return raw.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || "project";
 }
 
 /**

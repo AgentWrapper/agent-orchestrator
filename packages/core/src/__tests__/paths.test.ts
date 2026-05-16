@@ -111,6 +111,13 @@ describe("generateProjectId", () => {
     expect(generateProjectId("/home/user/repos/integrator")).toBe("integrator");
     expect(generateProjectId("~/repos/agent-orchestrator")).toBe("agent-orchestrator");
   });
+
+  it("sanitizes special characters in basename", () => {
+    expect(generateProjectId("~/repos/llama.cpp")).toBe("llama-cpp");
+    expect(generateProjectId("~/repos/my.app")).toBe("my-app");
+    expect(generateProjectId("~/repos/my_app-v2.0")).toBe("my_app-v2-0");
+    expect(generateProjectId("/tmp/...")).toBe("project");
+  });
 });
 
 describe("parseTmuxNameV2", () => {
