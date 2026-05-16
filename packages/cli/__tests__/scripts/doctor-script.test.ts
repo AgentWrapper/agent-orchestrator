@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -90,7 +91,10 @@ function createHealthyPath(binDir: string): void {
   createFakeBinary(binDir, "ao", 'printf "/fake/ao\\n" >/dev/null\nexit 0');
 }
 
-describe("ao-doctor.sh", () => {
+// Skipped on Windows: bash is required to execute the doctor script and is not
+// guaranteed to be available without Git for Windows. The Windows code path
+// (Git Bash auto-detection in runRepoScript) is exercised at runtime, not here.
+describe.skipIf(process.platform === "win32")("ao-doctor.sh", () => {
   it("reports a healthy install as PASS", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-script-"));
     const fakeRepo = createHealthyRepo(tempRoot);
@@ -181,7 +185,7 @@ describe("ao-doctor.sh", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("FIXED");
-    expect(npmCommands).toContain("link");
+    expect(npmCommands).toContain("link --force");
     expect(result.stdout).toContain("launcher");
     expect(result.stdout).toContain("stale temp files");
     expect(staleStillExists).toBe(false);
@@ -189,6 +193,63 @@ describe("ao-doctor.sh", () => {
     expect(worktreeDirExists).toBe(true);
     expect(commentedDataDirExists).toBe(false);
     expect(commentedWorktreeDirExists).toBe(false);
+  });
+
+  it("repairs a dangling ao launcher shim in fix mode", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-dangling-launcher-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+
+    const aoPath = join(binDir, "ao");
+    rmSync(aoPath, { force: true });
+    symlinkSync(join(tempRoot, "deleted-checkout", "dist", "index.js"), aoPath);
+
+    const npmLog = join(tempRoot, "npm.log");
+    createFakeBinary(
+      binDir,
+      "npm",
+      `printf '%s\n' "$*" >> ${JSON.stringify(npmLog)}
+if [ "$1" = "link" ]; then
+  rm -f ${JSON.stringify(aoPath)}
+  printf '#!/bin/bash\nexit 0\n' > ${JSON.stringify(aoPath)}
+  chmod +x ${JSON.stringify(aoPath)}
+fi
+if [ "$1" = "bin" ]; then
+  printf "/tmp/npm-bin\n"
+fi
+exit 0`,
+    );
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const dataDir = join(tempRoot, "data");
+    const worktreeDir = join(tempRoot, "worktrees");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+    );
+
+    const result = spawnSync("bash", [scriptPath, "--fix"], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    const npmCommands = existsSync(npmLog) ? readFileSync(npmLog, "utf8") : "";
+    const repairedLauncherIsExecutable = existsSync(aoPath);
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("FIXED");
+    expect(repairedLauncherIsExecutable).toBe(true);
+    expect(npmCommands).toContain("link --force");
   });
 
   it("reports a healthy packaged install without source-checkout failures", () => {

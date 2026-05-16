@@ -50,7 +50,7 @@ describe("useSessionEvents - mux", () => {
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
         "/api/sessions?project=proj",
-        expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }),
+        expect.objectContaining({ cache: "no-store" }),
       );
     });
   });

@@ -24,6 +24,14 @@
     "latestVersion": "0.2.0"
   },
   {
+    "id": "agent-kimicode",
+    "package": "@aoagents/ao-plugin-agent-kimicode",
+    "slot": "agent",
+    "description": "Agent plugin: Kimi Code CLI (MoonshotAI)",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
     "id": "notifier-openclaw",
     "package": "@aoagents/ao-plugin-notifier-openclaw",
     "slot": "notifier",

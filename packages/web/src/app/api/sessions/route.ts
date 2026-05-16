@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE, isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core";
+import { isOrchestratorSession, isTerminalSession } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -10,11 +10,14 @@ import {
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
-import type { DashboardOrchestratorLink } from "@/lib/types";
+import { isDashboardSessionTerminal, type DashboardOrchestratorLink } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
-function compareOrchestratorRecency(a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }, b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string }): number {
+function compareOrchestratorRecency(
+  a: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string },
+  b: { lastActivityAt?: Date | null; createdAt?: Date | null; id: string },
+): number {
   return (
     (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0) ||
     (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0) ||
@@ -54,7 +57,7 @@ function selectPreferredOrchestratorId(
 function listPreferredProjectOrchestrators(
   sessions: Parameters<typeof listDashboardOrchestrators>[0],
   projects: Parameters<typeof listDashboardOrchestrators>[1],
-) : DashboardOrchestratorLink[] {
+): DashboardOrchestratorLink[] {
   const preferredOrchestrators = listProjectOrchestratorSessions(sessions, projects);
 
   return preferredOrchestrators
@@ -90,7 +93,9 @@ export async function GET(request: Request) {
       : listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = requestedProjectId
       ? selectPreferredOrchestratorId(visibleSessions, config.projects)
-      : (orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null);
+      : orchestrators.length === 1
+        ? (orchestrators[0]?.id ?? null)
+        : null;
 
     if (orchestratorOnly) {
       recordApiObservation({
@@ -132,7 +137,7 @@ export async function GET(request: Request) {
 
     if (activeOnly) {
       const activeIndices = dashboardSessions
-        .map((session, index) => (session.activity !== ACTIVITY_STATE.EXITED ? index : -1))
+        .map((session, index) => (!isDashboardSessionTerminal(session) ? index : -1))
         .filter((index) => index !== -1);
       workerSessions = activeIndices.map((index) => workerSessions[index]);
       dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);

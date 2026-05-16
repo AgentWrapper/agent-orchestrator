@@ -3,15 +3,25 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { mockExec, mockExecSilent } = vi.hoisted(() => ({
+const { mockExec, mockExecSilent, mockFindPidByPort } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
+  mockFindPidByPort: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
   exec: mockExec,
   execSilent: mockExecSilent,
 }));
+
+vi.mock("@aoagents/ao-core", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
+  return {
+    ...actual,
+    findPidByPort: mockFindPidByPort,
+  };
+});
 
 vi.mock("ora", () => ({
   default: () => ({
@@ -29,6 +39,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-dashboard-test-"));
   mockExec.mockReset();
   mockExecSilent.mockReset();
+  mockFindPidByPort.mockReset();
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
 });
 
@@ -68,27 +79,6 @@ describe("cleanNextCache", () => {
   });
 });
 
-describe("findRunningDashboardPid", () => {
-  it("returns PID when a process is listening", async () => {
-    mockExecSilent.mockResolvedValue("12345");
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBe("12345");
-    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
-  });
-
-  it("returns null when no process is listening", async () => {
-    mockExecSilent.mockResolvedValue(null);
-
-    const { findRunningDashboardPid } = await import("../../src/lib/dashboard-rebuild.js");
-
-    const pid = await findRunningDashboardPid(3000);
-    expect(pid).toBeNull();
-  });
-});
-
 describe("isInstalledUnderNodeModules", () => {
   it("returns true for a Unix node_modules path segment", async () => {
     const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
@@ -99,7 +89,9 @@ describe("isInstalledUnderNodeModules", () => {
   it("returns true for a Windows node_modules path segment", async () => {
     const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
 
-    expect(isInstalledUnderNodeModules("C:\\Users\\me\\node_modules\\@composio\\ao-web")).toBe(true);
+    expect(isInstalledUnderNodeModules("C:\\Users\\me\\node_modules\\@composio\\ao-web")).toBe(
+      true,
+    );
   });
 
   it("returns false for source paths containing node_modules as plain text", async () => {
@@ -137,7 +129,8 @@ describe("rebuildDashboardProductionArtifacts", () => {
 
     mockExec.mockResolvedValue({ stdout: "", stderr: "" });
 
-    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
 
     await rebuildDashboardProductionArtifacts(webDir);
 
@@ -153,7 +146,8 @@ describe("rebuildDashboardProductionArtifacts", () => {
 
     mockExec.mockRejectedValue(new Error("build failed"));
 
-    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
 
     await expect(rebuildDashboardProductionArtifacts(webDir)).rejects.toThrow(
       "Failed to rebuild dashboard production artifacts",
@@ -161,11 +155,70 @@ describe("rebuildDashboardProductionArtifacts", () => {
   });
 
   it("throws when called from an npm-installed path", async () => {
-    const { rebuildDashboardProductionArtifacts } = await import("../../src/lib/dashboard-rebuild.js");
+    const { rebuildDashboardProductionArtifacts } =
+      await import("../../src/lib/dashboard-rebuild.js");
 
     await expect(
       rebuildDashboardProductionArtifacts("/usr/local/lib/node_modules/@aoagents/ao-web"),
     ).rejects.toThrow("Dashboard rebuild is only available from a source checkout");
+  });
+});
+
+describe("clearStaleCacheIfNeeded", () => {
+  it("clears .next/cache and writes stamp when version differs", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(join(webDir, ".next", "AO_VERSION"), "utf8")).toBe("0.2.0");
+  });
+
+  it("clears cache when stamp is missing (upgrade from old version)", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "AO_VERSION"))).toBe(true);
+  });
+
+  it("is a no-op when version matches", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache", "webpack"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.2.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    // cache should still exist
+    expect(existsSync(join(webDir, ".next", "cache", "webpack"))).toBe(true);
+  });
+
+  it("leaves .next/server and .next/static intact", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(join(webDir, ".next", "cache"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "server"), { recursive: true });
+    mkdirSync(join(webDir, ".next", "static"), { recursive: true });
+    writeFileSync(join(webDir, ".next", "AO_VERSION"), "0.1.0");
+    writeFileSync(join(webDir, "package.json"), JSON.stringify({ version: "0.2.0" }));
+
+    const { clearStaleCacheIfNeeded } = await import("../../src/lib/dashboard-rebuild.js");
+    await clearStaleCacheIfNeeded(webDir);
+
+    expect(existsSync(join(webDir, ".next", "cache"))).toBe(false);
+    expect(existsSync(join(webDir, ".next", "server"))).toBe(true);
+    expect(existsSync(join(webDir, ".next", "static"))).toBe(true);
   });
 });
 
@@ -186,8 +239,7 @@ describe("looksLikeStaleBuild pattern matching", () => {
 
   it("detects vendor-chunks module not found (the actual bug)", () => {
     // This is the exact error from the bug report
-    const stderr =
-      "Error: Cannot find module '/path/to/.next/server/vendor-chunks/xterm@5.3.0.js'";
+    const stderr = "Error: Cannot find module '/path/to/.next/server/vendor-chunks/xterm@5.3.0.js'";
     expect(looksLikeStaleBuild(stderr)).toBe(true);
   });
 
@@ -220,4 +272,84 @@ describe("looksLikeStaleBuild pattern matching", () => {
     const stderr = "ready - started server on 0.0.0.0:3000";
     expect(looksLikeStaleBuild(stderr)).toBe(false);
   });
+});
+
+describe("findRunningDashboardPidsForWebDir", () => {
+  // Unix-only: Windows code path skips lsof and uses findPidByPort (no cwd check),
+  // by design — see findRunningDashboardPidsForWebDir in dashboard-rebuild.ts.
+  it.skipIf(process.platform === "win32")("returns only listeners whose cwd matches the web directory", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExecSilent
+      .mockResolvedValueOnce("111\n222\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+      .mockResolvedValueOnce("p222\nn/tmp/other\n");
+
+    const { findRunningDashboardPidsForWebDir } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(findRunningDashboardPidsForWebDir(webDir, [3000])).resolves.toEqual(["111"]);
+    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
+    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-a", "-p", "111", "-d", "cwd", "-Fn"]);
+  });
+
+  it.skipIf(process.platform === "win32")("deduplicates dashboard pids found on multiple ports", async () => {
+    const webDir = join(tmpDir, "packages", "web");
+    mkdirSync(webDir, { recursive: true });
+
+    mockExecSilent
+      .mockResolvedValueOnce("111\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+      .mockResolvedValueOnce("111\n")
+      .mockResolvedValueOnce(`p111\nn${webDir}\n`);
+
+    const { findRunningDashboardPidsForWebDir } =
+      await import("../../src/lib/dashboard-rebuild.js");
+
+    await expect(findRunningDashboardPidsForWebDir(webDir, [3000, 3001])).resolves.toEqual(["111"]);
+  });
+
+  // Windows-runif parallels: on Windows, the function intentionally skips the
+  // lsof + cwd verification (lsof doesn't exist) and trusts findPidByPort. The
+  // tests above assert lsof behavior; these assert the Windows path runs the
+  // findPidByPort branch and produces correct dedup semantics.
+  it.runIf(process.platform === "win32")(
+    "returns all pids on the listed ports via findPidByPort on Windows",
+    async () => {
+      const webDir = join(tmpDir, "packages", "web");
+      mkdirSync(webDir, { recursive: true });
+
+      mockFindPidByPort.mockImplementation(async (port: number) =>
+        port === 3000 ? "111" : port === 3001 ? "222" : null,
+      );
+
+      const { findRunningDashboardPidsForWebDir } =
+        await import("../../src/lib/dashboard-rebuild.js");
+
+      const pids = await findRunningDashboardPidsForWebDir(webDir, [3000, 3001, 3002]);
+      expect(pids.sort()).toEqual(["111", "222"]);
+      // lsof must NOT be invoked on Windows.
+      expect(mockExecSilent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "deduplicates dashboard pids found on multiple ports on Windows",
+    async () => {
+      const webDir = join(tmpDir, "packages", "web");
+      mkdirSync(webDir, { recursive: true });
+
+      // Same pid claimed on two ports (e.g. parent + child Next.js workers
+      // sharing the listener) — must collapse to one entry.
+      mockFindPidByPort.mockResolvedValue("111");
+
+      const { findRunningDashboardPidsForWebDir } =
+        await import("../../src/lib/dashboard-rebuild.js");
+
+      await expect(findRunningDashboardPidsForWebDir(webDir, [3000, 3001])).resolves.toEqual([
+        "111",
+      ]);
+    },
+  );
 });

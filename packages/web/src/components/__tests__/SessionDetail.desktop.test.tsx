@@ -225,6 +225,52 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
   });
 
+  it("keeps restored working sessions live when terminatedAt is stale", () => {
+    const base = makeSession({
+      id: "worker-restored-stale-terminal-marker",
+      projectId: "my-app",
+      status: "terminated",
+      activity: "active",
+      summary: "Restored worker is live",
+      pr: null,
+    });
+    const staleLifecycle = {
+      ...base.lifecycle!,
+      sessionState: "working" as const,
+      sessionReason: "task_in_progress" as const,
+      runtimeState: "alive" as const,
+      runtimeReason: "process_running" as const,
+      session: {
+        ...base.lifecycle!.session,
+        state: "working" as const,
+        reason: "task_in_progress" as const,
+        label: "working",
+        reasonLabel: "task in progress",
+        terminatedAt: "2026-05-13T19:13:20.146Z",
+      },
+      runtime: {
+        ...base.lifecycle!.runtime,
+        state: "alive" as const,
+        reason: "process_running" as const,
+        label: "alive",
+        reasonLabel: "process running",
+      },
+      legacyStatus: "terminated" as const,
+      summary: "Session working (task in progress)",
+    };
+
+    render(<SessionDetail session={{ ...base, lifecycle: staleLifecycle }} />);
+
+    expect(screen.queryByRole("region", { name: "Session ended summary" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Terminal ended")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: "Restore" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("direct-terminal")).toHaveTextContent(
+      "worker-restored-stale-terminal-marker",
+    );
+  });
+
   it("shows restore for restorable orchestrator sessions", () => {
     render(
       <SessionDetail

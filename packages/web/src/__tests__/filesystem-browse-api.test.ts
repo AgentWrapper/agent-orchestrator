@@ -12,18 +12,20 @@ function makeRequest(rawUrl: string): NextRequest {
 
 describe("/api/filesystem/browse", () => {
   let originalHome: string | undefined;
-  let originalBrowseEnv: string | undefined;
+  let originalUserProfile: string | undefined;
   let homeDir: string;
   let outsideDir: string;
 
   beforeEach(() => {
     originalHome = process.env["HOME"];
-    originalBrowseEnv = process.env["AO_ALLOW_FILESYSTEM_BROWSE"];
+    originalUserProfile = process.env["USERPROFILE"];
 
     homeDir = mkdtempSync(path.join(tmpdir(), "ao-home-"));
     outsideDir = mkdtempSync(path.join(tmpdir(), "ao-outside-"));
     process.env["HOME"] = homeDir;
-    delete process.env["AO_ALLOW_FILESYSTEM_BROWSE"];
+    // node's os.homedir() reads USERPROFILE on Windows (not HOME), so the
+    // override must cover both for the tests to see the temp HOME.
+    process.env["USERPROFILE"] = homeDir;
   });
 
   afterEach(() => {
@@ -33,33 +35,24 @@ describe("/api/filesystem/browse", () => {
       process.env["HOME"] = originalHome;
     }
 
-    if (originalBrowseEnv === undefined) {
-      delete process.env["AO_ALLOW_FILESYSTEM_BROWSE"];
+    if (originalUserProfile === undefined) {
+      delete process.env["USERPROFILE"];
     } else {
-      process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = originalBrowseEnv;
+      process.env["USERPROFILE"] = originalUserProfile;
     }
 
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(outsideDir, { recursive: true, force: true });
   });
 
-  it("returns 404 when the env var is missing", async () => {
+  it("browses HOME without requiring an environment flag", async () => {
     const response = await browseGET(makeRequest("/api/filesystem/browse?path=~"));
 
-    expect(response.status).toBe(404);
-  });
-
-  it("returns 404 when the env var is not equal to 1", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "true";
-
-    const response = await browseGET(makeRequest("/api/filesystem/browse?path=~"));
-
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ entries: [] });
   });
 
   it("returns 400 when the requested path contains ..", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "1";
-
     const response = await browseGET(
       makeRequest("/api/filesystem/browse?path=projects/../secrets"),
     );
@@ -69,16 +62,23 @@ describe("/api/filesystem/browse", () => {
   });
 
   it("returns 400 for an absolute path outside HOME", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "1";
-
-    const response = await browseGET(makeRequest("/api/filesystem/browse?path=/etc"));
+    // Pick an absolute path outside HOME that actually exists on the platform —
+    // `/etc` exists on POSIX; on Windows we use `C:\\Windows`. The route's
+    // realpath() resolves first, so a non-existent path returns 404 (not 400)
+    // before the outside-root check fires.
+    const outsidePath =
+      process.platform === "win32" ? encodeURIComponent("C:\\Windows") : "/etc";
+    const response = await browseGET(
+      makeRequest(`/api/filesystem/browse?path=${outsidePath}`),
+    );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
-  it("returns 400 for a symlink inside HOME that points outside", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "1";
+  // Skipped on Windows: symlinkSync requires admin or Developer Mode on win32
+  // and is not portable in CI. The Linux/macOS path covers the symlink check.
+  it.skipIf(process.platform === "win32")("returns 400 for a symlink inside HOME that points outside", async () => {
     const outsideRepo = path.join(outsideDir, "external-repo");
     mkdirSync(outsideRepo);
     symlinkSync(outsideRepo, path.join(homeDir, "external-link"));
@@ -90,7 +90,6 @@ describe("/api/filesystem/browse", () => {
   });
 
   it("returns 400 for a restricted path inside HOME", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "1";
     mkdirSync(path.join(homeDir, ".ssh"));
 
     const response = await browseGET(makeRequest("/api/filesystem/browse?path=~/.ssh"));
@@ -100,7 +99,6 @@ describe("/api/filesystem/browse", () => {
   });
 
   it("returns minimal metadata only for a valid path inside HOME", async () => {
-    process.env["AO_ALLOW_FILESYSTEM_BROWSE"] = "1";
     const repoDir = path.join(homeDir, "repo");
     const plainDir = path.join(homeDir, "notes");
     const filePath = path.join(homeDir, "README.md");

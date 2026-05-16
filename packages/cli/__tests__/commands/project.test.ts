@@ -41,7 +41,7 @@ vi.mock("../../src/lib/prompts.js", () => ({
   promptConfirm: vi.fn(async () => true),
 }));
 
-import { registerProject_cmd } from "../../src/commands/project.js";
+import { registerProjectCommand } from "../../src/commands/project.js";
 
 let program: Command;
 let logSpy: ReturnType<typeof vi.spyOn>;
@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   program = new Command();
   program.exitOverride();
-  registerProject_cmd(program);
+  registerProjectCommand(program);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   _exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {

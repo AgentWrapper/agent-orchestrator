@@ -7,28 +7,30 @@ import {
   getActivityFallbackState,
   recordTerminalActivity,
   asValidOpenCodeSessionId,
+  isWindows,
+  PROCESS_PROBE_INDETERMINATE,
+  getCachedOpenCodeSessionList,
+  getOpenCodeChildEnv,
+  ensureOpenCodeTmpDir,
+  resetOpenCodeSessionListCache,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
   type OpenCodeAgentConfig,
+  type OpenCodeSessionListEntry,
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-interface OpenCodeSessionListEntry {
-  id: string;
-  title?: string;
-  updated?: string | number;
-}
 
 function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
   if (typeof updated === "number") {
@@ -54,20 +56,8 @@ function parseUpdatedTimestamp(updated: string | number | undefined): Date | nul
   return new Date(parsedMs);
 }
 
-function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((item): item is OpenCodeSessionListEntry => {
-    if (!item || typeof item !== "object") return false;
-    const record = item as Record<string, unknown>;
-    return asValidOpenCodeSessionId(record["id"]) !== undefined;
-  });
-}
+// Re-export for backward compat — see @aoagents/ao-core/opencode-shared.
+export { resetOpenCodeSessionListCache };
 
 /**
  * Parse JSON stream lines from `opencode run --format json` output.
@@ -158,13 +148,7 @@ async function findOpenCodeSession(
   session: Session,
 ): Promise<OpenCodeSessionListEntry | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "opencode",
-      ["session", "list", "--format", "json"],
-      { timeout: 30_000 },
-    );
-
-    const sessions = parseSessionList(stdout);
+    const sessions = await getCachedOpenCodeSessionList();
 
     // Prefer exact ID match from metadata
     if (session.metadata?.opencodeSessionId) {
@@ -273,6 +257,15 @@ function createOpenCodeAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
+      // Point Bun's embedded shared-library extraction at an AO-owned temp
+      // dir so the cli-side janitor only needs to sweep our own files
+      // (issue #1046). Setting all three keys covers POSIX (TMPDIR) and
+      // Windows fallbacks; opencode itself ships POSIX-only today.
+      const tmpDir = ensureOpenCodeTmpDir();
+      env["TMPDIR"] = tmpDir;
+      env["TMP"] = tmpDir;
+      env["TEMP"] = tmpDir;
+
       // PATH and GH_PATH are injected by session-manager for all agents.
 
       return env;
@@ -308,6 +301,7 @@ function createOpenCodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
@@ -350,9 +344,11 @@ function createOpenCodeAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux and ps are Unix-only; guard before any tmux calls on Windows.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -368,6 +364,7 @@ function createOpenCodeAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return PROCESS_PROBE_INDETERMINATE;
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)opencode(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -397,7 +394,7 @@ function createOpenCodeAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 
@@ -452,7 +449,14 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("opencode", ["version"], { stdio: "ignore" });
+    execFileSync("opencode", ["version"], {
+      stdio: "ignore",
+      // On Windows, execFileSync cannot resolve .cmd shim extensions without
+      // invoking the shell; windowsHide:true suppresses the conhost popup.
+      shell: isWindows(),
+      windowsHide: true,
+      env: getOpenCodeChildEnv(),
+    });
     return true;
   } catch {
     return false;

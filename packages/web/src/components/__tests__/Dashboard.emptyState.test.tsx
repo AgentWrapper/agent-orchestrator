@@ -1,13 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Dashboard } from "../Dashboard";
-
-const eventSourceConstructorMock = vi.hoisted(() => vi.fn());
-let lastEventSourceMock: {
-  onmessage: ((event: MessageEvent) => void) | null;
-  onerror: ((event?: Event) => void) | null;
-  close: ReturnType<typeof vi.fn>;
-};
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -15,21 +8,33 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ resolvedTheme: "light", setTheme: vi.fn() }),
+}));
+
+let currentMuxLastError: string | null = null;
+
+vi.mock("@/providers/MuxProvider", () => ({
+  useMuxOptional: () => ({
+    subscribeTerminal: () => () => {},
+    writeTerminal: () => {},
+    openTerminal: () => {},
+    closeTerminal: () => {},
+    resizeTerminal: () => {},
+    // "connecting" so muxSessions stays undefined — prevents snapshot dispatch from
+    // immediately flipping liveSessionsResolved and masking the SSR load error.
+    status: "connecting" as const,
+    sessions: [],
+    lastError: currentMuxLastError,
+  }),
+  MuxProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+import { Dashboard } from "../Dashboard";
+
 beforeEach(() => {
-  const eventSourceMock = {
-    onmessage: null,
-    onerror: null,
-    close: vi.fn(),
-  };
-  lastEventSourceMock = eventSourceMock;
-  eventSourceConstructorMock.mockReset();
-  eventSourceConstructorMock.mockImplementation(() => eventSourceMock as unknown as EventSource);
-  global.EventSource = Object.assign(eventSourceConstructorMock, {
-    CONNECTING: 0,
-    OPEN: 1,
-    CLOSED: 2,
-  }) as unknown as typeof EventSource;
   global.fetch = vi.fn();
+  currentMuxLastError = null;
 });
 
 describe("Dashboard empty state", () => {
@@ -113,36 +118,58 @@ describe("Dashboard empty state", () => {
     expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
     expect(screen.getByRole("alert")).toHaveTextContent("No agent-orchestrator.yaml found");
-    expect(eventSourceConstructorMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a live load error banner when the SSE stream reports a backend failure", async () => {
-    render(<Dashboard initialSessions={[]} />);
+  it("shows live load-error banner when WS transport reports a fetch failure", async () => {
+    let forceUpdate: () => void = () => {};
+    function Wrapper() {
+      const [, tick] = useState(0);
+      forceUpdate = () => tick((n) => n + 1);
+      return <Dashboard initialSessions={[]} />;
+    }
 
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "error", error: "session list timed out" }),
-      } as MessageEvent);
-      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
+    render(<Wrapper />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await act(async () => {
+      currentMuxLastError = "Session fetch failed: HTTP 503";
+      forceUpdate();
     });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
+    expect(screen.getByRole("alert")).toHaveTextContent("Session fetch failed: HTTP 503");
   });
 
-  it("clears a live load error banner after a healthy snapshot with unchanged sessions", async () => {
-    render(<Dashboard initialSessions={[]} />);
+  it("clears live load-error banner when the next WS snapshot succeeds", async () => {
+    let forceUpdate: () => void = () => {};
+    function Wrapper() {
+      const [, tick] = useState(0);
+      forceUpdate = () => tick((n) => n + 1);
+      return <Dashboard initialSessions={[]} />;
+    }
 
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "error", error: "session list timed out" }),
-      } as MessageEvent);
-      expect(screen.getByRole("alert")).toHaveTextContent("session list timed out");
+    render(<Wrapper />);
+
+    await act(async () => {
+      currentMuxLastError = "Session fetch failed: HTTP 503";
+      forceUpdate();
     });
 
-    await waitFor(() => {
-      lastEventSourceMock.onmessage?.({
-        data: JSON.stringify({ type: "snapshot", sessions: [] }),
-      } as MessageEvent);
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await act(async () => {
+      currentMuxLastError = null;
+      forceUpdate();
     });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("mounts the sidebar empty state on a fresh install with zero projects", () => {
+    render(<Dashboard initialSessions={[]} projects={[]} />);
+
+    expect(screen.getByText(/no projects yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new project/i })).toBeInTheDocument();
   });
 
   it("shows empty state when only done sessions exist", () => {

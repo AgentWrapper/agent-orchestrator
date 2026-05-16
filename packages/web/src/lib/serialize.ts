@@ -26,6 +26,7 @@ import {
   getAttentionLevel,
 } from "./types";
 import { TTLCache, type PREnrichmentData } from "./cache";
+import { matchesSessionPrefix } from "./session-utils";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
@@ -51,7 +52,9 @@ export function resolveProject(
   if (direct) return direct;
 
   // Match by session prefix
-  const entry = Object.entries(projects).find(([, p]) => core.id.startsWith(p.sessionPrefix));
+  const entry = Object.entries(projects).find(([, p]) =>
+    matchesSessionPrefix(core.id, p.sessionPrefix),
+  );
   if (entry) return entry[1];
 
   // Fall back to first project
@@ -178,6 +181,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     userPrompt: session.metadata["userPrompt"] ?? null,
     displayName: session.metadata["displayName"] ?? null,
+    displayNameUserSet: session.metadata["displayNameUserSet"] === "true",
     summary,
     summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),

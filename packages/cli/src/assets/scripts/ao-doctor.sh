@@ -215,23 +215,27 @@ check_launcher() {
   local ao_path
   ao_path="$(command -v ao 2>/dev/null || true)"
   if [ -n "$ao_path" ]; then
-    pass "ao launcher resolves to $ao_path"
-    return
+    if [ -x "$ao_path" ]; then
+      pass "ao launcher resolves to $ao_path"
+      return
+    fi
+    warn "ao launcher resolves to $ao_path, but its target is missing or not executable"
   fi
 
   if [ "$SCRIPT_LAYOUT" = "source-checkout" ] && [ "$FIX_MODE" = true ] && command -v npm >/dev/null 2>&1 && [ -d "$REPO_ROOT/packages/ao" ]; then
-    if (cd "$REPO_ROOT/packages/ao" && npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
-      fixed "ao launcher refreshed with npm link"
+    if (cd "$REPO_ROOT/packages/ao" && npm link --force >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
+      fixed "ao launcher refreshed with npm link --force"
       return
     fi
     if [ -t 0 ]; then
-      printf '  Permission denied. Retrying with sudo...\n'
-      if (cd "$REPO_ROOT/packages/ao" && sudo npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
-        fixed "ao launcher refreshed with sudo npm link"
+      printf '  Launcher refresh failed. Retrying with sudo...\n'
+      if (cd "$REPO_ROOT/packages/ao" && sudo npm link --force >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
+        fixed "ao launcher refreshed with sudo npm link --force"
         return
       fi
+      printf 'ERROR: sudo npm link --force failed. Inspect npm output above.\n' >&2
     fi
-    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/ao && sudo npm link"
+    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/ao && sudo npm link --force"
     return
   fi
 
@@ -345,7 +349,7 @@ check_config_dirs() {
   local config_path data_dir worktree_dir
   config_path="$(find_config || true)"
   if [ -z "$config_path" ]; then
-    warn "No agent-orchestrator config was found. Fix: run ao init --auto in a target repo"
+    warn "No agent-orchestrator config was found. Fix: run ao start in a target repo"
     return
   fi
 

@@ -214,6 +214,7 @@ function updatePRMetadataCache(
 export async function shouldRefreshPREnrichment(
   prs: PRInfo[],
   extraRepos: string[] = [],
+  observer?: BatchObserver,
 ): Promise<ETagGuardResult> {
   const details: string[] = [];
   let shouldRefresh = false;
@@ -248,7 +249,7 @@ export async function shouldRefreshPREnrichment(
   const prListUnchangedRepos = new Set<string>();
   for (const [repoKey] of repos) {
     const [owner, repo] = repoKey.split("/");
-    const prListChanged = await checkPRListETag(owner, repo);
+    const prListChanged = await checkPRListETag(owner, repo, observer);
     if (prListChanged) {
       guard1DetectedChanges = true;
       shouldRefresh = true;
@@ -292,6 +293,7 @@ export async function shouldRefreshPREnrichment(
         pr.owner,
         pr.repo,
         cached.headSha,
+        observer,
       );
       if (statusChanged) {
         shouldRefresh = true;
@@ -414,6 +416,7 @@ function extractETag(output: string): string | undefined {
 async function checkPRListETag(
   owner: string,
   repo: string,
+  observer?: BatchObserver,
 ): Promise<boolean> {
   const repoKey = `${owner}/${repo}`;
   const cachedETag = etagCache.prList.get(repoKey);
@@ -456,8 +459,13 @@ async function checkPRListETag(
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    // HTTP 304 may surface as an error message without stdout/stderr (e.g. gh cli versions
+    // that don't populate stdout on non-zero exit). Use is304() anchored to the HTTP status
+    // line to avoid false positives from URL paths like "pulls/304/comments".
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -479,6 +487,7 @@ async function checkCommitStatusETag(
   owner: string,
   repo: string,
   sha: string,
+  observer?: BatchObserver,
 ): Promise<boolean> {
   const commitKey = `${owner}/${repo}#${sha}`;
   const cachedETag = etagCache.commitStatus.get(commitKey);
@@ -521,10 +530,10 @@ async function checkCommitStatusETag(
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(
-      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
-    );
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -548,6 +557,7 @@ export async function checkReviewCommentsETag(
   owner: string,
   repo: string,
   prNumber: number,
+  observer?: BatchObserver,
 ): Promise<boolean> {
   const cacheKey = `${owner}/${repo}#${prNumber}`;
   const cachedETag = etagCache.reviewComments.get(cacheKey);
@@ -583,8 +593,10 @@ export async function checkReviewCommentsETag(
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`);
+    if (is304(errorMsg)) {
+      return false;
+    }
+    observer?.log("warn", `[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -1046,7 +1058,7 @@ export async function enrichSessionsPRBatch(
   // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
   // Guard 1 runs for all repos (including those with no PRs yet) so the
   // lifecycle manager knows whether detectPR can be skipped.
-  const guardResult = await shouldRefreshPREnrichment(prs, repos);
+  const guardResult = await shouldRefreshPREnrichment(prs, repos, observer);
 
   // Report which repos had no PR list changes so the lifecycle can skip detectPR
   observer?.reportPRListUnchangedRepos?.(guardResult.prListUnchangedRepos);
@@ -1152,8 +1164,7 @@ export async function enrichSessionsPRBatch(
       });
 
       // Log error for observability but don't fail entirely
-      // eslint-disable-next-line no-console -- Observability logging for batch errors
-      console.error(`[GraphQL Batch Warning] Batch enrichment partially failed: ${errorMsg}`);
+      observer?.log("error", `[GraphQL Batch] Batch enrichment partially failed: ${errorMsg}`);
 
       // Don't add placeholder entries to result or cache.
       // This allows lifecycle-manager to fall back to individual API calls

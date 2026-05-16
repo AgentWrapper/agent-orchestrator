@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@aoagents/ao-core";
+import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@aoagents/ao-core/types";
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before any import that uses the mocked modules
@@ -15,22 +15,49 @@ vi.mock("node:child_process", () => {
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
   lstatSync: vi.fn(),
+  statSync: vi.fn(),
   symlinkSync: vi.fn(),
+  linkSync: vi.fn(),
+  cpSync: vi.fn(),
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
   readdirSync: vi.fn(),
+}));
+
+vi.mock("@aoagents/ao-core", () => ({
+  getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
+  isWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:os", () => ({
   homedir: () => "/mock-home",
 }));
 
+// Force POSIX path semantics in tests so assertions like "/mock-home/..." match
+// on Windows too. The real source uses platform-native path.join at runtime; we
+// only override it for this test file's scope.
+vi.mock("node:path", async () => {
+  const actual = (await vi.importActual("node:path")) as { posix: unknown };
+  return { ...(actual.posix as Record<string, unknown>), default: actual.posix };
+});
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  linkSync,
+  cpSync,
+  rmSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
+import * as core from "@aoagents/ao-core";
 import { create, manifest } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -43,10 +70,15 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
 const mockLstatSync = lstatSync as ReturnType<typeof vi.fn>;
+const mockStatSync = statSync as ReturnType<typeof vi.fn>;
 const mockSymlinkSync = symlinkSync as ReturnType<typeof vi.fn>;
+const mockLinkSync = linkSync as ReturnType<typeof vi.fn>;
+const mockCpSync = cpSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
+const mockGetShell = core.getShell as ReturnType<typeof vi.fn>;
+const mockIsWindows = core.isWindows as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,7 +188,9 @@ describe("create() factory", () => {
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(
-      makeCreateConfig({ worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees" }),
+      makeCreateConfig({
+        worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees",
+      }),
     );
 
     // worktreeDir is used directly (not joined with projectId) — session-manager passes the project-scoped dir
@@ -170,9 +204,7 @@ describe("create() factory", () => {
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
-    const info = await ws.create(
-      makeCreateConfig({ worktreeDir: "/new/v2/worktrees" }),
-    );
+    const info = await ws.create(makeCreateConfig({ worktreeDir: "/new/v2/worktrees" }));
 
     expect(info.path).toBe("/new/v2/worktrees/session-1");
   });
@@ -191,18 +223,20 @@ describe("workspace.create()", () => {
     // First call: git remote get-url origin
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["remote", "get-url", "origin"], {
       cwd: "/repo/path",
+      windowsHide: true, timeout: 30_000,
     });
 
     // Second call: git fetch origin --quiet
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/repo/path",
+      windowsHide: true, timeout: 30_000,
     });
 
     // Third call: git rev-parse --verify --quiet origin/main
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--verify", "--quiet", "origin/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     // Fourth call: git worktree add -b <branch> <path> <baseRef>
@@ -216,7 +250,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "origin/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
@@ -253,8 +287,15 @@ describe("workspace.create()", () => {
 
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
-      ["worktree", "add", "-b", "feat/TEST-1", "/mock-home/.worktrees/myproject/session-1", "origin/main"],
-      { cwd: "/repo/path" },
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/main",
+      ],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
@@ -270,6 +311,128 @@ describe("workspace.create()", () => {
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
       'Worktree path "/mock-home/.worktrees/myproject/session-1" already exists and is still registered with git',
     );
+  });
+
+  it("finds an adoptable worktree in the project-scoped worktree directory", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.agent-orchestrator/projects/myproject/worktrees/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(
+      makeCreateConfig({
+        worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees",
+      }),
+    );
+
+    expect(info).toEqual({
+      path: "/mock-home/.agent-orchestrator/projects/myproject/worktrees/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
+    });
+  });
+
+  it("finds an adoptable worktree in the legacy managed worktree directory", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(
+      makeCreateConfig({
+        worktreeDir: "/mock-home/.agent-orchestrator/projects/myproject/worktrees",
+      }),
+    );
+
+    expect(info?.path).toBe("/mock-home/.worktrees/myproject/session-1");
+  });
+
+  it("returns null when no managed worktree tracks the requested branch", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-2",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/OTHER",
+      ].join("\n"),
+    );
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toBeNull();
+  });
+
+  it("throws when the matching branch is checked out outside AO-managed worktree directories", async () => {
+    const ws = create();
+
+    mockGitSuccess(
+      [
+        "worktree /tmp/manual-worktree",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    await expect(ws.findManagedWorkspace?.(makeCreateConfig())).rejects.toThrow(
+      'outside AO-managed worktree directories',
+    );
+  });
+
+  it("skips worktree entries whose path no longer exists on disk", async () => {
+    const ws = create();
+
+    // The worktree is listed by git but the directory was manually deleted
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\n"),
+    );
+    // existsSync returns false for the deleted worktree path
+    mockExistsSync.mockReturnValueOnce(false);
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toBeNull();
+  });
+
+  it("handles CRLF line endings in git worktree list output", async () => {
+    const ws = create();
+
+    // Simulate Windows git output with \r\n line endings
+    mockGitSuccess(
+      [
+        "worktree /mock-home/.worktrees/myproject/session-1",
+        "HEAD deadbeef",
+        "branch refs/heads/feat/TEST-1",
+      ].join("\r\n"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+
+    const info = await ws.findManagedWorkspace?.(makeCreateConfig());
+
+    expect(info).toEqual({
+      path: "/mock-home/.worktrees/myproject/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
+    });
   });
 
   it("continues when fetch fails (offline)", async () => {
@@ -296,7 +459,7 @@ describe("workspace.create()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--verify", "--quiet", "refs/heads/main"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     expect(mockExecFileAsync).toHaveBeenCalledWith(
@@ -309,7 +472,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
@@ -324,90 +487,117 @@ describe("workspace.create()", () => {
     );
   });
 
-  it("handles branch already exists by adding worktree then checking out", async () => {
+  it("reuses an existing branch when it already matches the resolved base", async () => {
     const ws = create();
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
-    mockGitSuccess(""); // checkout
+    mockGitSuccess("base-sha"); // git rev-parse origin/main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
+    mockGitSuccess("base-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // worktree add existing branch
 
     const info = await ws.create(makeCreateConfig());
 
-    // Third call: worktree add without -b
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
-      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "origin/main"],
-      { cwd: "/repo/path" },
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
-
-    // Fourth call: checkout
-    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
-      cwd: "/mock-home/.worktrees/myproject/session-1",
-    });
 
     expect(info.branch).toBe("feat/TEST-1");
   });
 
-  it("handles existing branch with local default-branch fallback when origin is missing", async () => {
+  it("resets an existing stale branch against the resolved base", async () => {
+    const ws = create();
+
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("already exists"); // worktree add -b fails
+    mockGitSuccess("base-sha"); // git rev-parse origin/main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
+    mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // worktree add -B existing branch
+
+    const info = await ws.create(makeCreateConfig());
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-B",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/main",
+      ],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("handles existing branch with local default branch when origin is missing", async () => {
     const ws = create();
 
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
     mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add without -b using refs/heads/main
-    mockGitSuccess(""); // checkout existing branch
+    mockGitSuccess("base-sha"); // git rev-parse refs/heads/main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
+    mockGitSuccess("base-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // worktree add existing branch
 
     const info = await ws.create(makeCreateConfig());
 
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
-      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "refs/heads/main"],
-      { cwd: "/repo/path" },
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
-
-    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
-      cwd: "/mock-home/.worktrees/myproject/session-1",
-    });
 
     expect(info.branch).toBe("feat/TEST-1");
   });
 
-  it("cleans up worktree on checkout failure", async () => {
+  it("cleans up worktree on retry failure", async () => {
     const ws = create();
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
-    mockGitError("checkout failed: conflict"); // checkout fails
+    mockGitSuccess("base-sha"); // git rev-parse origin/main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
+    mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitError("worktree add failed: branch checked out"); // worktree add -B fails
     mockGitSuccess(""); // worktree remove (cleanup)
 
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
-      'Failed to checkout branch "feat/TEST-1" in worktree: checkout failed: conflict',
+      'Failed to create worktree for branch "feat/TEST-1": worktree add failed: branch checked out',
     );
 
     // Verify cleanup was attempted
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
-  it("still throws on checkout failure even if cleanup fails", async () => {
+  it("still throws the retry failure even if cleanup fails", async () => {
     const ws = create();
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
-    mockGitError("checkout failed"); // checkout fails
+    mockGitSuccess("base-sha"); // git rev-parse origin/main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
+    mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitError("worktree add failed"); // worktree add -B fails
     mockGitError("worktree remove failed"); // cleanup also fails
 
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
-      'Failed to checkout branch "feat/TEST-1" in worktree',
+      'Failed to create worktree for branch "feat/TEST-1": worktree add failed',
     );
   });
 
@@ -488,6 +678,7 @@ describe("workspace.create()", () => {
     // fetch should use expanded path
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/mock-home/my-repo",
+      windowsHide: true, timeout: 30_000,
     });
   });
 
@@ -510,7 +701,7 @@ describe("workspace.create()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 });
@@ -522,6 +713,10 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // git worktree prune
     mockOriginRemote();
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitSuccess(""); // worktree remove --force <path> (best-effort)
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/feat/TEST-1
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath origin/feat/TEST-1
 
@@ -537,7 +732,7 @@ describe("workspace.restore()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "origin/feat/TEST-1",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     expect(info.branch).toBe("feat/TEST-1");
@@ -549,6 +744,10 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // git worktree prune
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitError("fatal: bad ref"); // refExists(refs/heads/feat/TEST-1) → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitSuccess(""); // worktree remove --force <path> (best-effort)
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
     mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath refs/heads/main
 
@@ -564,7 +763,7 @@ describe("workspace.restore()", () => {
         "/mock-home/.worktrees/myproject/session-1",
         "refs/heads/main",
       ],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
     expect(info).toEqual({
@@ -573,6 +772,282 @@ describe("workspace.restore()", () => {
       sessionId: "session-1",
       projectId: "myproject",
     });
+  });
+
+  // --- Regression coverage for #1741 ---------------------------------------
+  // When the local session branch already exists (destroy() preserves it on
+  // purpose), restore() must re-attach it instead of falling through to the
+  // -b path that would either fail ("branch already exists") or discard
+  // commits. See https://github.com/ComposioHQ/agent-orchestrator/issues/1741.
+  //
+  // The recovery sequence (in reattachExistingBranch):
+  //   1. `git worktree remove --force <path>` (best-effort: clears registry)
+  //   2. existsSync(<path>) — bail if dir already gone
+  //   3. `git worktree list --porcelain` (isRegisteredWorktree)
+  //   4. rmSync(<path>) if not still registered (else throw — data safety)
+  //   5. `git worktree add <path> <branch>` retry (no -b/-B)
+  //
+  // The entry-point prune in restore() is sufficient — no second prune in
+  // the recovery path.
+
+  it("re-attaches existing local branch when stale registry conflicts", async () => {
+    // Path was registered as a worktree but the dir was already cleaned up.
+    // worktree remove --force succeeds; the stale-dir cleanup short-circuits
+    // because existsSync returns false; retry succeeds.
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune (entry-point)
+    mockOriginRemote();
+    mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
+    mockGitSuccess(""); // refExists(refs/heads/feat/TEST-1) → true
+    mockGitSuccess(""); // worktree remove --force <path>
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
+    mockGitSuccess(""); // RETRY: worktree add <path> <branch> succeeds
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    // The recovery call must re-attach the existing branch — no -b, no -B.
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+
+    // No -b or -B should ever appear when the branch already exists locally.
+    const calls = mockExecFileAsync.mock.calls;
+    for (const [, args] of calls) {
+      if (Array.isArray(args)) {
+        expect(args).not.toContain("-b");
+        expect(args).not.toContain("-B");
+      }
+    }
+
+    expect(info).toEqual({
+      path: "/mock-home/.worktrees/myproject/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
+    });
+  });
+
+  it("rmSyncs a stale workspace directory before retrying worktree add", async () => {
+    // Direct repro of the user's #1741 follow-on failure: the dir physically
+    // exists on disk (workspace.exists() returned false because it's not a
+    // git working tree, just leftover files). worktree add fails with
+    // "<path> already exists" — recovery must rmSync the stale dir, not loop.
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune (entry-point)
+    mockOriginRemote();
+    mockGitError(
+      "fatal: '/mock-home/.worktrees/myproject/session-1' already exists",
+    ); // first worktree add fails because dir exists
+    mockGitSuccess(""); // refExists → true
+    mockGitError("fatal: not a working tree"); // worktree remove --force fails (path not registered)
+    mockExistsSync.mockReturnValueOnce(true); // dir exists
+    mockGitSuccess("worktree /some/other\nbranch refs/heads/main"); // worktree list — no entry for our path
+    // rmSync called (mocked) — no second prune
+    mockGitSuccess(""); // RETRY: worktree add succeeds
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    // The stale dir must have been removed.
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
+
+    // Retry must be the no-flag form.
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("refuses to rmSync a still-registered worktree dir (data safety)", async () => {
+    // If after `worktree remove --force` the path is STILL registered,
+    // something is very wrong. reattachExistingBranch throws rather than
+    // rmSync a registered worktree (which could destroy the user's work).
+    // The error must propagate, not be swallowed.
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune (entry-point)
+    mockOriginRemote();
+    mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitError("fatal: cannot remove"); // worktree remove --force fails
+    mockExistsSync.mockReturnValueOnce(true); // dir exists
+    // Path is still registered — isRegisteredWorktree returns our path
+    mockGitSuccess(
+      "worktree /mock-home/.worktrees/myproject/session-1\nbranch refs/heads/feat/TEST-1",
+    );
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow(/already exists and is still registered/);
+
+    // rmSync MUST NOT have been called — we never delete a registered worktree.
+    expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("propagates retry error when worktree add fails after cleanup", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // prune (entry-point)
+    mockOriginRemote();
+    mockGitError("fatal: first failure"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
+    mockGitError("fatal: persistent failure"); // RETRY also fails
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow(/persistent failure/);
+
+    // Crucially, the failure surface is the underlying git error — NOT a
+    // misleading "branch already exists" from a -b fallback.
+    const calls = mockExecFileAsync.mock.calls;
+    for (const [, args] of calls) {
+      if (Array.isArray(args)) {
+        expect(args).not.toContain("-b");
+        expect(args).not.toContain("-B");
+      }
+    }
+  });
+
+  it("never force-resets an existing branch (preserves session commits)", async () => {
+    // Defense-in-depth: confirm restore() never uses -B even in the
+    // recovery path. -B would silently discard the user's commits,
+    // which is the opposite of what restore must do.
+    const ws = create();
+
+    mockGitSuccess(""); // prune (entry-point)
+    mockOriginRemote();
+    mockGitError("fatal: registry conflict"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
+    mockGitSuccess(""); // RETRY succeeds
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    const calls = mockExecFileAsync.mock.calls;
+    const dashBigB = calls.filter(([, args]) => Array.isArray(args) && args.includes("-B"));
+    expect(dashBigB).toHaveLength(0);
+  });
+
+  it("checks branch existence with rev-parse --verify --quiet refs/heads/<branch>", async () => {
+    // Lock in the exact ref form used. If someone later refactors refExists or
+    // forgets the refs/heads/ prefix, this regression test catches it.
+    const ws = create();
+
+    mockGitSuccess(""); // prune (entry-point)
+    mockOriginRemote();
+    mockGitError("fatal: first failure"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    mockGitSuccess(""); // worktree remove --force
+    mockExistsSync.mockReturnValueOnce(false); // no leftover dir, skip cleanup
+    mockGitSuccess(""); // RETRY succeeds
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "refs/heads/feat/TEST-1"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+  });
+
+  it("matches registered worktree even when workspacePath has trailing slash", async () => {
+    // Path normalization safety: if `workspacePath` is passed in a non-canonical
+    // form (trailing slash, ".." segments) and git reports a canonical path,
+    // strict string equality false-negatives. That would mistakenly rmSync a
+    // still-registered worktree → DATA LOSS. Both sides must be resolve()d.
+    const ws = create();
+
+    mockGitSuccess(""); // entry-point prune
+    mockOriginRemote();
+    mockGitError("fatal: 'feat/TEST-1' is already checked out"); // first worktree add fails
+    mockGitSuccess(""); // refExists → true
+    // reattachExistingBranch → cleanupStaleWorkspacePath
+    mockGitError("fatal: cannot remove"); // worktree remove --force fails
+    mockExistsSync.mockReturnValueOnce(true); // dir exists
+    // git reports canonical path (no trailing slash); we call restore with trailing slash
+    mockGitSuccess(
+      "worktree /mock-home/.worktrees/myproject/session-1\nbranch refs/heads/feat/TEST-1",
+    );
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1/"),
+    ).rejects.toThrow(/already exists and is still registered/);
+
+    // CRITICAL: rmSync MUST NOT have been called — the resolve() normalization
+    // correctly identified the path as still-registered despite the trailing slash.
+    expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("createBranchFromBase also clears stale workspace dir before worktree add -b", async () => {
+    // Mirror of the re-attach path: when the local branch is MISSING and the
+    // workspacePath has stale state, createBranchFromBase must also do the
+    // cleanup. Otherwise `git worktree add -b ...` fails with the same
+    // "<path> already exists" error the re-attach path was fixed for.
+    const ws = create();
+
+    mockGitSuccess(""); // entry-point prune
+    mockOriginRemote();
+    mockGitError(
+      "fatal: '/mock-home/.worktrees/myproject/session-1' already exists",
+    ); // first worktree add fails
+    mockGitError("fatal: bad ref"); // refExists → false (branch missing)
+    // createBranchFromBase → cleanupStaleWorkspacePath
+    mockGitError("fatal: not registered"); // worktree remove --force fails
+    mockExistsSync.mockReturnValueOnce(true); // dir exists as junk
+    mockGitSuccess("worktree /some/other\nbranch refs/heads/main"); // not registered
+    // rmSync called (mocked)
+    mockGitSuccess(""); // resolveBaseRef: rev-parse origin/feat/TEST-1
+    mockGitSuccess(""); // worktree add -b ... origin/feat/TEST-1 succeeds
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    // Stale dir must have been removed before -b add.
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
+
+    expect(info.branch).toBe("feat/TEST-1");
+    expect(mockExecFileAsync).toHaveBeenLastCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/feat/TEST-1",
+      ],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+  });
+
+  it("happy path: restore re-attaches branch when first worktree add already succeeds", async () => {
+    // No catch path — the first attempt works. Confirms we don't accidentally
+    // run the cleanup/retry sequence in the common case.
+    const ws = create();
+
+    mockGitSuccess(""); // prune (entry-point)
+    mockOriginRemote();
+    mockGitSuccess(""); // worktree add <path> <branch> succeeds first try
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(info.branch).toBe("feat/TEST-1");
+    // Total calls: prune + remote get-url + fetch + worktree add = 4
+    expect(mockExecFileAsync).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -591,14 +1066,14 @@ describe("workspace.destroy()", () => {
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd: "/mock-home/.worktrees/myproject/session-1" },
+      { cwd: "/mock-home/.worktrees/myproject/session-1", windowsHide: true, timeout: 30_000 },
     );
 
     // Second call: worktree remove
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
-      { cwd: "/repo/path" },
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
   });
 
@@ -625,6 +1100,49 @@ describe("workspace.destroy()", () => {
     await ws.destroy("/nonexistent/path");
 
     expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("retries rmSync on Windows when first attempts fail (file-handle drain)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    const ws = create();
+
+    mockGitError("not a git repository"); // force fallback
+    // existsSync sequence: top guard (true), then between-retries checks
+    mockExistsSync.mockReturnValueOnce(true); // destroy() top guard
+    mockExistsSync.mockReturnValueOnce(true); // after attempt #1 — still there
+    mockExistsSync.mockReturnValueOnce(true); // after attempt #2 — still there
+    mockExistsSync.mockReturnValueOnce(false); // after attempt #3 — gone
+
+    let calls = 0;
+    mockRmSync.mockImplementation(() => {
+      calls++;
+      if (calls < 3) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    });
+
+    await ws.destroy("/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockRmSync.mock.calls.length).toBeGreaterThanOrEqual(3);
+    mockIsWindows.mockReturnValue(false);
+    mockRmSync.mockReset();
+  });
+
+  it("throws on Windows after exhausting retries (handles never released)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    const ws = create();
+
+    mockGitError("not a git repository");
+    mockExistsSync.mockReturnValue(true); // always exists — never drains
+    mockRmSync.mockImplementation(() => {
+      throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+    });
+
+    await expect(ws.destroy("/mock-home/.worktrees/myproject/session-1")).rejects.toThrow(
+      /Windows file-handle drain/,
+    );
+    expect(mockRmSync.mock.calls.length).toBe(6);
+    mockIsWindows.mockReturnValue(false);
+    mockExistsSync.mockReset();
+    mockRmSync.mockReset();
   });
 });
 
@@ -899,6 +1417,24 @@ describe("workspace.postCreate()", () => {
     );
   });
 
+  it("rejects Windows drive-letter absolute symlink paths (e.g. C:\\path)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["C:\\Windows\\System32"] });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow(
+      'must be a relative path without ".." segments',
+    );
+  });
+
+  it("rejects Windows UNC absolute symlink paths (e.g. \\\\server\\share)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["\\\\server\\share\\file"] });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow(
+      'must be a relative path without ".." segments',
+    );
+  });
+
   it("creates parent directories for nested symlink targets", async () => {
     const ws = create();
     const project = makeProject({ symlinks: ["config/settings"] });
@@ -915,24 +1451,151 @@ describe("workspace.postCreate()", () => {
     });
   });
 
-  it("runs postCreate commands", async () => {
+  it("runs postCreate commands using getShell()", async () => {
     const ws = create();
     const project = makeProject({
       postCreate: ["pnpm install", "pnpm build"],
     });
 
-    // Two sh -c calls
+    mockGetShell.mockReturnValue({ cmd: "sh", args: (c: string) => ["-c", c] });
+
+    // Two shell calls
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
 
     await ws.postCreate!(workspaceInfo, project);
 
+    expect(mockGetShell).toHaveBeenCalled();
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm install"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
+      windowsHide: true,
     });
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm build"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
+      windowsHide: true,
     });
+  });
+
+  it("uses Windows shell (pwsh) when getShell returns pwsh", async () => {
+    const ws = create();
+    const project = makeProject({ postCreate: ["npm install"] });
+
+    mockGetShell.mockReturnValueOnce({
+      cmd: "pwsh",
+      args: (c: string) => ["-NoLogo", "-NonInteractive", "-Command", c],
+    });
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "pwsh",
+      ["-NoLogo", "-NonInteractive", "-Command", "npm install"],
+      { cwd: "/mock-home/.worktrees/myproject/session-1", windowsHide: true },
+    );
+  });
+
+  it("falls back to junction for directories on Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync
+      .mockImplementationOnce(() => {
+        throw symlinkError;
+      })
+      .mockImplementationOnce(() => undefined); // junction succeeds
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => true });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockSymlinkSync).toHaveBeenLastCalledWith(
+      expect.stringContaining("node_modules"),
+      expect.stringContaining("node_modules"),
+      "junction",
+    );
+    expect(mockLinkSync).not.toHaveBeenCalled();
+    expect(mockCpSync).not.toHaveBeenCalled();
+  });
+
+  it("falls back to hardlink for files on Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: [".env"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync.mockImplementationOnce(() => {
+      throw symlinkError;
+    });
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => false });
+    mockLinkSync.mockImplementationOnce(() => undefined);
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockLinkSync).toHaveBeenCalledWith(
+      expect.stringContaining(".env"),
+      expect.stringContaining(".env"),
+    );
+    expect(mockCpSync).not.toHaveBeenCalled();
+  });
+
+  it("falls back to cpSync when junction also fails on Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(true);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = Object.assign(new Error("symlink requires elevation"), { code: "EPERM" });
+    mockSymlinkSync
+      .mockImplementationOnce(() => {
+        throw symlinkError;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("junction failed");
+      });
+    mockStatSync.mockReturnValueOnce({ isDirectory: () => true });
+
+    await ws.postCreate!(workspaceInfo, project);
+
+    expect(mockCpSync).toHaveBeenCalledWith(
+      expect.stringContaining("node_modules"),
+      expect.stringContaining("node_modules"),
+      { recursive: true },
+    );
+  });
+
+  it("re-throws symlink errors on non-Windows (B19)", async () => {
+    const ws = create();
+    const project = makeProject({ symlinks: ["node_modules"] });
+
+    mockIsWindows.mockReturnValue(false);
+    mockExistsSync.mockReturnValueOnce(true);
+    mockLstatSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const symlinkError = new Error("permission denied");
+    mockSymlinkSync.mockImplementationOnce(() => {
+      throw symlinkError;
+    });
+
+    await expect(ws.postCreate!(workspaceInfo, project)).rejects.toThrow("permission denied");
+    expect(mockCpSync).not.toHaveBeenCalled();
   });
 
   it("does nothing when no symlinks or postCreate configured", async () => {
@@ -966,7 +1629,8 @@ describe("workspace.postCreate()", () => {
     expect(mockSymlinkSync).toHaveBeenCalledTimes(1);
     expect(mockExecFileAsync).toHaveBeenCalledWith("sh", ["-c", "pnpm install"], {
       cwd: "/mock-home/.worktrees/myproject/session-1",
-    });
+      windowsHide: true,
+    }); // getShell() returns { cmd: "sh", args: ["-c", cmd] } in tests
   });
 
   it("expands tilde in project path for symlink sources", async () => {

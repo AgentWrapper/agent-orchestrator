@@ -409,6 +409,13 @@ export interface Runtime {
 
   /** Get info needed to attach a human to this session (for Terminal plugin) */
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
+
+  /**
+   * Optional: validate that this runtime's prerequisites are present before
+   * it is exercised by `ao spawn`. Throw with an actionable, human-readable
+   * message; the CLI catches and formats the error.
+   */
+  preflight?(context: PreflightContext): Promise<void>;
 }
 
 export interface RuntimeCreateConfig {
@@ -451,20 +458,22 @@ export interface AttachInfo {
  * Agent adapter for a specific AI coding tool.
  * Knows how to launch, detect activity, and extract session info.
  */
+
+export const PROCESS_PROBE_INDETERMINATE = "indeterminate" as const;
+
+export type ProcessProbeResult = boolean | typeof PROCESS_PROBE_INDETERMINATE;
+
+export function isProcessProbeIndeterminate(
+  result: ProcessProbeResult,
+): result is typeof PROCESS_PROBE_INDETERMINATE {
+  return result === PROCESS_PROBE_INDETERMINATE;
+}
+
 export interface Agent {
   readonly name: string;
 
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
-
-  /**
-   * How the initial prompt should be delivered to the agent.
-   * - "inline" (default): prompt is included in the launch command (e.g. -p flag)
-   * - "post-launch": prompt is sent via runtime.sendMessage() after the agent starts,
-   *   keeping the agent in interactive mode. Use this for agents where inlining
-   *   the prompt causes one-shot/exit behavior (e.g. Claude Code's -p flag).
-   */
-  readonly promptDelivery?: "inline" | "post-launch";
 
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
@@ -485,8 +494,14 @@ export interface Agent {
    */
   getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
 
-  /** Check if agent process is running (given runtime handle) */
-  isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
+  /**
+   * Check if agent process is running (given runtime handle).
+   *
+   * Returns "indeterminate" when the probe could not reliably determine
+   * liveness (for example, `ps`/`tmux` timed out or failed). Callers must
+   * treat that as no verdict, not as a missing process.
+   */
+  isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult>;
 
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
@@ -497,12 +512,25 @@ export interface Agent {
    */
   getRestoreCommand?(session: Session, project: ProjectConfig): Promise<string | null>;
 
+  /**
+   * Optional: run setup BEFORE the agent process is launched.
+   *
+   * Use this when a plugin needs to observe state that the agent itself will
+   * mutate at startup. Captured *after* the workspace exists but *before*
+   * `runtime.create()` spawns the agent — so the snapshot is taken cleanly,
+   * with no race against the agent's own initialization writes.
+   *
+   * Receives only the workspace path because the full Session object (with
+   * runtime handle, lifecycle, etc.) does not exist yet at this point.
+   */
+  preLaunchSetup?(workspacePath: string): Promise<void>;
+
   /** Optional: run setup after agent is launched (e.g. configure MCP servers) */
   postLaunchSetup?(session: Session): Promise<void>;
 
   /**
    * Optional: Set up agent-specific hooks/config in the workspace for automatic metadata updates.
-   * Called once per workspace during ao init/start and when creating new worktrees.
+   * Called once per workspace during ao start and when creating new worktrees.
    *
    * Each agent plugin implements this for their own config format:
    * - Claude Code: writes .claude/settings.json with PostToolUse hook
@@ -527,11 +555,26 @@ export interface Agent {
    * `getActivityState` already reads richer data from the agent's own session files.
    */
   recordActivity?(session: Session, terminalOutput: string): Promise<void>;
+
+  /**
+   * Optional: validate that this agent's prerequisites are present before
+   * it is exercised by `ao spawn`. Throw with an actionable error message.
+   */
+  preflight?(context: PreflightContext): Promise<void>;
 }
 
 export interface AgentLaunchConfig {
   sessionId: SessionId;
   projectConfig: ProjectConfig;
+  /**
+   * Per-session workspace path. Differs from `projectConfig.path` when the
+   * workspace plugin (e.g. worktree mode) creates an isolated checkout per
+   * session. Plugins that need the agent's actual cwd — for cwd-derived
+   * lookups, --work-dir flags, file-based discovery — must use this when
+   * present. Falls back to `projectConfig.path` when undefined (clone-mode
+   * workspaces, or plugins not yet plumbing it through).
+   */
+  workspacePath?: string;
   issueId?: string;
   prompt?: string;
   permissions?: AgentPermissionInput;
@@ -568,7 +611,7 @@ export interface AgentLaunchConfig {
 export interface WorkspaceHooksConfig {
   /** Data directory where session metadata files are stored */
   dataDir: string;
-  /** Optional session ID (may not be known at ao init time) */
+  /** Optional session ID (may not be known at workspace setup time) */
   sessionId?: string;
 }
 
@@ -579,6 +622,8 @@ export interface AgentSessionInfo {
   summaryIsFallback?: boolean;
   /** Agent's internal session ID (for resume) */
   agentSessionId: string | null;
+  /** Agent-owned metadata worth persisting for later restore. */
+  metadata?: Record<string, string>;
   /** Estimated cost so far */
   cost?: CostEstimate;
 }
@@ -608,6 +653,12 @@ export interface Workspace {
   /** List existing workspaces for a project */
   list(projectId: string): Promise<WorkspaceInfo[]>;
 
+  /**
+   * Optional: find a pre-existing AO-managed workspace that already tracks the
+   * requested branch and can be adopted instead of creating a fresh workspace.
+   */
+  findManagedWorkspace?(config: WorkspaceCreateConfig): Promise<WorkspaceInfo | null>;
+
   /** Optional: run hooks after workspace creation (symlinks, installs, etc.) */
   postCreate?(info: WorkspaceInfo, project: ProjectConfig): Promise<void>;
 
@@ -616,6 +667,12 @@ export interface Workspace {
 
   /** Optional: restore a workspace (e.g. recreate a worktree for an existing branch) */
   restore?(config: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo>;
+
+  /**
+   * Optional: validate that this workspace's prerequisites (e.g. git in PATH,
+   * write access to the worktree root) are present before `ao spawn`.
+   */
+  preflight?(context: PreflightContext): Promise<void>;
 }
 
 export interface WorkspaceCreateConfig {
@@ -670,6 +727,13 @@ export interface Tracker {
 
   /** Optional: create a new issue */
   createIssue?(input: CreateIssueInput, project: ProjectConfig): Promise<Issue>;
+
+  /**
+   * Optional: validate that this tracker's prerequisites (auth tokens, CLI
+   * tools) are present before `ao spawn` runs. Throw with an actionable
+   * error message.
+   */
+  preflight?(context: PreflightContext): Promise<void>;
 }
 
 export interface Issue {
@@ -764,6 +828,9 @@ export interface SCM {
   /** Get individual CI check statuses */
   getCIChecks(pr: PRInfo): Promise<CICheck[]>;
 
+  /** Get failed CI jobs/steps with a bounded failed-log tail, if supported. */
+  getCIFailureSummary?(pr: PRInfo, failedChecks?: CICheck[]): Promise<CIFailureSummary | null>;
+
   /** Get overall CI summary */
   getCISummary(pr: PRInfo): Promise<CIStatus>;
 
@@ -810,6 +877,14 @@ export interface SCM {
    * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
    */
   enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver, repos?: string[]): Promise<Map<string, PREnrichmentData>>;
+
+  /**
+   * Optional: validate that this SCM's prerequisites (auth, CLI tools) are
+   * present before `ao spawn` runs. Plugins should consult
+   * `context.intent.willClaimExistingPR` and skip PR-write prereqs when the
+   * spawn won't exercise them.
+   */
+  preflight?(context: PreflightContext): Promise<void>;
 }
 
 /**
@@ -936,6 +1011,15 @@ export interface CICheck {
   conclusion?: string;
   startedAt?: Date;
   completedAt?: Date;
+}
+
+export interface CIFailureSummary {
+  failedJobs: Array<{
+    name: string;
+    failedStep?: string;
+    runUrl: string;
+    logTail?: string;
+  }>;
 }
 
 export type CIStatus = "pending" | "passing" | "failing" | "none";
@@ -1128,6 +1212,7 @@ export type EventPriority = "urgent" | "action" | "warning" | "info";
 /** All orchestrator event types */
 export type EventType =
   // Session lifecycle
+  | "session.spawn_started"
   | "session.spawned"
   | "session.working"
   | "session.exited"
@@ -1439,6 +1524,9 @@ export interface ProjectConfig {
   /** Override default workspace */
   workspace?: string;
 
+  /** Environment variables forwarded into worker session runtimes (AO_* internals always win) */
+  env?: Record<string, string>;
+
   /** Issue tracker configuration */
   tracker?: TrackerConfig;
 
@@ -1639,6 +1727,32 @@ export interface PluginModule<T = unknown> {
   detect?(): boolean;
 }
 
+/**
+ * Context passed to a plugin's `preflight()` method.
+ *
+ * Describes the **intent** of the operation (what it will do), not the CLI
+ * flags that triggered it. Plugins should never know about specific flag
+ * names — translate flags into intent at the CLI boundary so adding a new
+ * flag doesn't ripple into every plugin that cares about a related operation.
+ */
+export interface PreflightContext {
+  /** The project the operation runs against. */
+  project: ProjectConfig;
+
+  /** What the operation will do. Plugins decide whether their prereqs apply. */
+  intent: {
+    /** Whether the spawn is for a worker session or the orchestrator. */
+    role: "worker" | "orchestrator";
+
+    /**
+     * Whether the operation will exercise SCM PR-write paths
+     * (e.g. claiming an existing PR for the new session). When false, an SCM
+     * plugin's preflight can skip PR-write prereqs.
+     */
+    willClaimExistingPR: boolean;
+  };
+}
+
 // =============================================================================
 // SESSION METADATA
 // =============================================================================
@@ -1656,6 +1770,7 @@ export interface SessionMetadata {
   lifecycle?: CanonicalSessionLifecycle;
   tmuxName?: string; // Tmux session name (matches session ID, e.g. "ao-1")
   issue?: string;
+  issueTitle?: string; // Issue title for event enrichment
   pr?: string;
   prAutoDetect?: boolean;
   summary?: string;
@@ -1671,16 +1786,33 @@ export interface SessionMetadata {
     directTerminalWsPort?: number;
   };
   opencodeSessionId?: string;
+  claudeSessionUuid?: string;
+  codexThreadId?: string;
+  codexModel?: string;
+  restoreFallbackReason?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**
-   * Stable human-readable display name derived from task context at spawn time.
-   * Populated from issue title, user prompt, or orchestrator system prompt —
-   * whichever was available when the session was created. Used by the dashboard
-   * as a fallback above humanized branch names so sessions are identifiable
-   * even when PR/issue enrichment is unavailable.
+   * Human-readable display name for the session.
+   *
+   * Populated automatically at spawn time from the best available task context
+   * (issue title, user prompt, or orchestrator system prompt). Can be
+   * overwritten later via the dashboard rename UI — the session ID (`ao-N`)
+   * remains the canonical identifier; only display surfaces are affected.
+   *
+   * Whether this value should beat PR/issue titles in the dashboard depends
+   * on `displayNameUserSet` — auto-derived values stay below live tracker
+   * signals, user-set values win over them.
    */
   displayName?: string;
+  /**
+   * Set to `true` when the user explicitly renamed the session via the
+   * dashboard. The dashboard fallback chain promotes `displayName` above
+   * PR/issue titles only when this flag is true, so an auto-derived spawn-time
+   * `displayName` doesn't shadow a live PR title for sessions the user never
+   * touched.
+   */
+  displayNameUserSet?: boolean;
 }
 
 // =============================================================================

@@ -17,8 +17,10 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   readPREnrichmentFromMetadata,
   enrichSessionAgentSummary,
+  enrichSessionIssue,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
   enrichSessionsMetadataFast,
@@ -347,6 +349,17 @@ describe("resolveProject", () => {
     };
     const session = createCoreSession({ id: "lib-42", projectId: "unknown" });
     expect(resolveProject(session, projects)).toBe(projects.lib);
+  });
+
+  it("should not match another project's longer prefix", () => {
+    const projects = {
+      app: makeProject({ name: "app", sessionPrefix: "app" }),
+      appx: makeProject({ name: "appx", sessionPrefix: "appx" }),
+    };
+    // Regression: prefix containment could resolve appx sessions as app.
+    // Found by /qa on 2026-05-01.
+    const session = createCoreSession({ id: "appx-1", projectId: "unknown" });
+    expect(resolveProject(session, projects)).toBe(projects.appx);
   });
 
   it("should fall back to first project when nothing matches", () => {

@@ -10,7 +10,9 @@ import { promisify } from "node:util";
 import {
   CI_STATUS,
   execGhObserved,
+  memoizeAsync,
   type PluginModule,
+  type PreflightContext,
   type SCM,
   type SCMWebhookEvent,
   type SCMWebhookRequest,
@@ -21,6 +23,7 @@ import {
   type PRState,
   type MergeMethod,
   type CICheck,
+  type CIFailureSummary,
   type CIStatus,
   type Review,
   type ReviewDecision,
@@ -57,6 +60,8 @@ const BOT_AUTHORS = new Set([
   "snyk-bot",
   "lgtm-com[bot]",
 ]);
+
+const CI_FAILURE_LOG_TAIL_LINES = 120;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -163,6 +168,80 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
   }
 
   return "skipped";
+}
+
+function isFailedCheck(check: CICheck): boolean {
+  return check.status === "failed" || check.conclusion?.toUpperCase() === "FAILURE";
+}
+
+function isDecimalId(value: string): boolean {
+  return value.length > 0 && [...value].every((char) => char >= "0" && char <= "9");
+}
+
+function extractActionRunReference(
+  check: CICheck,
+): { runId: string; jobId?: string; runUrl: string } | null {
+  if (!check.url) return null;
+  let pathParts: string[];
+  try {
+    pathParts = new URL(check.url).pathname.split("/").filter(Boolean);
+  } catch {
+    return null;
+  }
+
+  const actionsIndex = pathParts.findIndex(
+    (part, index) => part === "actions" && pathParts[index + 1] === "runs",
+  );
+  const runId = actionsIndex >= 0 ? pathParts[actionsIndex + 2] : undefined;
+  if (!runId || !isDecimalId(runId)) return null;
+
+  const jobIndex = pathParts.findIndex((part, index) => index > actionsIndex && part === "job");
+  const jobId = jobIndex >= 0 ? pathParts[jobIndex + 1] : undefined;
+
+  return {
+    runId,
+    ...(jobId && isDecimalId(jobId) ? { jobId } : {}),
+    runUrl: check.url,
+  };
+}
+
+function tailLines(text: string, maxLines: number): string | undefined {
+  const lines = text.split(/\r?\n/);
+  const tail = lines.slice(-maxLines).join("\n").trimEnd();
+  return tail.length > 0 ? tail : undefined;
+}
+
+function extractFailedStep(log: string): string | undefined {
+  let lastStep: string | undefined;
+  for (const line of log.split(/\r?\n/)) {
+    const parts = line.split("\t");
+    const step = parts.length >= 3 ? parts[1]?.trim() : undefined;
+    if (step) lastStep = step;
+  }
+  return lastStep;
+}
+
+async function getFailedJobLog(
+  pr: PRInfo,
+  runReference: { runId: string; jobId?: string },
+): Promise<string> {
+  try {
+    return await gh([
+      "run",
+      "view",
+      runReference.runId,
+      "--repo",
+      repoFlag(pr),
+      "--log-failed",
+      ...(runReference.jobId ? ["--job", runReference.jobId] : []),
+    ]);
+  } catch (err) {
+    if (!runReference.jobId) throw err;
+    return gh([
+      "api",
+      `repos/${pr.owner}/${pr.repo}/actions/jobs/${runReference.jobId}/logs`,
+    ]);
+  }
 }
 
 async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
@@ -486,6 +565,10 @@ function createGitHubSCM(): SCM {
   // ETag-controlled cache for review threads + reviews. Freshness is managed by
   // Guard 3 (checkReviewCommentsETag) — not a TTL timer.
   const reviewThreadsCache = new Map<string, ReviewThreadsResult>();
+  // Instance-level observer captured from enrichSessionsPRBatch calls.
+  // Used by getReviewThreads (which can't accept observer via the SCM interface)
+  // to log non-304 errors that would otherwise be swallowed by lifecycle's catch.
+  let instanceObserver: BatchObserver | undefined;
 
   function prCacheKey(owner: string, repo: string, prKey: string, method: PRCacheMethod): string {
     return `${owner}/${repo}#${prKey}:${method}`;
@@ -805,6 +888,46 @@ function createGitHubSCM(): SCM {
       });
     },
 
+    async getCIFailureSummary(
+      pr: PRInfo,
+      providedFailedChecks?: CICheck[],
+    ): Promise<CIFailureSummary | null> {
+      try {
+        const failedChecks = (providedFailedChecks ?? (await this.getCIChecks(pr))).filter(
+          isFailedCheck,
+        );
+        if (failedChecks.length === 0) return null;
+
+        const failedJobs: CIFailureSummary["failedJobs"] = [];
+        const seenRuns = new Set<string>();
+
+        for (const check of failedChecks) {
+          const runReference = extractActionRunReference(check);
+          if (!runReference) continue;
+
+          const seenKey = `${runReference.runId}:${runReference.jobId ?? ""}`;
+          if (seenRuns.has(seenKey)) continue;
+          seenRuns.add(seenKey);
+
+          const log = await getFailedJobLog(pr, runReference);
+
+          const failedJob: CIFailureSummary["failedJobs"][number] = {
+            name: check.name,
+            runUrl: runReference.runUrl,
+          };
+          const failedStep = extractFailedStep(log);
+          if (failedStep) failedJob.failedStep = failedStep;
+          const logTail = tailLines(log, CI_FAILURE_LOG_TAIL_LINES);
+          if (logTail) failedJob.logTail = logTail;
+          failedJobs.push(failedJob);
+        }
+
+        return failedJobs.length > 0 ? { failedJobs } : null;
+      } catch {
+        return null;
+      }
+    },
+
     async getCISummary(pr: PRInfo): Promise<CIStatus> {
       let checks: CICheck[];
       try {
@@ -1006,7 +1129,7 @@ function createGitHubSCM(): SCM {
       const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
 
       // Guard 3: check if review comments changed via REST ETag
-      const reviewsChanged = await checkReviewCommentsETag(pr.owner, pr.repo, pr.number);
+      const reviewsChanged = await checkReviewCommentsETag(pr.owner, pr.repo, pr.number, instanceObserver);
       if (!reviewsChanged) {
         const cached = reviewThreadsCache.get(cacheKey);
         if (cached) return cached;
@@ -1133,6 +1256,8 @@ function createGitHubSCM(): SCM {
         reviewThreadsCache.set(cacheKey, result);
         return result;
       } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        instanceObserver?.log("warn", `[getReviewThreads] Failed for ${cacheKey}: ${errorMsg}`);
         throw new Error("Failed to fetch review threads", { cause: err });
       }
     },
@@ -1241,8 +1366,31 @@ function createGitHubSCM(): SCM {
       observer?: BatchObserver,
       repos?: string[],
     ): Promise<Map<string, PREnrichmentData>> {
+      if (observer) instanceObserver = observer;
       const batchResult = await enrichSessionsPRBatchImpl(prs, observer, repos);
       return batchResult.enrichment;
+    },
+
+    async preflight(context: PreflightContext): Promise<void> {
+      // SCM is only exercised at spawn time when --claim-pr is set. Skip the
+      // gh-auth check otherwise so spawns that don't touch PRs don't require
+      // gh credentials. Lifecycle polling has its own auth handling.
+      if (!context.intent.willClaimExistingPR) return;
+      // Memoize across plugins: shares the "gh-cli-auth" cache key with
+      // tracker-github so spawns that touch both only run gh --version + gh
+      // auth status once total, not twice.
+      await memoizeAsync("gh-cli-auth", async () => {
+        try {
+          await execFileAsync("gh", ["--version"]);
+        } catch {
+          throw new Error("GitHub CLI (gh) is not installed. Install it: https://cli.github.com/");
+        }
+        try {
+          await execFileAsync("gh", ["auth", "status"]);
+        } catch {
+          throw new Error("GitHub CLI is not authenticated. Run: gh auth login");
+        }
+      });
     },
   };
 }

@@ -34,9 +34,11 @@ import {
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
+import pluginRuntimeProcess from "@aoagents/ao-plugin-runtime-process";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
 import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
 import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
+import pluginAgentKimicode from "@aoagents/ao-plugin-agent-kimicode";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
@@ -104,9 +106,11 @@ async function initServices(): Promise<Services> {
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
+  registry.register(pluginRuntimeProcess);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentCodex);
   registry.register(pluginAgentCursor);
+  registry.register(pluginAgentKimicode);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
@@ -135,11 +139,7 @@ function loadDashboardConfig(): LoadedConfig {
   } catch (error) {
     // The dashboard prefers the global portfolio config, but users may still
     // launch it from a single repo that only has a local agent-orchestrator.yaml.
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return loadConfig();
     }
     if (error instanceof ConfigNotFoundError) {

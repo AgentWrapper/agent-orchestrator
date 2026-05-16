@@ -29,7 +29,7 @@ function assertPortfolioEnabled(): void {
   process.exit(1);
 }
 
-export function registerProject_cmd(program: Command): void {
+export function registerProjectCommand(program: Command): void {
   const project = program.command("project").description("Manage portfolio projects");
 
   // ao project ls

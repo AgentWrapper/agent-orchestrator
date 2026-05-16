@@ -9,6 +9,36 @@ import {
   type EventPriority,
 } from "@aoagents/ao-core";
 
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function buildWindowsToastScript(title: string, message: string, sound: boolean): string {
+  // Build the toast XML — both fields are user content, so XML-escape them.
+  const safeTitle = xmlEscape(title);
+  const safeMessage = xmlEscape(message);
+  const audioNode = sound ? "" : '<audio silent="true" />';
+  const xml = `<toast>${audioNode}<visual><binding template="ToastGeneric"><text>${safeTitle}</text><text>${safeMessage}</text></binding></visual></toast>`;
+
+  // PowerShell script — uses WinRT directly (no BurntToast dep). The XML is
+  // injected as a single-quoted PS string with embedded apostrophes doubled.
+  const psSafeXml = xml.replace(/'/g, "''");
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
+    "[void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]",
+    "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
+    `$xml.LoadXml('${psSafeXml}')`,
+    "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
+    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Agent Orchestrator').Show($toast)",
+  ].join("; ");
+}
+
 export const manifest = {
   name: "desktop",
   slot: "notifier" as const,
@@ -80,6 +110,28 @@ function sendNotification(
         if (err) reject(err);
         else resolve();
       });
+    } else if (os === "win32") {
+      // WinRT toast via PowerShell — no third-party deps. Encode the script
+      // as UTF-16LE base64 so we never fight with PowerShell's argument
+      // tokenizer over quotes, special chars, or newlines in the toast XML.
+      const script = buildWindowsToastScript(title, message, options.sound);
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        { windowsHide: true, timeout: 10_000 },
+        (err) => {
+          if (err) {
+            // Don't crash the lifecycle on toast failures — log and resolve.
+            // Common causes: stripped-down Windows SKU without WinRT, locked
+            // group policy, or the user disabled toast notifications.
+            console.warn(
+              `[notifier-desktop] Windows toast failed: ${(err as Error).message}`,
+            );
+          }
+          resolve();
+        },
+      );
     } else {
       console.warn(`[notifier-desktop] Desktop notifications not supported on ${os}`);
       resolve();

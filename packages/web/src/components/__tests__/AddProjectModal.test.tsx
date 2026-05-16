@@ -49,19 +49,17 @@ describe("AddProjectModal", () => {
     );
   });
 
-  it("shows a helpful message and disables submit when filesystem browsing is unavailable", async () => {
+  it("shows the server browse error and disables submit when browsing fails", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
-      json: async () => ({ error: "Not found" }),
+      json: async () => ({ error: "path not found" }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AddProjectModal open onClose={vi.fn()} />);
 
-    expect(
-      await screen.findByText(/directory browsing is unavailable in this environment/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/path not found/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^add project$/i })).toBeDisabled();
   });
 

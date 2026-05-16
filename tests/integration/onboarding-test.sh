@@ -81,7 +81,7 @@ end_step "Step 4: Configuration created"
 
 # Step 5: Verify config is valid
 start_step "Step 5: Validate configuration"
-# ao init would fail if run again, so we just verify the file is readable
+# Verify the config file is readable
 if [ ! -f agent-orchestrator.yaml ]; then
     fail_step "Step 5: Config file not found"
 fi

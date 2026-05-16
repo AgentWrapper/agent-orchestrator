@@ -10,6 +10,7 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 // Import after mocks
 import {
   ensureLifecycleWorker,
+  stopLifecycleWorker,
   stopAllLifecycleWorkers,
   isLifecycleWorkerRunning,
   listLifecycleWorkers,
@@ -99,6 +100,42 @@ describe("lifecycle-service", () => {
     expect(result.started).toBe(true);
     expect(healthy.start).toHaveBeenCalledTimes(1);
     expect(isLifecycleWorkerRunning("healthy")).toBe(true);
+  });
+
+  it("stopLifecycleWorker is a no-op for unknown projects", () => {
+    expect(() => stopLifecycleWorker("missing")).not.toThrow();
+    expect(listLifecycleWorkers()).toEqual([]);
+  });
+
+  it("stopLifecycleWorker stops only the requested project", async () => {
+    const a = makeFakeLifecycle();
+    const b = makeFakeLifecycle();
+    mockGetLifecycleManager.mockImplementation(async (_cfg, projectId: string) =>
+      projectId === "a" ? a : b,
+    );
+
+    const config = makeConfig(["a", "b"]);
+    await ensureLifecycleWorker(config, "a");
+    await ensureLifecycleWorker(config, "b");
+
+    stopLifecycleWorker("a");
+
+    expect(a.stop).toHaveBeenCalledTimes(1);
+    expect(b.stop).not.toHaveBeenCalled();
+    expect(listLifecycleWorkers()).toEqual(["b"]);
+  });
+
+  it("stopLifecycleWorker removes a project even when lifecycle stop throws", async () => {
+    const broken = makeFakeLifecycle();
+    (broken.stop as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("stop failed");
+    });
+    mockGetLifecycleManager.mockResolvedValue(broken);
+
+    await ensureLifecycleWorker(makeConfig(["broken"]), "broken");
+
+    expect(() => stopLifecycleWorker("broken")).not.toThrow();
+    expect(listLifecycleWorkers()).toEqual([]);
   });
 
   it("stopAllLifecycleWorkers is a no-op when nothing is active", () => {

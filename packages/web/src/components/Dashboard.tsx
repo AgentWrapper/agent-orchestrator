@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
-  NON_RESTORABLE_STATUSES,
   type DashboardSession,
   type AttentionLevel,
   type DashboardOrchestratorLink,
   type DashboardAttentionZoneMode,
   getAttentionLevel,
   isPRRateLimited,
+  isDashboardSessionRestorable,
+  isDashboardSessionTerminated,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
@@ -22,9 +23,11 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
 import { ConnectionBar } from "./ConnectionBar";
+import { UpdateBanner } from "./UpdateBanner";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { BottomSheet } from "./BottomSheet";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -87,8 +90,8 @@ function DoneCard({
     session.summary ||
     session.id;
   const isMerged = session.pr?.state === "merged" || session.status === "merged";
-  const isTerminated = session.status === "killed" || session.status === "terminated";
-  const canRestore = !NON_RESTORABLE_STATUSES.has(session.status);
+  const isTerminated = isDashboardSessionTerminated(session);
+  const canRestore = isDashboardSessionRestorable(session);
   const badgeLabel = isMerged ? "merged" : isTerminated ? "terminated" : "done";
   const badgeClass = `done-card__badge ${isTerminated ? "done-card__badge--terminated" : "done-card__badge--merged"}`;
 
@@ -121,7 +124,7 @@ function DoneCard({
           </a>
         ) : null}
         <span className="done-card__age">{formatRelativeTimeCompact(session.lastActivityAt)}</span>
-        {canRestore ? (
+        {canRestore && !isMerged ? (
           <button
             type="button"
             className="done-card__restore"
@@ -158,23 +161,30 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions, attentionZones]);
-  const { sessions, connectionStatus, sseAttentionLevels, liveSessionsResolved, loadError } =
-    useSessionEvents({
-      initialSessions,
-      // No project filter — sidebar needs all sessions across all projects.
-      // Kanban filtering is applied client-side via projectSessions below.
-      muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
-      initialAttentionLevels,
-      attentionZones,
-    });
+  const { sessions, attentionLevels, liveSessionsResolved, loadError } = useSessionEvents({
+    initialSessions,
+    // No project filter — sidebar needs all sessions across all projects.
+    // Kanban filtering is applied client-side via projectSessions below.
+    muxSessions: mux?.status === "connected" ? mux.sessions : undefined,
+    muxLastError: mux?.lastError,
+    initialAttentionLevels,
+    attentionZones,
+  });
 
   const projectSessions = useMemo(() => {
     if (!projectId) return sessions;
     return sessions.filter((s) => s.projectId === projectId);
   }, [sessions, projectId]);
+  const connectionStatus: "connected" | "reconnecting" | "disconnected" =
+    mux?.status === "disconnected"
+      ? "disconnected"
+      : mux?.status === "connected"
+        ? "connected"
+        : "reconnecting";
   const recoveredFromLoadError = Boolean(dashboardLoadError) && liveSessionsResolved;
-  const visibleDashboardLoadError =
-    loadError ?? (recoveredFromLoadError ? undefined : dashboardLoadError);
+  const ssrLoadError = recoveredFromLoadError ? undefined : dashboardLoadError;
+  // Live WS error takes precedence; fall back to SSR load error when live data hasn't resolved it.
+  const visibleLoadError = loadError ?? ssrLoadError;
   const searchParams = useSearchParams();
   const router = useRouter();
   const routerRef = useRef(router);
@@ -188,17 +198,21 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [collapsedZones, setCollapsedZones] = useState<Set<AttentionLevel>>(
+    () => new Set<AttentionLevel>(["done", "working"]),
+  );
+  const [previewSession, setPreviewSession] = useState<DashboardSession | null>(null);
+  const [bottomSheetMode, setBottomSheetMode] = useState<"preview" | "confirm-kill">("preview");
   const debugParam = searchParams.get("debug");
   const showDebugBundleButton =
     !isMobile &&
     (process.env.NODE_ENV === "development" || debugParam === "1" || debugParam === "true");
-  const showSidebar = projects.length >= 1;
   const { showToast } = useToast();
   const [doneExpanded, setDoneExpanded] = useState(false);
   const sessionsRef = useRef(sessions);
 
   sessionsRef.current = sessions;
-  const allProjectsView = projects.length > 1 && showSidebar && projectId === undefined;
+  const allProjectsView = projects.length > 1 && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
@@ -229,12 +243,12 @@ function DashboardInner({
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
   }, [orchestratorLinks]);
 
-  // Update document title with live attention counts from SSE
+  // Update document title with live attention counts
   useEffect(() => {
-    const needsAttention = countNeedingAttention(sseAttentionLevels);
+    const needsAttention = countNeedingAttention(attentionLevels);
     const label = projectName ?? "ao";
     document.title = needsAttention > 0 ? `${label} (${needsAttention} need attention)` : label;
-  }, [sseAttentionLevels, projectName]);
+  }, [attentionLevels, projectName]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -360,6 +374,25 @@ function DashboardInner({
     },
     [killSession],
   );
+  const handlePreview = useCallback((session: DashboardSession) => {
+    setPreviewSession(session);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleRequestKill = useCallback(() => {
+    setBottomSheetMode("confirm-kill");
+  }, []);
+
+  const handleBottomSheetClose = useCallback(() => {
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, []);
+
+  const handleBottomSheetConfirmKill = useCallback(() => {
+    if (previewSession) void killSession(previewSession.id);
+    setPreviewSession(null);
+    setBottomSheetMode("preview");
+  }, [previewSession, killSession]);
 
   const handleMerge = useCallback(
     async (prNumber: number) => {
@@ -442,9 +475,9 @@ function DashboardInner({
   };
 
   const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
-  const showEmptyState = !allProjectsView && !hasAnySessions && !visibleDashboardLoadError;
+  const showEmptyState = !allProjectsView && !hasAnySessions && !visibleLoadError;
 
-  const loadErrorBanner = visibleDashboardLoadError ? (
+  const loadErrorBanner = visibleLoadError ? (
     <div
       className="dashboard-alert mb-6 flex flex-col gap-1.5 border border-[color-mix(in_srgb,var(--color-status-error)_28%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] px-3.5 py-2.5 text-[11px] md:mb-4"
       role="alert"
@@ -453,9 +486,7 @@ function DashboardInner({
       <span className="font-semibold text-[var(--color-status-error)]">
         Orchestrator failed to load
       </span>
-      <span className="break-words text-[var(--color-text-secondary)]">
-        {visibleDashboardLoadError}
-      </span>
+      <span className="break-words text-[var(--color-text-secondary)]">{visibleLoadError}</span>
       <span className="text-[var(--color-text-secondary)]">
         Confirm <span className="font-mono text-[10px]">agent-orchestrator.yaml</span> exists and is
         valid, then run <span className="font-mono text-[10px]">ao doctor</span> for diagnostics.
@@ -474,6 +505,17 @@ function DashboardInner({
       : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
+  const handleZoneToggle = (level: AttentionLevel) => {
+    setCollapsedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  };
   const handleToggleSidebar = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       setMobileMenuOpen((current) => !current);
@@ -487,44 +529,43 @@ function DashboardInner({
       value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen: mobileMenuOpen }}
     >
       <>
+        <UpdateBanner />
         <ConnectionBar status={connectionStatus} />
         <div className="dashboard-app-shell">
           <header className="dashboard-app-header">
-            {showSidebar ? (
-              <button
-                type="button"
-                className="dashboard-app-sidebar-toggle"
-                onClick={handleToggleSidebar}
-                aria-label="Toggle sidebar"
-              >
-                {isMobile ? (
-                  <svg
-                    width="16"
-                    height="16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                ) : (
-                  <svg
-                    width="14"
-                    height="14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <path d="M9 3v18" />
-                  </svg>
-                )}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="dashboard-app-sidebar-toggle"
+              onClick={handleToggleSidebar}
+              aria-label="Toggle sidebar"
+            >
+              {isMobile ? (
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              ) : (
+                <svg
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M9 3v18" />
+                </svg>
+              )}
+            </button>
             <div className="dashboard-app-header__brand">
               <span className="dashboard-app-header__brand-dot" aria-hidden="true" />
               <span>Agent Orchestrator</span>
@@ -593,27 +634,26 @@ function DashboardInner({
           <div
             className={`dashboard-shell dashboard-shell--desktop${sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
           >
-            {showSidebar && (
-              <div
-                className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}
-              >
-                <ProjectSidebar
-                  projects={projects}
-                  sessions={sessions}
-                  activeProjectId={projectId}
-                  activeSessionId={activeSessionId}
-                  collapsed={sidebarCollapsed}
-                  onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-                  onMobileClose={() => setMobileMenuOpen(false)}
-                />
-              </div>
-            )}
+            <div
+              className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}
+            >
+              <ProjectSidebar
+                projects={projects}
+                sessions={sessions}
+                orchestrators={activeOrchestrators}
+                activeProjectId={projectId}
+                activeSessionId={activeSessionId}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+                onMobileClose={() => setMobileMenuOpen(false)}
+              />
+            </div>
             {mobileMenuOpen && (
               <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
             )}
 
-            <main className="dashboard-main dashboard-main--desktop overflow-y-auto">
-              <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
+            <main className="dashboard-main dashboard-main--desktop">
+              <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
               <div className="dashboard-main__subhead">
                 <h1 className="dashboard-main__title">Dashboard</h1>
                 <p className="dashboard-main__subtitle">
@@ -687,6 +727,10 @@ function DashboardInner({
                           onKill={handleKill}
                           onMerge={handleMerge}
                           onRestore={handleRestore}
+                          compactMobile={isMobile}
+                          collapsed={isMobile && collapsedZones.has(level)}
+                          onToggle={isMobile ? handleZoneToggle : undefined}
+                          onPreview={isMobile ? handlePreview : undefined}
                         />
                       ))}
                     </div>
@@ -748,6 +792,15 @@ function DashboardInner({
             </main>
           </div>
         </div>
+        <BottomSheet
+          session={previewSession}
+          mode={bottomSheetMode}
+          onCancel={handleBottomSheetClose}
+          onConfirm={handleBottomSheetConfirmKill}
+          onRequestKill={handleRequestKill}
+          onMerge={handleMerge}
+          isMergeReady={previewSession ? attentionLevels[previewSession.id] === "merge" : false}
+        />
       </>
     </SidebarContext.Provider>
   );

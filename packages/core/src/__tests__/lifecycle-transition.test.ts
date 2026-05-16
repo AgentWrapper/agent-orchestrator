@@ -129,6 +129,29 @@ describe("applyDecisionToLifecycle", () => {
     expect(lifecycle.session.terminatedAt).toBe("2026-04-16T12:00:00.000Z");
   });
 
+  it("clears terminal markers when transitioning into a non-terminal state", () => {
+    lifecycle.session.state = "terminated";
+    lifecycle.session.reason = "runtime_lost";
+    lifecycle.session.completedAt = "2026-04-15T12:00:00.000Z";
+    lifecycle.session.terminatedAt = "2026-04-16T12:00:00.000Z";
+    lifecycle.session.lastTransitionAt = "2026-04-16T12:00:00.000Z";
+
+    const decision: LifecycleDecision = {
+      status: "working",
+      evidence: "restore",
+      detecting: { attempts: 0 },
+      sessionState: "working",
+      sessionReason: "task_in_progress",
+    };
+
+    applyDecisionToLifecycle(lifecycle, decision, nowIso);
+
+    expect(lifecycle.session.state).toBe("working");
+    expect(lifecycle.session.completedAt).toBeNull();
+    expect(lifecycle.session.terminatedAt).toBeNull();
+    expect(lifecycle.session.lastTransitionAt).toBe(nowIso);
+  });
+
   it("applies PR state and reason", () => {
     const decision: LifecycleDecision = {
       status: "pr_open",
@@ -371,6 +394,45 @@ describe("applyLifecycleDecision (integration)", () => {
 
     expect(result.success).toBe(true);
     expect(result.previousStatus).toBe("spawning");
+  });
+
+  it("persists cleared terminal markers when a terminal snapshot transitions to working", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker");
+    lifecycle.session.state = "terminated";
+    lifecycle.session.reason = "runtime_lost";
+    lifecycle.session.completedAt = "2026-04-16T11:00:00.000Z";
+    lifecycle.session.terminatedAt = "2026-04-16T12:00:00.000Z";
+    lifecycle.session.lastTransitionAt = "2026-04-16T12:00:00.000Z";
+
+    writeTestSession("test-5", {
+      status: "killed",
+      lifecycle: JSON.stringify(lifecycle),
+      worktree: "/tmp/test",
+      branch: "main",
+    });
+
+    const result = applyLifecycleDecision({
+      dataDir,
+      sessionId: "test-5",
+      decision: {
+        status: "working",
+        evidence: "restore",
+        detecting: { attempts: 0 },
+        sessionState: "working",
+        sessionReason: "task_in_progress",
+      },
+      source: "restore",
+      now: new Date("2026-04-17T12:00:00.000Z"),
+    });
+
+    expect(result.success).toBe(true);
+
+    const meta = readMetadataRaw(dataDir, "test-5");
+    const persisted = JSON.parse(meta!["lifecycle"]);
+    expect(persisted.session.state).toBe("working");
+    expect(persisted.session.completedAt).toBeNull();
+    expect(persisted.session.terminatedAt).toBeNull();
+    expect(persisted.session.lastTransitionAt).toBe("2026-04-17T12:00:00.000Z");
   });
 });
 
