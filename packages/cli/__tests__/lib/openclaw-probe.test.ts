@@ -138,7 +138,8 @@ describe("openclaw-probe", () => {
       const result = await detectOpenClawInstallation();
 
       expect(result.state).toBe("running");
-      expect(result.configPath).toContain(".openclaw/openclaw.json");
+      expect(result.configPath).toContain(".openclaw");
+      expect(result.configPath).toContain("openclaw.json");
     });
   });
 

@@ -141,6 +141,27 @@ export function isActivityEventsFtsEnabled(): boolean {
 }
 
 /**
+ * Close the cached DB connection and reset module state.
+ *
+ * On Windows the SQLite handle holds an exclusive file lock; without an
+ * explicit close, callers cannot remove `activity-events.db` (or its parent
+ * directory) until the process exits. Tests that recreate the AO base dir
+ * across runs must call this before `rmSync`.
+ */
+export function closeDb(): void {
+  if (_db) {
+    try {
+      _db.close();
+    } catch {
+      // best-effort: connection may already be closed
+    }
+    _db = null;
+  }
+  _dbFailed = false;
+  _ftsEnabled = false;
+}
+
+/**
  * Get the lazily-initialized DB connection.
  * Returns null if better-sqlite3 failed to load or init — callers should treat null as no-op.
  */

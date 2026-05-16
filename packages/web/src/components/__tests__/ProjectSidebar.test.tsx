@@ -80,7 +80,9 @@ describe("ProjectSidebar", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /switch to (dark|light) mode/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /switch to (dark|light) mode/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders a collapsed empty rail when collapsed with no projects", () => {
@@ -477,9 +479,7 @@ describe("ProjectSidebar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
 
-    expect(
-      await screen.findByRole("menuitem", { name: "Open orchestrator" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Open orchestrator" })).toBeInTheDocument();
   });
 
   it("omits 'Open orchestrator' from the menu when no orchestrator entry exists for the project", async () => {
@@ -547,5 +547,179 @@ describe("ProjectSidebar", () => {
 
     expect(screen.getByLabelText("Loading sessions")).toBeInTheDocument();
     expect(screen.queryByText("No sessions shown")).not.toBeInTheDocument();
+  });
+
+  // ── Rename worker sessions ───────────────────────────────────────────
+
+  describe("session rename", () => {
+    function renderWithSession(displayName: string | null = null) {
+      // When a displayName is supplied, treat it as a user-set rename so the
+      // sidebar renders it as the row label (auto-derived names are gated).
+      return render(
+        <ProjectSidebar
+          projects={projects}
+          sessions={[
+            makeSession({
+              id: "worker-1",
+              projectId: "project-1",
+              summary: "Review API changes",
+              displayName,
+              displayNameUserSet: displayName !== null,
+              branch: null,
+              status: "needs_input",
+              activity: "waiting_input",
+            }),
+          ]}
+          activeProjectId="project-1"
+          activeSessionId="worker-1"
+        />,
+      );
+    }
+
+    it("renders a pencil button for each worker session row", () => {
+      renderWithSession();
+      expect(screen.getByRole("button", { name: /rename worker-1/i })).toBeInTheDocument();
+    });
+
+    it("opens an inline input prefilled with the displayed title on pencil click", () => {
+      renderWithSession();
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i }) as HTMLInputElement;
+      expect(input.value).toBe("Review API changes");
+    });
+
+    it("PATCHes the new name and shows it immediately on Enter", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "worker-1", displayName: "PR 1466 review" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession();
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "PR 1466 review" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/sessions/worker-1",
+          expect.objectContaining({
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ displayName: "PR 1466 review" }),
+          }),
+        );
+      });
+
+      // Optimistic update: the new name appears without waiting for SSE.
+      expect(screen.getByRole("link", { name: "Open PR 1466 review" })).toBeInTheDocument();
+    });
+
+    it("sends null to clear when the input is empty (revert to default)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "worker-1", displayName: null }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession("Existing rename");
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "   " } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/sessions/worker-1",
+          expect.objectContaining({
+            body: JSON.stringify({ displayName: null }),
+          }),
+        );
+      });
+    });
+
+    it("cancels on Escape without firing PATCH", () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession("Existing rename");
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "Half-typed change" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      // Input is gone; original name is back.
+      expect(screen.queryByRole("textbox", { name: /rename worker-1/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open Existing rename" })).toBeInTheDocument();
+    });
+
+    it("does not fire a duplicate PATCH if Enter and onBlur both trigger", async () => {
+      // Some browsers fire blur during input unmount after the Enter handler
+      // already cleared editing state. The submitRename guard should swallow
+      // the second call.
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "worker-1", displayName: "Renamed" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession();
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "Renamed" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      // Simulate the post-unmount blur cascade.
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("does not shadow PR title with auto-derived displayName (displayNameUserSet=false)", () => {
+      // Regression: an auto-derived displayName captured at spawn time must not
+      // beat a live PR title in the sidebar. Mirrors the gate in getSessionTitle.
+      render(
+        <ProjectSidebar
+          projects={projects}
+          sessions={[
+            makeSession({
+              id: "worker-1",
+              projectId: "project-1",
+              displayName: "Stale spawn-time label",
+              displayNameUserSet: false,
+              branch: null,
+              pr: makePR({ title: "feat: live PR title" }),
+            }),
+          ]}
+          activeProjectId="project-1"
+          activeSessionId="worker-1"
+        />,
+      );
+      expect(screen.getByRole("link", { name: "Open feat: live PR title" })).toBeInTheDocument();
+      expect(screen.queryByText("Stale spawn-time label")).not.toBeInTheDocument();
+    });
+
+    it("rolls back the optimistic name when the PATCH fails", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "Failed to rename session" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession("Original");
+
+      fireEvent.click(screen.getByRole("button", { name: /rename worker-1/i }));
+      const input = screen.getByRole("textbox", { name: /rename worker-1/i });
+      fireEvent.change(input, { target: { value: "Optimistic name" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      // Settles back to the prop value once the failed PATCH resolves.
+      await waitFor(() => {
+        expect(screen.getByRole("link", { name: "Open Original" })).toBeInTheDocument();
+      });
+    });
   });
 });

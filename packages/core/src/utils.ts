@@ -4,14 +4,20 @@
 
 import { open, stat } from "node:fs/promises";
 import type { OrchestratorConfig } from "./types.js";
+import { isWindows } from "./platform.js";
 
 /**
- * POSIX-safe shell escaping: wraps value in single quotes,
- * escaping any embedded single quotes as '\\'' .
+ * Shell-safe escaping for the platform's default shell.
  *
- * Safe for use in both `sh -c` and `execFile` contexts.
+ * - Unix (/bin/sh): wraps in single quotes, escapes embedded ' as '\''
+ * - Windows (PowerShell): wraps in single quotes, escapes embedded ' as ''
  */
 export function shellEscape(arg: string): string {
+  if (isWindows()) {
+    // PowerShell: single-quoted strings use '' for embedded single quotes
+    return "'" + arg.replace(/'/g, "''") + "'";
+  }
+  // POSIX sh: single-quoted strings use '\'' for embedded single quotes
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 

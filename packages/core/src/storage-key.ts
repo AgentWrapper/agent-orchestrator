@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
 
+// Normalize a filesystem path to a posix-style string so the storage key hash
+// is stable across Windows/macOS/Linux. Without this, the same repo produces a
+// different storage key on Windows (drive letters + backslashes) than on Unix.
+function toPosixPath(p: string): string {
+  const resolved = resolve(p);
+  // On Windows, strip drive letter and flip separators. On Unix this is a no-op.
+  const driveStripped = resolved.replace(/^[A-Za-z]:/, "");
+  return driveStripped.split(sep).join("/");
+}
+
 export interface StorageKeyInput {
   originUrl: string | null;
   gitRoot: string;
@@ -43,7 +53,7 @@ export function relativeSubdir(gitRoot: string, projectPath: string): string {
 }
 
 export function deriveStorageKey({ originUrl, gitRoot, projectPath }: StorageKeyInput): string {
-  const normalizedOrigin = originUrl !== null ? normalizeOriginUrl(originUrl) : `local://${resolve(gitRoot)}`;
+  const normalizedOrigin = originUrl !== null ? normalizeOriginUrl(originUrl) : `local://${toPosixPath(gitRoot)}`;
   const subdir = relativeSubdir(gitRoot, projectPath);
   const raw = `${normalizedOrigin}#${subdir}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 12);

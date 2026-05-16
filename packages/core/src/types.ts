@@ -458,20 +458,22 @@ export interface AttachInfo {
  * Agent adapter for a specific AI coding tool.
  * Knows how to launch, detect activity, and extract session info.
  */
+
+export const PROCESS_PROBE_INDETERMINATE = "indeterminate" as const;
+
+export type ProcessProbeResult = boolean | typeof PROCESS_PROBE_INDETERMINATE;
+
+export function isProcessProbeIndeterminate(
+  result: ProcessProbeResult,
+): result is typeof PROCESS_PROBE_INDETERMINATE {
+  return result === PROCESS_PROBE_INDETERMINATE;
+}
+
 export interface Agent {
   readonly name: string;
 
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
-
-  /**
-   * How the initial prompt should be delivered to the agent.
-   * - "inline" (default): prompt is included in the launch command (e.g. -p flag)
-   * - "post-launch": prompt is sent via runtime.sendMessage() after the agent starts,
-   *   keeping the agent in interactive mode. Use this for agents where inlining
-   *   the prompt causes one-shot/exit behavior (e.g. Claude Code's -p flag).
-   */
-  readonly promptDelivery?: "inline" | "post-launch";
 
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
@@ -492,8 +494,14 @@ export interface Agent {
    */
   getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
 
-  /** Check if agent process is running (given runtime handle) */
-  isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
+  /**
+   * Check if agent process is running (given runtime handle).
+   *
+   * Returns "indeterminate" when the probe could not reliably determine
+   * liveness (for example, `ps`/`tmux` timed out or failed). Callers must
+   * treat that as no verdict, not as a missing process.
+   */
+  isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult>;
 
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
@@ -522,7 +530,7 @@ export interface Agent {
 
   /**
    * Optional: Set up agent-specific hooks/config in the workspace for automatic metadata updates.
-   * Called once per workspace during ao init/start and when creating new worktrees.
+   * Called once per workspace during ao start and when creating new worktrees.
    *
    * Each agent plugin implements this for their own config format:
    * - Claude Code: writes .claude/settings.json with PostToolUse hook
@@ -603,7 +611,7 @@ export interface AgentLaunchConfig {
 export interface WorkspaceHooksConfig {
   /** Data directory where session metadata files are stored */
   dataDir: string;
-  /** Optional session ID (may not be known at ao init time) */
+  /** Optional session ID (may not be known at workspace setup time) */
   sessionId?: string;
 }
 
@@ -644,6 +652,12 @@ export interface Workspace {
 
   /** List existing workspaces for a project */
   list(projectId: string): Promise<WorkspaceInfo[]>;
+
+  /**
+   * Optional: find a pre-existing AO-managed workspace that already tracks the
+   * requested branch and can be adopted instead of creating a fresh workspace.
+   */
+  findManagedWorkspace?(config: WorkspaceCreateConfig): Promise<WorkspaceInfo | null>;
 
   /** Optional: run hooks after workspace creation (symlinks, installs, etc.) */
   postCreate?(info: WorkspaceInfo, project: ProjectConfig): Promise<void>;
@@ -813,6 +827,9 @@ export interface SCM {
 
   /** Get individual CI check statuses */
   getCIChecks(pr: PRInfo): Promise<CICheck[]>;
+
+  /** Get failed CI jobs/steps with a bounded failed-log tail, if supported. */
+  getCIFailureSummary?(pr: PRInfo, failedChecks?: CICheck[]): Promise<CIFailureSummary | null>;
 
   /** Get overall CI summary */
   getCISummary(pr: PRInfo): Promise<CIStatus>;
@@ -994,6 +1011,15 @@ export interface CICheck {
   conclusion?: string;
   startedAt?: Date;
   completedAt?: Date;
+}
+
+export interface CIFailureSummary {
+  failedJobs: Array<{
+    name: string;
+    failedStep?: string;
+    runUrl: string;
+    logTail?: string;
+  }>;
 }
 
 export type CIStatus = "pending" | "passing" | "failing" | "none";
@@ -1498,6 +1524,9 @@ export interface ProjectConfig {
   /** Override default workspace */
   workspace?: string;
 
+  /** Environment variables forwarded into worker session runtimes (AO_* internals always win) */
+  env?: Record<string, string>;
+
   /** Issue tracker configuration */
   tracker?: TrackerConfig;
 
@@ -1764,13 +1793,26 @@ export interface SessionMetadata {
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**
-   * Stable human-readable display name derived from task context at spawn time.
-   * Populated from issue title, user prompt, or orchestrator system prompt —
-   * whichever was available when the session was created. Used by the dashboard
-   * as a fallback above humanized branch names so sessions are identifiable
-   * even when PR/issue enrichment is unavailable.
+   * Human-readable display name for the session.
+   *
+   * Populated automatically at spawn time from the best available task context
+   * (issue title, user prompt, or orchestrator system prompt). Can be
+   * overwritten later via the dashboard rename UI — the session ID (`ao-N`)
+   * remains the canonical identifier; only display surfaces are affected.
+   *
+   * Whether this value should beat PR/issue titles in the dashboard depends
+   * on `displayNameUserSet` — auto-derived values stay below live tracker
+   * signals, user-set values win over them.
    */
   displayName?: string;
+  /**
+   * Set to `true` when the user explicitly renamed the session via the
+   * dashboard. The dashboard fallback chain promotes `displayName` above
+   * PR/issue titles only when this flag is true, so an auto-derived spawn-time
+   * `displayName` doesn't shadow a live PR title for sessions the user never
+   * touched.
+   */
+  displayNameUserSet?: boolean;
 }
 
 // =============================================================================

@@ -34,6 +34,7 @@ vi.mock("node:child_process", () => {
 
 import { createPluginRegistry } from "../plugin-registry.js";
 import { createSessionManager } from "../session-manager.js";
+import { closeDb } from "../events-db.js";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata } from "../metadata.js";
 import { getProjectSessionsDir, getProjectDir } from "../paths.js";
@@ -60,6 +61,8 @@ let mockAgent: Agent;
 let mockWorkspace: Workspace;
 let config: OrchestratorConfig;
 let project: OrchestratorConfig["projects"][string];
+let previousHome: string | undefined;
+let previousUserProfile: string | undefined;
 
 function mockGh(result: unknown): void {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
@@ -91,8 +94,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 // Setup / teardown
 // ---------------------------------------------------------------------------
 
-let previousHome: string | undefined;
-
 beforeEach(() => {
   vi.clearAllMocks();
 
@@ -107,7 +108,12 @@ beforeEach(() => {
 
   mkdirSync(env.tmpDir, { recursive: true });
   previousHome = process.env["HOME"];
+  // On Windows, Node's homedir() reads USERPROFILE — overriding HOME alone is
+  // insufficient. We override both so AO base-dir resolution lands in tmpDir
+  // regardless of platform.
+  previousUserProfile = process.env["USERPROFILE"];
   process.env["HOME"] = env.tmpDir;
+  process.env["USERPROFILE"] = env.tmpDir;
   env.configPath = join(env.tmpDir, "agent-orchestrator.yaml");
   writeFileSync(env.configPath, "projects: {}\n");
 
@@ -156,11 +162,21 @@ beforeEach(() => {
   mkdirSync(env.sessionsDir, { recursive: true });
 
   env.cleanup = () => {
+    // closeDb releases the activity-events.db SQLite lock so Windows can
+    // unlink it; rmSync's maxRetries alone doesn't break the lock.
+    closeDb();
+    // V2 storage: project files live under getProjectDir(projectId).
+    // maxRetries/retryDelay handle Windows EBUSY (antivirus / search indexer
+    // briefly holding files); they're no-ops on Unix.
     const projectDir = getProjectDir("my-app");
     if (existsSync(projectDir)) {
-      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
-    rmSync(env.tmpDir, { recursive: true, force: true });
+    rmSync(env.tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
+    if (previousUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = previousUserProfile;
   };
 });
 
@@ -364,7 +380,7 @@ describe("plugin integration", () => {
       expect(result.killed).toContain("app-1");
       // Verify the gh CLI was called with the right args
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["issue", "view", "99", "--repo", "acme/app"]),
         expect.any(Object),
       );
@@ -451,7 +467,7 @@ describe("plugin integration", () => {
       expect(result.skipped).toContain("app-1");
       // Verify gh CLI was called for PR state check
       expect(ghMock).toHaveBeenCalledWith(
-        expect.stringMatching(/(?:^|\/)?gh$/),
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
         expect.arrayContaining(["pr", "view", "42"]),
         expect.any(Object),
       );

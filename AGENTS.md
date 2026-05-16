@@ -29,6 +29,26 @@ Monorepo (pnpm) with packages: `core`, `cli`, `web`, and `plugins/*`. The web da
 
 Full guidelines with AO-specific context: see "Working Principles" in CLAUDE.md.
 
+## Skills
+
+Agents working on this repo should use these checked-in skills:
+
+### Bug Triage (`skills/bug-triage/`)
+
+**When to use:** Any time a bug is reported — in chat, issues, or live observation.
+
+**What it covers:**
+- Full triage workflow: gather context → search duplicates → file/update GitHub issues → push fix PRs
+- Root cause analysis with `git log -S` archaeology and upstream dependency research
+- GitHub API-based file editing (no local checkout needed) via `scripts/push_fix_to_github.py`
+- NPM package regression diffing
+- Remote code inspection when the repo isn't cloned locally
+
+**How to load:** Read `skills/bug-triage/SKILL.md` and follow its step-by-step workflow. The `scripts/` directory contains executable tools:
+- `push_fix_to_github.py` — Push a single-file fix and create a PR entirely via GitHub API
+
+**Always pull latest main before triaging.** Stale code = bad triage. No exceptions.
+
 ## Key Files
 
 - `packages/core/src/types.ts` — All plugin interfaces (Agent, Runtime, Workspace, etc.)
@@ -47,3 +67,13 @@ Full guidelines with AO-specific context: see "Working Principles" in CLAUDE.md.
 - Ctrl+C on `ao start` performs full graceful shutdown (same as `ao stop`)
 - `LastStopState` includes `otherProjects` for cross-project session restore on next `ao start`
 - Dashboard sidebar always shows ALL projects' sessions regardless of active project view
+
+## Cross-Platform (Windows) Compatibility
+
+AO ships on macOS, Linux, **and Windows**. All three are first-class.
+
+**Golden Rule:** Never write `process.platform === "win32"` in new code. Use `isWindows()` from `@aoagents/ao-core`. If you need branching the helpers don't cover, add it to `packages/core/src/platform.ts` — never inline at the call site. Inline checks bypass the central platform-mock test pattern and become silent regressions.
+
+**Read `docs/CROSS_PLATFORM.md` before merging any change that touches:** process spawning/killing/signalling, file paths, shell commands, network binding, POSIX shell-outs (`tmux`, `lsof`, etc.), runtime/agent/workspace plugins, agent-plugin internals (`setupPathWrapperWorkspace`, `getActivityState`, `formatLaunchCommand`, `isProcessRunning`, `detect()`), the Windows pty-host pipe protocol or registry, or any new `process.platform === "win32"` check.
+
+That doc has the **full helper inventory** (every import path), the EPERM-vs-ESRCH gotcha when probing processes, path case-insensitivity rules, PowerShell-vs-bash differences (`& ` call-operator, `$env:VAR`, no `/dev/null`, no `$(cat …)`, `.cmd` shim resolution via `shell: isWindows()`), IPv6 `localhost` stalls on Windows, agent-plugin Windows specifics, the test pattern for mocking `process.platform`, and a 10-point pre-merge checklist. CLAUDE.md has the quick-reference helper table; CROSS_PLATFORM.md has the depth.

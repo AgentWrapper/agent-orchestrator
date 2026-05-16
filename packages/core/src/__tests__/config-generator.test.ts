@@ -20,6 +20,7 @@ import {
   resolveCloneTarget,
   sanitizeProjectId,
 } from "../config-generator.js";
+import { getDefaultRuntime } from "../platform.js";
 
 describe("withConfigSchema", () => {
   it("uses canonical schema URL for missing schema", () => {
@@ -274,7 +275,7 @@ describe("generateConfigFromUrl", () => {
     );
     expect(config.port).toBe(3000);
     expect(config.defaults).toEqual({
-      runtime: "tmux",
+      runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
       notifiers: [],

@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-cli",
-  "version": "0.4.0",
+  "version": "0.8.0",
   "description": "CLI for agent-orchestrator — the `ao` command",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc && cp -r src/assets dist/",
+    "build": "tsc && node --input-type=commonjs -e \"require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -68,5 +68,9 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
