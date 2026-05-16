@@ -119,8 +119,10 @@ export function UpdateBanner() {
           <span className="font-medium">
             Update available{channelLabel}: {info.current} → {info.latest}
           </span>
-          {phase === "blocked" && errorMessage ? (
-            <span className="text-xs text-[var(--color-status-error)]">{errorMessage}</span>
+          {phase === "blocked" ? (
+            <span className="text-xs text-[var(--color-text-secondary)]">
+              Sessions are active. Run in your terminal:
+            </span>
           ) : phase === "error" && errorMessage ? (
             <span className="text-xs text-[var(--color-status-error)]">
               {errorMessage}
@@ -135,14 +137,29 @@ export function UpdateBanner() {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handleUpdate()}
-          disabled={phase === "starting"}
-          className="rounded-sm border border-[var(--color-accent-amber-border)] bg-[var(--color-accent-amber)] px-3 py-1 text-xs font-medium text-[var(--color-text-inverse)] hover:bg-[color-mix(in_srgb,var(--color-accent-amber)_85%,black)] disabled:cursor-wait disabled:opacity-60"
-        >
-          {phase === "starting" ? "Updating…" : "Update"}
-        </button>
+        {phase === "blocked" ? (
+          <code
+            onClick={(e) => {
+              void navigator.clipboard.writeText("ao stop && ao update && ao start");
+              const el = e.currentTarget;
+              el.textContent = "Copied!";
+              setTimeout(() => { el.textContent = "ao stop && ao update && ao start"; }, 1500);
+            }}
+            title="Click to copy"
+            className="cursor-pointer rounded-sm border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-2 py-1 font-[var(--font-mono)] text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated-hover)]"
+          >
+            ao stop &amp;&amp; ao update &amp;&amp; ao start
+          </code>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void handleUpdate()}
+            disabled={phase === "starting"}
+            className="rounded-sm border border-[var(--color-accent-amber-border)] bg-[var(--color-accent-amber)] px-3 py-1 text-xs font-medium text-[var(--color-text-inverse)] hover:bg-[color-mix(in_srgb,var(--color-accent-amber)_85%,black)] disabled:cursor-wait disabled:opacity-60"
+          >
+            {phase === "starting" ? "Updating…" : "Update"}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleDismiss}
