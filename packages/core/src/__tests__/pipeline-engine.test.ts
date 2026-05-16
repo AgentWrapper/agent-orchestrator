@@ -293,7 +293,7 @@ describe("pipeline engine — end-to-end", () => {
     expect(executor.startCalls).toHaveLength(0);
   });
 
-  it("synthesizes STAGE_FAILED for non-agent executor kinds (v0.2 only supports agent)", async () => {
+  it("fails a command stage with a clear message when commandExecutor is not configured", async () => {
     const registry = withRegistry([makeAgentPlugin("codex", ["review"])]);
     const store = createPipelineStore(storeRoot);
     const executor = makeMockExecutor();
@@ -317,7 +317,7 @@ describe("pipeline engine — end-to-end", () => {
 
     const run = store.loadRun(runId)!;
     expect(run.stages["lint"]?.status).toBe("failed");
-    expect(run.stages["lint"]?.errorMessage).toContain("not supported in v0.2");
+    expect(run.stages["lint"]?.errorMessage).toContain("command executor not configured");
     expect(executor.startCalls).toHaveLength(0);
   });
 

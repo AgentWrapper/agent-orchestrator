@@ -28,6 +28,7 @@ const pr: PRInfo = {
   branch: "feat/my-feature",
   baseBranch: "main",
   isDraft: false,
+  isFromFork: false,
 };
 
 const project: ProjectConfig = {
@@ -341,6 +342,7 @@ describe("scm-gitlab plugin", () => {
         branch: "feat/my-feature",
         baseBranch: "main",
         isDraft: false,
+        isFromFork: false,
       });
     });
 

@@ -39,9 +39,13 @@ import {
   asStageRunId,
   emptyEngineState,
   isTerminalLoopState,
+  type Artifact,
+  type BuiltinTaskContext,
   type EngineState,
   type Pipeline,
   type RunId,
+  type RunState,
+  type Stage,
   type StageRunId,
   type StageTriggerEvent,
 } from "./types.js";
@@ -51,11 +55,28 @@ import {
   type RunningAgentStage,
   type StartStageInput,
 } from "./executors/agent.js";
+import type { BuiltinExecutor } from "./executors/builtin-router.js";
+import type { CommandStageExecutor, CommandStartInput } from "./executors/command.js";
 
 export interface PipelineEngineDeps {
   store: PipelineStore;
   registry: PluginRegistry;
   agentExecutor: AgentStageExecutor;
+  /**
+   * Required for `command` stages. When omitted, a `command` stage fails with
+   * a clear "command executor not configured" error rather than hanging.
+   */
+  commandExecutor?: CommandStageExecutor;
+  /** Required for `builtin/router` stages. */
+  builtinRouter?: BuiltinExecutor;
+  /** Required for `builtin/compose` stages. */
+  builtinCompose?: BuiltinExecutor;
+  /**
+   * Callback used by `builtin/router` to deliver payloads to a target
+   * session. Typically `(id, msg) => sessionManager.send(asSessionId(id), msg)`.
+   * Without it, router stages fail with "sendToSession not configured".
+   */
+  sendToSession?(sessionId: string, payload: string): Promise<void>;
   /** Optional initial state (e.g. restored from disk on startup). Defaults to empty. */
   initialState?: EngineState;
   /** Override clock for tests. */
@@ -72,6 +93,12 @@ export interface StartRunInput {
   headSha: string;
   /** Optional issue id forwarded into spawned sessions. */
   issueId?: string;
+  /**
+   * True when the triggering PR is from a fork. Forwarded into the command
+   * executor so it can enforce the fork-safety opt-in (`Stage.allowFork`).
+   * Defaults to `false` for non-PR runs (manual triggers).
+   */
+  isFromFork?: boolean;
 }
 
 export interface PipelineEngine {
@@ -103,18 +130,30 @@ export interface PipelineEngine {
 }
 
 export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
-  const { store, registry, agentExecutor, now = Date.now } = deps;
+  const {
+    store,
+    registry,
+    agentExecutor,
+    commandExecutor,
+    builtinRouter,
+    builtinCompose,
+    sendToSession,
+    now = Date.now,
+  } = deps;
 
   let state: EngineState = deps.initialState ?? emptyEngineState();
   /** stageRunId → executor handle for stages we own. */
   const inflight = new Map<StageRunId, RunningAgentStage>();
   /**
-   * Side-table for projectId/issueId, keyed by RunId. The persisted RunState
-   * shape was locked by v0.1 and doesn't carry these, so the engine threads
-   * them out-of-band into START_STAGE inputs. Pruned by
+   * Side-table for projectId/issueId/isFromFork, keyed by RunId. The persisted
+   * RunState shape was locked by v0.1 and doesn't carry these, so the engine
+   * threads them out-of-band into START_STAGE inputs. Pruned by
    * `pruneTerminatedRunMetadata` after every dispatch.
    */
-  const runMetadata = new Map<RunId, { projectId: string; issueId?: string }>();
+  const runMetadata = new Map<
+    RunId,
+    { projectId: string; issueId?: string; isFromFork: boolean }
+  >();
 
   /**
    * Serialization lock for top-level dispatches. Each public dispatch chains
@@ -190,21 +229,11 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
       case "START_STAGE": {
         const run = state.runs[effect.runId];
         if (!run) break;
-        if (effect.stage.executor.kind !== "agent") {
-          // command/builtin executors are out of scope for v0.2 — synthesize
-          // a STAGE_FAILED so the run terminates cleanly instead of hanging.
-          await dispatchInline({
-            type: "STAGE_FAILED",
-            now: now(),
-            runId: effect.runId,
-            stageName: effect.stage.name,
-            errorMessage: `Executor kind "${effect.stage.executor.kind}" is not supported in v0.2 (agent executor only).`,
-          });
-          break;
-        }
 
-        // Mark the stage as running BEFORE starting the executor — failures
-        // during spawn translate to STAGE_FAILED, which requires running|pending.
+        // Mark the stage as running BEFORE handing off to an executor —
+        // failures during spawn translate to STAGE_FAILED, which requires
+        // running|pending. The reducer guards against double-START so this
+        // is safe even when the executor completes synchronously.
         await dispatchInline({
           type: "STAGE_STARTED",
           now: now(),
@@ -213,27 +242,20 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
         });
 
         const meta = runMetadata.get(run.runId);
-        const startInput: StartStageInput = {
-          pipelineName: run.pipelineName,
-          projectId: meta?.projectId ?? "",
-          runId: effect.runId,
-          stageRunId: effect.stageRunId,
-          stage: effect.stage,
-          loopRound: run.loopRounds,
-          ...(meta?.issueId ? { issueId: meta.issueId } : {}),
-        };
-
-        try {
-          const handle = await agentExecutor.startStage(startInput);
-          inflight.set(effect.stageRunId, handle);
-        } catch (err) {
+        const kind = effect.stage.executor.kind;
+        if (kind === "agent") {
+          await runAgentStage(run, effect.runId, effect.stageRunId, effect.stage, meta);
+        } else if (kind === "command") {
+          await runCommandStage(run, effect.runId, effect.stage, meta);
+        } else if (kind === "builtin/router" || kind === "builtin/compose") {
+          await runBuiltinStage(run, effect.runId, effect.stageRunId, effect.stage);
+        } else {
           await dispatchInline({
             type: "STAGE_FAILED",
             now: now(),
             runId: effect.runId,
             stageName: effect.stage.name,
-            errorMessage:
-              err instanceof Error ? err.message : `agent executor failed: ${String(err)}`,
+            errorMessage: `Executor kind "${kind}" is not supported.`,
           });
         }
         break;
@@ -257,6 +279,169 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
         // a later sub-task (#1629/#1630) wires it into the activity-event log.
         break;
     }
+  }
+
+  async function runAgentStage(
+    run: RunState,
+    runId: RunId,
+    stageRunId: StageRunId,
+    stage: Stage,
+    meta: { projectId: string; issueId?: string } | undefined,
+  ): Promise<void> {
+    const startInput: StartStageInput = {
+      pipelineName: run.pipelineName,
+      projectId: meta?.projectId ?? "",
+      runId,
+      stageRunId,
+      stage,
+      loopRound: run.loopRounds,
+      ...(meta?.issueId ? { issueId: meta.issueId } : {}),
+    };
+
+    try {
+      const handle = await agentExecutor.startStage(startInput);
+      inflight.set(stageRunId, handle);
+    } catch (err) {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage:
+          err instanceof Error ? err.message : `agent executor failed: ${String(err)}`,
+      });
+    }
+  }
+
+  async function runCommandStage(
+    run: RunState,
+    runId: RunId,
+    stage: Stage,
+    meta: { projectId: string; issueId?: string; isFromFork: boolean } | undefined,
+  ): Promise<void> {
+    if (!commandExecutor) {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage: `command executor not configured for stage "${stage.name}"`,
+      });
+      return;
+    }
+
+    const stageRunId = run.stages[stage.name]?.stageRunId;
+    if (!stageRunId) {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage: `command stage "${stage.name}" has no stageRunId in run state`,
+      });
+      return;
+    }
+
+    const input: CommandStartInput = {
+      pipelineName: run.pipelineName,
+      runId,
+      stageRunId,
+      stage,
+      loopRound: run.loopRounds,
+      isFromFork: meta?.isFromFork ?? false,
+    };
+
+    const outcome = await commandExecutor.run(input);
+    if (outcome.status === "completed") {
+      await dispatchInline({
+        type: "STAGE_COMPLETED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        artifacts: outcome.artifacts,
+      });
+    } else {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage: outcome.errorMessage,
+      });
+    }
+  }
+
+  async function runBuiltinStage(
+    run: RunState,
+    runId: RunId,
+    stageRunId: StageRunId,
+    stage: Stage,
+  ): Promise<void> {
+    const isRouter = stage.executor.kind === "builtin/router";
+    const executor = isRouter ? builtinRouter : builtinCompose;
+    if (!executor) {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage: `${stage.executor.kind} executor not configured for stage "${stage.name}"`,
+      });
+      return;
+    }
+
+    const ctx = createBuiltinContext(run, runId, stageRunId, stage.name);
+    const outcome = await executor.run({
+      runId,
+      stageRunId,
+      stage,
+      loopRound: run.loopRounds,
+      ctx,
+    });
+
+    if (outcome.status === "completed") {
+      await dispatchInline({
+        type: "STAGE_COMPLETED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        artifacts: outcome.artifacts,
+      });
+    } else {
+      await dispatchInline({
+        type: "STAGE_FAILED",
+        now: now(),
+        runId,
+        stageName: stage.name,
+        errorMessage: outcome.errorMessage,
+      });
+    }
+  }
+
+  function createBuiltinContext(
+    run: RunState,
+    runId: RunId,
+    stageRunId: StageRunId,
+    stageName: string,
+  ): BuiltinTaskContext {
+    return {
+      runId,
+      stageRunId,
+      stageName,
+      sessionId: run.sessionId,
+      pipelineName: run.pipelineName,
+      readSiblingArtifacts: async (upstreamStageName: string): Promise<Artifact[]> => {
+        const upstream = run.stages[upstreamStageName];
+        if (!upstream) return [];
+        return store.listArtifacts(runId, upstream.stageRunId);
+      },
+      sendToSession: async (targetSessionId: string, payload: string): Promise<void> => {
+        if (!sendToSession) {
+          throw new Error("sendToSession callback not configured on engine deps");
+        }
+        await sendToSession(targetSessionId, payload);
+      },
+    };
   }
 
   async function tick(): Promise<void> {
@@ -307,12 +492,14 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
       stageRunIds[stage.name] = asStageRunId(`sr-${randomUUID()}`);
     }
 
-    // Stash projectId/issueId BEFORE dispatch so the START_STAGE effect — which
-    // fires synchronously inside the same dispatch — can read them. The
-    // persisted RunState shape was locked by v0.1, so we carry these out-of-band.
+    // Stash projectId/issueId/isFromFork BEFORE dispatch so the START_STAGE
+    // effect — which fires synchronously inside the same dispatch — can read
+    // them. The persisted RunState shape was locked by v0.1, so we carry
+    // these out-of-band.
     runMetadata.set(runId, {
       projectId: input.projectId,
       issueId: input.issueId,
+      isFromFork: input.isFromFork ?? false,
     });
 
     await withLock(() =>

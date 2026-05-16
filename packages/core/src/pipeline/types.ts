@@ -64,7 +64,47 @@ export interface CommandExecutor {
   cwd?: string;
 }
 
-export type StageExecutor = AgentExecutor | CommandExecutor;
+/**
+ * Routes findings from upstream stages into an existing AO session via
+ * {@link BuiltinTaskContext.sendToSession}. Replaces the original spec's
+ * `SEND_TO_AGENT` reducer command — the routing decision is now a stage with
+ * its own state, retries, and DAG position.
+ */
+export interface BuiltinRouterExecutor {
+  kind: "builtin/router";
+  /**
+   * The upstream stage names whose findings should be delivered. Must be a
+   * subset of this stage's `dependsOn` so the scheduler has already
+   * finalized them when the router runs.
+   */
+  fromStages: string[];
+  /**
+   * Target session resolution. Either a literal sessionId or a sentinel
+   * keyword the engine resolves at run time. v1.2 only supports `"self"`
+   * (the session this pipeline run is scoped to) — additional resolvers
+   * land alongside cross-session orchestration.
+   */
+  target: { kind: "session"; sessionId: string } | { kind: "self" };
+}
+
+/**
+ * Bundles findings from multiple upstream stages into a single composite
+ * findings artifact for a downstream stage to consume. The composite is
+ * emitted as a `json` artifact whose `data.findings` is the merged list,
+ * tagged with the originating stage name.
+ */
+export interface BuiltinComposeExecutor {
+  kind: "builtin/compose";
+  /**
+   * The upstream stage names whose findings should be merged. Must be a
+   * subset of this stage's `dependsOn`.
+   */
+  fromStages: string[];
+}
+
+export type BuiltinExecutor = BuiltinRouterExecutor | BuiltinComposeExecutor;
+
+export type StageExecutor = AgentExecutor | CommandExecutor | BuiltinExecutor;
 
 export interface TaskSpec {
   /** Prompt text injected into the spawned agent session, or main script body for command. */
@@ -139,6 +179,14 @@ export interface Stage {
    * "all `dependsOn` stages must have succeeded".
    */
   routes?: StageRoutes;
+  /**
+   * Opt-in fork-PR safety override for `command` stages. The command executor
+   * refuses to run a stage whose triggering PR is from a fork unless this is
+   * set to `true`. Agent and builtin stages ignore the flag — agent stages
+   * run in their own sandboxed sessions, and builtins are pure functions over
+   * findings. Default `false` (refuse on forks).
+   */
+  allowFork?: boolean;
 }
 
 export interface Pipeline {
@@ -321,4 +369,45 @@ export function emptyEngineState(): EngineState {
     currentRunByLoop: {},
     historySummaries: {},
   };
+}
+
+// ============================================================================
+// Builtin task context
+// ============================================================================
+
+/**
+ * Capabilities surface a `builtin/*` executor sees at run time. The engine
+ * constructs a fresh context per stage invocation — the implementation is the
+ * only place that touches the pipeline store and session manager, so builtin
+ * executors stay testable as pure functions over their context.
+ *
+ * v1.2 covers the three capabilities the spec calls out:
+ *   - read findings from sibling stages (router + compose)
+ *   - send a payload to a target session (router)
+ *   - write artifacts back into the pipeline store (compose)
+ *
+ * The context is intentionally narrow: builtins must not need access to the
+ * full SessionManager or PipelineStore. If a builtin needs a capability not
+ * exposed here, extend this interface rather than passing the underlying
+ * dependency through.
+ */
+export interface BuiltinTaskContext {
+  /** Identity of the stage currently executing. */
+  runId: RunId;
+  stageRunId: StageRunId;
+  stageName: string;
+  /** Pipeline run scope, for routing and downstream lookups. */
+  sessionId: string;
+  pipelineName: string;
+  /**
+   * Return artifacts emitted by an upstream sibling stage in the same run.
+   * Returns `[]` when the sibling has no artifacts or has not run.
+   */
+  readSiblingArtifacts(stageName: string): Promise<Artifact[]>;
+  /**
+   * Deliver a payload to a target session. Implementations route through
+   * `SessionManager.send()`. The payload is the literal message body the
+   * target session receives.
+   */
+  sendToSession(targetSessionId: string, payload: string): Promise<void>;
 }

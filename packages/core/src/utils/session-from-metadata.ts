@@ -83,6 +83,9 @@ export function sessionFromMetadata(
             branch: meta["branch"] ?? "",
             baseBranch: "",
             isDraft: prIsDraft,
+            // Metadata reconstruction can't know whether the PR is from a
+            // fork; fork-aware behavior is gated on a fresh SCM probe.
+            isFromFork: false,
           };
         })()
       : null,

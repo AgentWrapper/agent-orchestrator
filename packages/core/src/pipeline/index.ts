@@ -39,6 +39,22 @@ export {
   type RunningAgentStage,
   type StageOutcome,
   type StartStageInput,
+  createCommandExecutor,
+  formatForkRefusalMessage,
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  DEFAULT_COMMAND_STDOUT_CAP_BYTES,
+  type CommandExecutorDeps,
+  type CommandStageExecutor,
+  type CommandStartInput,
+  type CommandOutcome,
+  parseFindingsJsonl,
+  coerceArtifactInput,
+  createBuiltinRouterExecutor,
+  createBuiltinComposeExecutor,
+  type BuiltinExecutor,
+  type BuiltinRunInput,
+  type BuiltinOutcome,
+  type ComposeRunInput,
 } from "./executors/index.js";
 
 export {
