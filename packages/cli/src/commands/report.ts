@@ -61,14 +61,21 @@ async function writeReport(
   }
   const sessionsDir = getProjectSessionsDir(session.projectId);
   try {
-    const result = applyAgentReport(sessionsDir, sessionName, {
-      state,
-      note,
-      prUrl,
-      prNumber,
-      source,
-      actor: process.env["USER"] ?? process.env["LOGNAME"] ?? process.env["USERNAME"],
-    });
+    const result = applyAgentReport(
+      sessionsDir,
+      sessionName,
+      {
+        state,
+        note,
+        prUrl,
+        prNumber,
+        source,
+        actor: process.env["USER"] ?? process.env["LOGNAME"] ?? process.env["USERNAME"],
+      },
+      {
+        sessionPrefix: project.sessionPrefix,
+      },
+    );
     const label =
       result.previousState === result.nextState
         ? chalk.dim(`(${result.nextState})`)

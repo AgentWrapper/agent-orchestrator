@@ -383,6 +383,7 @@ export function applyAgentReport(
   dataDir: string,
   sessionId: SessionId,
   input: ApplyAgentReportInput,
+  options: { sessionPrefix?: string } = {},
 ): ApplyAgentReportResult {
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) {
@@ -433,7 +434,7 @@ export function applyAgentReport(
     const current = cloneLifecycle(
       parseCanonicalLifecycle(existing, {
         sessionId,
-        sessionKind: deriveSessionKindFromMetadata(sessionId, existing),
+        sessionKind: deriveSessionKindFromMetadata(sessionId, existing, options.sessionPrefix),
         status: validateStatus(existing["status"]),
       }),
     );
@@ -522,7 +523,7 @@ export function applyAgentReport(
 
   const nextLifecycle = parseCanonicalLifecycle(nextMetadata, {
     sessionId,
-    sessionKind: deriveSessionKindFromMetadata(sessionId, nextMetadata),
+    sessionKind: deriveSessionKindFromMetadata(sessionId, nextMetadata, options.sessionPrefix),
     status: validateStatus(nextMetadata["status"]),
   });
 

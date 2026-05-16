@@ -1,8 +1,5 @@
 import type { SessionId, SessionKind } from "../types.js";
-
-function escapeRegex(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegex } from "./regex.js";
 
 export function deriveSessionKindFromMetadata(
   sessionId: SessionId,

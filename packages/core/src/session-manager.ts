@@ -93,6 +93,7 @@ import {
 } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { deriveSessionKindFromMetadata } from "./utils/session-kind.js";
+import { escapeRegex } from "./utils/regex.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
@@ -184,11 +185,6 @@ async function discoverOpenCodeSessionIdByTitle(
 ): Promise<string | undefined> {
   const matches = await discoverOpenCodeSessionIdsByTitle(sessionId, timeoutMs, sessionListPromise);
   return matches[0];
-}
-
-/** Escape regex metacharacters in a string. */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Get the next session number for a project. */
