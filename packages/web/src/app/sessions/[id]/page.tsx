@@ -616,9 +616,13 @@ export default function SessionPage() {
     const controller = new AbortController();
     projectSessionsFetchControllerRef.current = controller;
     try {
+      // Use the cached list path here. The session-detail sidebar refreshes on
+      // mount and every poll tick; forcing `fresh=true` from this page defeats
+      // sessionManager.listCached() and fans out tmux/ps probes while the page's
+      // own session request is trying to load.
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
       const body = await fetchJsonWithTimeout<ProjectSessionsBody>(query, {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
@@ -676,10 +680,13 @@ export default function SessionPage() {
     const controller = new AbortController();
     sidebarFetchControllerRef.current = controller;
     try {
+      // This poll runs frequently and is fed by mux patches for freshness; do
+      // not force the uncached `fresh=true` list path from the session-detail
+      // page while the critical `/api/sessions/:id` request is loading.
       const body = await fetchJsonWithTimeout<{
         sessions?: DashboardSession[];
         orchestrators?: DashboardOrchestratorLink[];
-      } | null>("/api/sessions?fresh=true", {
+      } | null>("/api/sessions", {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
         timeoutMessage: `Sidebar sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,
