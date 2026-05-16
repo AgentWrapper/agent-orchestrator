@@ -163,6 +163,27 @@ describe("preventIdleSleep", () => {
       expect(handle).toBeNull();
       expect(mockChild.unref).not.toHaveBeenCalled();
     });
+
+    it("swallows async ENOENT error when caffeinate is missing (pid undefined)", async () => {
+      // Real EventEmitter so emit("error") goes through Node's listener machinery.
+      // Without a registered listener, this would propagate as an uncaught
+      // exception and crash AO on stripped macOS images / containers without
+      // caffeinate.
+      const emitter = new EventEmitter();
+      const mockChild = Object.assign(emitter, {
+        pid: undefined,
+        unref: vi.fn(),
+        kill: vi.fn(),
+      }) as unknown as ChildProcess;
+      mockSpawn.mockReturnValue(mockChild);
+
+      const handle = preventIdleSleep();
+
+      expect(handle).toBeNull();
+      // The error listener must be attached BEFORE the pid check so the
+      // async ENOENT that fires after we return is swallowed.
+      expect(() => emitter.emit("error", new Error("spawn ENOENT"))).not.toThrow();
+    });
   });
 
   describe("on Linux", () => {

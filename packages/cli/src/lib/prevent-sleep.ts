@@ -53,6 +53,16 @@ function preventIdleSleepMac(targetPid: number): SleepPreventionHandle | null {
     detached: true,
   });
 
+  // Attach the error listener BEFORE the pid check. Node emits `error`
+  // asynchronously when execvp fails (ENOENT — caffeinate missing on stripped
+  // macOS images or containers); without a listener that becomes an unhandled
+  // exception and crashes AO. The pid-undefined branch below still needs the
+  // listener attached because the async `error` event fires after this
+  // function returns.
+  child.on("error", () => {
+    // caffeinate not available — silently ignore
+  });
+
   // child.pid is undefined when spawn fails synchronously (e.g., ENOENT on old
   // macOS versions where caffeinate is missing).
   if (child.pid === undefined) {
@@ -60,9 +70,6 @@ function preventIdleSleepMac(targetPid: number): SleepPreventionHandle | null {
   }
 
   child.unref();
-  child.on("error", () => {
-    // caffeinate not available — silently ignore
-  });
 
   return {
     release: () => {
