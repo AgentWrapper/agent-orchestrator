@@ -7,12 +7,12 @@ import {
   resolveSpawnTarget,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
+  type PreflightContext,
 } from "@aoagents/ao-core";
 import { DEFAULT_PORT } from "../lib/constants.js";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
-import { preflight } from "../lib/preflight.js";
+import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { getRunning } from "../lib/running-state.js";
 import { projectSessionUrl } from "../lib/routes.js";
@@ -51,6 +51,49 @@ function autoDetectProject(config: OrchestratorConfig): string {
   );
 }
 
+/**
+ * Non-throwing variant — returns null when the project can't be resolved
+ * unambiguously. Used to feed `resolveSpawnTarget`'s fallback parameter so
+ * the prefix/no-prefix and issue/no-issue paths share one code path.
+ */
+function tryAutoDetectProject(config: OrchestratorConfig): string | null {
+  try {
+    return autoDetectProject(config);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the project + issue from a single optional CLI argument.
+ *
+ * Single source of truth for the four cases:
+ *   - `ao spawn`                   → auto-detect project, no issue
+ *   - `ao spawn 42`                → auto-detect project, issue=42
+ *   - `ao spawn xid/42`            → prefix match, issue=42
+ *   - `ao spawn x402-identity/42`  → exact projectId match, issue=42
+ *
+ * Throws (via autoDetectProject) when the project can't be resolved — the
+ * caller wraps in one try/catch instead of duplicating it across branches.
+ */
+function resolveProjectAndIssue(
+  config: OrchestratorConfig,
+  issue: string | undefined,
+): { projectId: string; issueId?: string } {
+  const fallback = tryAutoDetectProject(config);
+  if (issue) {
+    const target = resolveSpawnTarget(config.projects, issue, fallback ?? undefined);
+    if (target) return { projectId: target.projectId, issueId: target.issueId };
+    autoDetectProject(config); // throws with the real error message
+    throw new Error("unreachable");
+  }
+  if (!fallback) {
+    autoDetectProject(config); // throws
+    throw new Error("unreachable");
+  }
+  return { projectId: fallback };
+}
+
 interface SpawnClaimOptions {
   claimPr?: string;
   assignOnGithub?: boolean;
@@ -59,33 +102,41 @@ interface SpawnClaimOptions {
 /**
  * Lifecycle polling runs in-process inside the long-lived `ao start` process.
  * `ao spawn` is a one-shot CLI — it can't start polling in its own process
- * (the interval would keep the CLI alive forever and duplicate work). Warn
- * when no `ao start` is running, or when the running instance isn't covering
- * this project (e.g. `ao start A` then `ao spawn` in B).
+ * (the interval would keep the CLI alive forever and duplicate work).
+ *
+ * Refuse to spawn if no `ao start` is running, or if the running instance is
+ * not polling this project. Without an active daemon, sessions get worktrees
+ * and tmux panes but no lifecycle reactions (CI-failure routing, review
+ * comments, revive transitions, event log). That silent blackout is a
+ * worse failure mode than creating no session at all — so fail fast with
+ * an actionable error.
  */
-async function warnIfAONotRunning(projectId: string): Promise<void> {
+async function ensureAOPollingProject(projectId: string): Promise<void> {
   const running = await getRunning();
   if (!running) {
-    console.log(
-      chalk.yellow(
-        "⚠ AO is not running — lifecycle polling is inactive. Run `ao start` so the new session is tracked.",
-      ),
+    throw new Error(
+      `AO is not running — lifecycle polling is inactive. Run \`ao start\` before spawning sessions so they get CI/review routing and state advancement.`,
     );
-    return;
   }
   if (!running.projects.includes(projectId)) {
-    console.log(
-      chalk.yellow(
-        `⚠ The running AO instance (pid ${running.pid}) is not polling project "${projectId}" yet. Lifecycle polling will attach within ~60s.`,
-      ),
+    throw new Error(
+      `The running AO instance (pid ${running.pid}) is not polling project "${projectId}". Run \`ao start ${projectId}\` before spawning so sessions get tracked.`,
     );
   }
 }
 
 /**
  * Run pre-flight checks for a project once, before any sessions are spawned.
- * Validates runtime and tracker prerequisites so failures surface immediately
- * rather than repeating per-session in a batch.
+ *
+ * Iterates the plugins selected for this spawn and calls each one's optional
+ * `preflight()`. Plugins own their own prerequisites (binary present, auth
+ * configured, etc.) so this CLI helper does not need to know which plugin
+ * needs which tool. Adding a new runtime/tracker/scm plugin only requires
+ * the plugin to declare its own preflight — no edits here.
+ *
+ * Collects every plugin's failure rather than aborting at the first one, so a
+ * user with multiple broken prerequisites (e.g. tmux missing AND gh logged
+ * out) sees both errors in a single run instead of fixing one and re-invoking.
  */
 async function runSpawnPreflight(
   config: OrchestratorConfig,
@@ -93,15 +144,54 @@ async function runSpawnPreflight(
   options?: SpawnClaimOptions,
 ): Promise<void> {
   const project = config.projects[projectId];
-  const runtime = project?.runtime ?? config.defaults.runtime;
-  if (runtime === "tmux") {
-    await preflight.checkTmux();
+  if (!project) return;
+
+  const ctx: PreflightContext = {
+    project,
+    intent: {
+      role: "worker",
+      willClaimExistingPR: !!options?.claimPr,
+    },
+  };
+
+  const registry = await getPluginRegistry(config);
+  // DefaultPluginsSchema (config.ts) defaults runtime/agent/workspace via
+  // .default(), so these are guaranteed strings — no literal fallback needed.
+  const runtimeName = project.runtime ?? config.defaults.runtime;
+  const agentName = project.agent ?? config.defaults.agent;
+  const workspaceName = project.workspace ?? config.defaults.workspace;
+  const trackerName = project.tracker?.plugin;
+  const scmName = project.scm?.plugin;
+
+  // Only iterate plugins that the spawn will actually exercise. SCM is
+  // skipped unless the user passed --claim-pr; otherwise an unconfigured
+  // gh auth would block spawns that don't touch PRs.
+  const candidates: Array<unknown> = [
+    registry.get("runtime", runtimeName),
+    registry.get("agent", agentName),
+    registry.get("workspace", workspaceName),
+    trackerName ? registry.get("tracker", trackerName) : null,
+    options?.claimPr && scmName ? registry.get("scm", scmName) : null,
+  ];
+
+  const errors: Error[] = [];
+  for (const plugin of candidates) {
+    const preflight = (plugin as { preflight?: (ctx: PreflightContext) => Promise<void> } | null)
+      ?.preflight;
+    if (!preflight) continue;
+    try {
+      await preflight.call(plugin, ctx);
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+    }
   }
-  const needsGitHubAuth =
-    project?.tracker?.plugin === "github" ||
-    (options?.claimPr && project?.scm?.plugin === "github");
-  if (needsGitHubAuth) {
-    await preflight.checkGhAuth();
+
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new Error(
+      `${errors.length} preflight checks failed:\n` +
+        errors.map((e, i) => `  ${i + 1}. ${e.message}`).join("\n"),
+    );
   }
 }
 
@@ -113,7 +203,7 @@ async function spawnSession(
   agent?: string,
   claimOptions?: SpawnClaimOptions,
   prompt?: string,
-): Promise<string> {
+): Promise<void> {
   const spinner = ora("Creating session").start();
 
   try {
@@ -158,17 +248,6 @@ async function spawnSession(
     );
     console.log(`  View:     ${chalk.dim(projectSessionUrl(port, projectId, session.id))}`);
 
-    // Warn if prompt delivery failed (for post-launch agents like Claude Code)
-    const promptDelivered = session.metadata?.promptDelivered;
-    if (promptDelivered === "false") {
-      console.warn(
-        chalk.yellow(
-          `  ⚠ Prompt delivery failed — agent may be idle.\n` +
-            `    Use '${chalk.cyan("ao send " + session.id + ' "message..."')}' to send instructions manually.`,
-        ),
-      );
-    }
-
     // Open terminal tab if requested
     if (openTab) {
       try {
@@ -181,7 +260,6 @@ async function spawnSession(
 
     // Output for scripting
     console.log(`SESSION=${session.id}`);
-    return session.id;
   } catch (err) {
     spinner.fail("Failed to create or initialize session");
     throw err;
@@ -228,29 +306,11 @@ export function registerSpawn(program: Command): void {
         const config = loadConfig();
         let projectId: string;
         let issueId: string | undefined;
-
-        if (issue) {
-          const prefixed = resolveSpawnTarget(config.projects, issue);
-          if (prefixed) {
-            projectId = prefixed.projectId;
-            issueId = prefixed.issueId;
-          } else {
-            issueId = issue;
-            try {
-              projectId = autoDetectProject(config);
-            } catch (err) {
-              console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-              process.exit(1);
-            }
-          }
-        } else {
-          // No args: auto-detect project, no issue
-          try {
-            projectId = autoDetectProject(config);
-          } catch (err) {
-            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-            process.exit(1);
-          }
+        try {
+          ({ projectId, issueId } = resolveProjectAndIssue(config, issue));
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {
@@ -265,7 +325,7 @@ export function registerSpawn(program: Command): void {
 
         try {
           await runSpawnPreflight(config, projectId, claimOptions);
-          await warnIfAONotRunning(projectId);
+          await ensureAOPollingProject(projectId);
 
           await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
         } catch (err) {
@@ -342,7 +402,7 @@ export function registerBatchSpawn(program: Command): void {
         // Pre-flight once per project group so a missing prerequisite fails fast.
         try {
           await runSpawnPreflight(config, groupProjectId);
-          await warnIfAONotRunning(groupProjectId);
+          await ensureAOPollingProject(groupProjectId);
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);

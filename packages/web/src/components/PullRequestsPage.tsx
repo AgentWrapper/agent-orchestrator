@@ -115,6 +115,7 @@ export function PullRequestsPage({
           <ProjectSidebar
             projects={projects}
             sessions={sessions}
+            orchestrators={orchestratorLinks}
             activeProjectId={projectId}
             activeSessionId={undefined}
             collapsed={sidebarCollapsed}

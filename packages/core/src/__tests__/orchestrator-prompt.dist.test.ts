@@ -44,6 +44,8 @@ describe("generateOrchestratorPrompt dist smoke test", () => {
     execFileSync(pnpmCommand, ["build"], {
       cwd: packageRoot,
       stdio: "pipe",
+      // Node 18+ requires shell:true to spawn .cmd/.bat on Windows (CVE-2024-27980).
+      shell: process.platform === "win32",
     });
 
     const { generateOrchestratorPrompt } = await import(`${distModuleUrl}?t=${Date.now()}`);

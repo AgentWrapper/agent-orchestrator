@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 export interface ProbeResult {
   reachable: boolean;
@@ -41,11 +41,16 @@ function normalizeGatewayBaseUrl(url: string): string {
 }
 
 function resolveOpenClawBinaryPath(): string | undefined {
-  const shell = process.env["SHELL"] ?? "/bin/sh";
-  if (!shell.startsWith("/")) return undefined;
-  const result = spawnSync(shell, ["-lc", "command -v openclaw"], {
-    encoding: "utf-8",
-  });
+  let result: SpawnSyncReturns<string>;
+  if (process.platform === "win32") {
+    result = spawnSync("where", ["openclaw"], { encoding: "utf-8" });
+  } else {
+    const shell = process.env["SHELL"] ?? "/bin/sh";
+    if (!shell.startsWith("/")) return undefined;
+    result = spawnSync(shell, ["-lc", "command -v openclaw"], {
+      encoding: "utf-8",
+    });
+  }
 
   if (result.status !== 0) return undefined;
   const path = result.stdout.trim();

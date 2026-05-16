@@ -20,7 +20,10 @@ import { randomUUID } from "node:crypto";
 import { migrateStorage } from "@aoagents/ao-core";
 import { makeSession } from "./helpers/session-factory.js";
 
-describe("migrate-storage → agent-codex.getRestoreCommand round-trip", () => {
+// Skipped on Windows: exercises migration FROM the legacy hash-dir layout
+// that shipped only on Linux/macOS in V1. Windows installs never have that
+// state, and the fixtures rely on POSIX path semantics that don't apply on NTFS.
+describe.skipIf(process.platform === "win32")("migrate-storage → agent-codex.getRestoreCommand round-trip", () => {
   let testDir: string;
   let aoBaseDir: string;
   let configPath: string;

@@ -97,5 +97,13 @@ export function useFullscreenResize(
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
-  }, [fullscreen, sessionId, projectId, resizeTerminalMux, containerRef, fitAddon, terminalInstance]);
+  }, [
+    fullscreen,
+    sessionId,
+    projectId,
+    resizeTerminalMux,
+    containerRef,
+    fitAddon,
+    terminalInstance,
+  ]);
 }

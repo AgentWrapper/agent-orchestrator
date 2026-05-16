@@ -191,7 +191,13 @@ export async function getCachedOpenCodeSessionList(options?: {
   const promise: Promise<OpenCodeSessionListEntry[]> = execFileAsync(
     "opencode",
     ["session", "list", "--format", "json"],
-    { timeout: timeoutMs, env: getOpenCodeChildEnv() },
+    {
+      timeout: timeoutMs,
+      env: getOpenCodeChildEnv(),
+      // On Windows, execFile cannot resolve .cmd shim extensions without
+      // invoking the shell; windowsHide:true suppresses the conhost popup.
+      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+    },
   )
     .then(({ stdout }) => {
       const entries = parseSessionListStdout(stdout);

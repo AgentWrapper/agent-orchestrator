@@ -49,6 +49,15 @@ describe("direct-terminal-ws.ts", () => {
   });
 });
 
+describe("start-all.ts", () => {
+  const source = readServerFile("start-all.ts");
+
+  it("kills child process trees during shutdown", () => {
+    expect(source).toMatch(/killProcessTree/);
+    expect(source).toMatch(/spawnManagedDaemonChild/);
+    expect(source).toMatch(/detached:\s*!\s*isWindows\(\)/);
+  });
+});
 
 describe("OrchestratorConfig compatibility", () => {
   it("OrchestratorConfig does not have dataDir property", () => {

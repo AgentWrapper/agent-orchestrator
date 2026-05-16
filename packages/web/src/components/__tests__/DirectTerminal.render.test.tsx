@@ -143,11 +143,15 @@ describe("DirectTerminal render", () => {
   });
 
   it("renders the shared accent chrome for orchestrator terminals", async () => {
-    render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
-
-    await waitFor(() =>
-      expect(screen.getByText("Connected")).toBeInTheDocument(),
+    render(
+      <DirectTerminal
+        sessionId="ao-orchestrator"
+        tmuxName="ao-orchestrator"
+        variant="orchestrator"
+      />,
     );
+
+    await waitFor(() => expect(screen.getByText("Connected")).toBeInTheDocument());
 
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
@@ -157,6 +161,7 @@ describe("DirectTerminal render", () => {
     render(
       <DirectTerminal
         sessionId="ao-opencode"
+        tmuxName="ao-opencode"
         chromeless
         isOpenCodeSession
       />,
@@ -171,7 +176,13 @@ describe("DirectTerminal render", () => {
   });
 
   it("switches the terminal shell between inline and fullscreen positioning", async () => {
-    const { container } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+    const { container } = render(
+      <DirectTerminal
+        sessionId="ao-orchestrator"
+        tmuxName="ao-orchestrator"
+        variant="orchestrator"
+      />,
+    );
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument(),
@@ -196,7 +207,7 @@ describe("DirectTerminal render", () => {
   });
 
   it("passes projectId to fullscreen resize hook for scoped mux resize", () => {
-    render(<DirectTerminal sessionId="app-1" projectId="project-a" />);
+    render(<DirectTerminal sessionId="app-1" projectId="project-a" tmuxName="project-a-app-1" />);
 
     expect(useFullscreenResizeMock).toHaveBeenCalledWith(
       false,

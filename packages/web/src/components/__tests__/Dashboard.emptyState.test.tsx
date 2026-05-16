@@ -8,6 +8,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ resolvedTheme: "light", setTheme: vi.fn() }),
+}));
+
 let currentMuxLastError: string | null = null;
 
 vi.mock("@/providers/MuxProvider", () => ({
@@ -159,6 +163,13 @@ describe("Dashboard empty state", () => {
     });
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("mounts the sidebar empty state on a fresh install with zero projects", () => {
+    render(<Dashboard initialSessions={[]} projects={[]} />);
+
+    expect(screen.getByText(/no projects yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new project/i })).toBeInTheDocument();
   });
 
   it("shows empty state when only done sessions exist", () => {

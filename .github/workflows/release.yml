@@ -1,0 +1,152 @@
+name: Release
+
+# Two-stage release pipeline.
+#
+# This public repo is responsible for version bumps, tagging, and creating
+# the GitHub release. npm publishing is handled by a private cron job (AO)
+# that polls GitHub releases and publishes when a new tag is ahead of the
+# current npm version.
+#
+# No NPM_TOKEN or publisher dispatch secrets are needed in this repo.
+# The only secret used is GITHUB_TOKEN (automatic).
+#
+# See CONTRIBUTING.md → "Release architecture" for the full picture.
+
+on:
+  workflow_run:
+    # Depends on the workflow named "CI" in .github/workflows/ci.yml — if
+    # you rename that file or change its `name:` field, update this string
+    # too. GitHub matches by name (not filename) and silently no-ops on
+    # mismatch — so a rename here will mean releases never trigger again.
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          # No `registry-url`: this workflow does not publish to npm.
+      - run: echo "HUSKY=0" >> $GITHUB_ENV
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      # Pre-publish guard: catches the case where a publishable package has a
+      # workspace:* runtime dep on a `private: true` package — pnpm would
+      # rewrite the dep on publish to a version that doesn't exist on npm,
+      # breaking `npm install -g @aoagents/ao`. Still runs here so the
+      # public repo blocks a malformed version bump before it reaches npm.
+      - run: node scripts/check-publishable-deps.mjs
+
+      # changesets/action manages the "Version Packages" PR — when there
+      # are pending changesets it opens/updates the PR; when there are
+      # none (i.e. that PR was just merged) it would normally invoke the
+      # `publish:` command. We deliberately omit `publish:` so the action
+      # never runs `changeset publish`. npm publishing is handled by a
+      # private cron that detects the GitHub release.
+      - uses: changesets/action@v1
+        id: changesets
+        with:
+          version: pnpm changeset version
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Determine release state. Each downstream step (tag push, GH
+      # release creation) is gated on its own piece of state so the
+      # workflow is idempotent and recovers cleanly on re-run after a
+      # partial failure.
+      #
+      # `is_release_commit` is the crucial signal: it filters out
+      # regular commits to main (which also have `hasChangesets ==
+      # 'false'` but should NOT trigger a publish). We detect a
+      # version-bump commit by comparing the umbrella package's
+      # version against its value in the parent commit — a Version
+      # Packages merge changes that version, a regular commit does not.
+      # The umbrella `@aoagents/ao` is the canonical version source for
+      # the `vX.Y.Z` tag scheme and is part of the linked group, so
+      # any release that bumps the cohort will bump this file.
+      - name: Determine release state
+        id: state
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./packages/ao/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          prev_version=""
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            prev_version=$(git show HEAD^:packages/ao/package.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          fi
+          if [ -n "$prev_version" ] && [ "$prev_version" != "$version" ]; then
+            echo "is_release_commit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release_commit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if git ls-remote --tags --exit-code origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "tag_on_remote=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_on_remote=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "v$version" --json tagName >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Push the umbrella `vX.Y.Z` tag only if this is a fresh
+      # version-bump commit AND the tag isn't already on the remote.
+      # Skipped on re-runs where the tag was pushed on a prior run
+      # (idempotent recovery).
+      #
+      # We deliberately skip `pnpm changeset tag`: it would create one
+      # tag per publishable package (~27 here) on every release, which
+      # creates partial-recovery conflicts on re-run when `git push --tags`
+      # tries to re-push existing per-package tags. The npm publisher
+      # only consumes the umbrella tag, so the per-package tags add no
+      # value.
+      - name: Tag versioned packages
+        if: steps.state.outputs.is_release_commit == 'true' && steps.state.outputs.tag_on_remote == 'false'
+        run: |
+          git tag "v${{ steps.state.outputs.version }}"
+          git push origin "v${{ steps.state.outputs.version }}"
+
+      # Public-facing GitHub release. Stable channel — not a prerelease.
+      # No `--target`: the `vX.Y.Z` tag is on the remote at the
+      # version-bump commit, and `gh release create` resolves the
+      # commitish from the existing tag. Avoids the race where another
+      # commit lands on main between the tag push and this step,
+      # pulling unrelated commits into the auto-generated release notes.
+      # Skipped if a release for this version already exists.
+      - name: Create GitHub release
+        if: steps.state.outputs.is_release_commit == 'true' && steps.state.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.state.outputs.version }}" \
+            --generate-notes

@@ -29,6 +29,7 @@ import {
   generateSessionPrefix,
   sanitizeIdentifierComponent,
 } from "./paths.js";
+import { getDefaultRuntime } from "./platform.js";
 import {
   getGlobalConfigPath,
   isCanonicalGlobalConfigPath,
@@ -261,6 +262,7 @@ const ProjectConfigSchema = z.object({
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
   tracker: TrackerConfigSchema.optional(),
   scm: SCMConfigSchema.optional(),
   symlinks: z.array(z.string()).optional(),
@@ -279,7 +281,7 @@ const ProjectConfigSchema = z.object({
 });
 
 const DefaultPluginsSchema = z.object({
-  runtime: z.string().default("tmux"),
+  runtime: z.string().default(() => getDefaultRuntime()),
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default([]),
@@ -679,8 +681,6 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "ci-failed": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "CI is failing on your PR. Investigate the failures, fix the issues, and push again.",
       retries: 2,
       escalateAfter: 2,
     },
@@ -688,7 +688,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "send-to-agent",
       message:
-        "There are review comments on your PR. Details will follow shortly.",
+        "There are new review comments on your PR requesting changes.",
       escalateAfter: "30m",
     },
     "bugbot-comments": {
@@ -1007,7 +1007,7 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
   return config;
 }
 
-/** Get the default config (useful for `ao init`) */
+/** Get the default config (useful for first-run setup) */
 export function getDefaultConfig(): OrchestratorConfig {
   return validateConfig({
     projects: {},

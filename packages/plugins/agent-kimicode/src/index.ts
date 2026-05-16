@@ -1,15 +1,14 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
+  isWindows,
   shellEscape,
   normalizeAgentPermissionMode,
-  buildAgentPath,
   setupPathWrapperWorkspace,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
-  PREFERRED_GH_PATH,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -24,7 +23,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import {
@@ -123,6 +122,16 @@ function appendApprovalFlags(
   }
 }
 
+/**
+ * Join command parts and prepend the PowerShell call operator on Windows.
+ * Without `& `, PowerShell parses a leading quoted string as an expression
+ * and silently does not execute it. Matches agent-codex.
+ */
+function formatLaunchCommand(parts: string[]): string {
+  const cmd = parts.join(" ");
+  return isWindows() ? `& ${cmd}` : cmd;
+}
+
 function createKimicodeAgent(): Agent {
   return {
     name: "kimicode",
@@ -159,23 +168,28 @@ function createKimicodeAgent(): Agent {
         parts.push("--agent", shellEscape(config.subagent));
       }
 
-      // Kimi does not have a documented system-prompt flag for ad-hoc injection;
-      // --agent-file is the closest, but requires a dedicated file on disk.
-      // Prefer passing systemPromptFile directly when the caller asked for a
-      // file-backed system prompt.
-      if (config.systemPromptFile) {
-        parts.push("--agent-file", shellEscape(config.systemPromptFile));
-      }
-
       // kimi's `-p`/`--prompt` is just the prompt string (alias of `--command`).
       // It does NOT switch to print/exit mode — that's the separate `--print`
       // flag, which we never set. Inline delivery is reliable and avoids the
       // post-launch sendMessage() delay.
-      if (config.prompt) {
-        parts.push("--prompt", shellEscape(config.prompt));
+      //
+      // kimi has no documented system-prompt flag. `--agent-file` looked like
+      // the closest fit but requires a YAML agent spec — passing AO's plain
+      // markdown prompt file makes kimi exit with a YAML parse error. Inline
+      // the file contents into --prompt instead. When both are provided, the
+      // system instructions come first so the agent reads them before the task.
+      let combinedPrompt = config.prompt ?? "";
+      if (config.systemPromptFile) {
+        const sysContent = readFileSync(config.systemPromptFile, "utf-8");
+        combinedPrompt = combinedPrompt
+          ? `${sysContent}\n\n---\n\n${combinedPrompt}`
+          : sysContent;
+      }
+      if (combinedPrompt) {
+        parts.push("--prompt", shellEscape(combinedPrompt));
       }
 
-      return parts.join(" ");
+      return formatLaunchCommand(parts);
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -185,10 +199,7 @@ function createKimicodeAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin so gh/git wrappers intercept PR/commit commands.
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
-
+      // PATH and GH_PATH are injected by session-manager for all agents.
       return env;
     },
 
@@ -283,6 +294,10 @@ function createKimicodeAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux + ps are POSIX-only. A stale tmux handle on Windows
+          // (e.g. cross-platform session import) would otherwise throw
+          // and misclassify a live process as exited.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -378,7 +393,7 @@ function createKimicodeAgent(): Agent {
       if (configuredModel) {
         parts.push("--model", shellEscape(configuredModel));
       }
-      return parts.join(" ");
+      return formatLaunchCommand(parts);
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {

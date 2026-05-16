@@ -81,6 +81,7 @@ function TestDirectPageContent() {
         <DirectTerminal
           key={`${sessionId}-${startFullscreen ? "fullscreen" : "normal"}`}
           sessionId={sessionId}
+          tmuxName={sessionId}
           startFullscreen={startFullscreen}
         />
       </div>

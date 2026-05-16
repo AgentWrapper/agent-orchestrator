@@ -13,6 +13,7 @@ import {
   readMetadata,
   readMetadataRaw,
 } from "../../metadata.js";
+import { getProjectWorktreesDir } from "../../paths.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -27,7 +28,7 @@ import {
   makeHandle,
   type TestContext,
 } from "../test-utils.js";
-import { installMockOpencode, installMockGit } from "./opencode-helpers.js";
+import { installMockOpencode, installMockGit, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -72,7 +73,7 @@ describe("spawn", () => {
     expect(mockWorkspace.create).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "my-app",
-        worktreeDir: expect.stringContaining("projects/my-app/worktrees"),
+        worktreeDir: expect.stringMatching(/projects[\\/]my-app[\\/]worktrees/),
       }),
     );
     // Verify agent launch command was requested
@@ -100,6 +101,91 @@ describe("spawn", () => {
       if (previousTrace === undefined) delete process.env["AO_AGENT_GH_TRACE"];
       else process.env["AO_AGENT_GH_TRACE"] = previousTrace;
     }
+  });
+
+  it("forwards project.env into spawned agent runtime env", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            GH_TOKEN: "ghp_project_scoped",
+            CUSTOM_VAR: "hello",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({
+          GH_TOKEN: "ghp_project_scoped",
+          CUSTOM_VAR: "hello",
+        }),
+      }),
+    );
+  });
+
+  it("AO_* internals override project.env values with the same key", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            AO_SESSION: "should-not-win",
+            AO_PROJECT_ID: "should-not-win",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const call = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.environment?.AO_SESSION).not.toBe("should-not-win");
+    expect(call?.environment?.AO_SESSION).toBe("app-1");
+    expect(call?.environment?.AO_PROJECT_ID).toBe("my-app");
+  });
+
+  it("PATH and GH_PATH override project.env values with the same key", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const configWithEnv: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...projectConfig,
+          env: {
+            PATH: "/should/not/win",
+            GH_PATH: "/should/not/win",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithEnv, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const call = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.environment?.PATH).not.toBe("/should/not/win");
+    // Use platform-aware path so the assertion works on both POSIX and Windows
+    // (where buildAgentPath joins with backslashes via path.join).
+    expect(call?.environment?.PATH).toContain(join(".ao", "bin"));
+    expect(call?.environment?.GH_PATH).not.toBe("/should/not/win");
+    expect(call?.environment?.GH_PATH).toBe("/usr/local/bin/gh");
   });
 
   it("uses issue ID to derive branch name", async () => {
@@ -345,7 +431,7 @@ describe("spawn", () => {
 
   it("skips remote session branches when allocating a fresh session id", async () => {
     const mockGitBin = installMockGit(tmpDir, ["session/app-22"]);
-    process.env.PATH = `${mockGitBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
     mkdirSync(config.projects["my-app"]!.path, { recursive: true });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -540,7 +626,7 @@ describe("spawn", () => {
   it("deletes old issue mappings and starts fresh when opencodeIssueSessionStrategy is delete", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-issue.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     const opencodeAgent: Agent = {
       ...mockAgent,
@@ -1014,33 +1100,17 @@ describe("spawn", () => {
     expect(session.branch).not.toBe("main");
   });
 
-  it("sends prompt post-launch when agent.promptDelivery is 'post-launch'", async () => {
-    vi.useFakeTimers();
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithPostLaunch: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
-        if (slot === "agent") return postLaunchAgent;
-        if (slot === "workspace") return mockWorkspace;
-        return null;
+  it("passes prompt inline to agent via getLaunchCommand", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+    // Prompt should be passed to getLaunchCommand, not sent via runtime.sendMessage
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Fix the bug"),
       }),
-    };
-
-    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
-    await spawnPromise;
-
-    // Prompt should be sent via runtime.sendMessage, not included in launch command
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      expect.stringContaining("Fix the bug"),
     );
-    vi.useRealTimers();
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
@@ -1072,7 +1142,7 @@ describe("spawn", () => {
     expect(systemPrompt).toContain("Session Lifecycle");
     expect(systemPrompt).toContain("## Project Context");
     expect(systemPrompt).toContain("## Task");
-    expect(systemPrompt).toContain("Work on issue: INT-1343");
+    expect(systemPrompt).toContain("Work on issue #INT-1343");
     expect(systemPrompt).not.toContain("## Additional Instructions");
   });
 
@@ -1143,149 +1213,189 @@ describe("spawn", () => {
     expect(opencodeConfig.instructions[0]).toContain("worker-prompt-app-1.md");
 
     const systemPromptPath = opencodeConfig.instructions[0]!;
-    expect(readFileSync(systemPromptPath, "utf-8")).toContain("Work on issue: INT-1343");
+    expect(readFileSync(systemPromptPath, "utf-8")).toContain("Work on issue #INT-1343");
     expect(readFileSync(systemPromptPath, "utf-8")).not.toContain("## Additional Instructions");
 
     const agentsMdPath = getWorkspaceAgentsMdPath(workspacePath);
     expect(existsSync(agentsMdPath)).toBe(false);
   });
 
-  it("does not send prompt post-launch when agent.promptDelivery is not set", async () => {
+  it("passes generated task prompt to agent for issue-only spawns", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
-    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-1343" });
 
-    // Default agent (no promptDelivery) should NOT trigger sendMessage for prompt
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it("does not send a post-launch message when no task prompt is available", async () => {
-    vi.useFakeTimers();
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithPostLaunch: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
-        if (slot === "agent") return postLaunchAgent;
-        if (slot === "workspace") return mockWorkspace;
-        return null;
-      }),
-    };
-
-    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app" });
-    await vi.advanceTimersByTimeAsync(5_000);
-    const session = await spawnPromise;
-
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
-    expect(session.metadata.promptDelivered).toBeUndefined();
-    vi.useRealTimers();
-  });
-
-  it("sends a minimal post-launch task for issue-only spawns", async () => {
-    vi.useFakeTimers();
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithPostLaunch: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
-        if (slot === "agent") return postLaunchAgent;
-        if (slot === "workspace") return mockWorkspace;
-        return null;
-      }),
-    };
-
-    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", issueId: "INT-1343" });
-    await vi.advanceTimersByTimeAsync(5_000);
-    const session = await spawnPromise;
-
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: expect.any(String) }),
-      "Work on issue: INT-1343",
-    );
-    expect(session.metadata.promptDelivered).toBe("true");
-
-    const callArgs = vi.mocked(postLaunchAgent.getLaunchCommand).mock.calls[0][0];
-    expect(callArgs.prompt).toBe("Work on issue: INT-1343");
+    const callArgs = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
+    expect(callArgs.prompt).toContain("Work on issue #INT-1343");
     expect(callArgs.systemPromptFile).toContain("worker-prompt-app-1.md");
 
     const systemPrompt = readFileSync(callArgs.systemPromptFile!, "utf-8");
     expect(systemPrompt).toContain("## Task");
-    expect(systemPrompt).toContain("Work on issue: INT-1343");
-    vi.useRealTimers();
+    expect(systemPrompt).toContain("Work on issue #INT-1343");
   });
 
-  it("does not destroy session when post-launch prompt delivery fails", async () => {
-    vi.useFakeTimers();
-    const failingRuntime: Runtime = {
+  it("installs workspace hooks before launching the agent", async () => {
+    const callOrder: string[] = [];
+    const trackingAgent = {
+      ...mockAgent,
+      setupWorkspaceHooks: vi.fn().mockImplementation(() => {
+        callOrder.push("setupWorkspaceHooks");
+        return Promise.resolve();
+      }),
+    };
+    const trackingRuntime: Runtime = {
       ...mockRuntime,
-      sendMessage: vi.fn().mockRejectedValue(new Error("tmux send failed")),
+      create: vi.fn().mockImplementation((...args: Parameters<Runtime["create"]>) => {
+        callOrder.push("runtime.create");
+        return vi.mocked(mockRuntime.create)(...args);
+      }),
     };
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithFailingSend: PluginRegistry = {
+    const trackingRegistry: PluginRegistry = {
       ...mockRegistry,
       get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return failingRuntime;
-        if (slot === "agent") return postLaunchAgent;
+        if (slot === "runtime") return trackingRuntime;
+        if (slot === "agent") return trackingAgent;
         if (slot === "workspace") return mockWorkspace;
         return null;
       }),
     };
 
-    const sm = createSessionManager({ config, registry: registryWithFailingSend });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    // With retry logic (3 attempts at 3s, 6s, 9s delays before each attempt), need to advance 18s for all retries
-    await vi.advanceTimersByTimeAsync(18_000);
-    const session = await spawnPromise;
+    const sm = createSessionManager({ config, registry: trackingRegistry });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Session should still be returned successfully despite sendMessage failure
-    expect(session.id).toBe("app-1");
-    expect(session.status).toBe("spawning");
-    // Runtime should NOT have been destroyed
-    expect(failingRuntime.destroy).not.toHaveBeenCalled();
-    // Verify promptDelivered is set to false in metadata
-    expect(session.metadata.promptDelivered).toBe("false");
-    vi.useRealTimers();
-  }, 30_000);
+    const hooksIdx = callOrder.indexOf("setupWorkspaceHooks");
+    const createIdx = callOrder.indexOf("runtime.create");
+    expect(hooksIdx).toBeGreaterThanOrEqual(0);
+    expect(createIdx).toBeGreaterThanOrEqual(0);
+    expect(hooksIdx).toBeLessThan(createIdx);
+  });
 
-  it("waits before sending post-launch prompt", async () => {
-    vi.useFakeTimers();
-    const postLaunchAgent = {
-      ...mockAgent,
-      promptDelivery: "post-launch" as const,
-    };
-    const registryWithPostLaunch: PluginRegistry = {
-      ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
-        if (slot === "agent") return postLaunchAgent;
-        if (slot === "workspace") return mockWorkspace;
-        return null;
-      }),
-    };
+  describe("rollback on failure", () => {
+    it("cleans up reserved metadata when workspace creation fails", async () => {
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("workspace creation failed"),
+      );
+      const sm = createSessionManager({ config, registry: mockRegistry });
 
-    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
+        "workspace creation failed",
+      );
 
-    // Advance only 2s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+      expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+    });
 
-    // Advance the remaining 1s — now the first attempt should fire (3s total = 3000 * 1)
-    await vi.advanceTimersByTimeAsync(1_000);
-    await spawnPromise;
-    expect(mockRuntime.sendMessage).toHaveBeenCalled();
-    vi.useRealTimers();
-  }, 20_000);
+    it("destroys the worktree and cleans metadata when runtime creation fails", async () => {
+      // Workspace path must be inside the project's managed worktrees root so
+      // shouldDestroyWorkspacePath() permits destroy. Mock paths under tmpDir
+      // would be skipped as out-of-tree (correct, but not the path we want to
+      // characterize here).
+      const worktreePath = join(getProjectWorktreesDir("my-app"), "app-1");
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        path: worktreePath,
+        branch: "session/app-1",
+        sessionId: "app-1",
+        projectId: "my-app",
+      });
+      (mockRuntime.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("runtime creation failed"),
+      );
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
+        "runtime creation failed",
+      );
+
+      expect(mockWorkspace.destroy).toHaveBeenCalledWith(worktreePath);
+      expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+    });
+
+    it("destroys runtime and worktree when post-launch setup fails", async () => {
+      const worktreePath = join(getProjectWorktreesDir("my-app"), "app-1");
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        path: worktreePath,
+        branch: "session/app-1",
+        sessionId: "app-1",
+        projectId: "my-app",
+      });
+      const postLaunchError = new Error("post-launch setup failed");
+      const agentWithPostLaunch: typeof mockAgent = {
+        ...mockAgent,
+        postLaunchSetup: vi.fn().mockRejectedValueOnce(postLaunchError),
+      };
+      const registryWithPostLaunch: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return agentWithPostLaunch;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("post-launch setup failed");
+
+      expect(mockRuntime.destroy).toHaveBeenCalled();
+      expect(mockWorkspace.destroy).toHaveBeenCalledWith(worktreePath);
+      expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+    });
+
+    it("destroys the worktree and cleans metadata when workspace.postCreate fails", async () => {
+      const worktreePath = join(getProjectWorktreesDir("my-app"), "app-1");
+      const workspaceWithPostCreate: typeof mockWorkspace = {
+        ...mockWorkspace,
+        create: vi.fn().mockResolvedValueOnce({
+          path: worktreePath,
+          branch: "session/app-1",
+          sessionId: "app-1",
+          projectId: "my-app",
+        }),
+        postCreate: vi.fn().mockRejectedValueOnce(new Error("postCreate hook failed")),
+      };
+      const registryWithPostCreate: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return workspaceWithPostCreate;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostCreate });
+
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("postCreate hook failed");
+
+      expect(workspaceWithPostCreate.destroy).toHaveBeenCalledWith(worktreePath);
+      expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+      // Runtime should not have been created since postCreate failed before runtime.create.
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+    });
+
+    it("still cleans subsequent resources when one cleanup step throws", async () => {
+      const worktreePath = join(getProjectWorktreesDir("my-app"), "app-1");
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        path: worktreePath,
+        branch: "session/app-1",
+        sessionId: "app-1",
+        projectId: "my-app",
+      });
+      // workspace.destroy throws during rollback — metadata cleanup must still run
+      (mockWorkspace.destroy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("destroy failed"),
+      );
+      (mockRuntime.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("runtime creation failed"),
+      );
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
+        "runtime creation failed",
+      );
+
+      // Even though workspace.destroy threw, metadata must have been cleaned up.
+      expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+    });
+  });
 
   describe("displayName derivation", () => {
     it("persists the issue title as displayName when tracker returns one", async () => {
@@ -1436,6 +1546,29 @@ describe("spawn", () => {
 
       expect(session.workspacePath).toBe(worktreePath);
       expect(session.branch).toBe("orchestrator/app-orchestrator");
+    });
+
+    it("adopts an existing managed orchestrator worktree instead of creating a fresh one", async () => {
+      const adoptedPath = join(tmpDir, "legacy-orchestrator-ws");
+      (mockWorkspace.findManagedWorkspace as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        path: adoptedPath,
+        branch: "orchestrator/app-orchestrator",
+        sessionId: "app-orchestrator",
+        projectId: "my-app",
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(session.workspacePath).toBe(adoptedPath);
+      expect(mockWorkspace.findManagedWorkspace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "my-app",
+          sessionId: "app-orchestrator",
+          branch: "orchestrator/app-orchestrator",
+        }),
+      );
+      expect(mockWorkspace.create).not.toHaveBeenCalled();
     });
 
     it("writes metadata with proper fields", async () => {
@@ -1603,6 +1736,27 @@ describe("spawn", () => {
       expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
     });
 
+    it("keeps an adopted worktree in place when runtime creation fails", async () => {
+      const adoptedPath = join(tmpDir, "adopted-orchestrator-ws");
+      (mockWorkspace.findManagedWorkspace as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        path: adoptedPath,
+        branch: "orchestrator/app-orchestrator",
+        sessionId: "app-orchestrator",
+        projectId: "my-app",
+      });
+      (mockRuntime.create as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("runtime creation failed"),
+      );
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await expect(sm.spawnOrchestrator({ projectId: "my-app" })).rejects.toThrow(
+        "runtime creation failed",
+      );
+
+      expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
+    });
+
     it("destroys the worktree when post-launch setup fails", async () => {
       const worktreePath = join(tmpDir, "orchestrator-ws-postlaunch-fail");
       (mockWorkspace.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -1646,7 +1800,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1709,7 +1863,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1758,7 +1912,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1810,7 +1964,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,
@@ -1860,7 +2014,7 @@ describe("spawn", () => {
         ]),
         deleteLogPath,
       );
-      process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+      process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
       const opencodeAgent: Agent = {
         ...mockAgent,

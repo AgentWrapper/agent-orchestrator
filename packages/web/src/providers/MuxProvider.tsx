@@ -156,7 +156,8 @@ export function MuxProvider({ children }: { children: ReactNode }) {
                 }
               }
             } else if (msg.type === "opened") {
-              // Terminal opened successfully — preserve existing tmuxName
+              // Terminal opened successfully. Preserve any tmuxName stored by
+              // openTerminal so reconnects keep using the exact attach target.
               if (!openedTerminalsRef.current.has(key)) {
                 openedTerminalsRef.current.set(key, {
                   id: msg.id,
@@ -357,7 +358,16 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       sessions,
       lastError,
     }),
-    [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions, lastError],
+    [
+      subscribeTerminal,
+      writeTerminal,
+      openTerminal,
+      closeTerminal,
+      resizeTerminal,
+      status,
+      sessions,
+      lastError,
+    ],
   );
 
   return <MuxContext.Provider value={contextValue}>{children}</MuxContext.Provider>;

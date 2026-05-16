@@ -22,6 +22,7 @@ describe("portfolio-registry", () => {
   let oldGlobalConfig: string | undefined;
   let oldConfigPath: string | undefined;
   let oldHome: string | undefined;
+  let oldUserProfile: string | undefined;
 
   beforeEach(() => {
     tempRoot = join(tmpdir(), `ao-portfolio-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -29,7 +30,9 @@ describe("portfolio-registry", () => {
     oldGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
     oldConfigPath = process.env["AO_CONFIG_PATH"];
     oldHome = process.env["HOME"];
+    oldUserProfile = process.env["USERPROFILE"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
   });
 
   afterEach(() => {
@@ -39,7 +42,9 @@ describe("portfolio-registry", () => {
     else process.env["AO_CONFIG_PATH"] = oldConfigPath;
     if (oldHome === undefined) delete process.env["HOME"];
     else process.env["HOME"] = oldHome;
-    rmSync(tempRoot, { recursive: true, force: true });
+    if (oldUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = oldUserProfile;
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("reads projects from the canonical global config path instead of AO_CONFIG_PATH discovery", () => {

@@ -15,7 +15,7 @@ Agent Orchestrator is a TypeScript monorepo for managing parallel AI coding agen
 
 ## Review Focus
 
-- **Security**: Watch for command injection (especially in shell/tmux/git commands), AppleScript injection, GraphQL injection, unsanitized user input in API routes
+- **Security**: Watch for command injection (especially in shell/tmux/git/PowerShell commands and Windows named-pipe session IDs — `validateSessionId()` should guard those), AppleScript injection, GraphQL injection, unsanitized user input in API routes
 - **Shell execution**: Prefer `execFile` over `exec` to avoid shell injection. Flag any use of `exec` or string concatenation in shell commands
 - **Plugin pattern**: Plugins must export `{ manifest, create } satisfies PluginModule<T>` with types from `@aoagents/ao-core`
 - **Type safety**: Flag `as unknown as T` casts, unguarded `JSON.parse`, and type re-declarations that should import from core

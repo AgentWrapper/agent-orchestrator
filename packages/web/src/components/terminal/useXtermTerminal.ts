@@ -69,6 +69,7 @@ export function useXtermTerminal(
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    setError(null);
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
@@ -103,7 +104,11 @@ export function useXtermTerminal(
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
-          scrollback: 10000,
+          // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
+          // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
+          // the available width, causing right-side clipping when the actual
+          // scrollbar is narrower or wider than assumed. Fixes #1677.
+          scrollback: 0,
           allowProposedApi: true,
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
@@ -199,6 +204,31 @@ export function useXtermTerminal(
             }
           });
           resizeObserver.observe(terminalRef.current);
+        }
+
+        // Re-fit on devicePixelRatio changes (Windows display scaling, dragging
+        // window between monitors with different DPI). ResizeObserver doesn't
+        // fire for DPR-only changes, so we listen via matchMedia. Without this,
+        // moving the window to a 125%/150%-scaled monitor leaves a stripe of
+        // unrendered background to the right of the last column.
+        let dprMedia: MediaQueryList | null = null;
+        const handleDprChange = () => {
+          if (!mounted || !fitAddon.current || !terminalInstance.current) return;
+          try {
+            terminalInstance.current.clearTextureAtlas?.();
+            fitAddon.current.fit();
+            resizeTerminalMux(
+              sessionId,
+              terminalInstance.current.cols,
+              terminalInstance.current.rows,
+            );
+          } catch {
+            // Ignore fit errors
+          }
+        };
+        if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+          dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+          dprMedia.addEventListener?.("change", handleDprChange);
         }
 
         // ── Preserve selection while terminal receives output ────────
@@ -304,6 +334,7 @@ export function useXtermTerminal(
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
           resizeObserver?.disconnect();
+          dprMedia?.removeEventListener?.("change", handleDprChange);
           cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
@@ -331,7 +362,7 @@ export function useXtermTerminal(
     // fontSize intentionally NOT in deps — it's handled by a dedicated effect
     // below that mutates terminal.options.fontSize in place. Adding it here
     // would tear down and recreate the terminal (and WebSocket) on every
-    // stepper click, losing scrollback and flashing content.
+    // stepper click, causing a content flash and WebSocket reconnect.
   }, [
     appearance,
     sessionId,
@@ -387,12 +418,14 @@ export function useXtermTerminal(
     const t = terminalInstance.current;
     if (t) {
       if (t.buffer.active.type === "normal") {
-        // Normal buffer: scrollback exists in xterm, use its API.
+        // Normal buffer: xterm scrollback is disabled (scrollback: 0), so
+        // history lives in tmux. scrollToBottom() is a safe no-op that
+        // re-anchors the viewport to the live tail.
         t.scrollToBottom();
       } else {
-        // Alternate buffer (tmux/vim): xterm has no scrollback to scroll
-        // to. The user is in tmux copy-mode (entered by attachTouchScroll
-        // on swipe). Send 'q' to exit copy-mode and return to live tail.
+        // Alternate buffer (tmux/vim): the user is in tmux copy-mode
+        // (entered by attachTouchScroll on swipe). Send 'q' to exit
+        // copy-mode and return to live tail.
         writeTerminal(sessionId, "q", projectId);
       }
     }

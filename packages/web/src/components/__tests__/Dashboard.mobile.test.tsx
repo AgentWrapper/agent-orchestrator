@@ -66,8 +66,12 @@ describe("Dashboard unified layout (mobile viewport)", () => {
 
     render(<Dashboard initialSessions={sessions} />);
 
+    // Compact mobile rows cap at 5 by default; sessions 1–5 are immediately visible
     expect(screen.getByText("Session 1")).toBeInTheDocument();
     expect(screen.getByText("Session 5")).toBeInTheDocument();
+
+    // Expand to reveal session 6
+    fireEvent.click(screen.getByRole("button", { name: /View all/i }));
     expect(screen.getByText("Session 6")).toBeInTheDocument();
   });
 
@@ -150,7 +154,8 @@ describe("Dashboard unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getByText("feat/dashboard-polish")).toBeInTheDocument();
+    // Branch appears in the compact row's meta, combined with the PR number
+    expect(screen.getByText(/feat\/dashboard-polish/)).toBeInTheDocument();
   });
 
   it("shows and dismisses the rate limit banner", () => {
@@ -241,17 +246,17 @@ describe("Dashboard unified layout (mobile viewport)", () => {
       />,
     );
 
-    const killButtons = screen.getAllByRole("button", { name: "Terminate session" });
-    expect(killButtons.length).toBeGreaterThan(0);
+    // On mobile, kill is via the BottomSheet. Open it by tapping the compact row.
+    // getSessionTitle falls back to humanized branch: "feat/live" → "Live"
+    fireEvent.click(screen.getByRole("button", { name: /Open Live/i }));
 
-    // First click → enters confirming state; does not fire the kill request
-    fireEvent.click(killButtons[0]);
+    // BottomSheet preview mode: Terminate enters confirm-kill mode, does not fire yet
+    fireEvent.click(screen.getByRole("button", { name: "Terminate" }));
     expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining("/kill"), expect.anything());
 
-    // Button now advertises the confirm affordance
-    const confirm = screen.getByRole("button", { name: "Confirm terminate session" });
+    // BottomSheet confirm-kill mode: second Terminate fires the kill
     await act(async () => {
-      fireEvent.click(confirm);
+      fireEvent.click(screen.getByRole("button", { name: "Terminate" }));
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -260,7 +265,7 @@ describe("Dashboard unified layout (mobile viewport)", () => {
     );
   });
 
-  it("shows CI check chips on cards with enriched PRs", () => {
+  it("shows enriched PR sessions with branch and PR number in compact row", () => {
     render(
       <Dashboard
         initialSessions={[
@@ -284,9 +289,9 @@ describe("Dashboard unified layout (mobile viewport)", () => {
       />,
     );
 
-    // Passing CI checks render as chips by name
-    expect(screen.getByText("build")).toBeInTheDocument();
-    expect(screen.getByText("lint")).toBeInTheDocument();
+    // Compact row meta line shows branch and PR number
+    expect(screen.getByText(/feat\/green/)).toBeInTheDocument();
+    expect(screen.getByText(/PR #301/)).toBeInTheDocument();
   });
 
   it("preserves sessions across live updates", () => {

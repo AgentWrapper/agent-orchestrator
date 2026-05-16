@@ -19,7 +19,11 @@ import type {
   SessionId,
   SessionStatus,
 } from "./types.js";
-import { cloneLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
+import {
+  clearTerminalMarkersForNonTerminalState,
+  cloneLifecycle,
+  deriveLegacyStatus,
+} from "./lifecycle-state.js";
 import { updateMetadata, readMetadataRaw, readCanonicalLifecycle } from "./metadata.js";
 import type { LifecycleDecision } from "./lifecycle-status-decisions.js";
 
@@ -34,6 +38,7 @@ export type TransitionSource =
   | "kill" // Manual kill
   | "cleanup" // Session cleanup
   | "claim_pr"; // PR claim
+
 
 /**
  * Result of a lifecycle transition attempt.
@@ -106,6 +111,8 @@ export function applyDecisionToLifecycle(
       lifecycle.session.terminatedAt = nowIso;
     }
   }
+
+  clearTerminalMarkersForNonTerminalState(lifecycle);
 }
 
 /**
