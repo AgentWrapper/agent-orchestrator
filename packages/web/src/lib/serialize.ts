@@ -10,6 +10,8 @@ import "server-only";
 import {
   isOrchestratorSession,
   isTerminalSession,
+  getProjectSessionsDir,
+  updateMetadata,
   type Session,
   type Agent,
   type PRInfo,
@@ -476,7 +478,15 @@ export async function enrichSessionIssueTitle(
 ): Promise<void> {
   if (!dashboard.issueUrl || !dashboard.issueLabel) return;
 
-  // Check cache first
+  // 1. Check persisted metadata first (survives process restarts, zero network)
+  const persisted = dashboard.metadata["issueTitle"];
+  if (persisted) {
+    dashboard.issueTitle = persisted;
+    issueTitleCache.set(dashboard.issueUrl, persisted);
+    return;
+  }
+
+  // 2. Check in-memory cache
   const cached = issueTitleCache.get(dashboard.issueUrl);
   if (cached) {
     dashboard.issueTitle = cached;
@@ -486,17 +496,23 @@ export async function enrichSessionIssueTitle(
     return;
   }
 
+  // 3. Fall back to tracker API (gh call) — only on first encounter
   try {
-    // Strip "#" prefix from GitHub-style labels to get the identifier
     const identifier = dashboard.issueLabel.replace(/^#/, "");
     const issue = await tracker.getIssue(identifier, project);
     if (issue.title) {
       dashboard.issueTitle = issue.title;
       issueTitleCache.set(dashboard.issueUrl, issue.title);
+      // Persist to metadata so subsequent requests skip the gh call
+      try {
+        const sessionsDir = getProjectSessionsDir(dashboard.projectId);
+        updateMetadata(sessionsDir, dashboard.id, { issueTitle: issue.title });
+      } catch {
+        // Best-effort persistence — in-memory cache still prevents repeated calls
+      }
     }
   } catch {
     issueTitleMissCache.set(dashboard.issueUrl, true);
-    // Can't fetch issue — keep issueTitle null
   }
 }
 
