@@ -87,9 +87,10 @@ export interface StageBudget {
 }
 
 /**
- * Hardcoded predicate forms for v1.1. The typed predicate DSL (and richer
- * `exitPredicates`) lands in v1.3 — this union is intentionally minimal so the
- * scheduler can ship without committing to a DSL surface yet.
+ * Hardcoded route predicates from v1.1. v1.3 introduces the typed `Predicate`
+ * DSL ({@link Predicate}); routes accept either shape so existing pipelines
+ * keep working without a rewrite. Internally `dag.ts` normalizes both into the
+ * same evaluator.
  *
  * All forms reference stage names within the same pipeline. Validation at
  * config load rejects unknown names; the scheduler trusts the input here.
@@ -109,10 +110,53 @@ export type StageRoutePredicate =
   | { kind: "anySucceeded"; stages: string[] }
   | { kind: "anyFailed"; stages: string[] };
 
+/**
+ * v1.3 typed predicate DSL used by `Stage.routes.when` (new form) and
+ * `Pipeline.exitPredicates`. JSON-schema validated at config load.
+ *
+ * Leaf semantics:
+ *  - `all_pass`             — every referenced stage's terminal status is `succeeded`
+ *                             (or, when verdict is set, verdict === "pass").
+ *  - `no_open_findings`     — no finding artifacts in scope have `status === "open"`.
+ *  - `finding_count_below`  — fewer than `n` open findings exist in scope.
+ *
+ * The optional `stages` field scopes the leaf to a subset of stages. When
+ * omitted, the leaf evaluates over every stage in the run (the natural default
+ * for `Pipeline.exitPredicates`). Routes always set `stages` since they're
+ * gating an individual stage on prior siblings.
+ */
+export type Predicate =
+  | { kind: "all_pass"; stages?: string[] }
+  | { kind: "any_failed"; stages?: string[] }
+  | { kind: "no_open_findings"; stages?: string[] }
+  | { kind: "finding_count_below"; n: number; stages?: string[] }
+  | { kind: "and"; predicates: Predicate[] }
+  | { kind: "or"; predicates: Predicate[] }
+  | { kind: "not"; predicate: Predicate };
+
 export interface StageRoutes {
   /** Evaluated once every referenced upstream stage reaches a terminal state. */
-  when: StageRoutePredicate;
+  when: StageRoutePredicate | Predicate;
 }
+
+/**
+ * Workspace isolation class — see issue #1632.
+ *
+ *  - `independent`   (default): fresh session + fresh worktree; the stage sees
+ *                               nothing from prior sibling stages.
+ *  - `read-siblings`         : fresh session + fresh worktree, but the stage's
+ *                               prompt is augmented with read-only access to
+ *                               artifacts produced by upstream stages. Useful for
+ *                               "fix" stages that consume "review" findings.
+ *
+ * The original v0.1 spec had `shared-ro` / `isolated-rw` classes designed for a
+ * model where stages shared a workspace. Fresh-session-per-stage made that
+ * obsolete; the surviving distinction is just whether sibling artifacts are
+ * surfaced to the agent.
+ *
+ * Enforced by WorkspaceGuard at config load — see {@link ConfiguredPipelineSchema}.
+ */
+export type WorkspaceClass = "independent" | "read-siblings";
 
 export interface Stage {
   name: string;
@@ -139,6 +183,12 @@ export interface Stage {
    * "all `dependsOn` stages must have succeeded".
    */
   routes?: StageRoutes;
+  /**
+   * v1.3 — workspace isolation class. Defaults to `independent`.
+   * `read-siblings` requires at least one upstream stage (`dependsOn` or any
+   * preceding stage); WorkspaceGuard rejects orphans at config load.
+   */
+  workspaceClass?: WorkspaceClass;
 }
 
 export interface Pipeline {
@@ -147,6 +197,26 @@ export interface Pipeline {
   stages: Stage[];
   /** Default 1 in v0; engine enforces serial execution when unset. */
   maxConcurrentStages?: number;
+  /**
+   * v1.3 — run-completion conditions. Evaluated when every stage in the run
+   * reaches a terminal status. When unset, defaults to the v1.1 behavior
+   * (success ⇔ allTerminal regardless of artifacts).
+   *
+   * Multiple predicates are AND-combined. The result selects the terminal
+   * loop state:
+   *   - true  → loop state `done`     (loop_succeeded)
+   *   - false → loop state `stalled`  (loop_failed) once `maxLoopRounds` is
+   *             reached; otherwise the run terminates as `awaiting_context`
+   *             so the next trigger can attempt another round.
+   */
+  exitPredicates?: Predicate[];
+  /**
+   * v1.3 — pipeline-level loop cap. When set, `loopRounds >= maxLoopRounds`
+   * combined with falsy `exitPredicates` produces the `loop_failed` terminal.
+   * Per-stage `maxLoopRounds` is unrelated — that one caps retries within a
+   * single run; this caps re-trigger rounds across runs.
+   */
+  maxLoopRounds?: number;
 }
 
 // ============================================================================
@@ -270,6 +340,14 @@ export interface RunState {
   loopRounds: number;
   /** Keyed by stage name. v0 has at most one entry per stage. */
   stages: Record<string, StageState>;
+  /**
+   * v1.3 — artifacts materialized by the reducer during this run, keyed by
+   * stage name (declaration order preserved by Object semantics is irrelevant
+   * — predicates iterate explicitly). Required for `exitPredicates` to
+   * count/filter findings without round-tripping through the store. Optional
+   * so v1.1 RunStates loaded from disk still parse.
+   */
+  runArtifacts?: Record<string, Artifact[]>;
   createdAt: string;
   updatedAt: string;
 }

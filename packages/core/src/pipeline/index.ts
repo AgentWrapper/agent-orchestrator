@@ -26,7 +26,34 @@ export {
   validatePipelineDag,
 } from "./validation.js";
 
-export { findFirstStageCycle, scheduleAfterChange, type ScheduleResult } from "./dag.js";
+export {
+  evaluateRunExitOutcome,
+  findFirstStageCycle,
+  predicateContextForRun,
+  scheduleAfterChange,
+  type RunExitOutcome,
+  type ScheduleResult,
+} from "./dag.js";
+
+export {
+  PredicateSchema,
+  MAX_PREDICATE_DEPTH,
+  collectReferencedStages,
+  evaluateExitPredicates,
+  evaluatePredicate,
+  fromLegacyRoutePredicate,
+  isLegacyRoutePredicate,
+  normalizeRoutePredicate,
+  predicateDepth,
+  validateRoutePredicateScope,
+  type PredicateContext,
+} from "./predicate.js";
+
+export {
+  classifyConfigChange,
+  type ConfigChangeClassification,
+  type ConfigChangeKind,
+} from "./config-diff.js";
 
 export { buildStagePrompt, type StagePromptInput } from "./stage-prompt.js";
 

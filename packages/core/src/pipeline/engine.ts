@@ -39,9 +39,12 @@ import {
   asStageRunId,
   emptyEngineState,
   isTerminalLoopState,
+  type Artifact,
   type EngineState,
   type Pipeline,
   type RunId,
+  type RunState,
+  type Stage,
   type StageRunId,
   type StageTriggerEvent,
 } from "./types.js";
@@ -213,6 +216,10 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
         });
 
         const meta = runMetadata.get(run.runId);
+        const siblingArtifacts =
+          effect.stage.workspaceClass === "read-siblings"
+            ? collectSiblingArtifacts(run, effect.stage)
+            : undefined;
         const startInput: StartStageInput = {
           pipelineName: run.pipelineName,
           projectId: meta?.projectId ?? "",
@@ -221,6 +228,7 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
           stage: effect.stage,
           loopRound: run.loopRounds,
           ...(meta?.issueId ? { issueId: meta.issueId } : {}),
+          ...(siblingArtifacts !== undefined ? { siblingArtifacts } : {}),
         };
 
         try {
@@ -346,4 +354,34 @@ export function createPipelineEngine(deps: PipelineEngineDeps): PipelineEngine {
     dispatch,
     cancelRun,
   };
+}
+
+/**
+ * Collect artifacts from upstream stages a `read-siblings` stage should see.
+ * Upstream = the transitive closure of `dependsOn`. Routes references aren't
+ * included here because they're activation gates, not data dependencies — a
+ * stage that reacts to a sibling's *failure* doesn't necessarily want to read
+ * the sibling's artifacts.
+ *
+ * Returns an object keyed by upstream stage name. Stages that produced no
+ * artifacts (yet) are omitted to keep the prompt block compact.
+ */
+function collectSiblingArtifacts(run: RunState, stage: Stage): Record<string, Artifact[]> {
+  const buffer = run.runArtifacts ?? {};
+  const visited = new Set<string>();
+  const queue: string[] = [...(stage.dependsOn ?? [])];
+  const stagesByName = new Map<string, Stage>();
+  for (const s of run.pipelineConfigSnapshot.stages) stagesByName.set(s.name, s);
+
+  const out: Record<string, Artifact[]> = {};
+  while (queue.length > 0) {
+    const name = queue.shift()!;
+    if (visited.has(name)) continue;
+    visited.add(name);
+    const artifacts = buffer[name];
+    if (artifacts && artifacts.length > 0) out[name] = artifacts;
+    const upstream = stagesByName.get(name)?.dependsOn ?? [];
+    for (const next of upstream) if (!visited.has(next)) queue.push(next);
+  }
+  return out;
 }

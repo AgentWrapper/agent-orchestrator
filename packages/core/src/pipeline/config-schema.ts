@@ -14,13 +14,22 @@ import { z } from "zod";
 
 import { findFirstStageCycle } from "./dag.js";
 import {
+  collectReferencedStages,
+  MAX_PREDICATE_DEPTH,
+  PredicateSchema,
+  predicateDepth,
+  validateRoutePredicateScope,
+} from "./predicate.js";
+import {
   asPipelineId,
   type Pipeline,
+  type Predicate,
   type Stage,
   type StageExecutor,
   type StageRoutePredicate,
   type StageRoutes,
   type TaskMode,
+  type WorkspaceClass,
 } from "./types.js";
 
 const TaskModeSchema = z.enum(["review", "code", "answer"]);
@@ -65,6 +74,11 @@ const StageBudgetSchema = z.object({
   maxDurationMs: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * v1.1's hardcoded route predicates. Kept alongside the v1.3 typed DSL so
+ * existing pipeline configs continue to parse without rewrites — the union
+ * below accepts either shape.
+ */
 const StageRoutePredicateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allSucceeded"), stages: z.array(z.string().min(1)).min(1) }),
   z.object({ kind: z.literal("anySucceeded"), stages: z.array(z.string().min(1)).min(1) }),
@@ -72,8 +86,12 @@ const StageRoutePredicateSchema = z.discriminatedUnion("kind", [
 ]);
 
 const StageRoutesSchema = z.object({
-  when: StageRoutePredicateSchema,
+  when: z.union([StageRoutePredicateSchema, PredicateSchema]),
 });
+
+const WorkspaceClassSchema = z.enum(["independent", "read-siblings"]);
+
+const LEGACY_ROUTE_KINDS = new Set<string>(["allSucceeded", "anySucceeded", "anyFailed"]);
 
 const StageSchema = z.object({
   name: z.string().min(1),
@@ -87,6 +105,7 @@ const StageSchema = z.object({
   maxLoopRounds: z.number().int().positive().optional(),
   dependsOn: z.array(z.string().min(1)).optional(),
   routes: StageRoutesSchema.optional(),
+  workspaceClass: WorkspaceClassSchema.optional(),
 });
 
 /**
@@ -108,6 +127,13 @@ export const ConfiguredPipelineSchema = z
     name: z.string().min(1).optional(),
     stages: z.array(StageSchema).min(1),
     maxConcurrentStages: z.number().int().positive().optional(),
+    /**
+     * v1.3 — pipeline-level run-completion conditions (AND-combined).
+     * Empty / unset preserves v1.1 behavior (every terminal run is "done").
+     */
+    exitPredicates: z.array(PredicateSchema).optional(),
+    /** v1.3 — pipeline-level loop cap. See `Pipeline.maxLoopRounds`. */
+    maxLoopRounds: z.number().int().positive().optional(),
   })
   .superRefine((pipeline, ctx) => {
     const stageNames = new Set(pipeline.stages.map((s) => s.name));
@@ -128,6 +154,10 @@ export const ConfiguredPipelineSchema = z
     }
 
     // dependsOn / routes references must point to known stage names.
+    // WorkspaceGuard: `read-siblings` requires at least one upstream stage
+    // (dependsOn, route reference, or a prior-declared stage). Reject orphans
+    // at config load so runtime never has to handle a "no siblings to read"
+    // case.
     for (let i = 0; i < pipeline.stages.length; i++) {
       const stage = pipeline.stages[i];
       for (const dep of stage.dependsOn ?? []) {
@@ -148,21 +178,91 @@ export const ConfiguredPipelineSchema = z
       }
       const routes = stage.routes;
       if (routes) {
-        for (const ref of routes.when.stages) {
+        // Cast: superRefine receives the parsed-but-not-narrowed input.
+        // `collectReferencedStages` accepts either shape.
+        const refs = collectReferencedStages(routes.when as StageRoutePredicate | Predicate);
+        for (const ref of refs) {
           if (!stageNames.has(ref)) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["stages", i, "routes", "when", "stages"],
+              path: ["stages", i, "routes", "when"],
               message: `Stage "${stage.name}" routes references unknown stage "${ref}".`,
             });
           }
           if (ref === stage.name) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["stages", i, "routes", "when", "stages"],
+              path: ["stages", i, "routes", "when"],
               message: `Stage "${stage.name}" cannot route to itself.`,
             });
           }
+        }
+        // Bound predicate nesting so malformed configs can't OOM the evaluator.
+        for (const wh of [routes.when as StageRoutePredicate | Predicate]) {
+          // Legacy shapes are flat (depth 0); only DSL predicates need depth
+          // checks. Detect by `kind` to avoid `predicateDepth` blowing up on
+          // legacy shapes it doesn't know about.
+          if (!LEGACY_ROUTE_KINDS.has(wh.kind)) {
+            const depth = predicateDepth(wh as Predicate);
+            if (depth > MAX_PREDICATE_DEPTH) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["stages", i, "routes", "when"],
+                message: `Stage "${stage.name}" route predicate is nested ${depth} levels deep; the maximum is ${MAX_PREDICATE_DEPTH}.`,
+              });
+            }
+          }
+        }
+        // Routes-only constraint: every DSL leaf must declare an explicit
+        // `stages` scope. An unset-scope leaf would evaluate over "all
+        // stages" at trigger time, find the host stage still `pending`, and
+        // immediately cascade-skip it. Legacy shapes already require
+        // `stages` at the schema level.
+        for (const problem of validateRoutePredicateScope(
+          routes.when as StageRoutePredicate | Predicate,
+        )) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["stages", i, "routes", "when"],
+            message: `Stage "${stage.name}" routes.when: ${problem}.`,
+          });
+        }
+      }
+
+      if (stage.workspaceClass === "read-siblings") {
+        // Engine's `collectSiblingArtifacts` (engine.ts) walks `dependsOn`
+        // transitively and nothing else — route refs and positional
+        // neighbors don't seed the BFS. Reject any read-siblings stage that
+        // wouldn't actually receive artifacts at runtime, so the prompt
+        // block isn't silently omitted.
+        if ((stage.dependsOn?.length ?? 0) === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["stages", i, "workspaceClass"],
+            message: `Stage "${stage.name}" declares workspaceClass="read-siblings" but has no dependsOn; artifact collection follows only the dependsOn graph at runtime, so sibling artifacts would be empty. Add a dependsOn entry for each upstream stage whose artifacts this stage should read.`,
+          });
+        }
+      }
+    }
+
+    // Validate pipeline-level exitPredicates references and depth.
+    for (let p = 0; p < (pipeline.exitPredicates?.length ?? 0); p++) {
+      const pred = pipeline.exitPredicates![p];
+      const depth = predicateDepth(pred);
+      if (depth > MAX_PREDICATE_DEPTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["exitPredicates", p],
+          message: `exitPredicates[${p}] is nested ${depth} levels deep; the maximum is ${MAX_PREDICATE_DEPTH}.`,
+        });
+      }
+      for (const ref of collectReferencedStages(pred)) {
+        if (!stageNames.has(ref)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["exitPredicates", p],
+            message: `exitPredicates[${p}] references unknown stage "${ref}".`,
+          });
         }
       }
     }
@@ -208,12 +308,7 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
           };
 
     const routes: StageRoutes | undefined = stage.routes
-      ? {
-          when: {
-            kind: stage.routes.when.kind,
-            stages: [...stage.routes.when.stages],
-          } as StageRoutePredicate,
-        }
+      ? { when: cloneRouteWhen(stage.routes.when as StageRoutePredicate | Predicate) }
       : undefined;
 
     return {
@@ -228,6 +323,9 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
       ...(stage.maxLoopRounds !== undefined ? { maxLoopRounds: stage.maxLoopRounds } : {}),
       ...(stage.dependsOn !== undefined ? { dependsOn: [...stage.dependsOn] } : {}),
       ...(routes ? { routes } : {}),
+      ...(stage.workspaceClass !== undefined
+        ? { workspaceClass: stage.workspaceClass as WorkspaceClass }
+        : {}),
     };
   });
 
@@ -238,5 +336,41 @@ export function configuredPipelineToRuntime(key: string, configured: ConfiguredP
     ...(configured.maxConcurrentStages !== undefined
       ? { maxConcurrentStages: configured.maxConcurrentStages }
       : {}),
+    ...(configured.exitPredicates !== undefined
+      ? { exitPredicates: configured.exitPredicates.map(clonePredicate) }
+      : {}),
+    ...(configured.maxLoopRounds !== undefined ? { maxLoopRounds: configured.maxLoopRounds } : {}),
   };
+}
+
+/**
+ * Deep clone a route's `when` so the runtime Pipeline is fully detached from
+ * the Zod-parsed object. Legacy shapes stay legacy; DSL shapes stay DSL —
+ * the runtime evaluator handles both.
+ */
+function cloneRouteWhen(when: StageRoutePredicate | Predicate): StageRoutePredicate | Predicate {
+  if (LEGACY_ROUTE_KINDS.has(when.kind)) {
+    const legacy = when as StageRoutePredicate;
+    return { kind: legacy.kind, stages: [...legacy.stages] } as StageRoutePredicate;
+  }
+  return clonePredicate(when as Predicate);
+}
+
+function clonePredicate(p: Predicate): Predicate {
+  switch (p.kind) {
+    case "all_pass":
+    case "any_failed":
+    case "no_open_findings":
+      return p.stages !== undefined ? { kind: p.kind, stages: [...p.stages] } : { kind: p.kind };
+    case "finding_count_below":
+      return p.stages !== undefined
+        ? { kind: "finding_count_below", n: p.n, stages: [...p.stages] }
+        : { kind: "finding_count_below", n: p.n };
+    case "and":
+      return { kind: "and", predicates: p.predicates.map(clonePredicate) };
+    case "or":
+      return { kind: "or", predicates: p.predicates.map(clonePredicate) };
+    case "not":
+      return { kind: "not", predicate: clonePredicate(p.predicate) };
+  }
 }

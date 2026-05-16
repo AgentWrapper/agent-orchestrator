@@ -28,6 +28,7 @@ import { type SessionId, type SessionManager } from "../../types.js";
 import { buildStagePrompt } from "../stage-prompt.js";
 import {
   PIPELINE_FINDINGS_FILENAME,
+  type Artifact,
   type ArtifactInput,
   type RunId,
   type Stage,
@@ -51,6 +52,13 @@ export interface StartStageInput {
   issueId?: string;
   /** Loop counter from the engine. Surfaced in the prompt only. */
   loopRound?: number;
+  /**
+   * Artifacts from upstream sibling stages, keyed by stage name. Only used
+   * when `stage.workspaceClass === "read-siblings"`. The engine collects
+   * these from `RunState.runArtifacts` for stages this one transitively
+   * depends on; `undefined` is the default (independent semantics).
+   */
+  siblingArtifacts?: Record<string, Artifact[]>;
 }
 
 /**
@@ -118,6 +126,9 @@ export function createAgentExecutor(deps: AgentExecutorDeps): AgentStageExecutor
       pipelineName: input.pipelineName,
       stage: input.stage,
       loopRound: input.loopRound,
+      ...(input.siblingArtifacts !== undefined
+        ? { siblingArtifacts: input.siblingArtifacts }
+        : {}),
     });
 
     let session;

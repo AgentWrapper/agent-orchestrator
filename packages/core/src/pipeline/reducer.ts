@@ -12,7 +12,7 @@
  * reducer-helpers.ts.
  */
 
-import { scheduleAfterChange } from "./dag.js";
+import { evaluateRunExitOutcome, scheduleAfterChange } from "./dag.js";
 import type { PipelineEffect, PipelineEvent, ReducerResult } from "./events.js";
 import {
   deriveLoopStateFromRun,
@@ -123,6 +123,7 @@ function reduceTriggerFired(state: EngineState, event: TriggerFiredEvent): Reduc
       runs: { ...state.runs, [runId]: runState },
       currentRunByLoop: { ...state.currentRunByLoop, [key]: runId },
     };
+    const { reason, loopState: finalLoopState, observation } = terminalLoopForRun(runState);
     const preceding: PipelineEffect[] = [
       {
         type: "EMIT_OBSERVATION",
@@ -132,8 +133,9 @@ function reduceTriggerFired(state: EngineState, event: TriggerFiredEvent): Reduc
         },
       },
       ...skipObservations(runState.runId, sched.newlySkipped, runState),
+      ...(observation ? [observation] : []),
     ];
-    return terminateRunFromState(stateWithRun, runState, "completed", now, "done", preceding);
+    return terminateRunFromState(stateWithRun, runState, reason, now, finalLoopState, preceding);
   }
 
   const nextState: EngineState = {
@@ -271,7 +273,26 @@ function reduceStageCompleted(state: EngineState, event: StageCompletedEvent): R
     artifacts: [...stage.artifacts, ...newArtifacts.map((a) => a.artifactId)],
   };
 
-  return finalizeStageCompletion(state, run, stageName, updatedStage, newArtifacts, "success", now);
+  // Mirror materialized artifacts into the run-level buffer so
+  // `exitPredicates` can count/filter findings without round-tripping
+  // through the store. The buffer is overwritten per stage rather than
+  // appended: a stage's artifacts represent its current attempt, not the
+  // historical union (resume/retry semantics handle that elsewhere).
+  const priorArtifacts = run.runArtifacts ?? {};
+  const runWithArtifacts: RunState = {
+    ...run,
+    runArtifacts: { ...priorArtifacts, [stageName]: newArtifacts },
+  };
+
+  return finalizeStageCompletion(
+    state,
+    runWithArtifacts,
+    stageName,
+    updatedStage,
+    newArtifacts,
+    "success",
+    now,
+  );
 }
 
 interface StageFailedEvent {
@@ -417,10 +438,7 @@ function reduceRunResumed(state: EngineState, event: RunResumedEvent): ReducerRe
   for (const name of failedStageNames) {
     const fresh = stageRunIds[name];
     if (!fresh) {
-      return invalidTransition(
-        state,
-        `RUN_RESUMED missing stageRunId for failed stage "${name}"`,
-      );
+      return invalidTransition(state, `RUN_RESUMED missing stageRunId for failed stage "${name}"`);
     }
     const prior = run.stages[name];
     const cap = stageRetriesByName.get(name);
@@ -611,17 +629,20 @@ function finalizeStageCompletion(
   // Success path: the DAG scheduler may cascade-skip downstream stages whose
   // routes are now unsatisfied, and may immediately schedule the next batch
   // of parallel-eligible stages. Cascade-driven terminality is checked AFTER
-  // the cascade — only this can carry the run to `done` in one reducer step.
+  // the cascade — only this can carry the run to a terminal loop state in
+  // one reducer step.
   const sched = scheduleAfterChange(updatedRun, now);
   effects.push(...skipObservations(run.runId, sched.newlySkipped, sched.run));
 
   if (sched.allTerminal) {
+    const { reason, loopState: finalLoopState, observation } = terminalLoopForRun(sched.run);
+    if (observation) effects.push(observation);
     return terminateRunFromState(
       replaceRun(state, sched.run),
       sched.run,
-      "completed",
+      reason,
       now,
-      "done",
+      finalLoopState,
       effects,
     );
   }
@@ -630,4 +651,70 @@ function finalizeStageCompletion(
   effects.push(...sched.startEffects);
 
   return { state: replaceRun(state, sched.run), effects };
+}
+
+/**
+ * Decide how a fully-terminal run exits, applying `Pipeline.exitPredicates`.
+ * Returns the `terminateRunFromState` arguments + an optional observation so
+ * downstream consumers can distinguish loop_succeeded / loop_failed without
+ * inferring from `loopState` alone.
+ */
+function terminalLoopForRun(run: RunState): {
+  reason: RunTerminationReason;
+  loopState: LoopStateName;
+  observation?: PipelineEffect;
+} {
+  const outcome = evaluateRunExitOutcome(run);
+  if (outcome.kind === "succeeded") {
+    return {
+      reason: "completed",
+      loopState: "done",
+      observation: {
+        type: "EMIT_OBSERVATION",
+        event: {
+          name: "pipeline.loop.succeeded",
+          data: { runId: run.runId, pipelineName: run.pipelineName, loopRounds: run.loopRounds },
+        },
+      },
+    };
+  }
+  if (outcome.kind === "failed_exhausted") {
+    return {
+      reason: "completed",
+      loopState: "stalled",
+      observation: {
+        type: "EMIT_OBSERVATION",
+        event: {
+          name: "pipeline.loop.failed",
+          data: {
+            runId: run.runId,
+            pipelineName: run.pipelineName,
+            loopRounds: run.loopRounds,
+            reason: "exit_predicates_unsatisfied",
+          },
+        },
+      },
+    };
+  }
+  // failed_can_retry: the run is done but the loop awaits the next trigger.
+  // We still mark the run terminal (no more stages can fire) — the loop key
+  // gets freed by `terminateRunFromState` so the next TRIGGER_FIRED creates
+  // a fresh run. Using `awaiting_context` here advertises the intent on the
+  // run's final record without affecting cleanup.
+  return {
+    reason: "completed",
+    loopState: "awaiting_context",
+    observation: {
+      type: "EMIT_OBSERVATION",
+      event: {
+        name: "pipeline.loop.continuing",
+        data: {
+          runId: run.runId,
+          pipelineName: run.pipelineName,
+          loopRounds: run.loopRounds,
+          maxLoopRounds: run.pipelineConfigSnapshot.maxLoopRounds,
+        },
+      },
+    },
+  };
 }
