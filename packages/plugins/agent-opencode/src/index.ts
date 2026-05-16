@@ -7,6 +7,8 @@ import {
   getActivityFallbackState,
   recordTerminalActivity,
   asValidOpenCodeSessionId,
+  isWindows,
+  PROCESS_PROBE_INDETERMINATE,
   getCachedOpenCodeSessionList,
   getOpenCodeChildEnv,
   ensureOpenCodeTmpDir,
@@ -17,6 +19,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
@@ -298,6 +301,7 @@ function createOpenCodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
@@ -340,9 +344,11 @@ function createOpenCodeAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // tmux and ps are Unix-only; guard before any tmux calls on Windows.
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -358,6 +364,7 @@ function createOpenCodeAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return PROCESS_PROBE_INDETERMINATE;
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)opencode(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -387,7 +394,7 @@ function createOpenCodeAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 
@@ -442,7 +449,14 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("opencode", ["version"], { stdio: "ignore", env: getOpenCodeChildEnv() });
+    execFileSync("opencode", ["version"], {
+      stdio: "ignore",
+      // On Windows, execFileSync cannot resolve .cmd shim extensions without
+      // invoking the shell; windowsHide:true suppresses the conhost popup.
+      shell: isWindows(),
+      windowsHide: true,
+      env: getOpenCodeChildEnv(),
+    });
     return true;
   } catch {
     return false;

@@ -205,6 +205,7 @@ export function makeSession(overrides: Partial<DashboardSession> = {}): Dashboar
     issueTitle: null,
     userPrompt: null,
     displayName: null,
+    displayNameUserSet: false,
     summary: "Test session",
     summaryIsFallback: false,
     createdAt: new Date().toISOString(),

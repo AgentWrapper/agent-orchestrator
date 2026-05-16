@@ -444,7 +444,9 @@ describe("applyAgentReport", () => {
     ).toThrow(/not found/);
   });
 
-  it("bounds the on-disk audit trail to recent entries", { timeout: 15000 }, () => {
+  // 260 atomic-write cycles are slow on Windows (rename + AV scan); bump the
+  // per-test timeout to avoid flakes on slower filesystems.
+  it("bounds the on-disk audit trail to recent entries", { timeout: 30_000 }, () => {
     for (let index = 0; index < 260; index += 1) {
       applyAgentReport(dataDir, sessionId, {
         state: "working",

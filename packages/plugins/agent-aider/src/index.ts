@@ -5,14 +5,18 @@ import {
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
+  hasRecentCommits,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
+  isWindows,
+  PROCESS_PROBE_INDETERMINATE,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -21,29 +25,13 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Aider Activity Detection Helpers
 // =============================================================================
-
-/**
- * Check if Aider has made recent commits (within last 60 seconds).
- */
-async function hasRecentCommits(workspacePath: string): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["log", "--since=60 seconds ago", "--format=%H"],
-      { cwd: workspacePath, timeout: 5_000 },
-    );
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Get modification time of Aider chat history file.
@@ -122,7 +110,12 @@ function createAiderAgent(): Agent {
       }
 
       if (config.systemPromptFile) {
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        if (isWindows()) {
+          const content = readFileSync(config.systemPromptFile, "utf-8");
+          parts.push("--system-prompt", shellEscape(content));
+        } else {
+          parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        }
       } else if (config.systemPrompt) {
         parts.push("--system-prompt", shellEscape(config.systemPrompt));
       }
@@ -179,6 +172,7 @@ function createAiderAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // Process is running - check for activity signals
@@ -219,9 +213,11 @@ function createAiderAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          // ps -eo is Unix-only; guard against stale tmux handles on Windows
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -237,6 +233,7 @@ function createAiderAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return PROCESS_PROBE_INDETERMINATE;
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)aider(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -266,7 +263,7 @@ function createAiderAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 
@@ -309,7 +306,11 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("aider", ["--version"], { stdio: "ignore" });
+    execFileSync("aider", ["--version"], {
+      stdio: "ignore",
+      shell: isWindows(),
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;

@@ -64,7 +64,7 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("do not edit repository files or implement fixes");
   });
 
-  it("mandates ao send and bans raw tmux access", async () => {
+  it("mandates ao send and bans raw runtime access", async () => {
     const generateOrchestratorPrompt = await loadGenerateOrchestratorPrompt();
     const prompt = generateOrchestratorPrompt({
       config,
@@ -73,7 +73,11 @@ describe("generateOrchestratorPrompt", () => {
     });
 
     expect(prompt).toContain("Always use `ao send`");
-    expect(prompt).toContain("never use raw `tmux send-keys`");
+    // Platform-neutral runtime warning — must call out both tmux (Unix) and the
+    // Windows named-pipe path so the orchestrator agent doesn't try either.
+    expect(prompt).toContain("never bypass it by writing to the runtime layer directly");
+    expect(prompt).toContain("tmux send-keys");
+    expect(prompt).toContain("named pipe");
     expect(prompt).toContain("ao send --no-wait");
   });
 

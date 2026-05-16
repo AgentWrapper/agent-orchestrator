@@ -97,7 +97,7 @@ ao-1, ao-2      (agent-orchestrator)
 ss-1, ss-2      (safe-split)
 ```
 
-### Tmux Session Names (Globally Unique)
+### Runtime Session Names (Globally Unique)
 
 ```
 {hash}-{sessionPrefix}-{num}
@@ -106,6 +106,8 @@ a3b4c5d6e7f8-int-1
 a3b4c5d6e7f8-ao-1
 f1e2d3c4b5a6-int-1    (different checkout, no collision!)
 ```
+
+On Unix this is the tmux session name. On Windows (where the default runtime is `process`, not `tmux`) the same string identifies the named pipe path `\\.\pipe\ao-pty-{sessionId}` and is recorded in `~/.agent-orchestrator/windows-pty-hosts.json`.
 
 ### Prefix Generation (Clean Heuristic)
 
@@ -159,7 +161,7 @@ project=integrator
 issue=INT-100
 branch=feat/INT-100
 status=working
-tmuxName=a3b4c5d6e7f8-int-1
+tmuxName=a3b4c5d6e7f8-int-1            # Unix; on Windows the runtime handle is `pipePath=\\.\pipe\ao-pty-<sessionId>` plus `ptyHostPid`
 worktree=/Users/alice/.agent-orchestrator/a3b4c5d6e7f8-integrator/worktrees/int-1
 createdAt=2026-02-17T10:30:00Z
 pr=https://github.com/ComposioHQ/integrator/pull/123
@@ -187,7 +189,7 @@ ao list integrator
 # Spawn new session
 ao spawn integrator INT-100
 
-# Attach to session (orchestrator finds tmux name)
+# Attach to session (orchestrator finds the runtime handle: tmux name on Unix, named pipe on Windows)
 ao attach int-1
 
 # Kill session

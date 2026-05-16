@@ -3,13 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type {
-  PluginModule,
-  Workspace,
-  WorkspaceCreateConfig,
-  WorkspaceInfo,
-  ProjectConfig,
-} from "@aoagents/ao-core";
+import { getShell, type PluginModule, type Workspace, type WorkspaceCreateConfig, type WorkspaceInfo, type ProjectConfig } from "@aoagents/ao-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -234,8 +228,9 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Run postCreate hooks
       // NOTE: commands run with full shell privileges — they come from trusted YAML config
       if (project.postCreate) {
+        const shell = getShell();
         for (const command of project.postCreate) {
-          await execFileAsync("sh", ["-c", command], { cwd: info.path });
+          await execFileAsync(shell.cmd, shell.args(command), { cwd: info.path });
         }
       }
     },

@@ -1,12 +1,26 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import {
+  getShell,
+  isWindows,
+  killProcessTree,
+  registerWindowsPtyHost,
+  unregisterWindowsPtyHost,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@aoagents/ao-core";
+import {
+  getPipePath,
+  ptyHostSendMessage,
+  ptyHostGetOutput,
+  ptyHostIsAlive,
+  ptyHostKill,
+} from "./pty-client.js";
 
 export const manifest = {
   name: "process",
@@ -50,23 +64,130 @@ export function create(): Runtime {
         throw new Error(`Session "${handleId}" already exists — destroy it before re-creating`);
       }
 
+      // Reserve the slot synchronously for both platforms so duplicate-create,
+      // getMetrics, and getAttachInfo see the entry on Windows too. Unix used
+      // to create this further down; we hoist it so the Windows branch shares
+      // the same bookkeeping.
       const entry: ProcessEntry = {
-        process: null, // set after spawn — methods guard against null
+        process: null,
         outputBuffer: [],
         createdAt: Date.now(),
       };
       processes.set(handleId, entry);
 
-      // NOTE: shell:true is intentional — launchCommand comes from trusted YAML config
-      // and may contain pipes, redirects, or other shell syntax.
+      // --- Windows: spawn via PTY host (ConPTY) ---
+      if (isWindows()) {
+        const pipePath = getPipePath(handleId);
+        const shellInfo = getShell();
+        const ptyHostScript = resolve(
+          dirname(fileURLToPath(import.meta.url)),
+          "pty-host.js",
+        );
+
+        const ptyEnv = { ...process.env, ...config.environment };
+        try {
+          const ptyChild = spawn(
+            process.execPath,
+            [
+              ptyHostScript,
+              handleId,
+              pipePath,
+              config.workspacePath,
+              shellInfo.cmd,
+              ...shellInfo.args(config.launchCommand),
+            ],
+            {
+              cwd: config.workspacePath,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+              detached: true, // Must survive parent exit (like tmux daemon)
+              // Suppress the console window node-pty's conpty helper would
+              // otherwise flash on screen when a ConPTY child fails. Without
+              // this, errors from node-pty's internal conpty_console_list_agent
+              // surface as visible Windows error dialogs (0x800700e8).
+              windowsHide: true,
+            },
+          );
+
+          // Wait for PTY host to signal readiness (writes "READY:<pid>\n" to stdout)
+          const ptyPid = await new Promise<number>((resolveReady, reject) => {
+            const timeout = setTimeout(() => {
+              ptyChild.kill();
+              reject(new Error("PTY host startup timeout (10s)"));
+            }, 10_000);
+            let data = "";
+            ptyChild.stdout?.on("data", (chunk: Buffer) => {
+              data += chunk.toString();
+              const match = data.match(/READY:(\d+)/);
+              if (match) {
+                clearTimeout(timeout);
+                resolveReady(parseInt(match[1], 10));
+              }
+            });
+            ptyChild.stderr?.on("data", (chunk: Buffer) => {
+              data += chunk.toString();
+            });
+            ptyChild.on("error", (err) => {
+              clearTimeout(timeout);
+              reject(new Error(`PTY host spawn error: ${err.message}`));
+            });
+            ptyChild.on("exit", (code) => {
+              clearTimeout(timeout);
+              reject(new Error(`PTY host exited during startup with code ${code}: ${data}`));
+            });
+          });
+
+          // Unref so this process can exit while pty-host stays alive
+          ptyChild.unref();
+          ptyChild.stdout?.destroy();
+          ptyChild.stderr?.destroy();
+
+          // Sideband registration so `ao stop` can find and graceful-kill this
+          // pty-host even if its session JSON is later wiped. Without this,
+          // `detached: true` puts pty-host in its own console group, escaping
+          // `taskkill /T` on the parent process. See windows-pty-registry.ts.
+          if (typeof ptyChild.pid === "number") {
+            try {
+              registerWindowsPtyHost({
+                sessionId: handleId,
+                ptyHostPid: ptyChild.pid,
+                pipePath,
+              });
+            } catch {
+              /* registry is best-effort; spawn must succeed regardless */
+            }
+          }
+
+          return {
+            id: handleId,
+            runtimeName: "process",
+            data: {
+              pid: ptyPid,
+              ptyHostPid: ptyChild.pid,
+              pipePath,
+              createdAt: entry.createdAt,
+            },
+          };
+        } catch (err) {
+          processes.delete(handleId);
+          throw err;
+        }
+      }
+
+      // --- Unix: existing piped stdio path (unchanged below) ---
+      // Use explicit shell args instead of spawn's shell: option.
+      // When shell is a string, Node.js internally passes -c which is ambiguous
+      // on PowerShell 5.1 (-c matches both -Command and -ConfigurationName).
+      // getShell().args() returns the correct flag (-Command for pwsh/powershell.exe, /c for cmd).
+      // launchCommand comes from trusted YAML config and may contain pipes and redirects.
+      const shellInfo = getShell();
       let child: ChildProcess;
       try {
-        child = spawn(config.launchCommand, {
+        child = spawn(shellInfo.cmd, shellInfo.args(config.launchCommand), {
           cwd: config.workspacePath,
           env: { ...process.env, ...config.environment },
           stdio: ["pipe", "pipe", "pipe"],
-          shell: true,
-          detached: true, // Own process group so destroy() can kill child commands
+          detached: !isWindows(), // Own process group so destroy() can kill child commands (Unix only)
         });
       } catch (err: unknown) {
         processes.delete(handleId);
@@ -146,8 +267,58 @@ export function create(): Runtime {
     },
 
     async destroy(handle: RuntimeHandle): Promise<void> {
+      // PTY host path (Windows) — kill via named pipe + process tree
+      const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
+      if (pipePath) {
+        // Ask the pty-host to dispose its ConPTY handle and exit gracefully.
+        await ptyHostKill(pipePath);
+        const ptyHostPid = (handle.data as Record<string, unknown>)?.ptyHostPid;
+        if (typeof ptyHostPid === "number" && ptyHostPid > 0) {
+          // Give the host ~500ms to shut down cleanly so node-pty can release
+          // the ConPTY. SIGKILLing immediately orphans the
+          // conpty_console_list_agent helper and triggers Windows Error
+          // Reporting dialogs (0x800700e8).
+          const deadline = Date.now() + 500;
+          while (Date.now() < deadline) {
+            try {
+              process.kill(ptyHostPid, 0); // probe
+            } catch (err: unknown) {
+              // EPERM: the process exists but we lack permission to signal it
+              // (cross-context on Windows). It is NOT gone — fall through to
+              // killProcessTree so the orphan is reaped. Any other error code
+              // (typically ESRCH) means the process is gone — clean exit.
+              if ((err as { code?: string }).code === "EPERM") break;
+              processes.delete(handle.id);
+              try {
+                unregisterWindowsPtyHost(handle.id);
+              } catch {
+                /* best effort */
+              }
+              return; // already gone — clean exit
+            }
+            await new Promise((r) => setTimeout(r, 25));
+          }
+          await killProcessTree(ptyHostPid, "SIGKILL");
+        }
+        processes.delete(handle.id);
+        try {
+          unregisterWindowsPtyHost(handle.id);
+        } catch {
+          /* best effort */
+        }
+        return;
+      }
+
       const entry = processes.get(handle.id);
-      if (!entry) return;
+      if (!entry) {
+        // Process was spawned by a different Node.js process (e.g. ao spawn).
+        // The in-memory Map doesn't have it, but handle.data.pid has the OS PID.
+        const pid = (handle.data as Record<string, unknown>)?.pid;
+        if (typeof pid === "number" && pid > 0) {
+          await killProcessTree(pid, "SIGKILL");
+        }
+        return;
+      }
 
       const child = entry.process;
       if (!child) {
@@ -156,47 +327,53 @@ export function create(): Runtime {
         return;
       }
       if (child.exitCode === null && child.signalCode === null) {
-        // Kill the entire process group (negative PID) so child commands
-        // spawned by the shell are also terminated, not just the shell itself.
         const pid = child.pid;
-        if (pid) {
-          try {
-            process.kill(-pid, "SIGTERM");
-          } catch {
-            // Process group may not exist — fall back to direct kill
-            child.kill("SIGTERM");
-          }
-        } else {
-          child.kill("SIGTERM");
-        }
 
-        // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
-        await new Promise<void>((resolve) => {
+        // Register the exit listener BEFORE sending the kill signal to avoid
+        // the race where the process exits during the async killProcessTree
+        // call and the "exit" event fires before the listener is attached,
+        // causing the full 5-second timeout to always elapse on Windows.
+        const waitForExit = new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
-            if (child.exitCode === null && child.signalCode === null) {
-              if (pid) {
-                try {
-                  process.kill(-pid, "SIGKILL");
-                } catch {
-                  child.kill("SIGKILL");
-                }
-              } else {
-                child.kill("SIGKILL");
-              }
-            }
-            resolve();
+            Promise.resolve(
+              child.exitCode === null && child.signalCode === null
+                ? pid
+                  ? killProcessTree(pid, "SIGKILL")
+                  : void child.kill("SIGKILL")
+                : undefined,
+            )
+              .catch(() => {})
+              .finally(resolve);
           }, 5000);
+
           child.once("exit", () => {
             clearTimeout(timeout);
             resolve();
           });
         });
+
+        // Send SIGTERM after the listener is registered so we cannot miss
+        // the exit event regardless of how quickly the process terminates.
+        if (pid) {
+          await killProcessTree(pid, "SIGTERM");
+        } else {
+          child.kill("SIGTERM");
+        }
+
+        await waitForExit;
       }
 
       processes.delete(handle.id);
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
+      // PTY host path (Windows)
+      const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
+      if (pipePath) {
+        await ptyHostSendMessage(pipePath, message);
+        return;
+      }
+
       const entry = processes.get(handle.id);
       if (!entry) {
         throw new Error(`No process found for session ${handle.id}`);
@@ -236,6 +413,11 @@ export function create(): Runtime {
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
+      const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
+      if (pipePath) {
+        return ptyHostGetOutput(pipePath, lines);
+      }
+
       const entry = processes.get(handle.id);
       if (!entry) return "";
 
@@ -245,8 +427,27 @@ export function create(): Runtime {
     },
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
+      const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
+      if (pipePath) {
+        return ptyHostIsAlive(pipePath);
+      }
+
       const entry = processes.get(handle.id);
-      if (!entry || !entry.process) return false;
+      if (!entry || !entry.process) {
+        // Not in our in-memory Map — check via PID signal-0
+        const pid = (handle.data as Record<string, unknown>)?.pid;
+        if (typeof pid === "number" && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (err: unknown) {
+            // EPERM means process exists but we don't have permission — still alive
+            if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+            return false;
+          }
+        }
+        return false;
+      }
       return entry.process.exitCode === null && entry.process.signalCode === null;
     },
 
@@ -259,6 +460,15 @@ export function create(): Runtime {
     },
 
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
+      const pipePath = (handle.data as Record<string, unknown>)?.pipePath as string | undefined;
+      if (pipePath) {
+        const alive = await ptyHostIsAlive(pipePath);
+        if (!alive) {
+          return { type: "process", target: "", command: `# process for session ${handle.id} is no longer running` };
+        }
+        return { type: "process", target: String((handle.data as Record<string, unknown>)?.pid ?? ""), command: pipePath };
+      }
+
       const entry = processes.get(handle.id);
       if (
         !entry ||
@@ -278,6 +488,73 @@ export function create(): Runtime {
       };
     },
   };
+}
+
+/**
+ * Sweep all registered Windows pty-hosts: send a graceful kill via the named
+ * pipe (so node-pty disposes its ConPTY handle and avoids the WER 0x800700e8
+ * dialog), wait briefly, then SIGKILL stragglers via the OS process tree.
+ *
+ * Invoked by `ao stop` on Windows so orphaned pty-hosts (whose session JSON
+ * was wiped or whose parent died ungracefully) still get cleaned up.
+ *
+ * Returns counts for diagnostics. No-op on non-Windows.
+ */
+export async function sweepWindowsPtyHosts(): Promise<{
+  attempted: number;
+  gracefullyExited: number;
+  forceKilled: number;
+  failed: number;
+}> {
+  if (!isWindows()) {
+    return { attempted: 0, gracefullyExited: 0, forceKilled: 0, failed: 0 };
+  }
+  const { getWindowsPtyHosts, unregisterWindowsPtyHost } = await import("@aoagents/ao-core");
+  const entries = getWindowsPtyHosts();
+  let gracefullyExited = 0;
+  let forceKilled = 0;
+  let failed = 0;
+  for (const entry of entries) {
+    try {
+      // Step 1: graceful kill via the existing pipe protocol.
+      await ptyHostKill(entry.pipePath);
+
+      // Step 2: poll up to 500ms for the host to exit.
+      const deadline = Date.now() + 500;
+      let exited = false;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(entry.ptyHostPid, 0);
+        } catch (err: unknown) {
+          // EPERM: process exists but we can't signal it (cross-context on
+          // Windows). It is NOT gone — fall through to force-kill. Any other
+          // code (typically ESRCH) means it has already exited.
+          if ((err as { code?: string }).code !== "EPERM") {
+            exited = true;
+          }
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+
+      if (exited) {
+        gracefullyExited++;
+      } else {
+        // Step 3: force-kill stragglers.
+        await killProcessTree(entry.ptyHostPid, "SIGKILL");
+        forceKilled++;
+      }
+
+      try {
+        unregisterWindowsPtyHost(entry.sessionId);
+      } catch {
+        /* best effort */
+      }
+    } catch {
+      failed++;
+    }
+  }
+  return { attempted: entries.length, gracefullyExited, forceKilled, failed };
 }
 
 export default { manifest, create } satisfies PluginModule<Runtime>;

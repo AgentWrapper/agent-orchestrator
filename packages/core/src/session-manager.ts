@@ -41,6 +41,7 @@ import {
   type Runtime,
   type Agent,
   type Workspace,
+  type WorkspaceCreateConfig,
   type Tracker,
   type SCM,
   type PluginRegistry,
@@ -61,6 +62,7 @@ import {
 } from "./metadata.js";
 import {
   buildLifecycleMetadataPatch,
+  clearTerminalMarkersForNonTerminalState,
   cloneLifecycle,
   createInitialCanonicalLifecycle,
   deriveLegacyStatus,
@@ -82,9 +84,7 @@ import {
   resetOpenCodeSessionListCache as resetSharedOpenCodeSessionListCache,
   type OpenCodeSessionListEntry,
 } from "./opencode-shared.js";
-import {
-  writeWorkspaceOpenCodeAgentsMd,
-} from "./opencode-agents-md.js";
+import { writeWorkspaceOpenCodeAgentsMd } from "./opencode-agents-md.js";
 import { writeOpenCodeConfig } from "./opencode-config.js";
 import { CleanupStack } from "./cleanup-stack.js";
 import {
@@ -104,6 +104,11 @@ import {
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+// On Windows, execFile cannot resolve .cmd shim extensions without invoking the shell.
+// windowsHide:true suppresses the conhost popup that the shell would otherwise flash.
+const EXEC_SHELL_OPTION =
+  process.platform === "win32" ? ({ shell: true, windowsHide: true } as const) : ({} as const);
+
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -124,6 +129,7 @@ async function deleteOpenCodeSession(sessionId: string): Promise<void> {
     try {
       await execFileAsync("opencode", ["session", "delete", validatedSessionId], {
         timeout: 30_000,
+        ...EXEC_SHELL_OPTION,
         env: getOpenCodeChildEnv(),
       });
       // Drop cached list immediately so reuse / remap / restore call sites
@@ -239,10 +245,7 @@ const DISPLAY_NAME_MAX_LENGTH = 80;
  * Returns `undefined` when no usable context exists so callers can skip
  * writing the field entirely.
  */
-function deriveDisplayName(input: {
-  issueTitle?: string;
-  prompt?: string;
-}): string | undefined {
+function deriveDisplayName(input: { issueTitle?: string; prompt?: string }): string | undefined {
   const pickLine = (text: string): string => {
     const line = text
       .split(/\r?\n/)
@@ -258,7 +261,10 @@ function deriveDisplayName(input: {
     const codePoints = Array.from(collapsed);
     if (codePoints.length <= DISPLAY_NAME_MAX_LENGTH) return collapsed;
     // Leave room for the ellipsis character.
-    return `${codePoints.slice(0, DISPLAY_NAME_MAX_LENGTH - 1).join("").trimEnd()}…`;
+    return `${codePoints
+      .slice(0, DISPLAY_NAME_MAX_LENGTH - 1)
+      .join("")
+      .trimEnd()}…`;
   };
 
   if (input.issueTitle && input.issueTitle.trim()) {
@@ -287,6 +293,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function isAgentProcessNotDefinitelyMissing(
+  agent: Agent,
+  handle: RuntimeHandle,
+): Promise<boolean> {
+  try {
+    return (await agent.isProcessRunning(handle)) !== false;
+  } catch {
+    // Send/restore readiness should only block on a definitive "process missing"
+    // verdict. Probe failures are no verdict, so keep waiting or fall back to
+    // terminal output instead of forcing a restore.
+    return true;
+  }
+}
+
 function isFixedOrchestratorReservationError(err: unknown, sessionId: string): boolean {
   return err instanceof Error && err.message.includes(`Orchestrator session "${sessionId}" already exists`);
 }
@@ -296,7 +316,7 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
     const { stdout } = await execFileAsync(
       "tmux",
       ["display-message", "-p", "-t", sessionName, "#{pane_current_command}"],
-      { timeout: 5_000 },
+      { timeout: 5_000, windowsHide: true },
     );
     const command = stdout.trim();
     return command.length > 0 ? command : null;
@@ -365,13 +385,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function normalizePath(path: string): string {
-    return resolve(path).replace(/\/$/, "");
+    return resolve(path).replace(/[/\\]$/, "");
   }
 
   function isPathInside(path: string, parentPath: string): boolean {
     const normalizedPath = normalizePath(path);
     const normalizedParent = normalizePath(parentPath);
-    return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
+    const sep = process.platform === "win32" ? "\\" : "/";
+    return (
+      normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}${sep}`)
+    );
   }
 
   function getManagedWorkspaceRoots(projectId: string, projectPath: string): string[] {
@@ -431,10 +454,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   function requiresNativeRestore(agentName: string): boolean {
+    // kimicode is intentionally excluded: kimi's session dir only exists if the
+    // previous launch ran far enough to write to ~/.kimi/sessions. A failed
+    // launch (e.g. the --agent-file YAML crash) leaves no session to resume,
+    // and falling back to a fresh getLaunchCommand is the only sensible choice.
     return (
       agentName === "claude-code" ||
       agentName === "codex" ||
-      agentName === "kimicode" ||
       agentName === "opencode"
     );
   }
@@ -469,6 +495,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }),
     );
     updater(lifecycle);
+    clearTerminalMarkersForNonTerminalState(lifecycle);
     return lifecycle;
   }
 
@@ -506,12 +533,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   const SESSION_CACHE_TTL_MS = 35_000;
-  let sessionCache:
-    | {
-        sessions: Session[];
-        expiresAt: number;
-      }
-    | null = null;
+  let sessionCache: {
+    sessions: Session[];
+    expiresAt: number;
+  } | null = null;
   const ensureOrchestratorPromises = new Map<string, Promise<Session>>();
 
   function invalidateCache(): void {
@@ -775,6 +800,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         {
           cwd: project.path,
           timeout: 5_000,
+          ...EXEC_SHELL_OPTION,
         },
       );
 
@@ -866,8 +892,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     // After config validation, plugin is always set if tracker/scm exists
     // (either from user config or auto-generated from package/path)
-    const tracker =
-      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const tracker = project.tracker?.plugin
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
@@ -1007,7 +1034,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Fabricated handles (constructed as fallback for external sessions) should
     // NOT override status to "killed" — we don't know if the session ever had
     // a tmux session, and we'd clobber meaningful statuses like "pr_open".
-    if (handleFromMetadata && session.runtimeHandle && plugins.runtime && session.status !== "spawning") {
+    if (
+      handleFromMetadata &&
+      session.runtimeHandle &&
+      plugins.runtime &&
+      session.status !== "spawning"
+    ) {
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
@@ -1233,12 +1265,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
+      // If an orchestrator session exists on disk for this project, give the
+      // worker the literal command to message it. Existence-on-disk is the
+      // signal: if metadata was ever written for the canonical orchestrator
+      // ID, the orchestrator workflow is in play here.
+      const orchestratorSessionId = `${project.sessionPrefix}-orchestrator`;
+      const orchestratorExists = readMetadataRaw(sessionsDir, orchestratorSessionId) !== null;
+
       const { systemPrompt, taskPrompt } = buildPrompt({
         project,
         projectId: spawnConfig.projectId,
         issueId: spawnConfig.issueId,
         issueContext,
         userPrompt: spawnConfig.prompt,
+        ...(orchestratorExists && { orchestratorSessionId }),
       });
 
       const baseDir = getProjectDir(spawnConfig.projectId);
@@ -1291,6 +1331,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await plugins.agent.preLaunchSetup(workspacePath);
       }
 
+      // Install workspace hooks before launching the agent so that
+      // PostToolUse hooks (e.g. Claude Code's metadata-updater) are
+      // in place before the agent's first tool call.
+      if (plugins.agent.setupWorkspaceHooks) {
+        await plugins.agent.setupWorkspaceHooks(workspacePath, { dataDir: sessionsDir });
+      }
+      if (plugins.agent.name !== "claude-code") {
+        await setupPathWrapperWorkspace(workspacePath);
+      }
+
       const handle = await plugins.runtime.create({
         sessionId: tmuxName ?? sessionId, // Use tmux name for runtime if available
         workspacePath,
@@ -1298,6 +1348,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         environment: {
           ...environment,
           ...(opencodeConfigFile ? { OPENCODE_CONFIG: opencodeConfigFile } : {}),
+          ...(project.env ?? {}),
           PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
           GH_PATH: PREFERRED_GH_PATH,
           ...(process.env["AO_AGENT_GH_TRACE"] && {
@@ -1408,53 +1459,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       invalidateCache();
 
       // Past this point every resource that needed an undo is on disk in its
-      // final form. Dismiss the stack so the prompt-delivery loop below (which
-      // is intentionally non-fatal) cannot trigger a rollback.
+      // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Send the task-specific prompt post-launch for agents that need it
-      // (e.g. Claude Code exits after -p, so we send the prompt after it starts
-      // in interactive mode). Prompt delivery failure must NOT destroy the
-      // session — the agent is running; user can retry with `ao send`.
-      let promptDelivered = false;
-      if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-        const maxRetries = 3;
-        const baseDelayMs = 3_000;
-        let lastError: Error | undefined;
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            // Wait for agent to start and be ready for input
-            // Use exponential backoff: 3s, 6s, 9s between attempts
-            await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
-            await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-            promptDelivered = true;
-            break;
-          } catch (err) {
-            lastError = err instanceof Error ? err : new Error(String(err));
-            console.error(
-              `[session-manager] Prompt delivery attempt ${attempt}/${maxRetries} failed: ${lastError.message}`,
-            );
-          }
-        }
-
-        if (!promptDelivered) {
-          console.error(
-            `[session-manager] FAILED to deliver prompt to session ${sessionId} after ${maxRetries} attempts. ` +
-              `User must send manually with 'ao send'. Last error: ${lastError?.message}`,
-          );
-        }
-
-        session.metadata["promptDelivered"] = String(promptDelivered);
-      } else if (agentLaunchConfig.prompt) {
-        session.metadata["promptDelivered"] = "true";
-      }
-
-      if (session.metadata["promptDelivered"]) {
-        updateMetadata(sessionsDir, sessionId, session.metadata);
-        invalidateCache();
-      }
-
+      // Prompt is delivered inline via the agent's launch command (positional argument).
+      // No post-launch polling needed — the prompt is part of process invocation.
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,
@@ -1521,16 +1530,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
+    const workspaceConfig = {
+      projectId: orchestratorConfig.projectId,
+      project,
+      sessionId,
+      branch,
+      worktreeDir: getProjectWorktreesDir(orchestratorConfig.projectId),
+    } satisfies WorkspaceCreateConfig;
+
     let workspacePath: string;
+    let adoptedManagedWorkspace = false;
     try {
-      const wsInfo = await plugins.workspace.create({
-        projectId: orchestratorConfig.projectId,
-        project,
-        sessionId,
-        branch,
-        worktreeDir: getProjectWorktreesDir(orchestratorConfig.projectId),
-      });
+      const adoptedInfo = await plugins.workspace.findManagedWorkspace?.(workspaceConfig);
+      const wsInfo = adoptedInfo ?? (await plugins.workspace.create(workspaceConfig));
       workspacePath = wsInfo.path;
+      adoptedManagedWorkspace = adoptedInfo !== undefined && adoptedInfo !== null;
     } catch (err) {
       try {
         deleteMetadata(sessionsDir, sessionId);
@@ -1543,11 +1557,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Helper: undo worktree + metadata if anything between workspace creation
     // and a fully-written metadata record fails.
     const cleanupWorktreeAndMetadata = async (promptFile?: string): Promise<void> => {
-      try {
-        // plugins.workspace is guaranteed non-null here: we threw above if it was null
-        await plugins.workspace!.destroy(workspacePath);
-      } catch {
-        /* best effort */
+      if (!adoptedManagedWorkspace) {
+        try {
+          // plugins.workspace is guaranteed non-null here: we threw above if it was null
+          await plugins.workspace!.destroy(workspacePath);
+        } catch {
+          /* best effort */
+        }
       }
       try {
         deleteMetadata(sessionsDir, sessionId);
@@ -1662,6 +1678,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         launchCommand,
         environment: {
           ...environment,
+          ...(project.env ?? {}),
           PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
           GH_PATH: PREFERRED_GH_PATH,
           ...(process.env["AO_AGENT_GH_TRACE"] && {
@@ -1674,7 +1691,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1923,23 +1941,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
-      // Persist lifecycle to disk when enrichment detected a dead runtime.
-      // enrichSessionWithRuntimeState updates the in-memory lifecycle but
-      // doesn't write to disk — without this, the stale "alive" state persists
-      // and the dashboard shows terminated sessions on the active sidebar.
+      // Persist runtime probe result to disk so the lifecycle manager sees it
+      // on next poll. We only persist the runtime signal and detecting state —
+      // the lifecycle manager's resolveProbeDecision pipeline is the single
+      // authority on terminal decisions (terminated/done). See #1735.
+      // Check the on-disk state (raw) to avoid re-writing when already
+      // detecting — enrichment sets detecting in-memory, but we only need
+      // to persist the transition once to avoid resetting lastTransitionAt.
+      const onDiskLifecycle = parseCanonicalLifecycle(raw, {
+        sessionId: sessionName,
+        status: validateStatus(raw["status"]),
+      });
       if (
         session.lifecycle &&
         (session.lifecycle.runtime.state === "missing" ||
           session.lifecycle.runtime.state === "exited") &&
-        session.lifecycle.session.state !== "terminated" &&
-        session.lifecycle.session.state !== "done"
+        onDiskLifecycle.session.state !== "terminated" &&
+        onDiskLifecycle.session.state !== "done" &&
+        onDiskLifecycle.session.state !== "detecting"
       ) {
         try {
           const persisted = buildUpdatedLifecycle(sessionName, raw, (next) => {
-            next.session.state = "terminated";
+            next.session.state = "detecting";
             next.session.reason = "runtime_lost";
-            next.session.terminatedAt = new Date().toISOString();
-            next.session.lastTransitionAt = next.session.terminatedAt;
+            next.session.lastTransitionAt = new Date().toISOString();
             next.runtime.state = session.lifecycle!.runtime.state;
             next.runtime.reason = session.lifecycle!.runtime.reason;
             next.runtime.lastObservedAt = new Date().toISOString();
@@ -1972,9 +1997,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
     };
 
-    return projectId
-      ? sessions.filter((session) => session.projectId === projectId)
-      : sessions;
+    return projectId ? sessions.filter((session) => session.projectId === projectId) : sessions;
   }
 
   async function get(sessionId: SessionId): Promise<Session | null> {
@@ -2395,7 +2418,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -2442,7 +2465,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       while (true) {
         const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
           captureOutput(handle),
           handle.runtimeName === "tmux"
             ? getTmuxForegroundCommand(handle.id)
@@ -2510,14 +2533,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let [runtimeAlive, processRunning] = await Promise.all([
         runtimePlugin.isAlive(handle).catch(() => true),
-        agentPlugin.isProcessRunning(handle).catch(() => true),
+        isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
       ]);
 
       if (normalized.status === "spawning" && runtimeAlive) {
         await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
+          isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
         ]);
       }
 
@@ -2578,8 +2601,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       await sendWithConfirmation(prepared);
     } catch (err) {
-      const shouldRetryWithRestore =
-        prepared.restoredAt === undefined && isRestorable(prepared);
+      const shouldRetryWithRestore = prepared.restoredAt === undefined && isRestorable(prepared);
 
       if (!shouldRetryWithRestore) {
         if (err instanceof Error) {
@@ -2636,7 +2658,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
-      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
+        continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =
@@ -2882,6 +2905,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           : {}),
       },
     };
+    // Orchestrator launches need the original systemPromptFile so the agent
+    // boots as the orchestrator (not a bare TUI). spawnOrchestrator wrote it to
+    // {baseDir}/orchestrator-prompt-{sessionId}.md and references it via
+    // agentLaunchConfig.systemPromptFile. On restore we must re-attach it,
+    // otherwise getLaunchCommand() (the fallback when getRestoreCommand returns
+    // null — e.g. Codex with no resumable thread for the worktree) starts a
+    // plain agent without orchestrator instructions.
+    const orchestratorSystemPromptFile = ((): string | undefined => {
+      if (selection.role !== "orchestrator") return undefined;
+      // V2 storage: orchestrator-prompt-{sessionId}.md lives in the project dir
+      // (~/.agent-orchestrator/projects/{projectId}/), not the legacy hashed base dir.
+      const baseDir = getProjectDir(projectId);
+      const file = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
+      return existsSync(file) ? file : undefined;
+    })();
+
     const agentLaunchConfig = {
       sessionId,
       projectConfig: projectConfigForLaunch,
@@ -2890,6 +2929,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       permissions: selection.role === "orchestrator" ? "permissionless" : selection.permissions,
       model: selection.model,
       subagent: selection.subagent,
+      ...(orchestratorSystemPromptFile && { systemPromptFile: orchestratorSystemPromptFile }),
     };
 
     if (plugins.agent.getRestoreCommand) {
@@ -2927,6 +2967,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       environment: {
         ...environment,
         ...(opencodeConfigPath ? { OPENCODE_CONFIG: opencodeConfigPath } : {}),
+        ...(project.env ?? {}),
         PATH: buildAgentPath(environment["PATH"] ?? process.env["PATH"]),
         GH_PATH: PREFERRED_GH_PATH,
         ...(process.env["AO_AGENT_GH_TRACE"] && {
