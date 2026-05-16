@@ -1369,6 +1369,44 @@ describe.skipIf(process.platform === "win32")("migration edge cases", () => {
     }
   });
 
+  it("blocks migration when active sessions use a re-derived prefix for an invalid stored prefix", async () => {
+    const projectPath = join(testDir, "dot-path-project");
+    mkdirSync(projectPath, { recursive: true });
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  dot:",
+        `    path: ${projectPath}`,
+        "    sessionPrefix: .",
+        "",
+      ].join("\n"),
+    );
+
+    vi.resetModules();
+    // The invalid stored prefix "." should be ignored; the path-derived prefix
+    // for "dot-path-project" is "dpp", matching the active session below.
+    vi.doMock("node:child_process", async (importOriginal) => {
+      const actual = await importOriginal<typeof ChildProcess>();
+      return { ...actual, execSync: vi.fn(() => "dpp-1\n") };
+    });
+
+    const { migrateStorage: migrateStorageWithMock } = await import("../migration/storage-v2.js");
+
+    try {
+      await expect(
+        migrateStorageWithMock({
+          aoBaseDir,
+          globalConfigPath: configPath,
+          log: () => {},
+        }),
+      ).rejects.toThrow(/active AO tmux session/);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+
   it("migrates worktree directories to new layout", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });

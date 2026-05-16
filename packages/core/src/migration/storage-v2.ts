@@ -27,7 +27,11 @@ import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseKeyValueContent } from "../key-value.js";
-import { deriveSessionPrefixFromProjectPath, generateSessionPrefix } from "../paths.js";
+import {
+  deriveSessionPrefixFromProjectPath,
+  generateSessionPrefix,
+  sanitizeIdentifierComponent,
+} from "../paths.js";
 import { atomicWriteFileSync } from "../atomic-write.js";
 import { withFileLockSync } from "../file-lock.js";
 
@@ -208,15 +212,23 @@ function extractProjectPrefixes(globalConfigPath?: string): string[] {
     const projects = parsed?.["projects"] as Record<string, Record<string, unknown>> | undefined;
     if (!projects || typeof projects !== "object") return [];
 
-    return Array.from(new Set(Object.entries(projects).map(([projectId, entry]) => {
-      if (entry && typeof entry["sessionPrefix"] === "string" && entry["sessionPrefix"].trim()) {
-        return entry["sessionPrefix"].trim();
-      }
-      if (entry && typeof entry["path"] === "string" && entry["path"].trim()) {
-        return deriveSessionPrefixFromProjectPath(resolve(entry["path"].trim()));
-      }
-      return generateSessionPrefix(projectId);
-    })));
+    return Array.from(
+      new Set(
+        Object.entries(projects).map(([projectId, entry]) => {
+          const storedPrefix =
+            entry && typeof entry["sessionPrefix"] === "string"
+              ? entry["sessionPrefix"].trim()
+              : "";
+          if (storedPrefix && sanitizeIdentifierComponent(storedPrefix) === storedPrefix) {
+            return storedPrefix;
+          }
+          if (entry && typeof entry["path"] === "string" && entry["path"].trim()) {
+            return deriveSessionPrefixFromProjectPath(resolve(entry["path"].trim()));
+          }
+          return generateSessionPrefix(projectId);
+        }),
+      ),
+    );
   } catch {
     return [];
   }
