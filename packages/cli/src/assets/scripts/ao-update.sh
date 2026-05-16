@@ -177,32 +177,46 @@ if [ "$SMOKE_ONLY" = false ]; then
   maybe_sync_origin_with_upstream
 
   run_cmd git fetch "$UPDATE_REMOTE" "$TARGET_BRANCH"
-  run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
-  run_cmd pnpm install
 
-  run_cmd pnpm --filter @aoagents/ao-core clean
-  run_cmd pnpm --filter @aoagents/ao-cli clean
-  run_cmd pnpm --filter @aoagents/ao-web clean
+  local_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse "$UPDATE_REMOTE/$TARGET_BRANCH")"
+  if [ "$local_sha" = "$remote_sha" ]; then
+    printf '\nAlready on latest version.\n'
+  else
+    run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
+    run_cmd pnpm install
 
-  run_cmd pnpm --filter @aoagents/ao-core build
-  run_cmd pnpm --filter @aoagents/ao-cli build
-  run_cmd pnpm --filter @aoagents/ao-web build
+    run_cmd pnpm --filter @aoagents/ao-core clean
+    run_cmd pnpm --filter @aoagents/ao-cli clean
+    run_cmd pnpm --filter @aoagents/ao-web clean
 
-  printf '\nRefreshing ao launcher...\n'
-  (
-    cd "$REPO_ROOT/packages/ao"
-    if npm link 2>/dev/null; then
-      :
-    elif [ -t 0 ]; then
-      printf '  Permission denied. Retrying with sudo...\n'
-      sudo npm link
-    else
-      printf 'ERROR: Permission denied. Run manually: cd %s/packages/ao && sudo npm link\n' "$REPO_ROOT"
-      exit 1
-    fi
-  )
+    run_cmd pnpm --filter @aoagents/ao-core build
+    run_cmd pnpm --filter @aoagents/ao-cli build
+    run_cmd pnpm --filter @aoagents/ao-web build
 
-  ensure_repo_clean "Update modified tracked files. Inspect git status, review the changes, and rerun after restoring a clean checkout if needed."
+    printf '\nRefreshing ao launcher...\n'
+    (
+      cd "$REPO_ROOT/packages/ao"
+      npm_link_error="$(mktemp)"
+      if npm link --force 2>"$npm_link_error"; then
+        rm -f "$npm_link_error"
+      elif [ -t 0 ]; then
+        rm -f "$npm_link_error"
+        printf '  Launcher refresh failed. Retrying with sudo...\n'
+        if ! sudo npm link --force; then
+          printf 'ERROR: sudo npm link --force failed. Inspect npm output above.\n' >&2
+          exit 1
+        fi
+      else
+        cat "$npm_link_error" >&2
+        rm -f "$npm_link_error"
+        printf 'ERROR: Launcher refresh failed. Run manually: cd %s/packages/ao && sudo npm link --force\n' "$REPO_ROOT"
+        exit 1
+      fi
+    )
+
+    ensure_repo_clean "Update modified tracked files. Inspect git status, review the changes, and rerun after restoring a clean checkout if needed."
+  fi
 fi
 
 if [ "$SKIP_SMOKE" = false ]; then

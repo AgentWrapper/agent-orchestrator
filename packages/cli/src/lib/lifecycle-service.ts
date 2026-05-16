@@ -74,17 +74,21 @@ export async function ensureLifecycleWorker(
   return { running: true, started: true };
 }
 
+export function stopLifecycleWorker(projectId: string): void {
+  const entry = active.get(projectId);
+  if (!entry) return;
+
+  try {
+    entry.stop();
+  } catch {
+    // Best-effort
+  }
+  active.delete(projectId);
+}
+
 export function stopAllLifecycleWorkers(): void {
   for (const projectId of Array.from(active.keys())) {
-    const entry = active.get(projectId);
-    if (entry) {
-      try {
-        entry.stop();
-      } catch {
-        // Best-effort
-      }
-    }
-    active.delete(projectId);
+    stopLifecycleWorker(projectId);
   }
 }
 

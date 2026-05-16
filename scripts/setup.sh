@@ -137,13 +137,20 @@ pnpm build
 echo ""
 echo "Linking CLI globally..."
 cd packages/ao
-if npm link 2>/dev/null; then
-  :
+npm_link_error="$(mktemp)"
+if npm link --force 2>"$npm_link_error"; then
+  rm -f "$npm_link_error"
 elif [ "$INTERACTIVE" = true ]; then
-  echo "  Permission denied. Retrying with sudo..."
-  sudo npm link
+  rm -f "$npm_link_error"
+  echo "  Launcher refresh failed. Retrying with sudo..."
+  if ! sudo npm link --force; then
+    echo "ERROR: sudo npm link --force failed. Inspect npm output above." >&2
+    exit 1
+  fi
 else
-  echo "ERROR: Permission denied. Run manually: cd packages/ao && sudo npm link"
+  cat "$npm_link_error" >&2
+  rm -f "$npm_link_error"
+  echo "ERROR: Launcher refresh failed. Run manually: cd packages/ao && sudo npm link --force"
   exit 1
 fi
 cd "$REPO_ROOT"

@@ -16,6 +16,7 @@ export { resolveMonoFontFamily } from "./terminal/terminal-font";
 
 interface DirectTerminalProps {
   sessionId: string;
+  projectId?: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
   tmuxName?: string;
   startFullscreen?: boolean;
@@ -38,6 +39,7 @@ interface DirectTerminalProps {
  */
 export function DirectTerminal({
   sessionId,
+  projectId,
   tmuxName,
   startFullscreen = false,
   variant = "agent",
@@ -57,22 +59,17 @@ export function DirectTerminal({
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [fontSize, setFontSize] = useState(getStoredFontSize());
 
-  const {
-    error,
-    followOutput,
-    scrollToLatest,
-    muxStatus,
-    terminalInstance,
-    fitAddon,
-  } = useXtermTerminal(terminalRef, sessionId, {
-    appearance,
-    variant,
-    fontSize,
-    autoFocus,
-    tmuxName,
-  });
+  const { error, followOutput, scrollToLatest, muxStatus, terminalInstance, fitAddon } =
+    useXtermTerminal(terminalRef, sessionId, {
+      appearance,
+      variant,
+      fontSize,
+      autoFocus,
+      projectId,
+      tmuxName,
+    });
 
-  useFullscreenResize(fullscreen, sessionId, terminalInstance, fitAddon, terminalRef);
+  useFullscreenResize(fullscreen, sessionId, projectId, terminalInstance, fitAddon, terminalRef);
 
   // Sync fullscreen to URL query param
   useEffect(() => {
@@ -119,15 +116,18 @@ export function DirectTerminal({
             aria-label="Jump to latest"
             title="Jump to latest"
           >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
               <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
             </svg>
           </button>
         ) : null}
-        <div
-          ref={terminalRef}
-          className="w-full flex flex-col flex-1 min-h-0 overflow-hidden"
-        />
+        <div ref={terminalRef} className="w-full flex flex-col flex-1 min-h-0 overflow-hidden" />
       </div>
     </div>
   );

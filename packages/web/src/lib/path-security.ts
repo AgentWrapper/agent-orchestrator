@@ -76,10 +76,6 @@ export interface ResolvedHomePath {
   resolvedPath: string;
 }
 
-export function isFilesystemBrowseEnabled(): boolean {
-  return process.env["AO_ALLOW_FILESYSTEM_BROWSE"] === "1";
-}
-
 export function resolveHomeContainedPath(rawPath: string): ResolvedHomePath {
   const rootPath = homeRealPath();
   const requestedPath = rawPath.trim();

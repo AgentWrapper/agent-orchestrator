@@ -1,4 +1,5 @@
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
+import { matchesSessionPrefix } from "./session-utils";
 
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
@@ -18,7 +19,9 @@ function matchesProject(
 ): boolean {
   if (session.projectId === projectId) return true;
   const project = projects[projectId];
-  if (project?.sessionPrefix && session.id.startsWith(project.sessionPrefix)) return true;
+  if (project?.sessionPrefix && matchesSessionPrefix(session.id, project.sessionPrefix)) {
+    return true;
+  }
   return projects[session.projectId]?.sessionPrefix === projectId;
 }
 

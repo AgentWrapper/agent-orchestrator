@@ -111,7 +111,7 @@ spawning -> working -> pr_open -> ci_failed / review_pending
                                       +-> mergeable -> merged -> cleanup -> done
 ```
 
-**Stale runtime reconciliation:** `sm.list()` detects dead runtimes (tmux/process gone) during enrichment and persists `runtime_lost` reason to disk. This maps to legacy status `killed`. Without this, sessions with dead runtimes would show stale "active" status indefinitely.
+**Stale runtime reconciliation:** `sm.list()` detects dead runtimes (tmux/process gone) during enrichment and persists `detecting` state with `runtime_lost` reason to disk. The lifecycle manager's `resolveProbeDecision` pipeline is the single authority on terminal decisions — `sm.list()` never writes `terminated` directly (#1735).
 
 ### Data Flow
 
@@ -224,9 +224,64 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Kanban board filters client-side via `projectSessions` memo
 
 ### Key invariants
-- `sm.list()` persists `runtime_lost` lifecycle to disk when enrichment detects dead runtimes — this is the only place stale runtime state gets reconciled
+- `sm.list()` persists `detecting` state (not `terminated`) to disk when enrichment detects dead runtimes — terminal decisions are made only by the lifecycle manager's probe pipeline (#1735)
 - `deriveLegacyStatus()` maps canonical lifecycle to legacy status — new terminal reasons must be added here
 - Tab completions merge local config + global config to show all projects
+
+## Cross-Platform (Windows) Compatibility
+
+AO ships on macOS, Linux, **and Windows**. All three are first-class.
+
+### The Golden Rule
+
+> **Never write `process.platform === "win32"` in new code. Use `isWindows()` from `@aoagents/ao-core`. If you need branching the helpers don't cover, add it to `packages/core/src/platform.ts` (or one of the targeted helper modules below) — never inline at the call site.**
+
+The codebase has a deliberate set of cross-platform abstractions. Every platform helper is centrally tested by mocking `process.platform`; inline checks bypass those tests and become silent regressions. Whenever you'd type `process.platform`, stop and check the helper inventory in `docs/CROSS_PLATFORM.md` first.
+
+### Read `docs/CROSS_PLATFORM.md` before merging if you touch any of:
+
+- Process spawning, killing, signalling, or process-tree teardown (`child_process`, `process.kill`, runtime plugins)
+- File paths — comparison, joining, walking, anything OS-specific
+- Shell commands (`exec`, `execFile`, command strings, redirections, PowerShell-vs-bash)
+- Network binding, sockets, anything that says `localhost`
+- Shell-outs to POSIX tools (`tmux`, `lsof`, `pkill`, `which`, coreutils)
+- Adding any new `if (process.platform === "win32")` check (it should go into `platform.ts` instead — see the Golden Rule)
+- Runtime / agent / workspace plugin code that runs on both `runtime-tmux` and `runtime-process`
+- Agent-plugin internals: `setupPathWrapperWorkspace`, `getActivityState`, `formatLaunchCommand`, `isProcessRunning`, `detect()`
+- The Windows pty-host pipe protocol or registry (`pty-client.ts`, `windows-pty-registry.ts`, `sweepWindowsPtyHosts`)
+
+### Quick reference: helpers to use instead of raw platform checks
+
+All importable from `@aoagents/ao-core` unless noted:
+
+| Need | Use |
+|------|-----|
+| OS check | `isWindows()` |
+| Pick runtime | `getDefaultRuntime()` |
+| Resolve shell (PowerShell vs `/bin/sh`) | `getShell()` |
+| Kill process + descendants | `killProcessTree(pid, signal?)` |
+| Find PID listening on a port | `findPidByPort(port)` |
+| Default env (HOME / TMPDIR / SHELL / PATH / USER) | `getEnvDefaults()` |
+| Compare paths (case-insensitive on NTFS/APFS) | `pathsEqual()` / `canonicalCompareKey()` from `cli/src/lib/path-equality.ts` |
+| Escape shell args | `shellEscape()` |
+| Install agent PATH wrappers (`gh`/`git`) | `setupPathWrapperWorkspace(workspacePath)` |
+| Build env PATH with `~/.ao/bin` prepended | `buildAgentPath(basePath?)` |
+| Tail JSONL | `readLastJsonlEntry` / `readLastActivityEntry` |
+| Activity-state contract helpers | `checkActivityLogState`, `getActivityFallbackState`, `classifyTerminalActivity`, `recordTerminalActivity`, `appendActivityEntry` |
+| Windows pty-host registry (used by `ao stop`) | `registerWindowsPtyHost`, `getWindowsPtyHosts`, `unregisterWindowsPtyHost`, `clearWindowsPtyHostRegistry` |
+| Reap orphan pty-hosts on `ao stop` | `sweepWindowsPtyHosts()` from `@aoagents/ao-plugin-runtime-process` |
+| Talk to a Windows pty-host over its named pipe | `getPipePath`, `connectPtyHost`, `ptyHostSendMessage`, `ptyHostGetOutput`, `ptyHostIsAlive`, `ptyHostKill` from `@aoagents/ao-plugin-runtime-process` |
+| Validate user-supplied session ID before pipe/shell use | `validateSessionId()` from `@/server/tmux-utils` |
+| Resolve a session's Windows pipe path | `resolvePipePath()` from `@/server/tmux-utils` |
+| POSIX-only Ctrl+C signal forwarding | `forwardSignalsToChild()` from `cli/src/lib/shell.ts` (guard with `!isWindows()`) |
+| Defensive PowerShell sweep of orphan pty-hosts | `stopStaleWindowsPtyHosts(projectDir)` from `web/src/lib/windows-pty-cleanup.ts` |
+
+`docs/CROSS_PLATFORM.md` has the full helper reference with import paths, the EPERM-vs-ESRCH gotcha when probing processes (with a copyable code snippet), path case-insensitivity rules, PowerShell-vs-bash differences (`& ` call-operator, `$env:VAR`, no `/dev/null`, no `$(cat …)`, `.cmd`/`.bat`/`.exe` shim resolution via `shell: isWindows()`), the IPv6 `localhost` stall on Windows, agent-plugin Windows specifics, the test pattern for mocking `process.platform`, and a 10-point pre-merge checklist. **Run through that checklist for any non-trivial change.**
+
+### Environment variables to know about
+
+- `AO_SHELL` — overrides `getShell()` resolution (escape hatch for Git Bash users on Windows). Args inferred from basename: `cmd` → `/c`, `bash`/`sh`/`zsh` → `-c`, anything else → `-Command`.
+- `AO_BASH_PATH` — used by `script-runner.ts` on Windows to locate bash before falling back to Git Bash auto-detection. WSL bash is excluded (it sees Linux paths from a Windows cwd, breaking script semantics).
 
 ## Conventions
 
@@ -307,6 +362,19 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 | `packages/cli/src/commands/start.ts` | ao start/stop commands + Ctrl+C graceful shutdown |
 | `packages/cli/src/lib/running-state.ts` | RunningState + LastStopState management (register/unregister, last-stop read/write) |
 | `packages/web/src/components/ProjectSidebar.tsx` | Sidebar — always shows all projects' sessions |
+
+## Skills
+
+The `skills/` directory contains reusable workflow documents for common tasks. Load them before starting work:
+
+| Skill | When to load |
+|-------|-------------|
+| [`skills/bug-triage/SKILL.md`](skills/bug-triage/SKILL.md) | Triage a bug report — investigate, search duplicates, file GitHub issues, push fix PRs |
+| [`skills/agent-orchestrator/SKILL.md`](skills/agent-orchestrator/SKILL.md) | Architecture and conventions for working on this codebase |
+| [`skills/release-notes/ao-weekly-release/SKILL.md`](skills/release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history |
+| [`skills/social-media/SKILL.md`](skills/social-media/SKILL.md) | Social media post generation |
+
+See [`skills/README.md`](skills/README.md) for how to install skills into other coding agents (Cursor, Copilot, Codex, etc.).
 
 ## Plugin Standards
 

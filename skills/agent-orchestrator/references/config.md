@@ -14,8 +14,8 @@ readyThresholdMs: 300000      # Ms before "ready" session becomes "idle" (5 min)
 
 ```yaml
 defaults:
-  runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | cursor | opencode
+  runtime: tmux               # tmux (default on macOS/Linux) | process (default on Windows; ConPTY)
+  agent: claude-code          # claude-code | aider | codex | cursor | kimicode | opencode
   workspace: worktree         # worktree | clone
   notifiers:                  # Active notifier plugins
     - desktop                 # desktop | slack | webhook | composio | openclaw
@@ -37,7 +37,7 @@ projects:
     sessionPrefix: myapp      # Session name prefix (myapp-1, myapp-2)
 
     # Per-project plugin overrides (optional)
-    runtime: tmux
+    runtime: tmux              # tmux (macOS/Linux) or process (Windows; ConPTY)
     agent: claude-code
     workspace: worktree
 

@@ -16,6 +16,7 @@ describe("global-config storage identity", () => {
   let tempRoot: string;
   let configPath: string;
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
 
   beforeEach(() => {
     tempRoot = join(
@@ -25,12 +26,15 @@ describe("global-config storage identity", () => {
     mkdirSync(tempRoot, { recursive: true });
     configPath = join(tempRoot, "config.yaml");
     originalHome = process.env["HOME"];
+    originalUserProfile = process.env["USERPROFILE"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
   });
 
   afterEach(() => {
     process.env["HOME"] = originalHome;
-    rmSync(tempRoot, { recursive: true, force: true });
+    process.env["USERPROFILE"] = originalUserProfile;
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   function createRepo(repoName: string, originUrl?: string): string {
@@ -486,5 +490,15 @@ describe("global-config storage identity", () => {
       runtime: "tmux",
       postCreate: ["pnpm install"],
     });
+  });
+
+  it("defaults the global runtime to the platform-appropriate value", () => {
+    // The Zod default and makeEmptyGlobalConfig() must defer to
+    // getDefaultRuntime() so Windows-loaded projects don't inherit
+    // tmux (which is intentionally unavailable on win32).
+    writeFileSync(configPath, "port: 3000\nprojects: {}\n");
+    const config = loadGlobalConfig(configPath);
+    const expected = process.platform === "win32" ? "process" : "tmux";
+    expect(config?.defaults?.runtime).toBe(expected);
   });
 });

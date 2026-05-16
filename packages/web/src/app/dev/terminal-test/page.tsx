@@ -122,7 +122,9 @@ function TerminalTestPageContent() {
                 <li>tmux uses OSC 52 escape sequences to synchronize clipboard with terminals</li>
                 <li>
                   Format:{" "}
-                  <code className="rounded-[2px] bg-black px-1 py-0.5">\x1b]52;c;&lt;base64&gt;\x07</code>
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">
+                    \x1b]52;c;&lt;base64&gt;\x07
+                  </code>
                 </li>
                 <li>Terminal must support OSC 52 and have proper capabilities declared</li>
               </ul>
@@ -135,8 +137,8 @@ function TerminalTestPageContent() {
               <ul className="ml-6 list-disc space-y-1 text-[var(--color-text-secondary)]">
                 <li>tmux queries terminal capabilities using Device Attributes (DA/XDA)</li>
                 <li>
-                  XDA query: <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code> (also
-                  called XTVERSION)
+                  XDA query: <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code>{" "}
+                  (also called XTVERSION)
                 </li>
                 <li>
                   Terminal responds with identification string containing terminal type (e.g.,
@@ -223,7 +225,8 @@ function TerminalTestPageContent() {
               <ol className="ml-6 list-decimal space-y-1 text-[var(--color-text-secondary)]">
                 <li>Intercepts XDA queries from tmux</li>
                 <li>
-                  Responds with <code className="rounded-[2px] bg-black px-1 py-0.5">XTerm(370)</code>{" "}
+                  Responds with{" "}
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">XTerm(370)</code>{" "}
                   identification
                 </li>
                 <li>tmux detects "XTerm(" in response and enables TTYC_MS capability</li>
@@ -322,7 +325,8 @@ function TerminalTestPageContent() {
                   </code>
                 </li>
                 <li>
-                  If no <code className="rounded-[2px] bg-black px-1 py-0.5">posix_spawnp failed</code>{" "}
+                  If no{" "}
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">posix_spawnp failed</code>{" "}
                   error, proceed
                 </li>
                 <li>Start dev servers and open this page</li>
@@ -398,7 +402,7 @@ function TerminalTestPageContent() {
                   <br />
                   ⚠️ Requires Node 20.x (node-pty)
                 </div>
-                <DirectTerminal sessionId={newSessionId} />
+                <DirectTerminal sessionId={newSessionId} tmuxName={newSessionId} />
               </div>
             </div>
 
@@ -509,8 +513,8 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   <strong>Discovered XDA queries</strong> - Found that tmux sends{" "}
-                  <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code> (XTVERSION) to
-                  detect terminal type
+                  <code className="rounded-[2px] bg-black px-1 py-0.5">CSI &gt; q</code> (XTVERSION)
+                  to detect terminal type
                 </li>
                 <li>
                   <strong>Traced the "iTerm2 magic"</strong> - Realized why clipboard worked when
@@ -572,8 +576,8 @@ function TerminalTestPageContent() {
                 <li>xterm.js parser API documentation</li>
                 <li>XTerm Control Sequences: XTVERSION / Device Attributes</li>
                 <li>
-                  tmux <code className="rounded-[2px] bg-black px-1 py-0.5">tty-keys.c</code>: Terminal
-                  type detection logic
+                  tmux <code className="rounded-[2px] bg-black px-1 py-0.5">tty-keys.c</code>:
+                  Terminal type detection logic
                 </li>
               </ul>
             </div>

@@ -34,9 +34,27 @@ function assertValidSessionId(id: string): void {
   }
 }
 
+/**
+ * Shell snippet appended after the agent launch command so the tmux pane
+ * (and therefore the tmux session) survives agent exit. Without this, the
+ * pane closes when the agent process exits, the only window goes away, and
+ * the whole tmux session dies — leaving the dashboard with a phantom
+ * "runtime lost" state and the user with no way to do anything in that
+ * workspace (issue #1756).
+ *
+ * `exec` replaces the wrapping sh/bash with the user's interactive shell,
+ * so the lifecycle manager still detects agent termination via
+ * `agent.isProcessRunning` and transitions the session correctly.
+ */
+const KEEP_ALIVE_SHELL = `exec "\${SHELL:-/bin/bash}" -i`;
+
+function withKeepAliveShell(command: string): string {
+  return `${command.replace(/\n+$/, "")}\n${KEEP_ALIVE_SHELL}`;
+}
+
 function writeLaunchScript(command: string): string {
   const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
-  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${command}\n`;
+  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${withKeepAliveShell(command)}\n`;
   writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
   return `bash ${shellEscape(scriptPath)}`;
 }
@@ -63,12 +81,9 @@ export function create(): Runtime {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Create tmux session in detached mode
-      await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
-
       // Re-export PATH inside the launch script. macOS zsh runs path_helper
       // during shell startup which resets PATH, wiping entries set via tmux -e.
-      // Including the export in the script file (not send-keys) avoids terminal
+      // Including the export in the launched shell command avoids terminal
       // buffer issues with long PATH values (1000+ chars).
       const pathValue = config.environment?.["PATH"];
       let launchCommand = config.launchCommand;
@@ -78,18 +93,33 @@ export function create(): Runtime {
         launchCommand = `export PATH=$(printf '%s' ${JSON.stringify(pathValue)})\n${launchCommand}`;
       }
 
-      // Send the launch command — clean up the session if this fails.
-      // Use a temp script for long commands so the pane shows a short
-      // invocation instead of a pasted wall of shell.
+      // Start the launch command as the pane's initial command instead of
+      // typing into a live shell. A dashboard attach can trigger terminal
+      // device responses; if those race with tmux send-keys, they become
+      // literal shell input and corrupt the launch path. The keep-alive
+      // tail is appended in both code paths — see KEEP_ALIVE_SHELL.
+      const shellCommand =
+        launchCommand.length > 200
+          ? writeLaunchScript(launchCommand)
+          : withKeepAliveShell(launchCommand);
+
+      await tmux(
+        "new-session",
+        "-d",
+        "-s",
+        sessionName,
+        "-c",
+        config.workspacePath,
+        ...envArgs,
+        shellCommand,
+      );
+
+      // Hide the tmux status bar — sessions are embedded in the web terminal,
+      // and the green bar at the bottom is visual noise (and racy with the
+      // web layer's own set-option call, which only fires on WebSocket connect).
+      // Kill the session if this fails so we don't leave an orphaned tmux process.
       try {
-        if (launchCommand.length > 200) {
-          const invocation = writeLaunchScript(launchCommand);
-          await tmux("send-keys", "-t", sessionName, "-l", invocation);
-          await sleep(300);
-          await tmux("send-keys", "-t", sessionName, "Enter");
-        } else {
-          await tmux("send-keys", "-t", sessionName, launchCommand, "Enter");
-        }
+        await tmux("set-option", "-t", sessionName, "status", "off");
       } catch (err: unknown) {
         try {
           await tmux("kill-session", "-t", sessionName);
@@ -97,7 +127,7 @@ export function create(): Runtime {
           // Best-effort cleanup
         }
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to send launch command to session "${sessionName}": ${msg}`, {
+        throw new Error(`Failed to configure or launch session "${sessionName}": ${msg}`, {
           cause: err,
         });
       }
@@ -189,6 +219,20 @@ export function create(): Runtime {
         target: handle.id,
         command: `tmux attach -t ${handle.id}`,
       };
+    },
+
+    async preflight(): Promise<void> {
+      try {
+        await execFileAsync("tmux", ["-V"], { timeout: TMUX_COMMAND_TIMEOUT_MS });
+      } catch {
+        const hint =
+          process.platform === "darwin"
+            ? "brew install tmux"
+            : process.platform === "win32"
+              ? "tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux"
+              : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
+        throw new Error(`tmux is not installed. Install it: ${hint}`);
+      }
     },
   };
 }

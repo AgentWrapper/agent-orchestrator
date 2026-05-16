@@ -42,30 +42,20 @@ interface LockMetadata {
   acquiredAt: string;
 }
 
-type ProcessProbeResult = "alive" | "forbidden" | "missing";
-
 function ensureDir(): void {
   mkdirSync(STATE_DIR, { recursive: true });
 }
 
-function probeProcess(pid: number): ProcessProbeResult {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return "alive";
+    return true;
   } catch (error: unknown) {
     if ((error as { code?: string }).code === "EPERM") {
-      return "forbidden";
+      return true;
     }
-    return "missing";
+    return false;
   }
-}
-
-function isLockOwnerAlive(pid: number): boolean {
-  return probeProcess(pid) !== "missing";
-}
-
-function isRunningProcessAlive(pid: number): boolean {
-  return probeProcess(pid) !== "missing";
 }
 
 function readLockMetadata(lockFile: string): LockMetadata | null {
@@ -137,7 +127,7 @@ async function acquireLock(
 
     const owner = readLockMetadata(lockFile);
     if ((!owner && isStaleUnparseableLock(lockFile))
-      || (owner && !isLockOwnerAlive(owner.pid))) {
+      || (owner && !isProcessAlive(owner.pid))) {
       try { unlinkSync(lockFile); } catch { /* ignore */ }
       const retryRelease = tryAcquire(lockFile);
       if (retryRelease) return retryRelease;
@@ -253,7 +243,7 @@ export async function getRunning(): Promise<RunningState | null> {
     const state = readState();
     if (!state) return null;
 
-    if (!isRunningProcessAlive(state.pid)) {
+    if (!isProcessAlive(state.pid)) {
       // Stale entry — process is dead, clean up
       writeState(null);
       return null;
@@ -282,16 +272,16 @@ export async function acquireStartupLock(timeoutMs = 30000): Promise<() => void>
 }
 
 /**
- * Wait for a process to exit, polling isRunningProcessAlive.
+ * Wait for a process to exit, polling isProcessAlive.
  * Returns true if the process exited, false if timeout reached.
  */
 export async function waitForExit(pid: number, timeoutMs = 5000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (!isRunningProcessAlive(pid)) return true;
+    if (!isProcessAlive(pid)) return true;
     await sleep(100);
   }
-  return !isRunningProcessAlive(pid);
+  return !isProcessAlive(pid);
 }
 
 /**

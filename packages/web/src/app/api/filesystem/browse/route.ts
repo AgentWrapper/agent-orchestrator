@@ -4,7 +4,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   PathSecurityError,
   assertDirectoryPath,
-  isFilesystemBrowseEnabled,
   shouldHideBrowseEntry,
 } from "@/lib/path-security";
 
@@ -50,10 +49,6 @@ function serializeEntry(rootPath: string, parentPath: string, entry: Dirent): Br
 }
 
 export async function GET(request: NextRequest) {
-  if (!isFilesystemBrowseEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   const requestedPath = request.nextUrl.searchParams.get("path") ?? "~";
 
   let resolved;

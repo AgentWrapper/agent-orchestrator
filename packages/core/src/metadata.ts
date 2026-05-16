@@ -156,6 +156,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     status,
     tmuxName: raw["tmuxName"] as string | undefined,
     issue: raw["issue"] as string | undefined,
+    issueTitle: raw["issueTitle"] as string | undefined,
     pr: raw["pr"] as string | undefined,
     prAutoDetect:
       raw["prAutoDetect"] === "off" || raw["prAutoDetect"] === "false" || raw["prAutoDetect"] === false ? false :
@@ -173,6 +174,16 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     pinnedSummary: raw["pinnedSummary"] as string | undefined,
     userPrompt: raw["userPrompt"] as string | undefined,
     displayName: raw["displayName"] as string | undefined,
+    displayNameUserSet:
+      raw["displayNameUserSet"] === "off" ||
+      raw["displayNameUserSet"] === "false" ||
+      raw["displayNameUserSet"] === false
+        ? false
+        : raw["displayNameUserSet"] === "on" ||
+            raw["displayNameUserSet"] === "true" ||
+            raw["displayNameUserSet"] === true
+          ? true
+          : undefined,
   };
 }
 
@@ -217,7 +228,7 @@ const jsonFields = new Set([
 function unflattenFromStringRecord(data: Record<string, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const numberFields = new Set(["dashboardPort", "terminalWsPort", "directTerminalWsPort"]);
-  const booleanFields = new Set(["prAutoDetect"]);
+  const booleanFields = new Set(["prAutoDetect", "displayNameUserSet"]);
 
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === "") continue;
@@ -264,6 +275,7 @@ export function writeMetadata(
 
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
   if (metadata.issue) data["issue"] = metadata.issue;
+  if (metadata.issueTitle) data["issueTitle"] = metadata.issueTitle;
   if (metadata.pr) data["pr"] = metadata.pr;
   if (metadata.prAutoDetect !== undefined) data["prAutoDetect"] = metadata.prAutoDetect;
   if (metadata.summary) data["summary"] = metadata.summary;
@@ -279,6 +291,8 @@ export function writeMetadata(
   if (metadata.pinnedSummary) data["pinnedSummary"] = metadata.pinnedSummary;
   if (metadata.userPrompt) data["userPrompt"] = metadata.userPrompt;
   if (metadata.displayName) data["displayName"] = metadata.displayName;
+  if (metadata.displayNameUserSet !== undefined)
+    data["displayNameUserSet"] = metadata.displayNameUserSet;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }
@@ -297,7 +311,7 @@ export function updateMetadata(
   }, { createIfMissing: true });
 }
 
-function applyMetadataUpdates(
+export function applyMetadataUpdates(
   existing: Record<string, string>,
   updates: Partial<Record<string, string>>,
 ): Record<string, string> {

@@ -2,13 +2,13 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@aoagents/ao-core";
+import { isWindows, loadConfig } from "@aoagents/ao-core";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
+import { forwardSignalsToChild } from "../lib/shell.js";
 import {
-  findRunningDashboardPid,
+  clearStaleCacheIfNeeded,
   isInstalledUnderNodeModules,
   rebuildDashboardProductionArtifacts,
-  waitForPortFree,
 } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { DEFAULT_PORT } from "../lib/constants.js";
@@ -33,27 +33,11 @@ export function registerDashboard(program: Command): void {
       const localWebDir = findWebDir(); // throws with install-specific guidance if not found
 
       if (opts.rebuild) {
-        // Check if a dashboard is already running on this port.
-        const runningPid = await findRunningDashboardPid(port);
-
-        if (runningPid) {
-          // Stop the running server before rebuilding or restarting below.
-          console.log(
-            chalk.dim(`Stopping dashboard (PID ${runningPid}) on port ${port}...`),
-          );
-          try {
-            process.kill(parseInt(runningPid, 10), "SIGTERM");
-          } catch {
-            // Process already exited (ESRCH) — that's fine
-          }
-          // Wait for port to be released
-          await waitForPortFree(port, 5000);
-        }
-
-        await rebuildDashboardProductionArtifacts(localWebDir);
+        await rebuildDashboardProductionArtifacts(localWebDir, [port]);
         // Fall through to start the dashboard on this port.
       } else {
         await preflight.checkBuilt(localWebDir);
+        await clearStaleCacheIfNeeded(localWebDir);
       }
 
       const webDir = localWebDir;
@@ -71,6 +55,7 @@ export function registerDashboard(program: Command): void {
       const child = spawn("node", [startScript], {
         cwd: webDir,
         stdio: ["inherit", "inherit", "pipe"],
+        detached: !isWindows(),
         env,
       });
 
@@ -92,6 +77,14 @@ export function registerDashboard(program: Command): void {
         console.error(chalk.dim(String(err)));
         process.exit(1);
       });
+
+      // On Unix the child is spawned with detached:true (own process group) so
+      // Ctrl+C only reaches the parent's process group, not the dashboard's.
+      // Forward SIGINT/SIGTERM so the child group is cleaned up on exit.
+      const pid = child.pid;
+      if (!isWindows() && pid) {
+        forwardSignalsToChild(pid, child);
+      }
 
       let openAbort: AbortController | undefined;
 
@@ -120,8 +113,8 @@ export function registerDashboard(program: Command): void {
 
         process.exit(code ?? 0);
       });
+      /* c8 ignore stop */
     });
-    /* c8 ignore stop */
 }
 
 /**

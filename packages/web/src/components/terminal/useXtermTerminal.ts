@@ -23,6 +23,7 @@ export interface UseXtermTerminalOptions {
   variant: TerminalVariant;
   fontSize: number;
   autoFocus: boolean;
+  projectId?: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
   tmuxName?: string;
 }
@@ -48,7 +49,7 @@ export function useXtermTerminal(
   sessionId: string,
   options: UseXtermTerminalOptions,
 ): UseXtermTerminalResult {
-  const { appearance, variant, fontSize, autoFocus, tmuxName } = options;
+  const { appearance, variant, fontSize, autoFocus, projectId, tmuxName } = options;
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
   const {
@@ -68,6 +69,7 @@ export function useXtermTerminal(
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    setError(null);
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
@@ -102,7 +104,11 @@ export function useXtermTerminal(
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
-          scrollback: 10000,
+          // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
+          // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
+          // the available width, causing right-side clipping when the actual
+          // scrollbar is narrower or wider than assumed. Fixes #1677.
+          scrollback: 0,
           allowProposedApi: true,
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
@@ -131,7 +137,7 @@ export function useXtermTerminal(
           if (mounted && fitAddon.current) {
             try {
               fitAddon.current.fit();
-              resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+              resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
             } catch {
               // Ignore fit errors
             }
@@ -148,14 +154,18 @@ export function useXtermTerminal(
             terminalInstance.current.options.fontFamily = resolveMonoFontFamily();
             terminalInstance.current.clearTextureAtlas?.();
             fitAddon.current.fit();
-            resizeTerminalMux(sessionId, terminalInstance.current.cols, terminalInstance.current.rows);
+            resizeTerminalMux(
+              sessionId,
+              terminalInstance.current.cols,
+              terminalInstance.current.rows,
+              projectId,
+            );
           } catch {
             // Ignore fit errors
           }
         };
         // Feature-detect addEventListener — jsdom's document.fonts mock lacks it.
-        const fontsFace =
-          typeof document !== "undefined" ? document.fonts : undefined;
+        const fontsFace = typeof document !== "undefined" ? document.fonts : undefined;
         const fontsListenerAttached =
           !!fontsFace && typeof fontsFace.addEventListener === "function";
         if (fontsListenerAttached) {
@@ -168,12 +178,18 @@ export function useXtermTerminal(
         // In alternate buffer (tmux) there is no way to detect when the user
         // returned to the live tail, so the jump-to-latest button stays visible
         // until clicked.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const cleanupTouchScroll = attachTouchScroll(terminal as any, (data) => {
-          writeTerminal(sessionId, data);
-        }, {
-          onScrollAway: () => { followOutputRef.current = false; setFollowOutput(false); },
-        });
+        const cleanupTouchScroll = attachTouchScroll(
+          terminal,
+          (data) => {
+            writeTerminal(sessionId, data, projectId);
+          },
+          {
+            onScrollAway: () => {
+              followOutputRef.current = false;
+              setFollowOutput(false);
+            },
+          },
+        );
 
         let resizeObserver: ResizeObserver | null = null;
         if (terminalRef.current) {
@@ -181,13 +197,38 @@ export function useXtermTerminal(
             if (mounted && fitAddon.current) {
               try {
                 fitAddon.current.fit();
-                resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+                resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
               } catch {
                 // Ignore fit errors
               }
             }
           });
           resizeObserver.observe(terminalRef.current);
+        }
+
+        // Re-fit on devicePixelRatio changes (Windows display scaling, dragging
+        // window between monitors with different DPI). ResizeObserver doesn't
+        // fire for DPR-only changes, so we listen via matchMedia. Without this,
+        // moving the window to a 125%/150%-scaled monitor leaves a stripe of
+        // unrendered background to the right of the last column.
+        let dprMedia: MediaQueryList | null = null;
+        const handleDprChange = () => {
+          if (!mounted || !fitAddon.current || !terminalInstance.current) return;
+          try {
+            terminalInstance.current.clearTextureAtlas?.();
+            fitAddon.current.fit();
+            resizeTerminalMux(
+              sessionId,
+              terminalInstance.current.cols,
+              terminalInstance.current.rows,
+            );
+          } catch {
+            // Ignore fit errors
+          }
+        };
+        if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+          dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+          dprMedia.addEventListener?.("change", handleDprChange);
         }
 
         // ── Preserve selection while terminal receives output ────────
@@ -234,24 +275,28 @@ export function useXtermTerminal(
         // hazard if subscribeTerminal ever fires synchronously.
         let programmaticScroll = false;
 
-        openTerminal(sessionId, tmuxName);
+        openTerminal(sessionId, projectId, tmuxName);
 
-        unsubscribe = subscribeTerminal(sessionId, (data) => {
-          if (selectionActive) {
-            writeBuffer.push(data);
-            bufferBytes += data.length;
-            if (bufferBytes > MAX_BUFFER_BYTES) {
-              selectionActive = false;
-              flushWriteBuffer();
+        unsubscribe = subscribeTerminal(
+          sessionId,
+          (data) => {
+            if (selectionActive) {
+              writeBuffer.push(data);
+              bufferBytes += data.length;
+              if (bufferBytes > MAX_BUFFER_BYTES) {
+                selectionActive = false;
+                flushWriteBuffer();
+              }
+            } else {
+              terminal.write(data);
+              if (followOutputRef.current) {
+                programmaticScroll = true;
+                terminal.scrollToBottom();
+              }
             }
-          } else {
-            terminal.write(data);
-            if (followOutputRef.current) {
-              programmaticScroll = true;
-              terminal.scrollToBottom();
-            }
-          }
-        });
+          },
+          projectId,
+        );
 
         // Use xterm's onScroll event (fires with new viewportY) instead of a DOM
         // scroll listener — xterm v6 may update scrollTop via RAF, making DOM
@@ -275,20 +320,21 @@ export function useXtermTerminal(
         const handleResize = () => {
           if (fit) {
             fit.fit();
-            resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+            resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
           }
         };
         window.addEventListener("resize", handleResize);
 
         inputDisposable = terminal.onData((data) => {
-          writeTerminal(sessionId, data);
+          writeTerminal(sessionId, data, projectId);
         });
 
-        resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+        resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
 
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
           resizeObserver?.disconnect();
+          dprMedia?.removeEventListener?.("change", handleDprChange);
           cleanupTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
@@ -300,7 +346,7 @@ export function useXtermTerminal(
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
-          closeTerminal(sessionId);
+          closeTerminal(sessionId, projectId);
           terminal.dispose();
         };
       })
@@ -316,10 +362,11 @@ export function useXtermTerminal(
     // fontSize intentionally NOT in deps — it's handled by a dedicated effect
     // below that mutates terminal.options.fontSize in place. Adding it here
     // would tear down and recreate the terminal (and WebSocket) on every
-    // stepper click, losing scrollback and flashing content.
+    // stepper click, causing a content flash and WebSocket reconnect.
   }, [
     appearance,
     sessionId,
+    projectId,
     tmuxName,
     variant,
     resolvedTheme,
@@ -339,8 +386,8 @@ export function useXtermTerminal(
     const terminal = terminalInstance.current;
     if (!fit || !terminal) return;
     fit.fit();
-    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
-  }, [muxStatus, sessionId, resizeTerminalMux]);
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
+  }, [muxStatus, sessionId, projectId, resizeTerminalMux]);
 
   // Live theme switching without terminal recreation
   useEffect(() => {
@@ -364,20 +411,22 @@ export function useXtermTerminal(
       // localStorage might be unavailable
     }
     fit.fit();
-    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
-  }, [fontSize, sessionId, resizeTerminalMux]);
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows, projectId);
+  }, [fontSize, sessionId, projectId, resizeTerminalMux]);
 
   const scrollToLatest = () => {
     const t = terminalInstance.current;
     if (t) {
       if (t.buffer.active.type === "normal") {
-        // Normal buffer: scrollback exists in xterm, use its API.
+        // Normal buffer: xterm scrollback is disabled (scrollback: 0), so
+        // history lives in tmux. scrollToBottom() is a safe no-op that
+        // re-anchors the viewport to the live tail.
         t.scrollToBottom();
       } else {
-        // Alternate buffer (tmux/vim): xterm has no scrollback to scroll
-        // to. The user is in tmux copy-mode (entered by attachTouchScroll
-        // on swipe). Send 'q' to exit copy-mode and return to live tail.
-        writeTerminal(sessionId, "q");
+        // Alternate buffer (tmux/vim): the user is in tmux copy-mode
+        // (entered by attachTouchScroll on swipe). Send 'q' to exit
+        // copy-mode and return to live tail.
+        writeTerminal(sessionId, "q", projectId);
       }
     }
     followOutputRef.current = true;

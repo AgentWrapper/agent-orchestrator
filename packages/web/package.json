@@ -1,8 +1,22 @@
 {
   "name": "@aoagents/ao-web",
-  "version": "0.2.5",
+  "version": "0.8.0",
   "description": "Web dashboard for agent-orchestrator",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "directory": "packages/web"
+  },
+  "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
+  "bugs": {
+    "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     ".next/server",
     ".next/static",
@@ -15,15 +29,15 @@
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
     "dev:direct-terminal": "node scripts/dev-direct-terminal.mjs",
-    "prebuild": "rimraf .next dist-server",
-    "build": "next build && tsc -p tsconfig.server.json",
+    "prebuild": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
+    "build": "next build && tsc -p tsconfig.server.json && node scripts/stamp-version.js",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
     "dev:optimized": "rimraf .next dist-server && next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rimraf .next dist-server",
+    "clean": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
     "screenshot": "tsx e2e/screenshot.ts",
     "screenshot:install": "npx playwright install chromium"
   },
@@ -32,7 +46,9 @@
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
+    "@aoagents/ao-plugin-agent-kimicode": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
+    "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-github": "workspace:*",

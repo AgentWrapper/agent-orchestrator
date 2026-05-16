@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type * as ChildProcess from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
@@ -313,7 +314,12 @@ describe("convertKeyValueToJson", () => {
   );
 });
 
-describe("migrateStorage", () => {
+// Skipped on Windows: tests migrate FROM the legacy hash-dir layout that
+// shipped only on Linux/macOS in V1 (Windows wasn't supported). On Windows
+// the legacy layout never exists, so these scenarios cannot occur in real
+// installs, and several fixtures use ':' in filenames or rely on POSIX
+// rename semantics that NTFS does not provide.
+describe.skipIf(process.platform === "win32")("migrateStorage", () => {
   let testDir: string;
   let aoBaseDir: string;
   let configPath: string;
@@ -329,7 +335,11 @@ describe("migrateStorage", () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("migrates a single project with one session", async () => {
+  // Skipped on Windows: tests migrate FROM the legacy hash-dir layout that
+  // shipped only on Linux/macOS in V1 (Windows wasn't supported). On Windows
+  // the legacy layout never exists, so this code path can't be exercised, and
+  // some fixtures use ':' in filenames or rely on POSIX rename semantics.
+  it.skipIf(process.platform === "win32")("migrates a single project with one session", async () => {
     // Setup: hash dir with one worker session and worktree
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
@@ -534,7 +544,7 @@ describe("migrateStorage", () => {
     expect(existsSync(join(aoBaseDir, "aaaaaa000000-empty-project"))).toBe(false);
   });
 
-  it("dry run makes no changes", async () => {
+  it.skipIf(process.platform === "win32")("dry run makes no changes", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
@@ -567,7 +577,7 @@ describe("migrateStorage", () => {
     expect(result.sessions).toBe(0);
   });
 
-  it("flattens archives into sessions/ as terminated records", async () => {
+  it.skipIf(process.platform === "win32")("flattens archives into sessions/ as terminated records", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions", "archive"), { recursive: true });
 
@@ -817,7 +827,7 @@ describe("migrateStorage", () => {
     expect(existsSync(`${hashDir}.migrated`)).toBe(true);
   });
 
-  it("handles ENOTEMPTY when .migrated target already exists from interrupted run", async () => {
+  it.skipIf(process.platform === "win32")("handles ENOTEMPTY when .migrated target already exists from interrupted run", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
@@ -845,7 +855,7 @@ describe("migrateStorage", () => {
     expect(logs.some((l) => l.includes("already exists"))).toBe(true);
   });
 
-  it("preserves config and migration marker when retiring a legacy dir fails", async () => {
+  it.skipIf(process.platform === "win32")("preserves config and migration marker when retiring a legacy dir fails", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
     mkdirSync(join(hashDir, "sessions"), { recursive: true });
     writeFileSync(
@@ -919,7 +929,7 @@ describe("migrateStorage", () => {
   });
 });
 
-describe("rollbackStorage", () => {
+describe.skipIf(process.platform === "win32")("rollbackStorage", () => {
   let testDir: string;
   let aoBaseDir: string;
   let configPath: string;
@@ -979,7 +989,7 @@ describe("rollbackStorage", () => {
     expect(configContent).toContain("aaaaaa000000-myproject");
   });
 
-  it("does not treat flattened archive records as post-migration sessions", async () => {
+  it.skipIf(process.platform === "win32")("does not treat flattened archive records as post-migration sessions", async () => {
     mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "archive"), {
       recursive: true,
     });
@@ -1273,7 +1283,7 @@ describe("rollbackStorage", () => {
   });
 });
 
-describe("migration edge cases", () => {
+describe.skipIf(process.platform === "win32")("migration edge cases", () => {
   let testDir: string;
   let aoBaseDir: string;
   let configPath: string;
@@ -1335,9 +1345,13 @@ describe("migration edge cases", () => {
     );
 
     vi.resetModules();
-    vi.doMock("node:child_process", () => ({
-      execSync: vi.fn(() => "be-1\n"),
-    }));
+    // Use importOriginal so platform.ts's top-level promisify(execFile) keeps
+    // working when storage-v2 → atomic-write.ts pulls platform.ts into the
+    // module graph. A bare-object mock would leave execFile undefined.
+    vi.doMock("node:child_process", async (importOriginal) => {
+      const actual = await importOriginal<typeof ChildProcess>();
+      return { ...actual, execSync: vi.fn(() => "be-1\n") };
+    });
 
     const { migrateStorage: migrateStorageWithMock } = await import("../migration/storage-v2.js");
 
@@ -1595,7 +1609,7 @@ describe("migration edge cases", () => {
   // The migrator must move ~/.claude/projects/<old-encoded>/ → <new-encoded>/
   // so chat history survives migration; otherwise the next ao start →
   // restore launches a fresh `claude` and the conversation is lost.
-  it(
+  it.skipIf(process.platform === "win32")(
     "relinks ~/.claude/projects/<old-encoded>/ to <new-encoded>/ for migrated worktrees",
     async () => {
       const origHome = process.env["HOME"];
@@ -1723,7 +1737,7 @@ describe("migration edge cases", () => {
   // path no longer matches and `getRestoreCommand` returns null. The
   // migrator must rewrite that cwd in place so Codex restore continues to
   // find the prior thread.
-  it(
+  it.skipIf(process.platform === "win32")(
     "rewrites ~/.codex/sessions/**/rollout-*.jsonl session_meta.cwd for migrated worktrees",
     async () => {
       const origHome = process.env["HOME"];
