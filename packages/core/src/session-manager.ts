@@ -117,7 +117,7 @@ function normalizeRepoOverride(repoOverride: string | undefined): string | null 
 
   const segments = trimmed.split("/");
   const valid =
-    segments.length >= 2 &&
+    segments.length === 2 &&
     segments.every((segment) => {
       return (
         segment.length > 0 &&

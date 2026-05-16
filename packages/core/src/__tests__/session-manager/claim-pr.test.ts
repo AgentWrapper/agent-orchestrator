@@ -166,6 +166,24 @@ describe("claimPR", () => {
     expect(mockSCM.resolvePR).not.toHaveBeenCalled();
   });
 
+  it("rejects repo overrides with more than owner/repo segments", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-2"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await expect(
+      sm.claimPR("app-2", "42", { repoOverride: "org/repo/extra" }),
+    ).rejects.toThrow('Invalid repo "org/repo/extra"');
+    expect(mockSCM.resolvePR).not.toHaveBeenCalled();
+  });
+
   it("does not strip local sessions on branch name alone when claiming a cross-repo PR", async () => {
     const mockSCM = makeSCM({
       resolvePR: vi.fn().mockImplementation((_ref: string, proj: { repo?: string }) => {
