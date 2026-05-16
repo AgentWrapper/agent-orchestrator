@@ -17,11 +17,19 @@
  */
 
 import type { PipelineEffect } from "./events.js";
+import {
+  collectReferencedStages,
+  evaluatePredicate as evalDslPredicate,
+  evaluateExitPredicates as evalExit,
+  normalizeRoutePredicate,
+  type PredicateContext,
+} from "./predicate.js";
 import { iso, patchRun } from "./reducer-helpers.js";
 import {
+  type Artifact,
   type RunState,
   type Stage,
-  type StageRoutePredicate,
+  type StageRoutes,
   type StageState,
   isTerminalStageStatus,
 } from "./types.js";
@@ -59,7 +67,7 @@ export function scheduleAfterChange(run: RunState, now: number): ScheduleResult 
       const state = current.stages[stageDef.name];
       if (state.status !== "pending") continue;
       if (!areDepsSatisfiedForStart(stageDef, current.stages)) continue;
-      if (!evaluateRoutes(stageDef, current.stages)) continue;
+      if (stageDef.routes && !evaluateRoutes(stageDef.routes, current)) continue;
       startEffects.push({
         type: "START_STAGE",
         runId: current.runId,
@@ -98,7 +106,7 @@ function applyEligibleSkips(run: RunState, now: number): { run: RunState; newlyS
       if (!arePreconditionsTerminal(stageDef, current.stages)) continue;
 
       const shouldSkip = stageDef.routes
-        ? !evaluatePredicate(stageDef.routes.when, current.stages)
+        ? !evaluateRoutes(stageDef.routes, current)
         : !areAllDepsSucceeded(stageDef, current.stages);
 
       if (shouldSkip) {
@@ -119,7 +127,7 @@ function applyEligibleSkips(run: RunState, now: number): { run: RunState; newlyS
 function arePreconditionsTerminal(stage: Stage, stages: Record<string, StageState>): boolean {
   if (!areDepsTerminal(stage, stages)) return false;
   if (stage.routes) {
-    for (const ref of stage.routes.when.stages) {
+    for (const ref of collectReferencedStages(stage.routes.when)) {
       const refState = stages[ref];
       if (!refState || !isTerminalStageStatus(refState.status)) return false;
     }
@@ -154,29 +162,53 @@ function areDepsSatisfiedForStart(stage: Stage, stages: Record<string, StageStat
   return areAllDepsSucceeded(stage, stages);
 }
 
-function evaluateRoutes(stage: Stage, stages: Record<string, StageState>): boolean {
-  if (!stage.routes) return true;
-  return evaluatePredicate(stage.routes.when, stages);
+function evaluateRoutes(routes: StageRoutes, run: RunState): boolean {
+  const predicate = normalizeRoutePredicate(routes.when);
+  return evalDslPredicate(predicate, predicateContextForRun(run));
 }
 
 /**
- * Pure predicate evaluator over the runtime stage states. Stages referenced
- * here are guaranteed by config validation to exist in the pipeline; missing
- * entries are treated as non-terminal (i.e. `false` for everything except
- * `anyFailed` short-circuits) so an unevaluable predicate never green-lights.
+ * Build the evaluator context off the live run state. Routes only reference
+ * stage statuses today, but `Pipeline.exitPredicates` reuses the same context
+ * to count open findings; threading `runArtifacts` through both paths keeps
+ * a single evaluator implementation rather than two near-duplicates.
  */
-function evaluatePredicate(
-  predicate: StageRoutePredicate,
-  stages: Record<string, StageState>,
-): boolean {
-  switch (predicate.kind) {
-    case "allSucceeded":
-      return predicate.stages.every((name) => stages[name]?.status === "succeeded");
-    case "anySucceeded":
-      return predicate.stages.some((name) => stages[name]?.status === "succeeded");
-    case "anyFailed":
-      return predicate.stages.some((name) => stages[name]?.status === "failed");
+export function predicateContextForRun(run: RunState): PredicateContext {
+  const artifactsByStage: Record<string, Artifact[]> = run.runArtifacts ?? {};
+  return {
+    stages: run.stages,
+    artifactsByStage,
+    allStageNames: run.pipelineConfigSnapshot.stages.map((s) => s.name),
+  };
+}
+
+export type RunExitOutcome =
+  | { kind: "succeeded" }
+  | { kind: "failed_exhausted" }
+  | { kind: "failed_can_retry" };
+
+/**
+ * Evaluate a run's `exitPredicates` once every stage has reached a terminal
+ * status. Decision table (all stages terminal, predicates fully evaluated):
+ *
+ *   exitPredicates true  (or unset)       → `succeeded`
+ *   exitPredicates false, rounds exhausted → `failed_exhausted` (loop_failed)
+ *   exitPredicates false, rounds remain    → `failed_can_retry` (loop awaits)
+ *
+ * Rounds are "exhausted" when `Pipeline.maxLoopRounds` is unset (no retry
+ * budget configured) OR when `loopRounds >= maxLoopRounds`. The reducer maps
+ * these outcomes onto `LoopStateName` — see `reducer.ts`.
+ */
+export function evaluateRunExitOutcome(run: RunState): RunExitOutcome {
+  const pipeline = run.pipelineConfigSnapshot;
+  const ctx = predicateContextForRun(run);
+  const passed = evalExit(pipeline.exitPredicates, ctx);
+  if (passed) return { kind: "succeeded" };
+  const maxRounds = pipeline.maxLoopRounds;
+  if (maxRounds === undefined || run.loopRounds >= maxRounds) {
+    return { kind: "failed_exhausted" };
   }
+  return { kind: "failed_can_retry" };
 }
 
 /**
@@ -198,15 +230,13 @@ export function findFirstStageCycle(
   stages: ReadonlyArray<{
     name: string;
     dependsOn?: string[];
-    routes?: { when: { stages: string[] } };
+    routes?: StageRoutes;
   }>,
 ): string[] | null {
   const adjacency = new Map<string, string[]>();
   for (const stage of stages) {
-    const edges = new Set<string>([
-      ...(stage.dependsOn ?? []),
-      ...(stage.routes?.when.stages ?? []),
-    ]);
+    const routeRefs = stage.routes ? collectReferencedStages(stage.routes.when) : [];
+    const edges = new Set<string>([...(stage.dependsOn ?? []), ...routeRefs]);
     adjacency.set(stage.name, [...edges]);
   }
   const WHITE = 0;

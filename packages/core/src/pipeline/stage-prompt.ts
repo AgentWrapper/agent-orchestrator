@@ -10,13 +10,22 @@
  * spawn-time `prompt` field. Keep it terse — agents read it once.
  */
 
-import { PIPELINE_FINDINGS_FILENAME, type Stage, type TaskMode } from "./types.js";
+import { PIPELINE_FINDINGS_FILENAME, type Artifact, type Stage, type TaskMode } from "./types.js";
 
 export interface StagePromptInput {
   pipelineName: string;
   stage: Stage;
   /** Loop counter from the engine — included so prompts surface progress. */
   loopRound?: number;
+  /**
+   * Artifacts from upstream sibling stages, keyed by stage name. Only consulted
+   * when `stage.workspaceClass === "read-siblings"`. Empty / unset = no sibling
+   * artifacts are surfaced (the default `independent` semantics).
+   *
+   * The executor is responsible for collecting these from the run's artifact
+   * store and threading them through; the prompt builder only formats them.
+   */
+  siblingArtifacts?: Record<string, Artifact[]>;
 }
 
 /**
@@ -26,7 +35,7 @@ export interface StagePromptInput {
  * agent doesn't need to know the absolute path.
  */
 export function buildStagePrompt(input: StagePromptInput): string {
-  const { pipelineName, stage, loopRound } = input;
+  const { pipelineName, stage, loopRound, siblingArtifacts } = input;
   const mode = stage.executor.kind === "agent" ? stage.executor.mode : null;
   const lines: string[] = [];
 
@@ -53,11 +62,39 @@ export function buildStagePrompt(input: StagePromptInput): string {
     lines.push("```");
   }
 
+  if (stage.workspaceClass === "read-siblings") {
+    const block = formatSiblingArtifactsBlock(siblingArtifacts);
+    if (block) {
+      lines.push(``);
+      lines.push(`## Upstream Artifacts`);
+      lines.push(block);
+    }
+  }
+
   lines.push(``);
   lines.push(`## Reporting Findings`);
   lines.push(formatFindingsInstructions(mode));
 
   return lines.join("\n");
+}
+
+/**
+ * Render upstream artifacts as a single JSON block. The executor harvests
+ * them from the artifact store; the prompt just exposes them so the agent
+ * can react to prior findings without rummaging through the workspace.
+ *
+ * Returns `null` when there's nothing to surface — caller omits the section
+ * entirely in that case.
+ */
+function formatSiblingArtifactsBlock(
+  siblingArtifacts: Record<string, Artifact[]> | undefined,
+): string | null {
+  if (!siblingArtifacts) return null;
+  const entries = Object.entries(siblingArtifacts).filter(([, arr]) => arr.length > 0);
+  if (entries.length === 0) return null;
+  const flat: Record<string, Artifact[]> = {};
+  for (const [name, arr] of entries) flat[name] = arr;
+  return `\`\`\`json\n${JSON.stringify(flat, null, 2)}\n\`\`\``;
 }
 
 function formatFindingsInstructions(mode: TaskMode | null): string {
