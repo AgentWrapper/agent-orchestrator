@@ -153,6 +153,34 @@ export type GlobalProjectEntry = z.infer<typeof GlobalProjectEntrySchema>;
  * Global config schema.
  * Operational settings + project registry with identity fields only.
  */
+/**
+ * Update channel — controls which npm dist-tag the auto-updater tracks.
+ *
+ *   stable  — @latest (weekly Thursday releases). Auto-installs when run.
+ *   nightly — @nightly (daily Fri–Tue cron). Auto-installs when run.
+ *   manual  — no checks, no notice, no install. User runs `ao update` manually.
+ */
+export const UpdateChannelSchema = z.enum(["stable", "nightly", "manual"]);
+export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
+
+/**
+ * Install-method override. When set, the auto-updater bypasses path-based
+ * detection and uses this value to pick the upgrade command. Useful for
+ * non-standard install layouts (custom prefixes, asdf, etc.).
+ *
+ * Mirrors `InstallMethod` from the CLI (kept as `string` here so the core
+ * package doesn't depend on the CLI).
+ */
+export const InstallMethodOverrideSchema = z.enum([
+  "git",
+  "npm-global",
+  "pnpm-global",
+  "bun-global",
+  "homebrew",
+  "unknown",
+]);
+export type InstallMethodOverride = z.infer<typeof InstallMethodOverrideSchema>;
+
 export const GlobalConfigSchema = z
   .object({
     /** Web dashboard port. Default: 3000 */
@@ -161,6 +189,22 @@ export const GlobalConfigSchema = z
     directTerminalPort: z.number().optional(),
     /** Time before a "ready" session becomes "idle". Default: 300 000 ms (5 min). */
     readyThresholdMs: z.number().nonnegative().default(300_000),
+    /**
+     * Auto-update channel preference.
+     *
+     * Default `manual` (resolved at read time) so users who upgrade across
+     * this change keep their existing behavior — no surprise auto-installs.
+     * The onboarding flow prompts new users on first `ao start` and persists
+     * the answer here.
+     *
+     * `.catch(undefined)` makes the schema tolerant of legacy / typo'd values
+     * in the on-disk config: a stray `updateChannel: foo` parses as
+     * "unset" rather than failing the whole config load. The user can fix it
+     * later via `ao config set updateChannel <stable|nightly|manual>`.
+     */
+    updateChannel: UpdateChannelSchema.optional().catch(undefined),
+    /** Override path-based install detection. Optional. */
+    installMethod: InstallMethodOverrideSchema.optional().catch(undefined),
     /** Cross-project defaults — projects inherit when fields are omitted. */
     defaults: z
       .object({
@@ -1019,7 +1063,21 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
 // HELPERS
 // =============================================================================
 
-function makeEmptyGlobalConfig(): GlobalConfig {
+/**
+ * Build a fresh GlobalConfig with all platform-aware defaults filled in.
+ *
+ * Single source of truth for "what does a brand-new global config look like?"
+ * — used by:
+ *   - The internal initial-load path here in core (`makeEmptyGlobalConfig`).
+ *   - `ao config set` (CLI) when no config file exists yet.
+ *   - `maybePromptForUpdateChannel` (CLI) when persisting the user's channel
+ *     pick on first run.
+ *
+ * Critically, `defaults.runtime` is platform-aware via `getDefaultRuntime()`
+ * (returns "process" on Windows, "tmux" elsewhere) — hardcoding "tmux" would
+ * lock Windows users into a non-functional config.
+ */
+export function createDefaultGlobalConfig(): GlobalConfig {
   return {
     port: 3000,
     readyThresholdMs: 300_000,
@@ -1039,6 +1097,11 @@ function makeEmptyGlobalConfig(): GlobalConfig {
     },
     reactions: {},
   };
+}
+
+/** Internal alias for back-compat with existing callers in this file. */
+function makeEmptyGlobalConfig(): GlobalConfig {
+  return createDefaultGlobalConfig();
 }
 
 function sanitizeRawGlobalConfig(raw: Record<string, unknown>): RawGlobalConfigSanitization {

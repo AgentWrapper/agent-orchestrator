@@ -34,6 +34,9 @@ const {
   mockSpawn,
   mockFindPidByPort,
   mockKillProcessTree,
+  mockSweepDaemonChildren,
+  mockScanAoOrphans,
+  mockReapAoOrphans,
   mockStartProjectSupervisor,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
@@ -56,6 +59,9 @@ const {
   mockSpawn: vi.fn(),
   mockFindPidByPort: vi.fn(),
   mockKillProcessTree: vi.fn(),
+  mockSweepDaemonChildren: vi.fn(),
+  mockScanAoOrphans: vi.fn(),
+  mockReapAoOrphans: vi.fn(),
   mockStartProjectSupervisor: vi.fn(),
 }));
 
@@ -144,6 +150,9 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     },
     findPidByPort: mockFindPidByPort,
     killProcessTree: mockKillProcessTree,
+    sweepDaemonChildren: mockSweepDaemonChildren,
+    scanAoOrphans: mockScanAoOrphans,
+    reapAoOrphans: mockReapAoOrphans,
   };
 });
 
@@ -237,6 +246,17 @@ vi.mock("../../src/lib/prompts.js", () => ({
   promptConfirm: (...args: unknown[]) => mockPromptConfirm(...args),
 }));
 
+// Stub the update-channel onboarding so `runStartup` doesn't touch the real
+// global config file under ~/.agent-orchestrator. Without this, a test that
+// reaches runStartup writes `updateChannel` to disk, which makes subsequent
+// tests load that config and report wrong errors (e.g. "No projects
+// configured" instead of the expected "project not found").
+vi.mock("../../src/lib/update-channel-onboarding.js", () => ({
+  maybePromptForUpdateChannel: vi.fn(async () => {}),
+  hasChosenUpdateChannel: vi.fn(() => true),
+  persistUpdateChannel: vi.fn(),
+}));
+
 // Mock node:child_process — start.ts imports spawn for dashboard + browser open
 vi.mock("node:child_process", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -271,6 +291,7 @@ import { registerStart, registerStop, autoCreateConfig } from "../../src/command
 let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let originalAoGlobalConfig: string | undefined;
 
 function createSpawnChild(options?: {
   /** Emit `error` instead of `close`. */
@@ -308,6 +329,8 @@ function createSpawnChild(options?: {
 
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
+  originalAoGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
+  process.env["AO_GLOBAL_CONFIG"] = join(tmpDir, "global-agent-orchestrator.yaml");
 
   program = new Command();
   program.exitOverride();
@@ -387,6 +410,22 @@ beforeEach(async () => {
   mockFindPidByPort.mockResolvedValue(null);
   mockKillProcessTree.mockReset();
   mockKillProcessTree.mockResolvedValue(undefined);
+  mockSweepDaemonChildren.mockReset();
+  mockSweepDaemonChildren.mockResolvedValue({
+    attempted: 0,
+    terminated: 0,
+    forceKilled: 0,
+    failed: 0,
+  });
+  mockScanAoOrphans.mockReset();
+  mockScanAoOrphans.mockResolvedValue([]);
+  mockReapAoOrphans.mockReset();
+  mockReapAoOrphans.mockResolvedValue({
+    attempted: 0,
+    terminated: 0,
+    forceKilled: 0,
+    failed: 0,
+  });
   mockStartProjectSupervisor.mockReset();
   mockStartProjectSupervisor.mockResolvedValue({ stop: vi.fn(), reconcileNow: vi.fn() });
   mockDetectOpenClawInstallation.mockReset();
@@ -425,6 +464,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   if (cwdSpy) cwdSpy.mockRestore();
+  if (originalAoGlobalConfig === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+  else process.env["AO_GLOBAL_CONFIG"] = originalAoGlobalConfig;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -1975,6 +2016,7 @@ describe("start command — platform-aware runtime fallback", () => {
       .join("\n");
     expect(output).toContain("Stopped sessions for");
     expect(output).not.toContain("Dashboard stopped");
+    expect(mockSweepDaemonChildren).not.toHaveBeenCalled();
   });
 
   it("targeted stop does NOT unregister running.json", async () => {
@@ -2099,6 +2141,7 @@ describe("start command — platform-aware runtime fallback", () => {
     // not a direct process.kill — that's how it gets `taskkill /T /F` on
     // Windows and process-group kill on Unix. Assert on the mock.
     expect(mockKillProcessTree).toHaveBeenCalledWith(99999, "SIGTERM");
+    expect(mockSweepDaemonChildren).toHaveBeenCalledWith({ ownerPid: 99999 });
     expect(mockUnregister).toHaveBeenCalled();
     expect(mockRemoveProjectFromRunning).not.toHaveBeenCalled();
   });
@@ -2379,7 +2422,12 @@ describe("start command — already-running detection", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2571,7 +2619,12 @@ describe("start command — already-running detection", () => {
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2625,7 +2678,12 @@ describe("start command — already-running detection", () => {
     const { stringify: yamlStringify } = await import("yaml");
     const originalYaml = yamlStringify(
       {
-        defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        defaults: {
+          runtime: "process",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: [],
+        },
         projects: {
           "my-app": {
             name: "My App",
@@ -2678,7 +2736,12 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "my-app": {
               name: "My App",
@@ -2731,7 +2794,12 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       configPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             "old-name": {
               name: "Old Name",
@@ -2791,7 +2859,12 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             current: {
               projectId: "current",
@@ -2892,7 +2965,12 @@ describe("start command — global registry mutations", () => {
       globalConfigPath,
       yamlStringify(
         {
-          defaults: { runtime: "process", agent: "claude-code", workspace: "worktree", notifiers: [] },
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
           projects: {
             current: {
               projectId: "current",

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
+import { createInitialCanonicalLifecycle } from "../../lifecycle-state.js";
 import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import { getProjectDir } from "../../paths.js";
 import {
@@ -283,8 +284,22 @@ describe("restore", () => {
       createdAt: "2025-01-01T00:00:00.000Z",
       runtimeHandle: makeHandle("rt-old"),
     });
+    const staleLifecycle = createInitialCanonicalLifecycle(
+      "worker",
+      new Date("2025-01-01T00:00:00.000Z"),
+    );
+    staleLifecycle.session.state = "terminated";
+    staleLifecycle.session.reason = "runtime_lost";
+    staleLifecycle.session.completedAt = "2025-01-01T00:01:00.000Z";
+    staleLifecycle.session.terminatedAt = "2025-01-01T00:02:00.000Z";
+    staleLifecycle.session.lastTransitionAt = "2025-01-01T00:02:00.000Z";
+    staleLifecycle.pr.state = "open";
+    staleLifecycle.pr.reason = "in_progress";
+    staleLifecycle.pr.number = 10;
+    staleLifecycle.pr.url = "https://github.com/org/my-app/pull/10";
+    staleLifecycle.pr.lastObservedAt = "2025-01-01T00:00:00.000Z";
     updateMetadata(sessionsDir, "app-1", {
-      lifecycle: JSON.stringify({ session: { state: "terminated", terminatedAt: new Date().toISOString() } }),
+      lifecycle: JSON.stringify(staleLifecycle),
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -300,6 +315,14 @@ describe("restore", () => {
     expect(meta).not.toBeNull();
     expect(meta!["issue"]).toBe("TEST-1");
     expect(meta!["pr"]).toBe("https://github.com/org/my-app/pull/10");
+
+    const lifecycle = JSON.parse(meta!["lifecycle"]);
+    expect(lifecycle.session.state).toBe("working");
+    expect(lifecycle.session.completedAt).toBeNull();
+    expect(lifecycle.session.terminatedAt).toBeNull();
+    expect(new Date(lifecycle.session.lastTransitionAt).getTime()).toBeGreaterThan(
+      new Date("2025-01-01T00:02:00.000Z").getTime(),
+    );
   });
 
   it("preserves displayName when restoring terminated session", async () => {

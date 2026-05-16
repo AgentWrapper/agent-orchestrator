@@ -634,6 +634,7 @@ function ProjectSidebarInner({
                 {!isDegraded ? (
                   <Link
                     href={projectHref}
+                    prefetch={false}
                     onClick={(e) => {
                       e.stopPropagation();
                       onMobileClose?.();
@@ -659,6 +660,7 @@ function ProjectSidebarInner({
                 {!isDegraded && orchestratorLink && (
                   <Link
                     href={projectSessionPath(project.id, orchestratorLink.id)}
+                    prefetch={false}
                     onClick={(e) => {
                       e.stopPropagation();
                       onMobileClose?.();

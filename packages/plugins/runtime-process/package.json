@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-runtime-process",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Runtime plugin: child processes",
   "license": "MIT",
   "type": "module",
@@ -42,5 +42,9 @@
     "@types/node": "^25.2.3",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

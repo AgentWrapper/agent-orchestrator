@@ -315,6 +315,37 @@ describe("API Routes", () => {
       vi.useRealTimers();
     });
 
+    it("activeOnly keeps working sessions with stale terminatedAt annotations", async () => {
+      const staleLifecycle = createInitialCanonicalLifecycle(
+        "worker",
+        new Date("2026-05-13T19:13:20.146Z"),
+      );
+      staleLifecycle.session.state = "working";
+      staleLifecycle.session.reason = "task_in_progress";
+      staleLifecycle.session.terminatedAt = "2026-05-13T19:13:20.146Z";
+      staleLifecycle.runtime.state = "alive";
+      staleLifecycle.runtime.reason = "process_running";
+
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "worker-restored-stale-terminal-marker",
+          status: "terminated",
+          activity: "exited",
+          lifecycle: staleLifecycle,
+        }),
+      ]);
+
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions?active=true"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual([
+        "worker-restored-stale-terminal-marker",
+      ]);
+      expect(data.sessions[0].lifecycle.sessionState).toBe("working");
+      expect(data.sessions[0].lifecycle.session.terminatedAt).toBe("2026-05-13T19:13:20.146Z");
+    });
+
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {
       (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         multiProjectSessions,

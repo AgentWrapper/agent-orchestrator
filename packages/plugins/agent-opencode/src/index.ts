@@ -8,6 +8,7 @@ import {
   recordTerminalActivity,
   asValidOpenCodeSessionId,
   isWindows,
+  PROCESS_PROBE_INDETERMINATE,
   getCachedOpenCodeSessionList,
   getOpenCodeChildEnv,
   ensureOpenCodeTmpDir,
@@ -18,6 +19,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
@@ -299,6 +301,7 @@ function createOpenCodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
@@ -341,7 +344,7 @@ function createOpenCodeAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
           // tmux and ps are Unix-only; guard before any tmux calls on Windows.
@@ -361,6 +364,7 @@ function createOpenCodeAgent(): Agent {
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
           });
+          if (!psOut) return PROCESS_PROBE_INDETERMINATE;
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)opencode(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -390,7 +394,7 @@ function createOpenCodeAgent(): Agent {
 
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 

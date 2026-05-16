@@ -1,0 +1,168 @@
+name: Canary
+
+# Two-stage release pipeline (nightly canary side).
+#
+# Nightly canary creates snapshot versions, tags, and a GitHub prerelease.
+# npm publishing is handled by a private cron job (AO) that polls GitHub
+# releases and publishes when a new prerelease tag is ahead of the current
+# npm nightly version.
+#
+# No NPM_TOKEN or publisher dispatch secrets are needed in this repo.
+# The only secret used is GITHUB_TOKEN (automatic).
+#
+# Cron schedule: 23:30 IST = 18:00 UTC, on Fri,Sat,Sun,Mon,Tue
+# (DOW 5,6,0,1,2). Wed/Thu are the bake window — no scheduled publishes.
+# `workflow_dispatch` lets the release captain re-cut a nightly during
+# bake when a fix lands and the Discord cohort should test the patched
+# candidate.
+
+on:
+  schedule:
+    - cron: "0 18 * * 5,6,0,1,2"
+  workflow_dispatch:
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  canary:
+    name: Publish canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # Skip-if-unchanged guard: if the most recent prerelease in this
+      # repo was cut from the current tip of main, there's nothing new
+      # to publish — short-circuit the whole job. Prevents republishing
+      # the same SHA on every cron tick during quiet stretches.
+      #
+      # We filter to prereleases only (`isPrerelease == true`). If the
+      # most recent release were a stable cut from `release.yml`, an
+      # explicit `workflow_dispatch` nightly right after the stable
+      # release would otherwise be suppressed — which we don't want.
+      #
+      # The previous-nightly tag points at the snapshot commit created
+      # by the "Commit snapshot version bumps" step below. The snapshot
+      # commit's first parent is the source main HEAD, so `${LAST_TAG}^`
+      # is the right anchor to compare against `GITHUB_SHA` (main HEAD
+      # at this run).
+      #
+      # `workflow_dispatch` always proceeds — recovery path for partial
+      # failures. A human triggered the run, they want it to run.
+      - name: Check if main has new commits since the last nightly
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            echo 'Manual trigger via workflow_dispatch — bypassing skip guard.'
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LAST_TAG=$(gh release list --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)][0].tagName // empty')
+          LAST_SHA=""
+          if [ -n "$LAST_TAG" ]; then
+            LAST_SHA=$(git rev-parse "${LAST_TAG}^" 2>/dev/null || echo "")
+          fi
+          if [ -n "$LAST_SHA" ] && [ "$LAST_SHA" = "$GITHUB_SHA" ]; then
+            echo "Last prerelease ($LAST_TAG) was cut from $GITHUB_SHA — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          node-version: 20
+          cache: pnpm
+          # No `registry-url`: this workflow does not publish to npm.
+
+      - if: steps.check.outputs.skip != 'true'
+        run: echo "HUSKY=0" >> $GITHUB_ENV
+
+      - if: steps.check.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - if: steps.check.outputs.skip != 'true'
+        run: pnpm -r build
+
+      # Pre-publish guard: same as release.yml — catches workspace:* deps
+      # on private packages before they'd silently break a published
+      # install. Still runs here so the public repo blocks a malformed
+      # snapshot before it reaches npm.
+      - if: steps.check.outputs.skip != 'true'
+        run: node scripts/check-publishable-deps.mjs
+
+      - name: Create snapshot versions
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          # If no changesets exist (e.g. right after a Version Packages merge),
+          # create a minimal one. `changeset version --snapshot` consumes and
+          # deletes it, so no cleanup is needed.
+          if [ -z "$(ls .changeset/*.md 2>/dev/null | grep -vi 'README')" ]; then
+            printf -- '---\n"@aoagents/ao": patch\n---\n\nchore: canary build\n' > .changeset/canary-temp.md
+          fi
+          pnpm changeset version --snapshot nightly
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # `pnpm changeset version --snapshot` modifies package.json files
+      # on disk but does NOT create a git commit. Without this commit,
+      # the umbrella tag we push below would point at the pre-snapshot
+      # HEAD, so when the npm publisher checks out the tag it would see
+      # the un-bumped versions and either publish wrong version numbers
+      # or fail trying to republish an existing version.
+      #
+      # The commit is NEVER pushed to main — only the tag below is
+      # pushed, and the snapshot commit travels with it as part of the
+      # tag's reachable history. `[skip ci]` is defensive in case any
+      # future change ever pushes this commit to a branch.
+      - name: Commit snapshot version bumps
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/*/package.json packages/plugins/*/package.json .changeset/
+          git diff --cached --quiet || git commit -m 'chore: snapshot version bump [skip ci]'
+
+      # Push the umbrella `vX.Y.Z` tag pointing at the snapshot commit.
+      # The npm publisher resolves this tag to the snapshot commit with
+      # the bumped package.json versions.
+      #
+      # We deliberately skip `pnpm changeset tag`: it would create one
+      # tag per publishable package (~27 here) every night, which adds
+      # up fast on the nightly cadence. The npm publisher only consumes
+      # the umbrella tag, so the per-package tags are pure decoration.
+      - name: Tag snapshot versions
+        id: tag
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          version=$(node -p "require('./packages/ao/package.json').version")
+          git tag "v$version"
+          git push origin "v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Public-facing GitHub prerelease. `--prerelease` flags it as such
+      # so consumers and tooling that filter by stability stay correct.
+      # No `--target`: the tag was just pushed and GitHub resolves the
+      # commitish from it (avoids the race where another commit lands
+      # on main between the tag push and this step).
+      - name: Create GitHub prerelease
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.tag.outputs.version }}" \
+            --prerelease \
+            --generate-notes

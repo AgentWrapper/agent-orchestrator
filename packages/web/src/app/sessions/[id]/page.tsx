@@ -84,6 +84,9 @@ let cachedProjects: ProjectInfo[] | null = null;
 let cachedSidebarSessions: DashboardSession[] | null = null;
 const SESSION_PAGE_REFRESH_INTERVAL_MS = 2000;
 const SESSION_FETCH_TIMEOUT_MS = 8000;
+const SESSION_LOAD_MAX_CONSECUTIVE_FAILURES = 4;
+const SESSION_LOAD_MAX_RETRY_ELAPSED_MS = 30_000;
+const SESSION_LOAD_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
 const PROJECT_SIDEBAR_FETCH_TIMEOUT_MS = 5000;
 const PROJECTS_FETCH_TIMEOUT_MS = 5000;
 const validSessionStatuses = new Set<string>(Object.values(SESSION_STATUS));
@@ -133,6 +136,19 @@ function isAbortLikeError(error: unknown): boolean {
     return message.includes("aborted") || message.includes("aborterror");
   }
 
+  return false;
+}
+
+function isTransientSessionLoadError(error: unknown): boolean {
+  if (isAbortLikeError(error)) return true;
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("timed out") ||
+      message.includes("network") ||
+      message.includes("failed to fetch")
+    );
+  }
   return false;
 }
 
@@ -418,6 +434,22 @@ export default function SessionPage() {
   const projectSessionsFetchControllerRef = useRef<AbortController | null>(null);
   const sidebarFetchControllerRef = useRef<AbortController | null>(null);
   const pageUnloadingRef = useRef(false);
+  const sessionLoadFailureCountRef = useRef(0);
+  const sessionLoadFirstFailureAtRef = useRef<number | null>(null);
+  const sessionLoadRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSessionLoadRetry = useCallback(() => {
+    if (sessionLoadRetryTimerRef.current) {
+      clearTimeout(sessionLoadRetryTimerRef.current);
+      sessionLoadRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const resetSessionLoadFailures = useCallback(() => {
+    sessionLoadFailureCountRef.current = 0;
+    sessionLoadFirstFailureAtRef.current = null;
+    clearSessionLoadRetry();
+  }, [clearSessionLoadRetry]);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -497,6 +529,7 @@ export default function SessionPage() {
     fetchingSessionRef.current = true;
     const controller = new AbortController();
     sessionFetchControllerRef.current = controller;
+    let keepLoadingForRetry = false;
     try {
       const data = await fetchJsonWithTimeout<DashboardSession | { error: string }>(
         `/api/sessions/${encodeURIComponent(id)}`,
@@ -510,8 +543,9 @@ export default function SessionPage() {
       setRouteError(null);
       setSessionMissing(false);
       hasLoadedSessionRef.current = true;
+      resetSessionLoadFailures();
     } catch (err) {
-      if (pageUnloadingRef.current || controller.signal.aborted || isAbortLikeError(err)) {
+      if (pageUnloadingRef.current || controller.signal.aborted) {
         return;
       }
       const message = err instanceof Error ? err.message : "Failed to load session";
@@ -524,20 +558,55 @@ export default function SessionPage() {
           setSessionMissing(true);
         }
         setLoading(false);
+        resetSessionLoadFailures();
         return;
       }
+
+      if (!hasLoadedSessionRef.current && isTransientSessionLoadError(err)) {
+        const failureCount = sessionLoadFailureCountRef.current + 1;
+        sessionLoadFailureCountRef.current = failureCount;
+        sessionLoadFirstFailureAtRef.current ??= Date.now();
+        const elapsedMs = Date.now() - sessionLoadFirstFailureAtRef.current;
+        const shouldKeepRetrying =
+          failureCount < SESSION_LOAD_MAX_CONSECUTIVE_FAILURES &&
+          elapsedMs < SESSION_LOAD_MAX_RETRY_ELAPSED_MS;
+
+        if (shouldKeepRetrying) {
+          const delay =
+            SESSION_LOAD_RETRY_BACKOFF_MS[
+              Math.min(failureCount - 1, SESSION_LOAD_RETRY_BACKOFF_MS.length - 1)
+            ];
+          keepLoadingForRetry = true;
+          setLoading(true);
+          console.warn("Session fetch failed transiently; retrying", {
+            sessionId: id,
+            failureCount,
+            retryInMs: delay,
+            error: err,
+          });
+          clearSessionLoadRetry();
+          sessionLoadRetryTimerRef.current = setTimeout(() => {
+            sessionLoadRetryTimerRef.current = null;
+            void fetchSession();
+          }, delay);
+          return;
+        }
+      }
+
       console.error("Failed to fetch session:", err);
       if (!hasLoadedSessionRef.current) {
         setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
       }
     } finally {
-      setLoading(false);
+      if (!keepLoadingForRetry) {
+        setLoading(false);
+      }
       fetchingSessionRef.current = false;
       if (sessionFetchControllerRef.current === controller) {
         sessionFetchControllerRef.current = null;
       }
     }
-  }, [id]);
+  }, [clearSessionLoadRetry, id, resetSessionLoadFailures]);
 
   const fetchProjectSessions = useCallback(async () => {
     if (fetchingProjectSessionsRef.current) return;
@@ -727,11 +796,12 @@ export default function SessionPage() {
 
   useEffect(() => {
     return () => {
+      clearSessionLoadRetry();
       sessionFetchControllerRef.current?.abort();
       projectSessionsFetchControllerRef.current?.abort();
       sidebarFetchControllerRef.current?.abort();
     };
-  }, []);
+  }, [clearSessionLoadRetry]);
 
   if (loading) {
     return (
@@ -816,6 +886,7 @@ export default function SessionPage() {
               setRouteError(null);
               setSessionMissing(false);
               setLoading(true);
+              resetSessionLoadFailures();
               void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions()]);
             },
           }}

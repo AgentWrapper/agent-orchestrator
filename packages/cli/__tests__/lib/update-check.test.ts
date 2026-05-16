@@ -49,6 +49,22 @@ vi.mock("../../src/options/version.js", () => ({
   getCliVersion: () => mockGetCliVersion(),
 }));
 
+// Stub global config loader so channel resolution is deterministic. Tests that
+// need a specific channel set `mockChannel` before the import below runs.
+const { mockGlobalConfig } = vi.hoisted(() => ({
+  mockGlobalConfig: { value: null as null | { updateChannel?: string; installMethod?: string } },
+}));
+
+import type * as AoCoreType from "@aoagents/ao-core";
+
+vi.mock("@aoagents/ao-core", async () => {
+  const actual = (await vi.importActual("@aoagents/ao-core")) as typeof AoCoreType;
+  return {
+    ...actual,
+    loadGlobalConfig: () => mockGlobalConfig.value,
+  };
+});
+
 // Mock global fetch
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -68,6 +84,9 @@ import {
   maybeShowUpdateNotice,
   scheduleBackgroundRefresh,
   isVersionOutdated,
+  resolveUpdateChannel,
+  resolveInstallMethodOverride,
+  isManualOnlyInstall,
 } from "../../src/lib/update-check.js";
 
 // ---------------------------------------------------------------------------
@@ -86,10 +105,14 @@ describe("update-check", () => {
       }
       return null;
     });
+    // Default to nightly so checkForUpdate exercises the registry path.
+    // Individual tests reset this when they need different channel behavior.
+    mockGlobalConfig.value = { updateChannel: "nightly" };
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    mockGlobalConfig.value = null;
   });
 
   // -----------------------------------------------------------------------
@@ -140,8 +163,26 @@ describe("update-check", () => {
       expect(isVersionOutdated("beta", "1.0.0")).toBe(false);
     });
 
-    it("returns false when both are the same with pre-release", () => {
-      expect(isVersionOutdated("0.2.2-rc.1", "0.2.2-rc.2")).toBe(false);
+    it("compares prerelease segments numerically (rc.1 < rc.2)", () => {
+      expect(isVersionOutdated("0.2.2-rc.1", "0.2.2-rc.2")).toBe(true);
+      expect(isVersionOutdated("0.2.2-rc.2", "0.2.2-rc.1")).toBe(false);
+      expect(isVersionOutdated("0.2.2-rc.2", "0.2.2-rc.2")).toBe(false);
+    });
+
+    it("treats any nightly SHA-suffix difference as outdated (lexical order would misfire)", () => {
+      // Real-world canary tag: 0.5.0-nightly-<sha>. SHAs are random hex, so
+      // lexical compare gives the wrong answer ~50% of the time. The cache
+      // always carries the registry's current dist-tag, so any SHA mismatch
+      // on the same base means the installed copy is behind.
+      expect(isVersionOutdated("0.5.0-nightly-abc", "0.5.0-nightly-def")).toBe(true);
+      expect(isVersionOutdated("0.5.0-nightly-def", "0.5.0-nightly-abc")).toBe(true);
+      expect(isVersionOutdated("0.5.0-nightly-f00d123", "0.5.0-nightly-0dead01")).toBe(true);
+      expect(isVersionOutdated("0.5.0-nightly-abc", "0.5.0-nightly-abc")).toBe(false);
+    });
+
+    it("treats missing prerelease segments as older than longer prereleases", () => {
+      // Per semver: a longer prerelease is greater when shared segments are equal.
+      expect(isVersionOutdated("0.5.0-nightly", "0.5.0-nightly.1")).toBe(true);
     });
   });
 
@@ -554,73 +595,74 @@ describe("update-check", () => {
   // -----------------------------------------------------------------------
 
   describe("fetchLatestVersion", () => {
-    it("returns version string from registry", async () => {
+    it("returns latest dist-tag from registry by default (stable channel)", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.4.0-nightly-abc" } }),
       });
 
-      const version = await fetchLatestVersion();
+      const version = await fetchLatestVersion("stable");
       expect(version).toBe("0.3.0");
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://registry.npmjs.org/@aoagents%2Fao/latest",
+        "https://registry.npmjs.org/@aoagents%2Fao",
         expect.objectContaining({ headers: { Accept: "application/json" } }),
       );
+    });
+
+    it("returns nightly dist-tag when nightly channel requested", async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.4.0-nightly-abc" } }),
+      });
+      expect(await fetchLatestVersion("nightly")).toBe("0.4.0-nightly-abc");
+    });
+
+    it("falls back to latest when nightly tag is missing", async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ "dist-tags": { latest: "0.3.0" } }),
+      });
+      expect(await fetchLatestVersion("nightly")).toBe("0.3.0");
     });
 
     it("passes an AbortSignal for timeout", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "1.0.0" }),
+        json: async () => ({ "dist-tags": { latest: "1.0.0" } }),
       });
-      await fetchLatestVersion();
+      await fetchLatestVersion("stable");
       expect(mockFetch.mock.calls[0][1]).toHaveProperty("signal");
     });
 
     it("returns null on non-ok response", async () => {
       mockFetch.mockResolvedValue({ ok: false, status: 404 });
-      expect(await fetchLatestVersion()).toBeNull();
-    });
-
-    it("returns null on 500 server error", async () => {
-      mockFetch.mockResolvedValue({ ok: false, status: 500 });
-      expect(await fetchLatestVersion()).toBeNull();
+      expect(await fetchLatestVersion("stable")).toBeNull();
     });
 
     it("returns null on network error", async () => {
       mockFetch.mockRejectedValue(new Error("fetch failed"));
-      expect(await fetchLatestVersion()).toBeNull();
+      expect(await fetchLatestVersion("stable")).toBeNull();
     });
 
     it("returns null on timeout (AbortError)", async () => {
       mockFetch.mockRejectedValue(new DOMException("signal timed out", "TimeoutError"));
-      expect(await fetchLatestVersion()).toBeNull();
+      expect(await fetchLatestVersion("stable")).toBeNull();
     });
 
-    it("returns null on non-JSON response", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => {
-          throw new Error("invalid json");
-        },
-      });
-      expect(await fetchLatestVersion()).toBeNull();
-    });
-
-    it("returns null when version field is missing", async () => {
+    it("returns null when dist-tags missing", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ name: "@aoagents/ao" }),
       });
-      expect(await fetchLatestVersion()).toBeNull();
+      expect(await fetchLatestVersion("stable")).toBeNull();
     });
 
-    it("returns null when version field is not a string", async () => {
+    it("returns null when chosen tag is not a string", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: 123 }),
+        json: async () => ({ "dist-tags": { latest: 123 } }),
       });
-      expect(await fetchLatestVersion()).toBeNull();
+      expect(await fetchLatestVersion("stable")).toBeNull();
     });
   });
 
@@ -657,6 +699,10 @@ describe("update-check", () => {
           checkedAt: now,
           currentVersionAtCheck: currentVersion,
           installMethod: "npm-global",
+          // Must match the active channel (nightly via the suite-level
+          // beforeEach) or the new "treat missing channel as miss when
+          // channel is provided" guard would reject the cache entry.
+          channel: "nightly",
         }),
       );
       mockExistsSync.mockReturnValue(false);
@@ -680,7 +726,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.4.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.4.0", nightly: "0.4.0" } }),
       });
 
       const info = await checkForUpdate({ force: true });
@@ -695,7 +741,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.3.0" } }),
       });
 
       const info = await checkForUpdate();
@@ -710,7 +756,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.3.0" } }),
       });
 
       await checkForUpdate();
@@ -741,7 +787,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: currentVersion }),
+        json: async () => ({ "dist-tags": { latest: currentVersion, nightly: currentVersion } }),
       });
 
       const info = await checkForUpdate({ force: true });
@@ -768,7 +814,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.3.0" } }),
       });
 
       const info = await checkForUpdate();
@@ -786,6 +832,7 @@ describe("update-check", () => {
             checkedAt: new Date().toISOString(),
             currentVersionAtCheck: currentVersion,
             installMethod: "npm-global",
+            channel: "nightly", // matches the suite-level beforeEach
           });
         }
         return JSON.stringify({ name: "not-ao" });
@@ -798,6 +845,9 @@ describe("update-check", () => {
     });
 
     it("uses npm registry and npm-global command for npm-global installs", async () => {
+      // Stable channel so the install command picks @latest. The default
+      // beforeEach sets nightly which would resolve to @nightly.
+      mockGlobalConfig.value = { updateChannel: "stable" };
       mockReadFileSync.mockImplementation((path: string) => {
         if (path.endsWith("update-check.json")) throw new Error("ENOENT");
         return JSON.stringify({ name: "not-ao" });
@@ -805,7 +855,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0" } }),
       });
 
       const info = await checkForUpdate({ force: true, installMethod: "npm-global" });
@@ -815,13 +865,14 @@ describe("update-check", () => {
     });
 
     it("uses npm registry and pnpm-global command for pnpm-global installs", async () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
       mockReadFileSync.mockImplementation((path: string) => {
         if (path.endsWith("update-check.json")) throw new Error("ENOENT");
         return JSON.stringify({ name: "not-ao" });
       });
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0" } }),
       });
 
       const info = await checkForUpdate({ force: true, installMethod: "pnpm-global" });
@@ -844,6 +895,7 @@ describe("update-check", () => {
             checkedAt: new Date().toISOString(),
             currentVersionAtCheck: currentVersion,
             installMethod: "git",
+            channel: "nightly", // matches the suite-level beforeEach
             isOutdated: false,
             currentRevisionAtCheck: "abc",
             latestRevisionAtCheck: "abc",
@@ -923,6 +975,10 @@ describe("update-check", () => {
     });
 
     it("prints update notice when cache shows outdated version", () => {
+      // Stable channel so the install command picks @latest. (Default is
+      // nightly which would prepend "(nightly)" to the message and use
+      // @nightly in the install command.)
+      mockGlobalConfig.value = { updateChannel: "stable" };
       const currentVersion = getCurrentVersion();
       mockReadFileSync.mockReturnValue(
         JSON.stringify({
@@ -930,6 +986,7 @@ describe("update-check", () => {
           checkedAt: new Date().toISOString(),
           currentVersionAtCheck: currentVersion,
           installMethod: "unknown",
+          channel: "stable",
         }),
       );
 
@@ -943,6 +1000,7 @@ describe("update-check", () => {
     });
 
     it("prints git update notice from cached git state", () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
       const currentVersion = getCurrentVersion();
       mockExistsSync.mockImplementation((path: string) => path.endsWith(".git"));
       mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
@@ -956,6 +1014,7 @@ describe("update-check", () => {
             checkedAt: new Date().toISOString(),
             currentVersionAtCheck: currentVersion,
             installMethod: "git",
+            channel: "stable",
             isOutdated: true,
             currentRevisionAtCheck: "local",
           });
@@ -1038,7 +1097,7 @@ describe("update-check", () => {
       mockExistsSync.mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => ({ version: "0.3.0" }),
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.3.0" } }),
       });
 
       expect(() => scheduleBackgroundRefresh()).not.toThrow();
@@ -1052,6 +1111,194 @@ describe("update-check", () => {
       mockFetch.mockRejectedValue(new Error("network fail"));
 
       expect(() => scheduleBackgroundRefresh()).not.toThrow();
+    });
+
+    it("does NOT schedule a refresh when channel is manual", () => {
+      mockGlobalConfig.value = { updateChannel: "manual" };
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      scheduleBackgroundRefresh();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      setTimeoutSpy.mockRestore();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Channel + install-method overrides (Section B / F)
+  // -----------------------------------------------------------------------
+
+  describe("resolveUpdateChannel", () => {
+    it("returns the channel from global config when set", () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
+      expect(resolveUpdateChannel()).toBe("stable");
+    });
+
+    it("defaults to 'manual' when global config is missing", () => {
+      mockGlobalConfig.value = null;
+      expect(resolveUpdateChannel()).toBe("manual");
+    });
+
+    it("defaults to 'manual' when updateChannel is unset", () => {
+      mockGlobalConfig.value = {};
+      expect(resolveUpdateChannel()).toBe("manual");
+    });
+  });
+
+  describe("resolveInstallMethodOverride", () => {
+    it("returns the override when set", () => {
+      mockGlobalConfig.value = { installMethod: "bun-global" };
+      expect(resolveInstallMethodOverride()).toBe("bun-global");
+    });
+
+    it("returns undefined when not set", () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
+      expect(resolveInstallMethodOverride()).toBeUndefined();
+    });
+  });
+
+  describe("classifyInstallPath — bun + homebrew (Section F)", () => {
+    it("returns 'bun-global' for ~/.bun/install/global/ paths", () => {
+      expect(
+        classifyInstallPath(
+          "/home/user/.bun/install/global/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
+      ).toBe("bun-global");
+    });
+
+    it("returns 'bun-global' for Windows .bun paths", () => {
+      expect(
+        classifyInstallPath(
+          "C:\\Users\\test\\.bun\\install\\global\\node_modules\\@aoagents\\ao-cli\\dist\\lib\\update-check.js",
+        ),
+      ).toBe("bun-global");
+    });
+
+    it("returns 'homebrew' for /Cellar/ao/ paths even when nested under lib/node_modules", () => {
+      // Brew installs nest the npm tree inside the formula's libexec dir, so
+      // the path also matches /lib/node_modules/. The Cellar check must run
+      // FIRST or we'd misclassify brew installs as npm-global.
+      expect(
+        classifyInstallPath(
+          "/usr/local/Cellar/ao/0.5.0/libexec/lib/node_modules/@aoagents/ao-cli/dist/lib/update-check.js",
+        ),
+      ).toBe("homebrew");
+    });
+  });
+
+  describe("getUpdateCommand — channel-aware (Section B)", () => {
+    it("uses @nightly tag for nightly channel", () => {
+      expect(getUpdateCommand("npm-global", "nightly")).toBe(
+        "npm install -g @aoagents/ao@nightly",
+      );
+      expect(getUpdateCommand("pnpm-global", "nightly")).toBe(
+        "pnpm add -g @aoagents/ao@nightly",
+      );
+      expect(getUpdateCommand("bun-global", "nightly")).toBe(
+        "bun add -g @aoagents/ao@nightly",
+      );
+    });
+
+    it("uses @latest tag for stable + manual channels", () => {
+      expect(getUpdateCommand("npm-global", "stable")).toBe(
+        "npm install -g @aoagents/ao@latest",
+      );
+      expect(getUpdateCommand("npm-global", "manual")).toBe(
+        "npm install -g @aoagents/ao@latest",
+      );
+    });
+
+    it("returns the brew upgrade notice for homebrew installs", () => {
+      expect(getUpdateCommand("homebrew", "stable")).toBe("brew upgrade ao");
+      expect(getUpdateCommand("homebrew", "nightly")).toBe("brew upgrade ao");
+    });
+  });
+
+  describe("isManualOnlyInstall", () => {
+    it("returns true only for homebrew", () => {
+      expect(isManualOnlyInstall("homebrew")).toBe(true);
+      expect(isManualOnlyInstall("npm-global")).toBe(false);
+      expect(isManualOnlyInstall("bun-global")).toBe(false);
+      expect(isManualOnlyInstall("git")).toBe(false);
+    });
+  });
+
+  describe("detectInstallMethod with override", () => {
+    it("uses the configured installMethod when set", () => {
+      mockGlobalConfig.value = { installMethod: "bun-global" };
+      expect(detectInstallMethod()).toBe("bun-global");
+    });
+  });
+
+  describe("checkForUpdate — channel + cache discrimination", () => {
+    it("ignores cached entries when their channel does not match the active channel", async () => {
+      mockGlobalConfig.value = { updateChannel: "nightly" };
+      const now = new Date().toISOString();
+      // Cache was written by the @latest channel; nightly request must skip it.
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: now,
+          currentVersionAtCheck: getCurrentVersion(),
+          installMethod: "npm-global",
+          channel: "stable",
+        }),
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.5.0-nightly-x" } }),
+      });
+
+      const info = await checkForUpdate({ installMethod: "npm-global" });
+      expect(info.latestVersion).toBe("0.5.0-nightly-x");
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("ignores legacy cached entries that pre-date channel scoping (no `channel` field)", async () => {
+      // A user who installed before channel scoping has a cache entry without
+      // a `channel` field. Without the explicit-channel guard, that entry
+      // would pass the mismatch check (`channel && data.channel && ...`
+      // short-circuits on `!data.channel`) and we'd return stale stable
+      // version info after the user switched to nightly. Force a refresh.
+      mockGlobalConfig.value = { updateChannel: "nightly" };
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.3.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: getCurrentVersion(),
+          installMethod: "npm-global",
+          // no `channel` field — legacy
+        }),
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ "dist-tags": { latest: "0.3.0", nightly: "0.5.0-nightly-x" } }),
+      });
+
+      const info = await checkForUpdate({ installMethod: "npm-global" });
+      expect(info.latestVersion).toBe("0.5.0-nightly-x");
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("skips notice when channel is manual", () => {
+      mockGlobalConfig.value = { updateChannel: "manual" };
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
+      delete process.env["CI"];
+      delete process.env["AGENT_ORCHESTRATOR_CI"];
+      delete process.env["AO_NO_UPDATE_NOTIFIER"];
+      const origArgv = process.argv;
+      process.argv = ["node", "ao", "start"];
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "99.0.0",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: getCurrentVersion(),
+        }),
+      );
+
+      maybeShowUpdateNotice();
+      expect(stderrSpy).not.toHaveBeenCalled();
+      stderrSpy.mockRestore();
+      process.argv = origArgv;
     });
   });
 });

@@ -376,11 +376,18 @@ export function getActivitySignalReasonLabel(session: DashboardSession): string 
   return parts.length > 0 ? parts.join(" • ") : null;
 }
 
+export function isDashboardSessionTerminated(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    return session.lifecycle.sessionState === "terminated";
+  }
+  return session.status === "terminated" || session.status === "killed";
+}
+
 export function isDashboardSessionDone(session: DashboardSession): boolean {
   if (session.lifecycle) {
     return (
       session.lifecycle.sessionState === "done" ||
-      session.lifecycle.sessionState === "terminated" ||
+      isDashboardSessionTerminated(session) ||
       session.lifecycle.prState === "merged"
     );
   }
@@ -426,7 +433,7 @@ export function isDashboardSessionRestorable(session: DashboardSession): boolean
   if (session.lifecycle) {
     const terminalByCoreTruth =
       session.lifecycle.sessionState === "done" ||
-      session.lifecycle.sessionState === "terminated" ||
+      isDashboardSessionTerminated(session) ||
       session.lifecycle.runtimeState === "missing" ||
       session.lifecycle.runtimeState === "exited";
     return (

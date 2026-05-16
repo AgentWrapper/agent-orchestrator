@@ -111,7 +111,7 @@ spawning -> working -> pr_open -> ci_failed / review_pending
                                       +-> mergeable -> merged -> cleanup -> done
 ```
 
-**Stale runtime reconciliation:** `sm.list()` detects dead runtimes (tmux/process gone) during enrichment and persists `runtime_lost` reason to disk. This maps to legacy status `killed`. Without this, sessions with dead runtimes would show stale "active" status indefinitely.
+**Stale runtime reconciliation:** `sm.list()` detects dead runtimes (tmux/process gone) during enrichment and persists `detecting` state with `runtime_lost` reason to disk. The lifecycle manager's `resolveProbeDecision` pipeline is the single authority on terminal decisions — `sm.list()` never writes `terminated` directly (#1735).
 
 ### Data Flow
 
@@ -224,7 +224,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Kanban board filters client-side via `projectSessions` memo
 
 ### Key invariants
-- `sm.list()` persists `runtime_lost` lifecycle to disk when enrichment detects dead runtimes — this is the only place stale runtime state gets reconciled
+- `sm.list()` persists `detecting` state (not `terminated`) to disk when enrichment detects dead runtimes — terminal decisions are made only by the lifecycle manager's probe pipeline (#1735)
 - `deriveLegacyStatus()` maps canonical lifecycle to legacy status — new terminal reasons must be added here
 - Tab completions merge local config + global config to show all projects
 
@@ -362,6 +362,19 @@ All importable from `@aoagents/ao-core` unless noted:
 | `packages/cli/src/commands/start.ts` | ao start/stop commands + Ctrl+C graceful shutdown |
 | `packages/cli/src/lib/running-state.ts` | RunningState + LastStopState management (register/unregister, last-stop read/write) |
 | `packages/web/src/components/ProjectSidebar.tsx` | Sidebar — always shows all projects' sessions |
+
+## Skills
+
+The `skills/` directory contains reusable workflow documents for common tasks. Load them before starting work:
+
+| Skill | When to load |
+|-------|-------------|
+| [`skills/bug-triage/SKILL.md`](skills/bug-triage/SKILL.md) | Triage a bug report — investigate, search duplicates, file GitHub issues, push fix PRs |
+| [`skills/agent-orchestrator/SKILL.md`](skills/agent-orchestrator/SKILL.md) | Architecture and conventions for working on this codebase |
+| [`skills/release-notes/ao-weekly-release/SKILL.md`](skills/release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history |
+| [`skills/social-media/SKILL.md`](skills/social-media/SKILL.md) | Social media post generation |
+
+See [`skills/README.md`](skills/README.md) for how to install skills into other coding agents (Cursor, Copilot, Codex, etc.).
 
 ## Plugin Standards
 

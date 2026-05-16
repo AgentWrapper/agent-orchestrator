@@ -55,6 +55,9 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 npm install -g @aoagents/ao
 ```
 
+> **Nightly builds** (latest `main`, daily Fri–Tue): `npm install -g @aoagents/ao@nightly`
+> Back to stable: `npm install -g @aoagents/ao@latest`
+
 <details>
 <summary>Permission denied? Install from source?</summary>
 

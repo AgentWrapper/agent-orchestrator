@@ -697,6 +697,36 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 
+  it("leaves lifecycle metadata untouched when process probe is indeterminate", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue("indeterminate");
+
+    const session = makeSession({
+      status: "working",
+      workspacePath: null,
+      metadata: {
+        lifecycleEvidence: "previous_evidence",
+        detectingAttempts: "2",
+      },
+    });
+    const lifecycle = JSON.stringify(session.lifecycle);
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: {
+        lifecycle,
+        lifecycleEvidence: "previous_evidence",
+        detectingAttempts: "2",
+      },
+    });
+    const before = readMetadataRaw(env.sessionsDir, "app-1");
+
+    await lm.check("app-1");
+
+    expect(readMetadataRaw(env.sessionsDir, "app-1")).toEqual(before);
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
   it("does not mark a session stuck from terminal-only idle evidence without a timestamp", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
@@ -2335,7 +2365,66 @@ describe("reactions", () => {
     expect(sentMessage).toContain("Potential issue detected");
   });
 
-  it("dispatches CI failure details with check names and URLs on subsequent polls", async () => {
+  it("dispatches CI failure summary with failed step and log tail", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 3,
+        escalateAfter: 3,
+      },
+    };
+
+    const ciChecks = [
+      {
+        name: "build",
+        status: "failed",
+        url: "https://github.com/org/repo/actions/runs/123/job/456",
+        conclusion: "FAILURE",
+      },
+    ];
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIFailureSummary: vi.fn().mockResolvedValue({
+        failedJobs: [
+          {
+            name: "build",
+            failedStep: "Run pnpm test",
+            runUrl: "https://github.com/org/repo/actions/runs/123/job/456",
+            logTail:
+              "AssertionError: expected true to be false\n```\nProcess completed with exit code 1",
+          },
+        ],
+      }),
+      enrichSessionsPRBatch: mockBatchEnrichment({ ciStatus: "failing", ciChecks }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1];
+    expect(sentMessage).toContain("CI is failing on your PR.");
+    expect(sentMessage).toContain("Failed: build → Run pnpm test");
+    expect(sentMessage).toContain("Failure URL: https://github.com/org/repo/actions/runs/123/job/456");
+    expect(sentMessage).toContain("Log tail (last 3 lines):");
+    expect(sentMessage).toContain("AssertionError: expected true to be false");
+    expect(sentMessage).toContain("\u200B```");
+    expect(sentMessage).toContain("Fix the issues and push again.");
+    expect(mockSCM.getCIFailureSummary).toHaveBeenCalledWith(makePR(), ciChecks);
+  });
+
+  it("falls back to check names and URLs when SCM lacks getCIFailureSummary", async () => {
     config.reactions = {
       "ci-failed": {
         auto: true,
@@ -2389,6 +2478,7 @@ describe("reactions", () => {
     expect(lm.getStates().get("app-1")).toBe("ci_failed");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
     const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1];
+    expect(sentMessage).toContain("CI checks are failing on your PR.");
     expect(sentMessage).toContain("lint");
     expect(sentMessage).toContain("typecheck");
     expect(sentMessage).toContain("https://github.com/org/repo/actions/runs/123");
