@@ -12,14 +12,20 @@ function makeRequest(rawUrl: string): NextRequest {
 
 describe("/api/filesystem/browse", () => {
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
   let homeDir: string;
   let outsideDir: string;
 
   beforeEach(() => {
     originalHome = process.env["HOME"];
+    originalUserProfile = process.env["USERPROFILE"];
+
     homeDir = mkdtempSync(path.join(tmpdir(), "ao-home-"));
     outsideDir = mkdtempSync(path.join(tmpdir(), "ao-outside-"));
     process.env["HOME"] = homeDir;
+    // node's os.homedir() reads USERPROFILE on Windows (not HOME), so the
+    // override must cover both for the tests to see the temp HOME.
+    process.env["USERPROFILE"] = homeDir;
   });
 
   afterEach(() => {
@@ -27,6 +33,12 @@ describe("/api/filesystem/browse", () => {
       delete process.env["HOME"];
     } else {
       process.env["HOME"] = originalHome;
+    }
+
+    if (originalUserProfile === undefined) {
+      delete process.env["USERPROFILE"];
+    } else {
+      process.env["USERPROFILE"] = originalUserProfile;
     }
 
     rmSync(homeDir, { recursive: true, force: true });
@@ -50,13 +62,23 @@ describe("/api/filesystem/browse", () => {
   });
 
   it("returns 400 for an absolute path outside HOME", async () => {
-    const response = await browseGET(makeRequest("/api/filesystem/browse?path=/etc"));
+    // Pick an absolute path outside HOME that actually exists on the platform —
+    // `/etc` exists on POSIX; on Windows we use `C:\\Windows`. The route's
+    // realpath() resolves first, so a non-existent path returns 404 (not 400)
+    // before the outside-root check fires.
+    const outsidePath =
+      process.platform === "win32" ? encodeURIComponent("C:\\Windows") : "/etc";
+    const response = await browseGET(
+      makeRequest(`/api/filesystem/browse?path=${outsidePath}`),
+    );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
-  it("returns 400 for a symlink inside HOME that points outside", async () => {
+  // Skipped on Windows: symlinkSync requires admin or Developer Mode on win32
+  // and is not portable in CI. The Linux/macOS path covers the symlink check.
+  it.skipIf(process.platform === "win32")("returns 400 for a symlink inside HOME that points outside", async () => {
     const outsideRepo = path.join(outsideDir, "external-repo");
     mkdirSync(outsideRepo);
     symlinkSync(outsideRepo, path.join(homeDir, "external-link"));

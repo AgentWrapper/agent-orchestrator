@@ -349,7 +349,7 @@ check_config_dirs() {
   local config_path data_dir worktree_dir
   config_path="$(find_config || true)"
   if [ -z "$config_path" ]; then
-    warn "No agent-orchestrator config was found. Fix: run ao init --auto in a target repo"
+    warn "No agent-orchestrator config was found. Fix: run ao start in a target repo"
     return
   fi
 

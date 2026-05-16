@@ -23,6 +23,7 @@ const {
   mockCreateReadStream,
   mockHomedir,
   mockReadLastJsonlEntry,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -36,6 +37,7 @@ const {
   mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockReadLastJsonlEntry: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("node:child_process", () => {
@@ -74,10 +76,12 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   return {
     ...actual,
     readLastJsonlEntry: mockReadLastJsonlEntry,
+    isWindows: mockIsWindows,
   };
 });
 
 import { Readable } from "node:stream";
+import { join as pathJoin } from "node:path";
 import {
   create,
   manifest,
@@ -305,7 +309,11 @@ describe("getLaunchCommand", () => {
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("-- 'it'\\''s broken'");
+    if (process.platform === "win32") {
+      expect(cmd).toContain("-- 'it''s broken'");
+    } else {
+      expect(cmd).toContain("-- 'it'\\''s broken'");
+    }
   });
 
   it("escapes dangerous characters in prompt", () => {
@@ -471,9 +479,18 @@ describe("isProcessRunning", () => {
     expect(mockExecFileAsync).not.toHaveBeenCalled();
   });
 
-  it("returns false on tmux command failure", async () => {
+  it("returns indeterminate on tmux command failure", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -526,6 +543,14 @@ describe("isProcessRunning", () => {
 
   it("returns false for non-numeric PID", async () => {
     expect(await agent.isProcessRunning(makeProcessHandle("not-a-pid"))).toBe(false);
+  });
+
+  it("returns false for tmux handle on Windows without spawning ps", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
+    mockIsWindows.mockReturnValue(false);
   });
 });
 
@@ -623,11 +648,17 @@ describe("getActivityState", () => {
   });
 
   it("returns exited when process is not running", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
+    mockTmuxWithProcess("codex", false);
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     const result = await agent.getActivityState(session);
     expect(result?.state).toBe("exited");
     expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns null when process probe is indeterminate", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    await expect(agent.getActivityState(session)).resolves.toBeNull();
   });
 
   it("returns null when process is running but no workspacePath", async () => {
@@ -1635,29 +1666,31 @@ describe("resolveCodexBinary", () => {
   });
 
   it("checks ~/.cargo/bin/codex as fallback (Rust-based codex)", async () => {
+    const expectedPath = pathJoin("/mock/home", ".cargo", "bin", "codex");
     mockExecFileAsync.mockRejectedValue(new Error("not found"));
-    mockStat.mockImplementation((path: string) => {
-      if (path === "/mock/home/.cargo/bin/codex") {
+    mockStat.mockImplementation((p: string) => {
+      if (p === expectedPath) {
         return Promise.resolve({ mtimeMs: 1000 });
       }
       return Promise.reject(new Error("ENOENT"));
     });
 
     const result = await resolveCodexBinary();
-    expect(result).toBe("/mock/home/.cargo/bin/codex");
+    expect(result).toBe(expectedPath);
   });
 
   it("checks ~/.npm/bin/codex as fallback", async () => {
+    const expectedPath = pathJoin("/mock/home", ".npm", "bin", "codex");
     mockExecFileAsync.mockRejectedValue(new Error("not found"));
-    mockStat.mockImplementation((path: string) => {
-      if (path === "/mock/home/.npm/bin/codex") {
+    mockStat.mockImplementation((p: string) => {
+      if (p === expectedPath) {
         return Promise.resolve({ mtimeMs: 1000 });
       }
       return Promise.reject(new Error("ENOENT"));
     });
 
     const result = await resolveCodexBinary();
-    expect(result).toBe("/mock/home/.npm/bin/codex");
+    expect(result).toBe(expectedPath);
   });
 
   it("returns 'codex' when not found anywhere", async () => {
@@ -1750,10 +1783,16 @@ describe("setupWorkspaceHooks", () => {
   });
 });
 
+// (Legacy wrapper-write tests removed: the plugin no longer installs wrappers
+// or writes ao-metadata-helper.sh / gh / git / .ao-version — session-manager
+// owns that path now. See main's test refresh in #1487.)
+
 // =========================================================================
 // Shell wrapper content verification
 // =========================================================================
-describe("shell wrapper content", () => {
+// Skip on Windows: these tests verify Unix shell-script wrapper contents
+// (ao-metadata-helper.sh / gh / git wrappers) which don't apply to PowerShell.
+describe.skipIf(process.platform === "win32")("shell wrapper content", () => {
   beforeEach(() => {
     // Force wrapper installation by making version marker miss
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
@@ -1852,9 +1891,7 @@ describe("shell wrapper content", () => {
 
     it("extracts PR URL from gh pr create output", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain(
-        "grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'",
-      );
+      expect(content).toContain("grep -Eo 'https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+'");
       expect(content).toContain("update_ao_metadata pr");
     });
 

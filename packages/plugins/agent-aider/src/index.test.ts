@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 // Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -11,12 +16,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 // Mock activity log utilities from core
-const { mockAppendActivityEntry, mockReadLastActivityEntry, mockRecordTerminalActivity } =
-  vi.hoisted(() => ({
-    mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
-    mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
-    mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
-  }));
+const {
+  mockAppendActivityEntry,
+  mockReadLastActivityEntry,
+  mockRecordTerminalActivity,
+  mockIsWindows,
+  mockReadFileSync,
+} = vi.hoisted(() => ({
+  mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+  mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  mockIsWindows: vi.fn(() => false),
+  mockReadFileSync: vi.fn(() => ""),
+}));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -25,7 +37,13 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     appendActivityEntry: mockAppendActivityEntry,
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
+    isWindows: mockIsWindows,
   };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, readFileSync: mockReadFileSync };
 });
 
 // ---------------------------------------------------------------------------
@@ -181,9 +199,13 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("aider --yes --model 'sonnet' --message 'Go'");
   });
 
-  it("escapes single quotes in prompt (POSIX shell escaping)", () => {
+  it("escapes single quotes in prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("--message 'it'\\''s broken'");
+    if (process.platform === "win32") {
+      expect(cmd).toContain("--message 'it''s broken'");
+    } else {
+      expect(cmd).toContain("--message 'it'\\''s broken'");
+    }
   });
 
   it("omits optional flags when not provided", () => {
@@ -191,6 +213,17 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--yes");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("--message");
+  });
+
+  it("inlines systemPromptFile content on Windows instead of $(cat ...)", () => {
+    mockIsWindows.mockReturnValueOnce(true);
+    mockReadFileSync.mockReturnValueOnce("You are a senior engineer.");
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md" }),
+    );
+    expect(cmd).toContain("--system-prompt");
+    expect(cmd).toContain("You are a senior engineer.");
+    expect(cmd).not.toContain("$(cat");
   });
 });
 
@@ -253,9 +286,18 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(handle)).toBe(false);
   });
 
-  it("returns false on tmux command failure", async () => {
+  it("returns indeterminate on tmux command failure", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux gone"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys005\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -281,6 +323,39 @@ describe("isProcessRunning", () => {
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
+  });
+
+  it("returns false for tmux handle on Windows without spawning ps", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockExecFileAsync.mockRejectedValue(new Error("ps not available on Windows"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalledWith("ps", expect.anything(), expect.anything());
+    mockIsWindows.mockReturnValue(false);
+  });
+});
+
+describe("isProcessRunning with process runtime", () => {
+  it("returns true for a live PID", async () => {
+    const handle = {
+      id: "test-session",
+      runtimeName: "process",
+      data: { pid: process.pid }, // current process — known alive
+    };
+    const agent = create();
+    const result = await agent.isProcessRunning(handle as unknown as RuntimeHandle);
+    expect(result).toBe(true);
+  });
+
+  it("returns false for a dead PID", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementationOnce(() => {
+      const err = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      throw err;
+    });
+    const handle = { id: "test", runtimeName: "process", data: { pid: 999999 } };
+    const agent = create();
+    const result = await agent.isProcessRunning(handle as any);
+    expect(result).toBe(false);
+    killSpy.mockRestore();
   });
 });
 
@@ -308,7 +383,9 @@ describe("detectActivity", () => {
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for add-to-chat prompt", () => {
@@ -370,10 +447,13 @@ describe("getRestoreCommand", () => {
   const agent = create();
 
   it("returns null (aider does not support session resume)", async () => {
-    const result = await agent.getRestoreCommand!(
-      makeSession(),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const result = await agent.getRestoreCommand!(makeSession(), {
+      name: "proj",
+      repo: "o/r",
+      path: "/p",
+      defaultBranch: "main",
+      sessionPrefix: "p",
+    });
     expect(result).toBeNull();
   });
 });
@@ -462,9 +542,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("waiting_input");
   });
 
@@ -475,9 +553,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("blocked");
   });
 
@@ -492,9 +568,7 @@ describe("getActivityState with activity JSONL", () => {
     // falls through to git/chat fallbacks. With no git commits or chat history,
     // falls through to JSONL mtime fallback (step 4) which returns "active"
     // since modifiedAt is recent.
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("active");
   });
 });

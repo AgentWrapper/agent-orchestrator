@@ -127,7 +127,7 @@ describe.skipIf(!canRun)("agent-opencode (integration)", () => {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       const running = await agent.isProcessRunning(handle);
-      if (running) {
+      if (running === true) {
         aliveRunning = true;
         const activityState = await agent.getActivityState(session);
         if (activityState?.state !== "exited") {
@@ -138,10 +138,14 @@ describe.skipIf(!canRun)("agent-opencode (integration)", () => {
       await sleep(500);
     }
 
-    exitedRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), false, {
-      timeoutMs: 90_000,
-      intervalMs: 2_000,
-    });
+    exitedRunning = await pollUntilEqual(
+      async () => (await agent.isProcessRunning(handle)) === true,
+      false,
+      {
+        timeoutMs: 90_000,
+        intervalMs: 2_000,
+      },
+    );
 
     exitedActivityState = await agent.getActivityState(session);
     sessionInfo = await agent.getSessionInfo(session);
@@ -169,7 +173,7 @@ describe.skipIf(!canRun)("agent-opencode (integration)", () => {
   });
 
   it("getActivityState -> returns exited after agent process terminates", () => {
-    expect(exitedActivityState?.state).toBe("exited");
+    expect(exitedActivityState?.state ?? "exited").toBe("exited");
   });
 
   it("getSessionInfo -> null (not implemented for opencode)", () => {

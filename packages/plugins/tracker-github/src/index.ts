@@ -278,7 +278,7 @@ function createGitHubTracker(): Tracker {
 
       lines.push(
         "",
-        "The issue context above is complete and current. You should not need to call gh issue view unless you need additional context beyond what is provided here.",
+        "The issue title, description, and labels above are current. Fetch comments or linked issues via `gh` only if you need additional context beyond what is provided here.",
         "",
         "Please implement the changes described in this issue. When done, commit and push your changes.",
       );

@@ -12,10 +12,13 @@ import {
   repairWrappedLocalProjectConfig,
   unregisterProject,
   writeLocalProjectConfig,
+  type OpenCodeSessionManager,
+  type PluginRegistry,
   type LocalProjectConfig,
 } from "@aoagents/ao-core";
 import { revalidatePath } from "next/cache";
 import { getServices, invalidatePortfolioServicesCache } from "@/lib/services";
+import { stopStaleWindowsPtyHosts } from "@/lib/windows-pty-cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +45,24 @@ type CleanupWorkspacePlugin = {
   destroy?: (workspacePath: string) => Promise<void>;
 };
 
-async function cleanupManagedWorkspaces(projectId: string, workspacePluginName: string): Promise<void> {
-  const { registry } = await getServices();
+async function stopProjectSessions(
+  projectId: string,
+  sessionManager: Pick<OpenCodeSessionManager, "list" | "kill">,
+): Promise<void> {
+  const sessions = await sessionManager.list(projectId);
+  for (const session of sessions) {
+    await sessionManager.kill(session.id, {
+      purgeOpenCode: true,
+      reason: "manually_killed",
+    });
+  }
+}
+
+async function cleanupManagedWorkspaces(
+  projectId: string,
+  workspacePluginName: string,
+  registry: PluginRegistry,
+): Promise<void> {
   const workspacePlugin = registry.get<CleanupWorkspacePlugin>("workspace", workspacePluginName);
   if (!workspacePlugin?.list || !workspacePlugin.destroy) return;
 
@@ -51,6 +70,19 @@ async function cleanupManagedWorkspaces(projectId: string, workspacePluginName: 
   for (const workspace of workspaces) {
     await workspacePlugin.destroy(workspace.path);
   }
+}
+
+function removeProjectStorageDir(projectDir: string): boolean {
+  const hadStorageDir = existsSync(projectDir);
+  if (hadStorageDir) {
+    rmSync(projectDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  }
+  return hadStorageDir;
 }
 
 function loadProjectRouteConfig() {
@@ -268,12 +300,12 @@ export async function DELETE(
     }
 
     const workspacePluginName = state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
-    await cleanupManagedWorkspaces(id, workspacePluginName);
+    const { registry, sessionManager } = await getServices();
+    await stopProjectSessions(id, sessionManager);
+    await stopStaleWindowsPtyHosts(projectDir);
+    await cleanupManagedWorkspaces(id, workspacePluginName, registry);
 
-    const hadStorageDir = existsSync(projectDir);
-    if (hadStorageDir) {
-      rmSync(projectDir, { recursive: true, force: true });
-    }
+    const hadStorageDir = removeProjectStorageDir(projectDir);
     unregisterProject(id);
     invalidatePortfolioServicesCache();
     revalidateProjectPaths(id);

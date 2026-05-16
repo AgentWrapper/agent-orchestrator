@@ -1,7 +1,7 @@
 ---
 name: agent-orchestrator
 description: "Open-source, pluggable agentic coding orchestrator. Manages durable coding agents (Claude Code, Codex, OpenCode) through a simple interface — spawn agents, track progress, and let feedback loops like PR reviews and CI failures automatically route to the right agents. Use for fixing bugs, building features, working on GitHub issues, checking status, and managing agent sessions."
-metadata: {"openclaw": {"emoji": "🤖", "requires": {"bins": ["ao", "gh", "tmux"], "anyBins": ["node", "npm"], "env": ["ANTHROPIC_API_KEY"]}, "os": ["darwin", "linux"]}}
+metadata: {"openclaw": {"emoji": "🤖", "requires": {"bins": ["ao", "gh"], "anyBins": ["node", "npm"], "env": ["ANTHROPIC_API_KEY"]}, "os": ["darwin", "linux", "win32"]}}
 ---
 
 # Agent Orchestrator (AO)
@@ -172,6 +172,7 @@ What to know:
 | AO tools not visible to AI | Run `/ao setup` — needs `tools.profile: "full"` and `tools.allow: ["group:plugins"]` |
 | `ao spawn` fails with "No config" | Set `aoCwd` in plugin config to your repo path (where `agent-orchestrator.yaml` lives) |
 | `ao: not found` | Install AO globally or set `aoPath` in plugin config |
-| `spawn tmux ENOENT` | `brew install tmux` (macOS) or `apt install tmux` (Linux) |
+| `spawn tmux ENOENT` (macOS / Linux) | `brew install tmux` (macOS) or `apt install tmux` (Linux) |
+| `spawn tmux ENOENT` (Windows) | Your config has `runtime: tmux` set explicitly. Switch to `runtime: process` (or remove the override — `process` is the Windows default; ConPTY is used natively, no tmux required) |
 | Bot only responds in DMs | Set `channels.discord.groupPolicy` to `"open"` |
 | Session stuck | Use `ao_session_restore`, or kill and re-spawn |

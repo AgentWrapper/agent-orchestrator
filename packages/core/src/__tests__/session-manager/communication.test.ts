@@ -16,7 +16,7 @@ import type {
   Agent,
 } from "../../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
-import { installMockOpencode, installMockOpencodeSequence } from "./opencode-helpers.js";
+import { installMockOpencode, installMockOpencodeSequence, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -245,7 +245,7 @@ describe("send", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -279,7 +279,7 @@ describe("send", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -326,7 +326,7 @@ describe("send", () => {
       deleteLogPath,
       listLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -372,7 +372,7 @@ describe("send", () => {
       deleteLogPath,
       listLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -433,7 +433,7 @@ describe("remap", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -466,7 +466,7 @@ describe("remap", () => {
       deleteLogPath,
       3,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -488,7 +488,7 @@ describe("remap", () => {
   it("throws when OpenCode session id mapping is missing", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-missing-remap.log");
     const mockBin = installMockOpencode(tmpDir, "[]", deleteLogPath);
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -515,7 +515,7 @@ describe("remap", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -546,7 +546,7 @@ describe("remap", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -578,7 +578,7 @@ describe("remap", () => {
       ]),
       deleteLogPath,
     );
-    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    process.env.PATH = `${mockBin}${PATH_SEP}${originalPath ?? ""}`;
 
     config.projects["my-app"] = {
       ...config.projects["my-app"]!,

@@ -23,6 +23,7 @@ describe("portfolio-projects", () => {
   let oldGlobalConfig: string | undefined;
   let oldConfigPath: string | undefined;
   let oldHome: string | undefined;
+  let oldUserProfile: string | undefined;
 
   beforeEach(() => {
     tempRoot = join(tmpdir(), `ao-portfolio-projects-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -30,7 +31,9 @@ describe("portfolio-projects", () => {
     oldGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
     oldConfigPath = process.env["AO_CONFIG_PATH"];
     oldHome = process.env["HOME"];
+    oldUserProfile = process.env["USERPROFILE"];
     process.env["HOME"] = tempRoot;
+    process.env["USERPROFILE"] = tempRoot;
     clearConfigCache();
   });
 
@@ -41,8 +44,10 @@ describe("portfolio-projects", () => {
     else process.env["AO_CONFIG_PATH"] = oldConfigPath;
     if (oldHome === undefined) delete process.env["HOME"];
     else process.env["HOME"] = oldHome;
+    if (oldUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = oldUserProfile;
     clearConfigCache();
-    rmSync(tempRoot, { recursive: true, force: true });
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("resolves effective project config from the canonical global registry", () => {

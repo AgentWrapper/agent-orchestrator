@@ -36,11 +36,14 @@ describe("notifier-desktop", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPlatform.mockReturnValue("darwin");
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
-        cb(null);
-      },
-    );
+    mockExecFile.mockImplementation((..._args: unknown[]) => {
+      // execFile may be called as (cmd, args, cb) or (cmd, args, opts, cb).
+      // Pick whichever trailing arg is the callback so both shapes work.
+      const cb = _args.find((a) => typeof a === "function") as
+        | ((err: Error | null) => void)
+        | undefined;
+      cb?.(null);
+    });
   });
 
   describe("manifest", () => {
@@ -220,14 +223,63 @@ describe("notifier-desktop", () => {
     });
   });
 
+  describe("notify on Windows", () => {
+    it("invokes powershell.exe with an EncodedCommand toast script", async () => {
+      mockPlatform.mockReturnValue("win32");
+      const notifier = create();
+      await notifier.notify(makeEvent({ message: "hello" }));
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "powershell.exe",
+        expect.arrayContaining(["-EncodedCommand"]),
+        expect.objectContaining({ windowsHide: true }),
+        expect.any(Function),
+      );
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const encoded = args[args.indexOf("-EncodedCommand") + 1];
+      const script = Buffer.from(encoded, "base64").toString("utf16le");
+      expect(script).toContain("ToastNotificationManager");
+      expect(script).toContain("hello");
+    });
+
+    it("XML-escapes title and message to prevent toast XML injection", async () => {
+      mockPlatform.mockReturnValue("win32");
+      const notifier = create();
+      await notifier.notify(makeEvent({ sessionId: "<x>", message: 'a"&b' }));
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const script = Buffer.from(
+        args[args.indexOf("-EncodedCommand") + 1],
+        "base64",
+      ).toString("utf16le");
+      expect(script).toContain("&lt;x&gt;");
+      expect(script).toContain("a&quot;&amp;b");
+      expect(script).not.toContain("<x>");
+    });
+
+    it("logs a warning but does not reject when powershell fails", async () => {
+      mockPlatform.mockReturnValue("win32");
+      mockExecFile.mockImplementationOnce((..._args: unknown[]) => {
+        const cb = _args.find((a) => typeof a === "function") as
+          | ((err: Error | null) => void)
+          | undefined;
+        cb?.(new Error("WinRT unavailable"));
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const notifier = create();
+      await expect(notifier.notify(makeEvent())).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WinRT unavailable"));
+      warnSpy.mockRestore();
+    });
+  });
+
   describe("notify on unsupported platform", () => {
     it("resolves without error on unsupported platform", async () => {
-      mockPlatform.mockReturnValue("win32");
+      mockPlatform.mockReturnValue("freebsd");
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       await expect(notifier.notify(makeEvent())).resolves.toBeUndefined();
       expect(mockExecFile).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("not supported on win32"));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("not supported on freebsd"));
       warnSpy.mockRestore();
     });
   });
