@@ -135,7 +135,11 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  const rawProjectId = basename(projectPath);
+  // Sanitize project ID to conform to Zod validation: [a-zA-Z0-9_-]+
+  // Fixes #1877 — folder names like "llama.cpp" must become "llama-cpp"
+  const projectId =
+    rawProjectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || rawProjectId;
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -149,14 +153,15 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
     typeof parsed["defaultBranch"] === "string"
       ? parsed["defaultBranch"]
       : await detectDefaultBranch(projectPath, repo ?? null);
-  // Strip characters invalid in sessionPrefix (Zod: [a-zA-Z0-9_-]+)
-  // so folder names like "my.app" don't produce invalid prefixes.
-  const prefixInput = projectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
-  const prefix = generateSessionPrefix(prefixInput || projectId);
+  const prefix = generateSessionPrefix(projectId);
 
-  console.log(chalk.dim(`\n  Registering project "${projectId}" in global config...\n`));
+  console.log(
+    chalk.dim(
+      `\n  Registering project "${rawProjectId}" → "${projectId}" in global config...\n`,
+    ),
+  );
 
-  const registeredProjectId = registerProjectInGlobalConfig(projectId, projectId, projectPath, {
+  const registeredProjectId = registerProjectInGlobalConfig(projectId, rawProjectId, projectPath, {
     defaultBranch,
     sessionPrefix: prefix,
     ...(repo ? { repo } : {}),
