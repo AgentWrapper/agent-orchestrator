@@ -119,6 +119,27 @@ export function SessionDetail({
     }
   }, [session.id]);
 
+  const handleRelaunchClean = useCallback(async () => {
+    const confirmed = window.confirm(
+      "This will discard the current orchestrator's conversation and state. Continue?",
+    );
+    if (!confirmed) return;
+    try {
+      const res = await fetch("/api/orchestrators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: session.projectId, clean: true }),
+      });
+      if (!res.ok) {
+        const message = await res.text().catch(() => "");
+        throw new Error(message || `HTTP ${res.status}`);
+      }
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to relaunch orchestrator:", err);
+    }
+  }, [session.projectId]);
+
   const orchestratorHref = useMemo(() => {
     if (isOrchestrator) return projectSessionPath(session.projectId, session.id);
     if (projectOrchestratorId) return projectSessionPath(session.projectId, projectOrchestratorId);
@@ -158,6 +179,7 @@ export function SessionDetail({
           onToggleSidebar={handleToggleSidebar}
           onRestore={handleRestore}
           onKill={handleKill}
+          onRelaunchClean={isOrchestrator ? handleRelaunchClean : undefined}
         />
 
         <div

@@ -304,6 +304,71 @@ describe("SessionDetail desktop layout", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders Relaunch (clean) on live orchestrator sessions and POSTs after confirm", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const reloadSpy = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, reload: reloadSpy },
+      writable: true,
+    });
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          summary: "Project orchestrator",
+        })}
+        isOrchestrator
+        orchestratorZones={{
+          merge: 0,
+          respond: 0,
+          review: 0,
+          pending: 0,
+          working: 0,
+          done: 0,
+        }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    const relaunchBtn = within(screen.getByRole("banner")).getByRole("button", {
+      name: /launch orchestrator \(clean context\)/i,
+    });
+    fireEvent.click(relaunchBtn);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await act(async () => {});
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/orchestrators", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: "my-app", clean: true }),
+    });
+
+    confirmSpy.mockRestore();
+  });
+
+  it("does not render Relaunch (clean) on worker sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-1",
+          projectId: "my-app",
+          status: "working",
+        })}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /launch orchestrator \(clean context\)/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("restores without using router refresh on the client-only session page", async () => {
     render(
       <SessionDetail

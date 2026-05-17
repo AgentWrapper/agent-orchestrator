@@ -436,7 +436,7 @@ function DashboardInner({
     [showToast],
   );
 
-  const handleSpawnOrchestrator = async (project: ProjectInfo) => {
+  const postOrchestrator = async (project: ProjectInfo, clean: boolean): Promise<void> => {
     setSpawningProjectIds((current) =>
       current.includes(project.id) ? current : [...current, project.id],
     );
@@ -446,7 +446,7 @@ function DashboardInner({
       const res = await fetch("/api/orchestrators", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id }),
+        body: JSON.stringify(clean ? { projectId: project.id, clean: true } : { projectId: project.id }),
       });
 
       const data = (await res.json().catch(() => null)) as {
@@ -472,6 +472,19 @@ function DashboardInner({
     } finally {
       setSpawningProjectIds((current) => current.filter((id) => id !== project.id));
     }
+  };
+
+  const handleSpawnOrchestrator = (project: ProjectInfo) => postOrchestrator(project, false);
+
+  const handleRelaunchOrchestrator = (project: ProjectInfo): Promise<void> => {
+    const hasExisting = activeOrchestrators.some((o) => o.projectId === project.id);
+    if (hasExisting) {
+      const confirmed = window.confirm(
+        "This will discard the current orchestrator's conversation and state. Continue?",
+      );
+      if (!confirmed) return Promise.resolve();
+    }
+    return postOrchestrator(project, true);
   };
 
   const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
@@ -580,28 +593,41 @@ function DashboardInner({
             <div className="dashboard-app-header__spacer" />
             <div className="dashboard-app-header__actions">
               {!allProjectsView && orchestratorHref ? (
-                <Link
-                  href={orchestratorHref}
-                  className="dashboard-app-btn dashboard-app-btn--amber"
-                  aria-label="Orchestrator"
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
+                <>
+                  <Link
+                    href={orchestratorHref}
+                    className="dashboard-app-btn dashboard-app-btn--amber"
+                    aria-label="Orchestrator"
                   >
-                    <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                    <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                    <circle cx="6" cy="17" r="2" />
-                    <circle cx="12" cy="17" r="2" />
-                    <circle cx="18" cy="17" r="2" />
-                  </svg>
-                  Orchestrator
-                </Link>
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                      <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                      <circle cx="6" cy="17" r="2" />
+                      <circle cx="12" cy="17" r="2" />
+                      <circle cx="18" cy="17" r="2" />
+                    </svg>
+                    Orchestrator
+                  </Link>
+                  {activeProject ? (
+                    <button
+                      type="button"
+                      className="dashboard-app-btn dashboard-app-btn--amber"
+                      aria-label="Launch Orchestrator (clean context)"
+                      onClick={() => void handleRelaunchOrchestrator(activeProject)}
+                      disabled={isSpawningCurrentProject}
+                    >
+                      {isSpawningCurrentProject ? "Launching..." : "Relaunch (clean)"}
+                    </button>
+                  ) : null}
+                </>
               ) : canSpawnProjectOrchestrator && activeProject ? (
                 <button
                   type="button"

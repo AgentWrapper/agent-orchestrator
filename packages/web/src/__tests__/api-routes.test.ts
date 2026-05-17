@@ -233,7 +233,7 @@ import {
   GET as sessionDetailGET,
   PATCH as sessionDetailPATCH,
 } from "@/app/api/sessions/[id]/route";
-import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -1217,54 +1217,6 @@ describe("API Routes", () => {
 
       expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalled();
       expect(mockSessionManager.relaunchOrchestrator).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("GET /api/orchestrators", () => {
-    it("returns orchestrators for a project", async () => {
-      const orchestrator = makeSession({
-        id: "my-app-orchestrator",
-        projectId: "my-app",
-        metadata: { role: "orchestrator" },
-      });
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
-
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.orchestrators).toHaveLength(1);
-      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
-      expect(data.projectName).toBe("My App");
-    });
-
-    it("returns 400 when project parameter is missing", async () => {
-      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toMatch(/Missing project query parameter/);
-    });
-
-    it("returns 404 for unknown project", async () => {
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
-      );
-      expect(res.status).toBe(404);
-      const data = await res.json();
-      expect(data.error).toMatch(/Unknown project/);
-    });
-
-    it("returns 500 when list fails", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("boom"),
-      );
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(500);
-      const data = await res.json();
-      expect(data.error).toBe("boom");
     });
   });
 

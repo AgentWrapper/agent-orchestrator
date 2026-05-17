@@ -100,6 +100,99 @@ describe("Dashboard project overview cards", () => {
     );
   });
 
+  it("renders a Relaunch (clean) action in the header when an orchestrator exists", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+        orchestrators={[{ id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" }]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /launch orchestrator \(clean context\)/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("Relaunch (clean) POSTs with clean:true after confirmation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let relaunchBody: string | null = null;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/orchestrators" && init?.method === "POST") {
+        relaunchBody = init.body as string;
+        return {
+          ok: true,
+          json: async () => ({
+            orchestrator: {
+              id: "my-app-orchestrator",
+              projectId: "my-app",
+              projectName: "My App",
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    });
+
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[{ id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /launch orchestrator \(clean context\)/i }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining("discard the current orchestrator"),
+    );
+    await waitFor(() => {
+      expect(relaunchBody).not.toBeNull();
+      expect(JSON.parse(relaunchBody!)).toEqual({ projectId: "my-app", clean: true });
+    });
+
+    confirmSpy.mockRestore();
+  });
+
+  it("Relaunch (clean) is skipped when the user cancels the confirm prompt", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock;
+
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+        orchestrators={[{ id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /launch orchestrator \(clean context\)/i }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    // No POST to /api/orchestrators after cancel.
+    const orchestratorPosts = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        typeof url === "string" &&
+        url === "/api/orchestrators" &&
+        (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(orchestratorPosts).toHaveLength(0);
+
+    confirmSpy.mockRestore();
+  });
+
   it("renders a header spawn action when the project has no orchestrator yet", () => {
     render(
       <Dashboard
