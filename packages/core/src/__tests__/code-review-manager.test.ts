@@ -91,7 +91,7 @@ function makeSessionManager(
   session: Session | null,
   overrides: Partial<SessionManager> = {},
 ): SessionManager {
-  return {
+  const manager: SessionManager = {
     get: async (sessionId: string) => (session?.id === sessionId ? session : null),
     list: async () => (session ? [session] : []),
     spawn: async () => {
@@ -103,6 +103,9 @@ function makeSessionManager(
     ensureOrchestrator: async () => {
       throw new Error("not implemented");
     },
+    relaunchOrchestrator: async () => {
+      throw new Error("not implemented");
+    },
     restore: async () => {
       throw new Error("not implemented");
     },
@@ -112,8 +115,9 @@ function makeSessionManager(
     claimPR: async () => {
       throw new Error("not implemented");
     },
-    ...overrides,
   };
+
+  return Object.assign(manager, overrides);
 }
 
 beforeEach(() => {

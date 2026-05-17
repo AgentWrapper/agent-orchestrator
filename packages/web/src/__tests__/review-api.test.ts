@@ -35,18 +35,19 @@ const { mockConfig, mockSessionManager } = vi.hoisted(() => ({
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     ensureOrchestrator: vi.fn(),
+    relaunchOrchestrator: vi.fn(),
     restore: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
     send: vi.fn(),
     claimPR: vi.fn(),
-  },
+  } satisfies SessionManager,
 }));
 
 vi.mock("@/lib/services", () => ({
   getServices: vi.fn(async () => ({
     config: mockConfig,
-    sessionManager: mockSessionManager as SessionManager,
+    sessionManager: mockSessionManager,
   })),
 }));
 

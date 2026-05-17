@@ -244,6 +244,8 @@ function DashboardInner({
 
   sessionsRef.current = sessions;
   const allProjectsView = projects.length > 1 && projectId === undefined;
+  const codingHref = projectId ? projectDashboardPath(projectId) : "/?project=all";
+  const reviewHref = projectReviewPath(projectId);
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
@@ -615,6 +617,18 @@ function DashboardInner({
               <div className="topbar-project-pills-group">
                 <div className="topbar-project-line">
                   <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+                  <nav className="workspace-mode-switch" aria-label="Workspace mode">
+                    <Link
+                      href={codingHref}
+                      className="workspace-mode-switch__item workspace-mode-switch__item--active"
+                      aria-current="page"
+                    >
+                      Coding
+                    </Link>
+                    <Link href={reviewHref} className="workspace-mode-switch__item">
+                      Reviews
+                    </Link>
+                  </nav>
                 </div>
                 {!allProjectsView && projectSessions.length > 0 ? (
                   <div className="topbar-session-pills">
