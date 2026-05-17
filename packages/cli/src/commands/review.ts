@@ -5,6 +5,7 @@ import {
   createCodeReviewStore,
   executeCodeReviewRun,
   loadConfig,
+  sendCodeReviewFindingsToAgent,
   SessionNotFoundError,
   triggerCodeReviewForSession,
   type CodeReviewRunStatus,
@@ -49,6 +50,12 @@ function printRun(run: CodeReviewRunSummary): void {
   }
 
   console.log(parts.join("  "));
+}
+
+function printSendResult(run: CodeReviewRunSummary, sentFindingCount: number): void {
+  const findings = sentFindingCount === 1 ? "1 finding" : `${sentFindingCount} findings`;
+  console.log(chalk.green(`Sent ${findings} to ${chalk.cyan(run.linkedSessionId)}:`));
+  printRun(run);
 }
 
 function getRunProjectId(
@@ -209,6 +216,47 @@ export function registerReview(program: Command): void {
         }
       },
     );
+
+  review
+    .command("send")
+    .description("Send open AO-local review findings to the linked coding worker")
+    .argument("<run>", "Review run ID or reviewer session ID")
+    .option("-p, --project <project>", "Project ID (searches all projects if omitted)")
+    .option("--json", "Output as JSON")
+    .action(async (runRef: string, opts: { project?: string; json?: boolean }) => {
+      try {
+        const config = loadConfig();
+        if (opts.project && !config.projects[opts.project]) {
+          throw new Error(`Unknown project: ${opts.project}`);
+        }
+
+        const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
+        const target = getRunProjectId(projectIds, runRef);
+        if (!target) {
+          throw new Error(`Review run not found: ${runRef}`);
+        }
+
+        const sessionManager = await getSessionManager(config);
+        const result = await sendCodeReviewFindingsToAgent(
+          { config, sessionManager },
+          { projectId: target.projectId, runId: target.run.id },
+        );
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        printSendResult(result.run, result.sentFindingCount);
+      } catch (error) {
+        if (error instanceof SessionNotFoundError) {
+          console.error(chalk.red(error.message));
+          process.exit(1);
+        }
+        console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+        process.exit(1);
+      }
+    });
 
   review
     .command("list")

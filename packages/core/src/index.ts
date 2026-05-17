@@ -63,9 +63,11 @@ export {
   CodeReviewRunNotFoundError,
   createShellCodeReviewRunner,
   executeCodeReviewRun,
+  formatCodeReviewFindingsForAgent,
   parseReviewerOutput,
   prepareGitReviewerWorkspace,
   runCodexCodeReview,
+  sendCodeReviewFindingsToAgent,
   triggerCodeReviewForSession,
 } from "./code-review-manager.js";
 export type {
@@ -77,6 +79,9 @@ export type {
   ExecuteCodeReviewRunInput,
   ExecuteCodeReviewRunOptions,
   PrepareCodeReviewWorkspace,
+  SendCodeReviewFindingsInput,
+  SendCodeReviewFindingsOptions,
+  SendCodeReviewFindingsResult,
   TriggerCodeReviewInput,
   TriggerCodeReviewOptions,
 } from "./code-review-manager.js";

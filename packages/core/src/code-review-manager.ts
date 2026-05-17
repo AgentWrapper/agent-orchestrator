@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  type CodeReviewFinding,
   type CodeReviewSeverity,
   createCodeReviewStore,
   type CodeReviewRun,
@@ -37,6 +38,89 @@ async function execFileAsync(
 ): Promise<{ stdout: string; stderr: string }> {
   const { execFile } = await import("node:child_process");
   return promisify(execFile)(file, args, { windowsHide: true, ...options });
+}
+
+async function execFileWithClosedStdin(
+  file: string,
+  args: string[],
+  options: {
+    cwd?: string;
+    timeout?: number;
+    maxBuffer?: number;
+    env?: NodeJS.ProcessEnv;
+    shell?: boolean | string;
+    windowsHide?: boolean;
+  } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  const { spawn } = await import("node:child_process");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: options.shell,
+      windowsHide: options.windowsHide ?? true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const maxBuffer = options.maxBuffer ?? REVIEW_COMMAND_MAX_BUFFER;
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      callback();
+    };
+
+    const fail = (message: string, code?: number | null, signal?: NodeJS.Signals | null) => {
+      const error = new Error(message) as Error & {
+        code?: number | null;
+        signal?: NodeJS.Signals | null;
+        stdout?: string;
+        stderr?: string;
+      };
+      error.code = code;
+      error.signal = signal;
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    };
+
+    const timer =
+      options.timeout && options.timeout > 0
+        ? setTimeout(() => {
+            child.kill("SIGTERM");
+            finish(() =>
+              fail(`Command timed out after ${options.timeout}ms`, null, "SIGTERM"),
+            );
+          }, options.timeout)
+        : null;
+
+    const append = (kind: "stdout" | "stderr", chunk: Buffer) => {
+      const next = chunk.toString();
+      if (kind === "stdout") stdout += next;
+      else stderr += next;
+
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) <= maxBuffer) return;
+      child.kill("SIGTERM");
+      finish(() => fail(`Command output exceeded maxBuffer ${maxBuffer}`));
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
+    child.once("error", (error) => finish(() => reject(error)));
+    child.once("close", (code, signal) => {
+      finish(() => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+          return;
+        }
+        fail(`Command failed with code ${code ?? signal ?? "unknown"}`, code, signal);
+      });
+    });
+  });
 }
 
 export type CodeReviewRequestSource = "cli" | "web" | "system";
@@ -109,6 +193,24 @@ export interface ExecuteCodeReviewRunInput {
   runId: string;
 }
 
+export interface SendCodeReviewFindingsOptions {
+  config: OrchestratorConfig;
+  sessionManager: SessionManager;
+  storeFactory?: (projectId: string) => CodeReviewStore;
+  now?: () => Date;
+}
+
+export interface SendCodeReviewFindingsInput {
+  projectId: string;
+  runId: string;
+}
+
+export interface SendCodeReviewFindingsResult {
+  run: CodeReviewRunSummary;
+  sentFindingCount: number;
+  message: string;
+}
+
 export class CodeReviewRunNotFoundError extends Error {
   constructor(runId: string) {
     super(`Code review run not found: ${runId}`);
@@ -144,6 +246,30 @@ function parsePrNumber(url: string | undefined): number | undefined {
 
 function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+function formatFindingLocation(finding: CodeReviewFinding): string | null {
+  if (!finding.filePath) return null;
+  if (finding.startLine === undefined) return finding.filePath;
+  if (finding.endLine !== undefined && finding.endLine !== finding.startLine) {
+    return `${finding.filePath}:${finding.startLine}-${finding.endLine}`;
+  }
+  return `${finding.filePath}:${finding.startLine}`;
+}
+
+function formatFindingForAgent(finding: CodeReviewFinding, index: number): string {
+  const lines = [`${index}. [${finding.severity}] ${finding.title}`];
+  const location = formatFindingLocation(finding);
+  if (location) lines.push(`   Location: ${location}`);
+  if (finding.confidence !== undefined) lines.push(`   Confidence: ${finding.confidence}`);
+  lines.push("   Details:");
+  lines.push(
+    ...finding.body
+      .split(/\r?\n/)
+      .map((line) => `   ${line}`)
+      .filter((line, lineIndex, allLines) => line.trim() || lineIndex < allLines.length - 1),
+  );
+  return lines.join("\n");
 }
 
 function parseFiniteNumber(value: unknown): number | undefined {
@@ -442,7 +568,7 @@ export async function runCodexCodeReview(
   const args = buildCodexCodeReviewArgs(outputFile, prompt);
 
   try {
-    const { stdout, stderr } = await execFileAsync("codex", args, {
+    const { stdout, stderr } = await execFileWithClosedStdin("codex", args, {
       cwd: context.workspacePath,
       timeout: REVIEW_COMMAND_TIMEOUT_MS,
       maxBuffer: REVIEW_COMMAND_MAX_BUFFER,
@@ -466,6 +592,37 @@ export async function runCodexCodeReview(
 function defaultReviewSummary(session: Session, source: CodeReviewRequestSource): string {
   const sourceLabel = source === "cli" ? "CLI" : source === "web" ? "dashboard" : "automation";
   return `Review requested from ${sourceLabel} for ${session.id}.`;
+}
+
+export function formatCodeReviewFindingsForAgent({
+  run,
+  findings,
+  session,
+}: {
+  run: CodeReviewRun;
+  findings: CodeReviewFinding[];
+  session: Session;
+}): string {
+  const prLabel = run.prNumber
+    ? `PR #${run.prNumber}${run.prUrl ? ` (${run.prUrl})` : ""}`
+    : run.prUrl
+      ? `PR ${run.prUrl}`
+      : "the current PR";
+  const targetLabel = run.targetSha ? `\nTarget SHA reviewed: ${run.targetSha}` : "";
+
+  return [
+    `AO reviewer ${run.reviewerSessionId} found ${findings.length} open issue${
+      findings.length === 1 ? "" : "s"
+    } for ${prLabel}.`,
+    `Linked coding worker: ${session.id}`,
+    `Review run: ${run.id}${targetLabel}`,
+    "",
+    "Please address each finding below. Verify each issue against the current source before editing, then update the PR branch and push your fixes.",
+    "When you start working on these, report `ao report addressing-reviews`. When the fixes are ready for another review, report `ao report ready-for-review`.",
+    "",
+    "Findings:",
+    findings.map((finding, index) => formatFindingForAgent(finding, index + 1)).join("\n\n"),
+  ].join("\n");
 }
 
 export async function triggerCodeReviewForSession(
@@ -599,7 +756,7 @@ export async function executeCodeReviewRun(
       { status: "running", reviewerWorkspacePath: workspacePath },
       now(),
     );
-    const baseRef = session.pr?.baseBranch ?? project.defaultBranch;
+    const baseRef = session.pr?.baseBranch?.trim() || project.defaultBranch;
     const result = await runReviewer({ config, project, session, run, workspacePath, baseRef });
     const findings = result.findings ?? parseReviewerOutput(result.rawOutput ?? "");
 
@@ -647,4 +804,58 @@ export async function executeCodeReviewRun(
   }
 
   return summarizeRun(store, run.id);
+}
+
+export async function sendCodeReviewFindingsToAgent(
+  {
+    config,
+    sessionManager,
+    storeFactory = createCodeReviewStore,
+    now = () => new Date(),
+  }: SendCodeReviewFindingsOptions,
+  { projectId, runId }: SendCodeReviewFindingsInput,
+): Promise<SendCodeReviewFindingsResult> {
+  const project = config.projects[projectId];
+  if (!project) {
+    throw new Error(`Unknown project: ${projectId}`);
+  }
+
+  const store = storeFactory(projectId);
+  const run = store.getRun(runId);
+  if (!run) {
+    throw new CodeReviewRunNotFoundError(runId);
+  }
+
+  const session = await sessionManager.get(run.linkedSessionId);
+  if (!session) {
+    throw new SessionNotFoundError(run.linkedSessionId);
+  }
+
+  const findings = store.listFindings({ runId: run.id, status: "open" });
+  if (findings.length === 0) {
+    throw new Error(`No open review findings to send for ${run.reviewerSessionId}.`);
+  }
+
+  const message = formatCodeReviewFindingsForAgent({ run, findings, session });
+  await sessionManager.send(session.id, message);
+
+  const sentAt = now();
+  for (const finding of findings) {
+    store.updateFinding(
+      finding.id,
+      {
+        status: "sent_to_agent",
+        sentToAgentAt: sentAt.toISOString(),
+      },
+      sentAt,
+    );
+  }
+
+  store.updateRun(run.id, { status: "waiting_update" }, sentAt);
+
+  return {
+    run: summarizeRun(store, run.id),
+    sentFindingCount: findings.length,
+    message,
+  };
 }

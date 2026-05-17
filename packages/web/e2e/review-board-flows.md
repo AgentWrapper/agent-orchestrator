@@ -99,3 +99,11 @@ a coding worker, but they must not reuse the worker's terminal context.
 2. Open the review board and capture the header `Orchestrator` link.
 3. Confirm both links point to the same project orchestrator session.
 4. Confirm the review board does not offer `Spawn Orchestrator` when one already exists.
+
+## Flow 14: Send reviewer findings back to worker
+
+1. Complete a review run with open findings.
+2. From the orchestrator flow, issue the AO handoff command for that review run.
+3. Confirm AO sends the stored finding details to the linked coding worker.
+4. Confirm the review run moves to `Waiting`.
+5. Confirm open findings become sent findings and are no longer counted as open.

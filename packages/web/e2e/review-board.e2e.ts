@@ -99,6 +99,34 @@ function killTmuxSession(sessionName: string): void {
   }
 }
 
+function captureTmuxPane(sessionName: string): string {
+  try {
+    return execFileSync("tmux", ["capture-pane", "-p", "-t", sessionName], {
+      encoding: "utf-8",
+    });
+  } catch {
+    return "";
+  }
+}
+
+async function waitForTmuxText(
+  sessionName: string,
+  pattern: RegExp,
+  label: string,
+  timeoutMs = 45_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastCapture = "";
+
+  while (Date.now() < deadline) {
+    lastCapture = captureTmuxPane(sessionName);
+    if (pattern.test(lastCapture)) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+
+  throw new Error(`Expected tmux text: ${label}\n${lastCapture}`);
+}
+
 async function getFreePort(): Promise<number> {
   return new Promise((resolvePromise, reject) => {
     const server = createServer();
@@ -397,6 +425,10 @@ function orchestratorReviewExecute(fixture: Fixture, args: string[]): unknown {
   return parseJsonCommandOutput(runAoCli(fixture, ["review", "execute", PROJECT_ID, ...args]));
 }
 
+function orchestratorReviewSend(fixture: Fixture, args: string[]): unknown {
+  return parseJsonCommandOutput(runAoCli(fixture, ["review", "send", ...args]));
+}
+
 async function orchestratorReviewExecuteAsync(
   fixture: Fixture,
   args: string[],
@@ -612,6 +644,63 @@ async function main(): Promise<void> {
       );
       await expectVisible(dialog.getByRole("link", { name: "Open terminal" }), "terminal link");
       await dialog.getByLabel("Close review details").click();
+    });
+
+    await step("orchestrator sends review findings back to the linked worker", async () => {
+      const sent = orchestratorReviewSend(fixture, [
+        "todo-rev-1",
+        "--project",
+        PROJECT_ID,
+        "--json",
+      ]) as {
+        run: {
+          id: string;
+          reviewerSessionId: string;
+          status: string;
+          openFindingCount: number;
+          sentFindingCount: number;
+        };
+        sentFindingCount: number;
+        message: string;
+      };
+
+      assert.equal(sent.sentFindingCount, 1);
+      assert.equal(sent.run.reviewerSessionId, "todo-rev-1");
+      assert.equal(sent.run.status, "waiting_update");
+      assert.equal(sent.run.openFindingCount, 0);
+      assert.equal(sent.run.sentFindingCount, 1);
+      assert.match(sent.message, /E2E reviewer finding/);
+      assert.match(sent.message, /README\.md:1/);
+
+      const store = createCodeReviewStore(PROJECT_ID);
+      const sentFindings = store.listFindings({ runId: sent.run.id });
+      assert.equal(sentFindings.length, 1);
+      assert.equal(sentFindings[0]?.status, "sent_to_agent");
+      assert.ok(sentFindings[0]?.sentToAgentAt, "sent finding should record handoff time");
+
+      await waitForTmuxText(
+        fixture.tmuxSessions[0] ?? "",
+        /E2E reviewer finding/,
+        "worker receives AO-local review finding",
+      );
+
+      await page.goto(`${server.baseUrl}/review?project=${PROJECT_ID}`, {
+        waitUntil: "networkidle",
+      });
+      const sentCard = reviewCard(page, "todo-rev-1");
+      await expectVisible(
+        page.locator('[data-reviewer-session-id="todo-rev-1"][data-review-status="waiting_update"]'),
+        "sent review moved to waiting",
+      );
+      await expectVisible(
+        sentCard.getByText(/waiting update · 1 finding · 1 sent/i),
+        "sent truth line",
+      );
+      assert.equal(
+        await sentCard.getByRole("button", { name: /open finding/i }).count(),
+        0,
+        "sent findings should not still be counted as open",
+      );
     });
 
     await step("jump from review card back to the linked coding worker", async () => {

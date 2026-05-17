@@ -11,6 +11,7 @@ import {
   executeCodeReviewRun,
   parseReviewerOutput,
   prepareGitReviewerWorkspace,
+  sendCodeReviewFindingsToAgent,
   triggerCodeReviewForSession,
 } from "../code-review-manager.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
@@ -85,7 +86,10 @@ function makeSession(overrides: Partial<Session> & { id?: string } = {}): Sessio
   };
 }
 
-function makeSessionManager(session: Session | null): SessionManager {
+function makeSessionManager(
+  session: Session | null,
+  overrides: Partial<SessionManager> = {},
+): SessionManager {
   return {
     get: async (sessionId: string) => (session?.id === sessionId ? session : null),
     list: async () => (session ? [session] : []),
@@ -107,6 +111,7 @@ function makeSessionManager(session: Session | null): SessionManager {
     claimPR: async () => {
       throw new Error("not implemented");
     },
+    ...overrides,
   };
 }
 
@@ -279,6 +284,39 @@ describe("executeCodeReviewRun", () => {
     });
   });
 
+  it("falls back to the project default branch when the session PR base branch is empty", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+      targetSha: "abc123",
+    });
+    let observedBaseRef: string | undefined;
+    const session = makeSession({
+      pr: {
+        ...makeSession().pr!,
+        baseBranch: "",
+      },
+    });
+
+    const summary = await executeCodeReviewRun(
+      {
+        config,
+        sessionManager: makeSessionManager(session),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async ({ baseRef }) => {
+          observedBaseRef = baseRef;
+          return { findings: [] };
+        },
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(observedBaseRef).toBe("main");
+    expect(summary.status).toBe("clean");
+  });
+
   it("marks clean reviews clean and records failed reviewer executions", async () => {
     const cleanRun = store.createRun({
       linkedSessionId: "app-1",
@@ -318,6 +356,124 @@ describe("executeCodeReviewRun", () => {
     );
     expect(failedSummary.status).toBe("failed");
     expect(failedSummary.terminationReason).toBe("review command crashed");
+  });
+});
+
+describe("sendCodeReviewFindingsToAgent", () => {
+  it("sends open review findings to the linked coding worker and marks them sent", async () => {
+    const session = makeSession();
+    const sentMessages: Array<{ sessionId: string; message: string }> = [];
+    const run = store.createRun({
+      linkedSessionId: session.id,
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+      targetSha: "abc123",
+      prNumber: 7,
+      prUrl: "https://github.com/acme/app/pull/7",
+    });
+    const first = store.createFinding({
+      runId: run.id,
+      linkedSessionId: session.id,
+      severity: "error",
+      title: "Broken save path",
+      body: "The save handler drops failed writes.",
+      filePath: "src/save.ts",
+      startLine: 12,
+      confidence: 0.9,
+    });
+    const second = store.createFinding({
+      runId: run.id,
+      linkedSessionId: session.id,
+      severity: "warning",
+      title: "Missing retry",
+      body: "The request fails permanently on transient network errors.",
+      filePath: "src/api.ts",
+      startLine: 4,
+      endLine: 8,
+    });
+    const dismissed = store.createFinding({
+      runId: run.id,
+      linkedSessionId: session.id,
+      severity: "info",
+      title: "Dismissed nit",
+      body: "This should not be sent.",
+      status: "dismissed",
+    });
+
+    const result = await sendCodeReviewFindingsToAgent(
+      {
+        config,
+        sessionManager: makeSessionManager(session, {
+          send: async (sessionId, message) => {
+            sentMessages.push({ sessionId, message });
+          },
+        }),
+        storeFactory: () => store,
+        now: () => new Date("2026-05-10T12:00:00.000Z"),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]?.sessionId).toBe("app-1");
+    expect(sentMessages[0]?.message).toContain("AO reviewer app-rev-1 found 2 open issues");
+    expect(sentMessages[0]?.message).toContain("Review run:");
+    expect(sentMessages[0]?.message).toContain("[error] Broken save path");
+    expect(sentMessages[0]?.message).toContain("Location: src/save.ts:12");
+    expect(sentMessages[0]?.message).toContain("[warning] Missing retry");
+    expect(sentMessages[0]?.message).toContain("Location: src/api.ts:4-8");
+    expect(sentMessages[0]?.message).not.toContain("Dismissed nit");
+    expect(result).toMatchObject({
+      sentFindingCount: 2,
+      run: {
+        status: "waiting_update",
+        openFindingCount: 0,
+        sentFindingCount: 2,
+        dismissedFindingCount: 1,
+      },
+    });
+    expect(store.getFinding(first.id)).toMatchObject({
+      status: "sent_to_agent",
+      sentToAgentAt: "2026-05-10T12:00:00.000Z",
+    });
+    expect(store.getFinding(second.id)?.status).toBe("sent_to_agent");
+    expect(store.getFinding(dismissed.id)?.status).toBe("dismissed");
+  });
+
+  it("does not send or mutate when there are no open findings", async () => {
+    const session = makeSession();
+    const run = store.createRun({
+      linkedSessionId: session.id,
+      reviewerSessionId: "app-rev-1",
+      status: "clean",
+    });
+    store.createFinding({
+      runId: run.id,
+      linkedSessionId: session.id,
+      severity: "warning",
+      title: "Already sent",
+      body: "Do not resend this.",
+      status: "sent_to_agent",
+    });
+    const sentMessages: string[] = [];
+
+    await expect(
+      sendCodeReviewFindingsToAgent(
+        {
+          config,
+          sessionManager: makeSessionManager(session, {
+            send: async (_sessionId, message) => {
+              sentMessages.push(message);
+            },
+          }),
+          storeFactory: () => store,
+        },
+        { projectId: "app", runId: run.id },
+      ),
+    ).rejects.toThrow(/No open review findings/);
+
+    expect(sentMessages).toEqual([]);
+    expect(store.getRun(run.id)?.status).toBe("clean");
   });
 });
 

@@ -63,6 +63,17 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
         },
         input,
       ),
+    sendCodeReviewFindingsToAgent: (
+      options: AoCore.SendCodeReviewFindingsOptions,
+      input: AoCore.SendCodeReviewFindingsInput,
+    ) =>
+      actual.sendCodeReviewFindingsToAgent(
+        {
+          ...options,
+          storeFactory: options.storeFactory ?? createIsolatedStore,
+        },
+        input,
+      ),
     loadConfig: () => mockConfigRef.current,
   };
 });
@@ -177,6 +188,7 @@ beforeEach(() => {
   mockSessionManager.get.mockReset();
   mockSessionManager.get.mockResolvedValue(makeSession({ workspacePath: appPath }));
   mockSessionManager.list.mockReset();
+  mockSessionManager.send.mockReset();
 
   createCodeReviewStore("app").deleteAll();
   createCodeReviewStore("docs").deleteAll();
@@ -259,9 +271,20 @@ describe("review command", () => {
   it("executes the oldest queued review run across all projects when no run is specified", async () => {
     const appStore = createCodeReviewStore("app");
     const docsStore = createCodeReviewStore("docs");
+    const appPath = join(tmpDir, "app");
+    const docsPath = join(tmpDir, "docs");
+    mockSessionManager.get.mockImplementation(async (sessionId: string) => {
+      if (sessionId === "docs-1") {
+        return makeSession({ id: "docs-1", projectId: "docs", workspacePath: docsPath });
+      }
+      if (sessionId === "app-1") {
+        return makeSession({ id: "app-1", projectId: "app", workspacePath: appPath });
+      }
+      return null;
+    });
     const older = docsStore.createRun(
       {
-        linkedSessionId: "app-1",
+        linkedSessionId: "docs-1",
         reviewerSessionId: "docs-rev-1",
         status: "queued",
       },
@@ -295,5 +318,55 @@ describe("review command", () => {
       status: "clean",
     });
     expect(createCodeReviewStore("app").getRun(newer.id)?.status).toBe("queued");
+  });
+
+  it("sends open review findings to the linked coding worker", async () => {
+    const store = createCodeReviewStore("app");
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+      prNumber: 7,
+    });
+    store.createFinding({
+      runId: run.id,
+      linkedSessionId: "app-1",
+      severity: "warning",
+      title: "CLI finding",
+      body: "Detected in CLI.",
+      filePath: "src/app.ts",
+      startLine: 12,
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "review",
+      "send",
+      "app-rev-1",
+      "--project",
+      "app",
+      "--json",
+    ]);
+
+    const payload = JSON.parse(String(consoleLogSpy.mock.calls.at(-1)?.[0])) as {
+      run: { status: string; openFindingCount: number; sentFindingCount: number };
+      sentFindingCount: number;
+      message: string;
+    };
+    expect(payload).toMatchObject({
+      sentFindingCount: 1,
+      run: {
+        status: "waiting_update",
+        openFindingCount: 0,
+        sentFindingCount: 1,
+      },
+    });
+    expect(payload.message).toContain("AO reviewer app-rev-1 found 1 open issue");
+    expect(payload.message).toContain("Location: src/app.ts:12");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      expect.stringContaining("[warning] CLI finding"),
+    );
   });
 });
