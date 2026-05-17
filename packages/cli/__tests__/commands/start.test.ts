@@ -32,7 +32,6 @@ const {
   mockSessionManager,
   mockWaitForPortAndOpen,
   mockSpawn,
-  mockFindPidByPort,
   mockKillProcessTree,
   mockSweepDaemonChildren,
   mockScanAoOrphans,
@@ -57,7 +56,6 @@ const {
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
-  mockFindPidByPort: vi.fn(),
   mockKillProcessTree: vi.fn(),
   mockSweepDaemonChildren: vi.fn(),
   mockScanAoOrphans: vi.fn(),
@@ -148,7 +146,6 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
-    findPidByPort: mockFindPidByPort,
     killProcessTree: mockKillProcessTree,
     sweepDaemonChildren: mockSweepDaemonChildren,
     scanAoOrphans: mockScanAoOrphans,
@@ -408,8 +405,6 @@ beforeEach(async () => {
   });
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
-  mockFindPidByPort.mockReset();
-  mockFindPidByPort.mockResolvedValue(null);
   mockKillProcessTree.mockReset();
   mockKillProcessTree.mockResolvedValue(undefined);
   mockSweepDaemonChildren.mockReset();
@@ -1766,20 +1761,7 @@ describe("start command — orchestrator session strategy display", () => {
 // ---------------------------------------------------------------------------
 
 describe("stop command", () => {
-  /** Helper: mock exec to simulate a dashboard process on a given port. */
-  function mockDashboardOnPort(dashboardPort: number, pid = "12345"): void {
-    mockExec.mockImplementation(async (cmd: string, args: string[] = []) => {
-      if (cmd === "kill") return { stdout: "", stderr: "" };
-      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-      if (cmd === "lsof") {
-        const portArg = args.find((a) => a.startsWith(":"));
-        if (portArg === `:${dashboardPort}`) return { stdout: pid, stderr: "" };
-      }
-      throw new Error("no process");
-    });
-  }
-
-  it("stops the actual numbered orchestrator session and dashboard", async () => {
+  it("stops the actual numbered orchestrator session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     // Issue #1048: ao stop must look up the real numbered orchestrator id
     // (e.g. app-orchestrator-3) via sm.list — never the phantom `${prefix}-orchestrator`.
@@ -1795,8 +1777,6 @@ describe("stop command", () => {
       },
     ]);
     mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-    mockDashboardOnPort(3000);
-
     await program.parseAsync(["node", "test", "stop"]);
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator-3", {
@@ -1911,101 +1891,12 @@ describe("stop command", () => {
       },
     ]);
     mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
-    mockDashboardOnPort(3000);
-
     await program.parseAsync(["node", "test", "stop", "--purge-session"]);
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
   });
-
-  it("calls killProcessTree with numeric PID when findPidByPort returns a PID", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.list.mockResolvedValue([]);
-    mockFindPidByPort.mockResolvedValue("1234");
-    // killDashboardOnPort verifies the PID is an AO dashboard via `ps` on Unix
-    // before killing. Stub it to return a matching cmdline so we reach the kill.
-    mockExec.mockImplementation(async (cmd: string) => {
-      if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-      throw new Error("no process");
-    });
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
-    expect(mockKillProcessTree).toHaveBeenCalledWith(1234);
-  });
-
-  it("does not call killProcessTree when findPidByPort returns null", async () => {
-    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-    mockSessionManager.list.mockResolvedValue([]);
-    mockFindPidByPort.mockResolvedValue(null);
-
-    await program.parseAsync(["node", "test", "stop"]);
-
-    expect(mockFindPidByPort).toHaveBeenCalledWith(3000);
-    expect(mockKillProcessTree).not.toHaveBeenCalled();
-  });
-
-  // Recovers from issue #645: when the configured port was busy at start, the
-  // dashboard auto-reassigned to port+N and `ao stop` couldn't find it. The
-  // port-scan fallback in stopDashboard walks port+1..port+MAX_PORT_SCAN.
-  // Skip on Windows: killDashboardOnPort skips the `ps` cmdline verification
-  // there (uses netstat trust), so the assertions on `ps` output don't apply.
-  it.skipIf(process.platform === "win32")(
-    "finds orphaned dashboard on a reassigned port via port scan",
-    async () => {
-      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-      mockSessionManager.list.mockResolvedValue([]);
-      // Port 3000 has nothing; port 3001 has the orphaned dashboard
-      mockFindPidByPort.mockImplementation(async (port: number) =>
-        port === 3001 ? "99999" : null,
-      );
-      // ps cmdline check inside killDashboardOnPort must pass for the kill to fire
-      mockExec.mockImplementation(async (cmd: string) => {
-        if (cmd === "ps") return { stdout: "node /fake/web/dist-server/start-all.js", stderr: "" };
-        throw new Error("no process");
-      });
-
-      await program.parseAsync(["node", "test", "stop"]);
-
-      expect(mockKillProcessTree).toHaveBeenCalledWith(99999);
-      const output = vi
-        .mocked(console.log)
-        .mock.calls.map((c) => c.join(" "))
-        .join("\n");
-      expect(output).toContain("was on port 3001");
-    },
-  );
-
-  // Windows parallel: the port-scan fallback must still find the orphaned
-  // dashboard, but killDashboardOnPort intentionally skips the `ps` cmdline
-  // check (no `ps` on Windows; we trust netstat output via findPidByPort).
-  // Ensures a developer who breaks the Windows port-scan path is caught.
-  it.runIf(process.platform === "win32")(
-    "finds orphaned dashboard on a reassigned port via port scan (Windows)",
-    async () => {
-      mockConfigRef.current = makeConfig({ "my-app": makeProject() });
-      mockSessionManager.list.mockResolvedValue([]);
-      mockFindPidByPort.mockImplementation(async (port: number) =>
-        port === 3001 ? "99999" : null,
-      );
-
-      await program.parseAsync(["node", "test", "stop"]);
-
-      expect(mockKillProcessTree).toHaveBeenCalledWith(99999);
-      // `ps` must NOT be invoked on Windows — the cmdline verification is
-      // skipped by design in killDashboardOnPort.
-      const psCalls = mockExec.mock.calls.filter((c) => c[0] === "ps");
-      expect(psCalls).toHaveLength(0);
-      const output = vi
-        .mocked(console.log)
-        .mock.calls.map((c) => c.join(" "))
-        .join("\n");
-      expect(output).toContain("was on port 3001");
-    },
-  );
 });
 
 // ---------------------------------------------------------------------------

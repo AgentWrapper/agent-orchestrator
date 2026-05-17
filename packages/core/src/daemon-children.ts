@@ -1,9 +1,4 @@
-import {
-  type ChildProcess,
-  type SpawnOptions,
-  execFile as execFileCb,
-  spawn,
-} from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -16,11 +11,9 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { promisify } from "node:util";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { isWindows, killProcessTree } from "./platform.js";
 
-const execFileAsync = promisify(execFileCb);
 const DEFAULT_GRACE_MS = 5_000;
 const LOCK_STALE_MS = 10_000;
 
@@ -39,11 +32,12 @@ export interface DaemonChildSweepResult {
   failed: number;
 }
 
-export interface AoOrphanProcess {
+export interface DaemonChildOrphan {
   pid: number;
-  ppid: number;
-  command: string;
+  parentPid: number;
   role: string;
+  startedAt: string;
+  command?: string;
 }
 
 export interface DaemonChildSweepOptions {
@@ -381,120 +375,20 @@ export async function sweepDaemonChildren(
   return result;
 }
 
-function isAsciiWhitespace(char: string): boolean {
-  return char === " " || char === "\t" || char === "\r" || char === "\n";
-}
-
-function normalizeCommand(command: string): string {
-  return command.replaceAll("\\", "/").toLowerCase();
-}
-
-function firstCommandWord(command: string): string {
-  let start = 0;
-  while (start < command.length && isAsciiWhitespace(command[start] ?? "")) start++;
-
-  let end = start;
-  while (end < command.length && !isAsciiWhitespace(command[end] ?? "")) end++;
-
-  return command.slice(start, end);
-}
-
-function commandLooksLikeNode(command: string): boolean {
-  const executable = firstCommandWord(normalizeCommand(command));
-  const basename = executable.slice(executable.lastIndexOf("/") + 1);
-  return basename === "node" || basename === "node.exe";
-}
-
-export function classifyAoOrphanCommand(command: string): string | null {
-  if (!commandLooksLikeNode(command)) return null;
-
-  const normalized = normalizeCommand(command);
-
-  if (
-    normalized.includes("@aoagents/ao-web") &&
-    (normalized.includes("/dist-server/") || normalized.includes(" dist-server/"))
-  ) {
-    return "ao-web";
-  }
-  if (
-    normalized.includes("/ao lifecycle-worker ") ||
-    normalized.includes(" ao lifecycle-worker ")
-  ) {
-    return "lifecycle-worker";
-  }
-  if (normalized.includes("next-server")) {
-    return "next-server";
-  }
-  return null;
-}
-
-function parseLeadingUnsignedInt(
-  value: string,
-  start: number,
-): { value: number; next: number } | null {
-  let index = start;
-  while (index < value.length && isAsciiWhitespace(value[index] ?? "")) index++;
-
-  const firstDigit = index;
-  while (index < value.length) {
-    const code = value.charCodeAt(index);
-    if (code < 48 || code > 57) break;
-    index++;
-  }
-
-  if (index === firstDigit) return null;
-  return { value: Number(value.slice(firstDigit, index)), next: index };
-}
-
-function parsePsLine(line: string): AoOrphanProcess | null {
-  const pid = parseLeadingUnsignedInt(line, 0);
-  if (!pid) return null;
-
-  const ppid = parseLeadingUnsignedInt(line, pid.next);
-  if (!ppid) return null;
-
-  let commandStart = ppid.next;
-  while (commandStart < line.length && isAsciiWhitespace(line[commandStart] ?? "")) {
-    commandStart++;
-  }
-
-  const command = line.slice(commandStart);
-  if (!Number.isFinite(pid.value) || !Number.isFinite(ppid.value) || ppid.value !== 1) {
-    return null;
-  }
-
-  const role = classifyAoOrphanCommand(command);
-  if (!role) return null;
-  return { pid: pid.value, ppid: ppid.value, command, role };
-}
-
-export function detectAoOrphansFromPsOutput(psOutput: string): AoOrphanProcess[] {
-  const orphans: AoOrphanProcess[] = [];
-  for (const rawLine of psOutput.replaceAll("\r\n", "\n").split("\n")) {
-    const line = rawLine.trimStart();
-    if (!line) continue;
-
-    const orphan = parsePsLine(line);
-    if (orphan) orphans.push(orphan);
-  }
-  return orphans;
-}
-
-export async function scanAoOrphans(): Promise<AoOrphanProcess[]> {
-  if (isWindows()) return [];
-  try {
-    const { stdout } = await execFileAsync("ps", ["-axo", "pid,ppid,command"], {
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return detectAoOrphansFromPsOutput(stdout);
-  } catch {
-    return [];
-  }
+export async function scanAoOrphans(): Promise<DaemonChildOrphan[]> {
+  return getDaemonChildren()
+    .filter((entry) => !isProcessAlive(entry.parentPid))
+    .map((entry) => ({
+      pid: entry.pid,
+      parentPid: entry.parentPid,
+      role: entry.role,
+      startedAt: entry.startedAt,
+      command: entry.command,
+    }));
 }
 
 export async function reapAoOrphans(
-  orphans: AoOrphanProcess[],
+  orphans: DaemonChildOrphan[],
   graceMs: number = DEFAULT_GRACE_MS,
 ): Promise<DaemonChildSweepResult> {
   const result: DaemonChildSweepResult = {
@@ -520,6 +414,7 @@ export async function reapAoOrphans(
   result.forceKilled = stillAliveAfterTerm.size - stillAliveAfterKill.size;
   result.failed = stillAliveAfterKill.size;
 
+  pruneSweptDaemonChildren(new Set(pids));
   return result;
 }
 

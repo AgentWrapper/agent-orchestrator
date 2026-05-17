@@ -6,9 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   __getDaemonChildrenRegistryFile,
   clearDaemonChildrenRegistry,
-  detectAoOrphansFromPsOutput,
   getDaemonChildren,
   registerDaemonChild,
+  reapAoOrphans,
+  scanAoOrphans,
   spawnManagedDaemonChild,
   sweepDaemonChildren,
   unregisterDaemonChild,
@@ -144,28 +145,75 @@ describe("daemon child registry", () => {
   });
 });
 
-describe("AO orphan detection", () => {
-  it("detects PPID=1 AO dashboard, websocket, and lifecycle processes", () => {
-    const output = [
-      "  90350      1 node next-server (v15.5.15)",
-      "  90351      1 node /opt/homebrew/lib/node_modules/@aoagents/ao-web/dist-server/start-all.js",
-      "  47457      1 node /opt/homebrew/lib/node_modules/@aoagents/ao-web@0.2.4/dist-server/start-all.js",
-      "  47458      1 node @aoagents/ao-web@0.2.4 dist-server/start-all.js",
-      "  47575      1 node /opt/homebrew/lib/node_modules/@aoagents/ao-web@0.2.4/dist-server/terminal-websocket.js",
-      "  47580      1 node /opt/homebrew/lib/node_modules/@aoagents/ao-web@0.2.4/dist-server/direct-terminal-ws.js",
-      "   9914      1 node /opt/homebrew/bin/ao lifecycle-worker codex-startup-factory",
-      "  22222   3333 node /opt/homebrew/bin/ao lifecycle-worker not-an-orphan",
-      "  44444      1 node unrelated-server.js",
-    ].join("\n");
+describe("AO orphan recovery", () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
 
-    expect(detectAoOrphansFromPsOutput(output)).toEqual([
-      expect.objectContaining({ pid: 90350, role: "next-server" }),
-      expect.objectContaining({ pid: 90351, role: "ao-web" }),
-      expect.objectContaining({ pid: 47457, role: "ao-web" }),
-      expect.objectContaining({ pid: 47458, role: "ao-web" }),
-      expect.objectContaining({ pid: 47575, role: "ao-web" }),
-      expect.objectContaining({ pid: 47580, role: "ao-web" }),
-      expect.objectContaining({ pid: 9914, role: "lifecycle-worker" }),
-    ]);
+  beforeEach(() => {
+    tmpHome = mkdtempSync(join(tmpdir(), "ao-daemon-orphans-"));
+    originalHome = process.env["HOME"];
+    process.env["HOME"] = tmpHome;
+    clearDaemonChildrenRegistry();
+  });
+
+  afterEach(() => {
+    clearDaemonChildrenRegistry();
+    if (originalHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = originalHome;
+    rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("finds and reaps registered children whose owning daemon is gone", async () => {
+    const liveOwnerChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+      stdio: "ignore",
+    });
+    const orphanChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
+      stdio: "ignore",
+    });
+
+    try {
+      expect(liveOwnerChild.pid).toBeTypeOf("number");
+      expect(orphanChild.pid).toBeTypeOf("number");
+      const liveOwnerPid = liveOwnerChild.pid as number;
+      const orphanPid = orphanChild.pid as number;
+      const missingOwnerPid = 999_999_999;
+
+      registerDaemonChild({
+        pid: liveOwnerPid,
+        parentPid: process.pid,
+        role: "live-owner-child",
+        command: "node live-owner.js",
+      });
+      registerDaemonChild({
+        pid: orphanPid,
+        parentPid: missingOwnerPid,
+        role: "orphaned-child",
+        command: "node orphan.js",
+      });
+
+      const orphans = await scanAoOrphans();
+      expect(orphans).toEqual([
+        expect.objectContaining({
+          pid: orphanPid,
+          parentPid: missingOwnerPid,
+          role: "orphaned-child",
+        }),
+      ]);
+
+      const result = await reapAoOrphans(orphans, 1_000);
+
+      expect(result.attempted).toBe(1);
+      expect(isProcessAliveForTest(orphanPid)).toBe(false);
+      expect(isProcessAliveForTest(liveOwnerPid)).toBe(true);
+      expect(getDaemonChildren()).toContainEqual(
+        expect.objectContaining({ pid: liveOwnerPid, role: "live-owner-child" }),
+      );
+      expect(getDaemonChildren()).not.toContainEqual(expect.objectContaining({ pid: orphanPid }));
+    } finally {
+      liveOwnerChild.kill("SIGKILL");
+      orphanChild.kill("SIGKILL");
+      await waitForChildExit(liveOwnerChild);
+      await waitForChildExit(orphanChild);
+    }
   });
 });

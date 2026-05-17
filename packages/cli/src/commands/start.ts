@@ -29,7 +29,6 @@ import {
   isWindows,
   isMac,
   isLinux,
-  findPidByPort,
   killProcessTree,
   loadLocalProjectConfigDetailed,
   recordActivityEvent,
@@ -45,10 +44,10 @@ import {
   scanAoOrphans,
   reapAoOrphans,
   type DaemonChildSweepResult,
-  type AoOrphanProcess,
+  type DaemonChildOrphan,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { exec, execSilent, git } from "../lib/shell.js";
+import { execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { listLifecycleWorkers } from "../lib/lifecycle-service.js";
 import { startBunTmpJanitor } from "../lib/bun-tmp-janitor.js";
@@ -1253,64 +1252,6 @@ async function runStartup(
   return port;
 }
 
-/**
- * Stop dashboard server.
- * Uses platform adapter to find the process listening on the port, then kills it.
- * Best effort — if it fails, just warn the user.
- */
-/** Pattern matching AO dashboard processes (production and dev mode). */
-const DASHBOARD_CMD_PATTERN = /next-server|start-all\.js|next dev|ao-web/;
-
-/**
- * Check whether a process listening on the given port is an AO dashboard
- * (next-server, start-all.js, or next dev).  Only kills matching PIDs,
- * leaving unrelated co-listeners (sidecars, SO_REUSEPORT) untouched.
- */
-async function killDashboardOnPort(port: number): Promise<boolean> {
-  try {
-    const pid = await findPidByPort(port);
-    if (!pid) return false;
-
-    // On Unix, verify the process is actually a dashboard before killing so
-    // unrelated co-listeners (sidecars, SO_REUSEPORT) are left untouched.
-    // findPidByPort on Windows uses netstat; we trust the port match there.
-    if (!isWindows()) {
-      try {
-        const { stdout: cmdline } = await exec("ps", ["-p", String(pid), "-o", "args="]);
-        if (!DASHBOARD_CMD_PATTERN.test(cmdline)) return false;
-      } catch {
-        return false;
-      }
-    }
-
-    await killProcessTree(Number(pid));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopDashboard(port: number): Promise<void> {
-  // 1. Try the expected port — verify it's a dashboard before killing
-  if (await killDashboardOnPort(port)) {
-    console.log(chalk.green("Dashboard stopped"));
-    return;
-  }
-
-  // 2. Fallback: scan nearby ports to find an orphaned dashboard
-  //    that was auto-reassigned when the original port was busy.
-  //    Uses killDashboardOnPort to verify the process is actually an
-  //    AO dashboard before killing, avoiding collateral damage.
-  for (let p = port + 1; p <= port + MAX_PORT_SCAN; p++) {
-    if (await killDashboardOnPort(p)) {
-      console.log(chalk.green(`Dashboard stopped (was on port ${p})`));
-      return;
-    }
-  }
-
-  console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
-}
-
 function formatSweepSummary(result: DaemonChildSweepResult): string {
   return `${result.terminated} graceful, ${result.forceKilled} force-killed${
     result.failed > 0 ? `, ${result.failed} failed` : ""
@@ -1328,7 +1269,7 @@ async function sweepRegisteredDaemonChildren(ownerPid?: number): Promise<void> {
   }
 }
 
-function describeAoOrphans(orphans: AoOrphanProcess[]): string {
+function describeAoOrphans(orphans: DaemonChildOrphan[]): string {
   return orphans
     .map((orphan) => `${orphan.pid} (${orphan.role})`)
     .slice(0, 8)
@@ -1928,7 +1869,6 @@ export function registerStop(program: Command): void {
             projectIds[0];
           project = config.projects[_projectId];
         }
-        const port = config.port ?? DEFAULT_PORT;
 
         if (projectArg) {
           console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
@@ -2128,7 +2068,6 @@ export function registerStop(program: Command): void {
           } else {
             await sweepRegisteredDaemonChildren();
           }
-          await stopDashboard(running?.port ?? port);
         }
         // Targeted stop deliberately does NOT edit `running.json` from this
         // child CLI process. The long-lived parent supervises lifecycle
