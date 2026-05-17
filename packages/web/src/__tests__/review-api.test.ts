@@ -103,6 +103,7 @@ function makeSession(): Session {
 import { POST } from "@/app/api/reviews/route";
 import { POST as POST_EXECUTE } from "@/app/api/reviews/execute/route";
 import { GET as GET_FINDINGS } from "@/app/api/reviews/findings/route";
+import { POST as POST_SEND } from "@/app/api/reviews/send/route";
 
 let tmpHome: string;
 let originalHome: string | undefined;
@@ -181,6 +182,53 @@ describe("GET /api/reviews/findings", () => {
         filePath: "src/App.tsx",
       }),
     ]);
+  });
+});
+
+describe("POST /api/reviews/send", () => {
+  it("sends open findings to the linked worker session", async () => {
+    const store = createCodeReviewStore("app");
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+      prNumber: 7,
+    });
+    const finding = store.createFinding({
+      runId: run.id,
+      linkedSessionId: "app-1",
+      severity: "warning",
+      title: "Missing empty state",
+      body: "The todo list should render a clear empty state.",
+      filePath: "src/App.tsx",
+      startLine: 12,
+    });
+
+    const response = await POST_SEND(
+      makeRequest("/api/reviews/send", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "app", runId: run.id }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      run: { status: string; sentFindingCount: number; openFindingCount: number };
+      sentFindingCount: number;
+      message: string;
+    };
+    expect(payload.sentFindingCount).toBe(1);
+    expect(payload.run).toMatchObject({
+      status: "waiting_update",
+      sentFindingCount: 1,
+      openFindingCount: 0,
+    });
+    expect(payload.message).toContain("Missing empty state");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      expect.stringContaining("Missing empty state"),
+    );
+    expect(store.getFinding(finding.id)).toMatchObject({ status: "sent_to_agent" });
   });
 });
 

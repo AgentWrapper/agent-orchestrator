@@ -60,9 +60,10 @@ a coding worker, but they must not reuse the worker's terminal context.
 ## Flow 8: Feedback availability
 
 1. Show a review run linked to a worker with no live runtime.
-2. Confirm the card shows the worker runtime state instead of a `Feedback` link.
+2. Confirm the card shows the worker runtime state instead of a `Feedback` action.
 3. Show a review run linked to a live worker.
-4. Confirm `Feedback` links to the worker terminal section.
+4. Confirm `Feedback` sends open review findings to the linked worker.
+5. Confirm the app opens the worker terminal section after the send succeeds.
 
 ## Flow 9: CLI and UI share the same review store
 
@@ -103,7 +104,7 @@ a coding worker, but they must not reuse the worker's terminal context.
 ## Flow 14: Send reviewer findings back to worker
 
 1. Complete a review run with open findings.
-2. From the orchestrator flow, issue the AO handoff command for that review run.
+2. From the review board, click `Feedback` for that review run.
 3. Confirm AO sends the stored finding details to the linked coding worker.
 4. Confirm the review run moves to `Waiting`.
 5. Confirm open findings become sent findings and are no longer counted as open.

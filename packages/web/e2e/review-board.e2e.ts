@@ -28,6 +28,7 @@ interface Fixture {
   projectDir: string;
   globalConfigPath: string;
   localConfigPath: string;
+  tmuxSessionPrefix: string;
   tmuxSessions: string[];
 }
 
@@ -96,6 +97,43 @@ function killTmuxSession(sessionName: string): void {
     execFileSync("tmux", ["kill-session", "-t", sessionName], { stdio: "ignore" });
   } catch {
     // Best effort cleanup for local e2e fixtures.
+  }
+}
+
+function listTmuxSessions(): string[] {
+  try {
+    return execFileSync("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .map((sessionName) => sessionName.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function killReviewBoardTmuxSessions(fixture: Fixture): void {
+  const sessionNames = new Set([
+    ...fixture.tmuxSessions,
+    ...listTmuxSessions().filter((sessionName) =>
+      sessionName.startsWith(fixture.tmuxSessionPrefix),
+    ),
+  ]);
+
+  for (const sessionName of sessionNames) {
+    killTmuxSession(sessionName);
+  }
+}
+
+function installFixtureSignalCleanup(fixture: Fixture): void {
+  process.once("exit", () => killReviewBoardTmuxSessions(fixture));
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      killReviewBoardTmuxSessions(fixture);
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
   }
 }
 
@@ -242,6 +280,7 @@ function createFixture(): Fixture {
   const localConfigPath = join(projectDir, "agent-orchestrator.yaml");
   const sessionsDir = join(homeDir, ".agent-orchestrator", "projects", PROJECT_ID, "sessions");
   const tmuxSuffix = basename(rootDir).replace(/[^a-zA-Z0-9_-]/g, "-");
+  const tmuxSessionPrefix = `${tmuxSuffix}-`;
   const workerTmuxName = `${tmuxSuffix}-worker`;
   const orchestratorTmuxName = `${tmuxSuffix}-orchestrator`;
 
@@ -357,6 +396,7 @@ function createFixture(): Fixture {
     projectDir,
     globalConfigPath,
     localConfigPath,
+    tmuxSessionPrefix,
     tmuxSessions: [workerTmuxName, orchestratorTmuxName],
   };
 }
@@ -425,10 +465,6 @@ function orchestratorReviewExecute(fixture: Fixture, args: string[]): unknown {
   return parseJsonCommandOutput(runAoCli(fixture, ["review", "execute", PROJECT_ID, ...args]));
 }
 
-function orchestratorReviewSend(fixture: Fixture, args: string[]): unknown {
-  return parseJsonCommandOutput(runAoCli(fixture, ["review", "send", ...args]));
-}
-
 async function orchestratorReviewExecuteAsync(
   fixture: Fixture,
   args: string[],
@@ -478,6 +514,7 @@ async function step(name: string, run: () => Promise<void>): Promise<void> {
 
 async function main(): Promise<void> {
   const fixture = createFixture();
+  installFixtureSignalCleanup(fixture);
   const server = await startWebServer(fixture);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -646,43 +683,31 @@ async function main(): Promise<void> {
       await dialog.getByLabel("Close review details").click();
     });
 
-    await step("orchestrator sends review findings back to the linked worker", async () => {
-      const sent = orchestratorReviewSend(fixture, [
-        "todo-rev-1",
-        "--project",
-        PROJECT_ID,
-        "--json",
-      ]) as {
-        run: {
-          id: string;
-          reviewerSessionId: string;
-          status: string;
-          openFindingCount: number;
-          sentFindingCount: number;
-        };
-        sentFindingCount: number;
-        message: string;
-      };
-
-      assert.equal(sent.sentFindingCount, 1);
-      assert.equal(sent.run.reviewerSessionId, "todo-rev-1");
-      assert.equal(sent.run.status, "waiting_update");
-      assert.equal(sent.run.openFindingCount, 0);
-      assert.equal(sent.run.sentFindingCount, 1);
-      assert.match(sent.message, /E2E reviewer finding/);
-      assert.match(sent.message, /README\.md:1/);
-
-      const store = createCodeReviewStore(PROJECT_ID);
-      const sentFindings = store.listFindings({ runId: sent.run.id });
-      assert.equal(sentFindings.length, 1);
-      assert.equal(sentFindings[0]?.status, "sent_to_agent");
-      assert.ok(sentFindings[0]?.sentToAgentAt, "sent finding should record handoff time");
+    await step("review board sends review findings back to the linked worker", async () => {
+      await reviewCard(page, "todo-rev-1").getByRole("button", { name: "Feedback" }).click();
+      await page.waitForURL(
+        `**/projects/${PROJECT_ID}/sessions/${SESSION_ID}#session-terminal-section`,
+      );
 
       await waitForTmuxText(
         fixture.tmuxSessions[0] ?? "",
         /E2E reviewer finding/,
         "worker receives AO-local review finding",
       );
+
+      const store = createCodeReviewStore(PROJECT_ID);
+      const sentRun = store
+        .listRunSummaries()
+        .find((run) => run.reviewerSessionId === "todo-rev-1");
+      assert.ok(sentRun, "sent review run should still exist");
+      assert.equal(sentRun.status, "waiting_update");
+      assert.equal(sentRun.openFindingCount, 0);
+      assert.equal(sentRun.sentFindingCount, 1);
+
+      const sentFindings = store.listFindings({ runId: sentRun.id });
+      assert.equal(sentFindings.length, 1);
+      assert.equal(sentFindings[0]?.status, "sent_to_agent");
+      assert.ok(sentFindings[0]?.sentToAgentAt, "sent finding should record handoff time");
 
       await page.goto(`${server.baseUrl}/review?project=${PROJECT_ID}`, {
         waitUntil: "networkidle",
@@ -809,8 +834,8 @@ async function main(): Promise<void> {
       await page.goto(`${server.baseUrl}/review?project=${PROJECT_ID}`, {
         waitUntil: "domcontentloaded",
       });
-      const first = reviewCard(page, "todo-rev-1");
-      await expectVisible(first.getByRole("link", { name: "Feedback" }), "feedback link");
+      const retried = reviewCard(page, "todo-rev-failed");
+      await expectVisible(retried.getByRole("button", { name: "Feedback" }), "feedback button");
       const orchestrator = page.getByRole("link", { name: "Open project orchestrator" });
       await expectVisible(orchestrator, "project orchestrator link");
       assert.equal(
@@ -821,11 +846,17 @@ async function main(): Promise<void> {
 
     process.stdout.write("\nReview board e2e flows passed.\n");
   } finally {
-    await browser.close();
-    await server.stop();
-    for (const tmuxSession of fixture.tmuxSessions) {
-      killTmuxSession(tmuxSession);
+    try {
+      await browser.close();
+    } catch {
+      // Best effort cleanup; tmux sessions and fixture files still need cleanup.
     }
+    try {
+      await server.stop();
+    } catch {
+      // Best effort cleanup; tmux sessions and fixture files still need cleanup.
+    }
+    killReviewBoardTmuxSessions(fixture);
     if (process.env["AO_E2E_KEEP_ARTIFACTS"] !== "1") {
       rmSync(fixture.rootDir, { recursive: true, force: true });
     } else {

@@ -154,6 +154,7 @@ function ReviewDashboardInner({
     useState<DashboardOrchestratorLink[]>(orchestrators);
   const [requestingSessionId, setRequestingSessionId] = useState<string | null>(null);
   const [executingRunIds, setExecutingRunIds] = useState<Set<string>>(() => new Set());
+  const [sendingRunIds, setSendingRunIds] = useState<Set<string>>(() => new Set());
   const [restoringOrchestratorId, setRestoringOrchestratorId] = useState<string | null>(null);
   const [newReviewMenuOpen, setNewReviewMenuOpen] = useState(false);
   const [reviewDetails, setReviewDetails] = useState<ReviewDetailsState | null>(null);
@@ -347,6 +348,76 @@ function ReviewDashboardInner({
       showToast(`Review failed: ${message}`, "error");
     } finally {
       setExecutingRunIds((current) => {
+        const next = new Set(current);
+        next.delete(run.id);
+        return next;
+      });
+    }
+  };
+
+  const mergeRunUpdate = (run: DashboardReviewRun, nextRun: DashboardReviewRun) => ({
+    ...run,
+    ...nextRun,
+    projectName: run.projectName,
+    workerTitle: run.workerTitle,
+    workerBranch: run.workerBranch,
+    workerPrUrl: run.workerPrUrl,
+    workerStatus: run.workerStatus,
+    workerActivity: run.workerActivity,
+    workerRuntimeState: run.workerRuntimeState,
+    workerHasRuntime: run.workerHasRuntime,
+  });
+
+  const handleSendFeedback = async (run: DashboardReviewRun) => {
+    if (sendingRunIds.has(run.id) || run.openFindingCount === 0) return;
+    setSendingRunIds((current) => {
+      const next = new Set(current);
+      next.add(run.id);
+      return next;
+    });
+    try {
+      const response = await fetch("/api/reviews/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: run.projectId, runId: run.id }),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        run?: DashboardReviewRun;
+        sentFindingCount?: number;
+        error?: string;
+      } | null;
+      if (!response.ok || !data?.run) {
+        throw new Error(data?.error ?? "Failed to send review findings");
+      }
+
+      setReviewRuns((current) =>
+        current.map((entry) =>
+          entry.id === run.id ? mergeRunUpdate(entry, data.run as DashboardReviewRun) : entry,
+        ),
+      );
+      setReviewDetails((current) => {
+        if (!current || current.run.id !== run.id) return current;
+        const sentAt = new Date().toISOString();
+        return {
+          ...current,
+          run: mergeRunUpdate(current.run, data.run as DashboardReviewRun),
+          findings: current.findings.map((finding) =>
+            finding.status === "open"
+              ? { ...finding, status: "sent_to_agent", sentToAgentAt: sentAt }
+              : finding,
+          ),
+        };
+      });
+      showToast(
+        `Sent ${pluralize(data.sentFindingCount ?? 0, "finding")} to ${run.linkedSessionId}`,
+        "success",
+      );
+      router.push(projectSessionHashPath(run.projectId, run.linkedSessionId, "#session-terminal-section"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to send review findings";
+      showToast(`Feedback failed: ${message}`, "error");
+    } finally {
+      setSendingRunIds((current) => {
         const next = new Set(current);
         next.delete(run.id);
         return next;
@@ -659,8 +730,10 @@ function ReviewDashboardInner({
                       runs={grouped[column]}
                       allProjectsView={allProjectsView}
                       executingRunIds={executingRunIds}
+                      sendingRunIds={sendingRunIds}
                       onOpenDetails={handleOpenReviewDetails}
                       onExecute={handleExecuteRun}
+                      onSendFeedback={handleSendFeedback}
                     />
                   ))}
                 </div>
@@ -673,6 +746,8 @@ function ReviewDashboardInner({
             state={reviewDetails}
             onClose={() => setReviewDetails(null)}
             onOpenWorker={() => setReviewDetails(null)}
+            isSending={sendingRunIds.has(reviewDetails.run.id)}
+            onSendFeedback={handleSendFeedback}
           />
         ) : null}
       </div>
@@ -703,15 +778,19 @@ function ReviewColumn({
   runs,
   allProjectsView,
   executingRunIds,
+  sendingRunIds,
   onOpenDetails,
   onExecute,
+  onSendFeedback,
 }: {
   column: ReviewBoardColumn;
   runs: DashboardReviewRun[];
   allProjectsView: boolean;
   executingRunIds: Set<string>;
+  sendingRunIds: Set<string>;
   onOpenDetails: (run: DashboardReviewRun) => void;
   onExecute: (run: DashboardReviewRun) => void;
+  onSendFeedback: (run: DashboardReviewRun) => void;
 }) {
   return (
     <div className="kanban-column review-kanban-column" data-review-column={column}>
@@ -733,8 +812,10 @@ function ReviewColumn({
                 run={run}
                 allProjectsView={allProjectsView}
                 isExecuting={executingRunIds.has(run.id)}
+                isSending={sendingRunIds.has(run.id)}
                 onOpenDetails={onOpenDetails}
                 onExecute={onExecute}
+                onSendFeedback={onSendFeedback}
               />
             ))}
           </div>
@@ -748,21 +829,20 @@ function ReviewCard({
   run,
   allProjectsView,
   isExecuting,
+  isSending,
   onOpenDetails,
   onExecute,
+  onSendFeedback,
 }: {
   run: DashboardReviewRun;
   allProjectsView: boolean;
   isExecuting: boolean;
+  isSending: boolean;
   onOpenDetails: (run: DashboardReviewRun) => void;
   onExecute: (run: DashboardReviewRun) => void;
+  onSendFeedback: (run: DashboardReviewRun) => void;
 }) {
   const workerHref = projectDashboardSessionPath(run.projectId, run.linkedSessionId);
-  const feedbackHref = projectSessionHashPath(
-    run.projectId,
-    run.linkedSessionId,
-    "#session-terminal-section",
-  );
   const title = run.workerTitle ?? run.linkedSessionId;
   const status = formatStatus(run.status);
   const totalFindingLabel = pluralize(run.findingCount, "finding");
@@ -904,12 +984,19 @@ function ReviewCard({
               Worker
             </Link>
             {feedbackAvailable ? (
-              <Link
-                href={feedbackHref}
+              <button
+                type="button"
                 className="session-card__control session-card__terminal-link"
+                disabled={isSending || run.openFindingCount === 0}
+                title={
+                  run.openFindingCount === 0
+                    ? "No open review findings to send."
+                    : "Send review findings to the worker."
+                }
+                onClick={() => onSendFeedback(run)}
               >
-                Feedback
-              </Link>
+                {isSending ? "Sending" : "Feedback"}
+              </button>
             ) : (
               <span
                 className="session-card__control session-card__terminal-link review-card__disabled-control"
@@ -929,10 +1016,14 @@ function ReviewDetailsDrawer({
   state,
   onClose,
   onOpenWorker,
+  isSending,
+  onSendFeedback,
 }: {
   state: ReviewDetailsState;
   onClose: () => void;
   onOpenWorker: () => void;
+  isSending: boolean;
+  onSendFeedback: (run: DashboardReviewRun) => void;
 }) {
   const { run, findings, loading, error } = state;
   const workerHref = projectDashboardSessionPath(run.projectId, run.linkedSessionId);
@@ -987,6 +1078,11 @@ function ReviewDetailsDrawer({
             </a>
           ) : null}
           {feedbackAvailable ? <Link href={feedbackHref}>Open terminal</Link> : null}
+          {feedbackAvailable && openFindings.length > 0 ? (
+            <button type="button" disabled={isSending} onClick={() => onSendFeedback(run)}>
+              {isSending ? "Sending feedback" : "Send feedback"}
+            </button>
+          ) : null}
         </div>
 
         {!feedbackAvailable ? (
