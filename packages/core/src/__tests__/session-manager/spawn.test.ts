@@ -2474,6 +2474,36 @@ describe("spawn", () => {
       expect(meta?.["displayName"]).toBeUndefined();
     });
 
+    it("persists spawn-time permissions/model/subagent into orchestrator metadata (issue #1475)", async () => {
+      // Mirror of the worker-side test. The orchestrator runtime force-applies
+      // permissions:"permissionless" at launch (in projectConfigForLaunch /
+      // agentLaunchConfig construction), but model and subagent must still
+      // round-trip through metadata so a restored orchestrator preserves them.
+      const configWithDefaults: OrchestratorConfig = {
+        ...config,
+        projects: {
+          ...config.projects,
+          "my-app": {
+            ...config.projects["my-app"],
+            agentConfig: {
+              permissions: "suggest",
+              model: "claude-orch-model",
+              subagent: "oracle",
+            },
+          },
+        },
+      };
+
+      const sm = createSessionManager({ config: configWithDefaults, registry: mockRegistry });
+      await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
+      expect(meta).not.toBeNull();
+      expect(meta!["spawnedPermissions"]).toBe("suggest");
+      expect(meta!["spawnedModel"]).toBe("claude-orch-model");
+      expect(meta!["spawnedSubagent"]).toBe("oracle");
+    });
+
     it("writes the orchestrator AGENTS.md block for OpenCode orchestrators", async () => {
       const opencodeAgent: Agent = {
         ...mockAgent,

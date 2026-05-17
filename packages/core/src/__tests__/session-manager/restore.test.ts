@@ -614,6 +614,67 @@ describe("restore", () => {
     });
   });
 
+  it("normalizes raw spawnedPermissions metadata before applying (issue #1475)", async () => {
+    // Metadata is always raw strings on disk — including legacy values like
+    // "skip" that normalize to "permissionless". `resolveSelectionForSession`
+    // must round-trip the raw string through `normalizeAgentPermissionMode`
+    // before passing it as `persistedPermissions` to `resolveAgentSelection`,
+    // otherwise non-canonical values silently drop to undefined and the
+    // session falls back to project defaults — exactly the bug we're fixing.
+    const wsPath = join(tmpDir, "ws-app-perms-normalize");
+    mkdirSync(wsPath, { recursive: true });
+
+    const configWithSuggestDefault: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: { permissions: "suggest" },
+        },
+      },
+    };
+
+    const captured: Array<unknown> = [];
+    const mockAgentWithRestore: Agent = {
+      ...mockAgent,
+      getRestoreCommand: vi.fn().mockImplementation(async (_session, projectArg) => {
+        captured.push(projectArg.agentConfig?.permissions);
+        return "agent --resume";
+      }),
+    };
+
+    const registryWithAgentRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgentWithRestore;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-NORMALIZE",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    // "skip" is a legacy alias that normalizeAgentPermissionMode maps to
+    // "permissionless"; without normalization at the boundary it'd be
+    // silently dropped.
+    updateMetadata(sessionsDir, "app-1", { spawnedPermissions: "skip" });
+
+    const sm = createSessionManager({
+      config: configWithSuggestDefault,
+      registry: registryWithAgentRestore,
+    });
+    await sm.restore("app-1");
+
+    expect(captured).toEqual(["permissionless"]);
+  });
+
   it("falls back to project defaults when legacy session has no spawned* metadata (issue #1475)", async () => {
     // Legacy sessions persisted before #1475 lack spawnedPermissions etc.
     // Per the issue's accepted scope, those continue to resolve against

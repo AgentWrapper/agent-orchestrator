@@ -71,20 +71,6 @@ describe("resolveAgentSelection persisted* inputs (issue #1475)", () => {
     expect(selection.subagent).toBe("project-default-subagent");
   });
 
-  it("normalizes persistedPermissions (string from metadata) before applying", () => {
-    // metadata is always raw strings on disk; the persisted permissions value
-    // must round-trip through normalizeAgentPermissionMode the same way
-    // project config does, otherwise non-canonical values silently drop.
-    const selection = resolveAgentSelection({
-      role: "worker",
-      project: projectWithDefaults,
-      defaults: baseDefaults,
-      persistedPermissions: "permissionless",
-    });
-
-    expect(selection.permissions).toBe("permissionless");
-  });
-
   it("orchestrator role honors persistedPermissions at resolution time (session-manager enforces permissionless separately)", () => {
     // The forced-permissionless rule for orchestrators is applied in
     // session-manager when building agentLaunchConfig / projectConfigForLaunch.
