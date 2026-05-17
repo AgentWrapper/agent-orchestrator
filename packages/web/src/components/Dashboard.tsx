@@ -592,11 +592,11 @@ function DashboardInner({
                 </div>
                 {!allProjectsView && projectSessions.length > 0 ? (
                   <div className="topbar-session-pills">
-                    {grouped.working.length + grouped.pending.length > 0 ? (
+                    {grouped.working.length > 0 ? (
                       <div className="topbar-status-pill topbar-status-pill--active">
                         <span className="topbar-status-pill__dot topbar-status-pill__dot--working" />
                         <span className="topbar-status-pill__label">
-                          {grouped.working.length + grouped.pending.length} working
+                          {grouped.working.length} working
                         </span>
                       </div>
                     ) : null}

@@ -373,70 +373,76 @@ export default function ProjectSessionPage() {
     };
   }, []);
 
-  if (loading) return <LoadingContent />;
+  if (loading) return <div className="dashboard-main--desktop"><LoadingContent /></div>;
 
   if (sessionMissing) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <ErrorDisplay
-          title="Session not found"
-          message="This session is no longer available. It may have been removed, renamed, or already cleaned up."
-          tone="not-found"
-          primaryAction={{
-            label: "Back to dashboard",
-            href: expectedProjectId ? `/projects/${expectedProjectId}` : "/",
-          }}
-          secondaryAction={{ label: "Retry", onClick: () => void fetchSession() }}
-          compact
-          chrome="card"
-        />
+      <div className="dashboard-main--desktop">
+        <div className="flex h-full items-center justify-center">
+          <ErrorDisplay
+            title="Session not found"
+            message="This session is no longer available. It may have been removed, renamed, or already cleaned up."
+            tone="not-found"
+            primaryAction={{
+              label: "Back to dashboard",
+              href: expectedProjectId ? `/projects/${expectedProjectId}` : "/",
+            }}
+            secondaryAction={{ label: "Retry", onClick: () => void fetchSession() }}
+            compact
+            chrome="card"
+          />
+        </div>
       </div>
     );
   }
 
   if (routeError) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <ErrorDisplay
-          title="Failed to load session"
-          message={getSessionLoadErrorMessage(routeError)}
-          tone="error"
-          primaryAction={{
-            label: "Try again",
-            onClick: () => {
-              setRouteError(null);
-              setSessionMissing(false);
-              setLoading(true);
-              void Promise.all([fetchProjects(), fetchSession()]);
-            },
-          }}
-          secondaryAction={{
-            label: "Back to dashboard",
-            href: session?.projectId ? `/projects/${session.projectId}` : "/",
-          }}
-          error={routeError}
-          compact
-          chrome="card"
-        />
+      <div className="dashboard-main--desktop">
+        <div className="flex h-full items-center justify-center">
+          <ErrorDisplay
+            title="Failed to load session"
+            message={getSessionLoadErrorMessage(routeError)}
+            tone="error"
+            primaryAction={{
+              label: "Try again",
+              onClick: () => {
+                setRouteError(null);
+                setSessionMissing(false);
+                setLoading(true);
+                void Promise.all([fetchProjects(), fetchSession()]);
+              },
+            }}
+            secondaryAction={{
+              label: "Back to dashboard",
+              href: session?.projectId ? `/projects/${session.projectId}` : "/",
+            }}
+            error={routeError}
+            compact
+            chrome="card"
+          />
+        </div>
       </div>
     );
   }
 
   if (!session) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <ErrorDisplay
-          title="Session unavailable"
-          message="The backend has not returned this session yet. This can happen right after spawning an orchestrator; retry once the terminal registers the session."
-          tone="error"
-          primaryAction={{ label: "Retry", onClick: () => void fetchSession() }}
-          secondaryAction={{
-            label: "Back to dashboard",
-            href: expectedProjectId ? `/projects/${expectedProjectId}` : "/",
-          }}
-          compact
-          chrome="card"
-        />
+      <div className="dashboard-main--desktop">
+        <div className="flex h-full items-center justify-center">
+          <ErrorDisplay
+            title="Session unavailable"
+            message="The backend has not returned this session yet. This can happen right after spawning an orchestrator; retry once the terminal registers the session."
+            tone="error"
+            primaryAction={{ label: "Retry", onClick: () => void fetchSession() }}
+            secondaryAction={{
+              label: "Back to dashboard",
+              href: expectedProjectId ? `/projects/${expectedProjectId}` : "/",
+            }}
+            compact
+            chrome="card"
+          />
+        </div>
       </div>
     );
   }
