@@ -2575,6 +2575,75 @@ describe("spawn", () => {
       expect(mockRuntime.create).toHaveBeenCalledTimes(1);
     });
 
+    it("ensureOrchestrator waits for an in-flight relaunch before returning", async () => {
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      let releaseWorkspace: () => void = () => {};
+      const blockingWorkspace = new Promise<void>((resolve) => {
+        releaseWorkspace = resolve;
+      });
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockImplementationOnce(async (cfg) => {
+        await blockingWorkspace;
+        return {
+          path: join(tmpDir, "ws-relaunch"),
+          branch: cfg.branch,
+          sessionId: cfg.sessionId,
+          projectId: cfg.projectId,
+        };
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const relaunchPromise = sm.relaunchOrchestrator({ projectId: "my-app" });
+      await Promise.resolve();
+      const ensurePromise = sm.ensureOrchestrator({ projectId: "my-app" });
+
+      releaseWorkspace();
+
+      const [relaunched, ensured] = await Promise.all([relaunchPromise, ensurePromise]);
+      expect(relaunched.id).toBe("app-orchestrator");
+      expect(ensured.id).toBe("app-orchestrator");
+      // Both should resolve to the *post-relaunch* session, not the killed one.
+      expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("old-rt"));
+    });
+
+    it("waits for an in-flight ensureOrchestrator before replacing", async () => {
+      let releaseWorkspace: () => void = () => {};
+      const blockingWorkspace = new Promise<void>((resolve) => {
+        releaseWorkspace = resolve;
+      });
+      const ensureWorkspacePath = join(tmpDir, "ws-ensure");
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockImplementationOnce(async (cfg) => {
+        await blockingWorkspace;
+        return {
+          path: ensureWorkspacePath,
+          branch: cfg.branch,
+          sessionId: cfg.sessionId,
+          projectId: cfg.projectId,
+        };
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const ensurePromise = sm.ensureOrchestrator({ projectId: "my-app" });
+      // Yield so ensure can register itself in the in-flight map.
+      await Promise.resolve();
+      const relaunchPromise = sm.relaunchOrchestrator({ projectId: "my-app" });
+
+      releaseWorkspace();
+
+      const [ensured, relaunched] = await Promise.all([ensurePromise, relaunchPromise]);
+
+      expect(ensured.id).toBe("app-orchestrator");
+      expect(relaunched.id).toBe("app-orchestrator");
+      // Relaunch's kill must run, destroying the runtime ensure just spawned.
+      expect(mockRuntime.destroy).toHaveBeenCalled();
+    });
+
     it("rewrites the orchestrator-prompt file with the new system prompt", async () => {
       writeMetadata(sessionsDir, "app-orchestrator", {
         role: "orchestrator",

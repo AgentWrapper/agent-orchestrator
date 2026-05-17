@@ -128,7 +128,7 @@ export function OrchestratorSelector({
     }
   };
 
-  const handleSpawnNew = () => postOrchestrator({ projectId });
+  const handleSpawnNew = () => void postOrchestrator({ projectId });
 
   const handleRelaunchClean = () => {
     if (orchestrators.length > 0) {
@@ -283,7 +283,7 @@ export function OrchestratorSelector({
                 "disabled:cursor-wait disabled:opacity-70",
               )}
             >
-              Launch Orchestrator (clean context)
+              {isSpawning ? "Launching..." : "Launch Orchestrator (clean context)"}
             </button>
             {spawnError && (
               <p className="mt-2 text-sm text-[var(--color-status-error)]">{spawnError}</p>

@@ -268,6 +268,20 @@ describe("OrchestratorSelector", () => {
       confirmSpy.mockRestore();
     });
 
+    it("shows loading label while the relaunch POST is in flight", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      global.fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
+
+      render(<OrchestratorSelector {...defaultProps} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /launch orchestrator \(clean context\)/i }),
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /launching/i })).toBeInTheDocument();
+      });
+    });
+
     it("surfaces server errors", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(true);
       global.fetch = vi.fn().mockResolvedValue({

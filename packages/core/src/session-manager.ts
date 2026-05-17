@@ -1816,6 +1816,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const sessionId = getOrchestratorSessionId(project);
+
+    // If a relaunch is mid-flight for this sessionId, wait it out — otherwise
+    // we could return a session that relaunch is about to kill, or race the
+    // relaunch's spawnOrchestrator on the same reservation.
+    const pendingRelaunch = relaunchOrchestratorPromises.get(sessionId);
+    if (pendingRelaunch) {
+      await pendingRelaunch.catch(() => {});
+    }
+
     const existing = await get(sessionId);
     if (existing) {
       const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
@@ -1886,6 +1895,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
     const sessionId = getOrchestratorSessionId(project);
     const sessionsDir = getProjectSessionsDir(orchestratorConfig.projectId);
+
+    // If ensureOrchestrator is mid-flight for this sessionId, wait it out.
+    // Otherwise get() would return null (metadata not yet written) and we'd
+    // skip the kill, then race the in-flight spawnOrchestrator on the same
+    // reservation — surfacing "session already exists" instead of replacing.
+    const pendingEnsure = ensureOrchestratorPromises.get(sessionId);
+    if (pendingEnsure) {
+      await pendingEnsure.catch(() => {});
+    }
 
     const existing = await get(sessionId);
     if (existing) {
