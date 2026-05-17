@@ -31,7 +31,7 @@ function sanitizeString(value: unknown): string | undefined {
 }
 
 function revalidateProjectPaths(projectId: string): void {
-  for (const route of ["/", "/orchestrators", "/prs", `/projects/${projectId}`]) {
+  for (const route of ["/", "/prs", `/projects/${projectId}`]) {
     try {
       revalidatePath(route);
     } catch {

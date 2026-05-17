@@ -450,8 +450,8 @@ import {
   validateUrl,                  // Webhook URL validation
   readLastJsonlEntry,           // Efficient JSONL log tail (native agent JSONL)
   readLastActivityEntry,        // Read last AO activity JSONL entry
-  checkActivityLogState,        // Extract waiting_input/blocked from AO JSONL (with staleness cap)
-  getActivityFallbackState,     // Last-resort fallback: entry state + age-based decay
+  checkActivityLogState,        // Extract sticky waiting_input/blocked from AO JSONL
+  getActivityFallbackState,     // Last-resort fallback: actionable states + liveness age decay
   recordTerminalActivity,       // Shared recordActivity impl (classify + dedup + append)
   classifyTerminalActivity,     // Classify terminal output via detectActivity
   appendActivityEntry,          // Low-level JSONL append
@@ -460,7 +460,7 @@ import {
   normalizeAgentPermissionMode, // Normalize permission mode strings
   DEFAULT_READY_THRESHOLD_MS,   // 5 min — ready→idle threshold
   DEFAULT_ACTIVE_WINDOW_MS,     // 30s — active→ready window
-  ACTIVITY_INPUT_STALENESS_MS,  // 5 min — waiting_input/blocked expiry
+  ACTIVITY_INPUT_STALENESS_MS,  // Deprecated compatibility export; actionable states no longer expire by wallclock
   PREFERRED_GH_PATH,            // /usr/local/bin/gh
   CI_STATUS, ACTIVITY_STATE, SESSION_STATUS,  // Constants
   type Session, type ProjectConfig, type RuntimeHandle,

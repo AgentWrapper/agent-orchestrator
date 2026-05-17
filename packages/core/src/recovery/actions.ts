@@ -132,6 +132,7 @@ export async function recoverSession(
 
     const session = sessionFromMetadata(sessionId, updatedMetadata, {
       projectId: assessment.projectId,
+      workspacePathFallback: assessment.workspacePath ?? undefined,
       status: preservedStatus,
       runtimeHandle: assessment.runtimeHandle,
       lastActivityAt: new Date(),

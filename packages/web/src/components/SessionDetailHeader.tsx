@@ -36,6 +36,7 @@ interface SessionDetailHeaderProps {
   onToggleSidebar: () => void;
   onRestore: () => void;
   onKill: () => void;
+  onRelaunchClean?: () => void;
 }
 
 function normalizeActivityLabelForClass(activityLabel: string): string {
@@ -80,6 +81,7 @@ export function SessionDetailHeader({
   onToggleSidebar,
   onRestore,
   onKill,
+  onRelaunchClean,
 }: SessionDetailHeaderProps) {
   const pr = session.pr;
   const allGreen = pr ? isPRMergeReady(pr) : false;
@@ -299,6 +301,30 @@ export function SessionDetailHeader({
               <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
             <span className="topbar-btn-label">Kill</span>
+          </button>
+        ) : null}
+
+        {isOrchestrator && onRelaunchClean ? (
+          <button
+            type="button"
+            className="dashboard-app-btn dashboard-app-btn--amber"
+            onClick={onRelaunchClean}
+            aria-label="Launch Orchestrator (clean context)"
+          >
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M20 11a8 8 0 0 0-14.9-3.98" />
+              <path d="M4 5v4h4" />
+              <path d="M4 13a8 8 0 0 0 14.9 3.98" />
+              <path d="M20 19v-4h-4" />
+            </svg>
+            <span className="topbar-btn-label">Relaunch (clean)</span>
           </button>
         ) : null}
 
