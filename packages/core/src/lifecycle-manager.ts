@@ -733,7 +733,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                     p.owner === detectedPR.owner &&
                     p.repo === detectedPR.repo &&
                     p.number !== detectedPR.number &&
-                    session.lifecycle.pr.state === "closed"
+                    prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`)?.state === "closed"
                   )
               )
               .concat(detectedPR);
@@ -826,6 +826,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
           session.metadata["prEnrichment"] = blob;
         }
+        // Keep in-memory isDraft in sync with enrichment data
+        if (cached.isDraft !== undefined && session.pr) {
+          session.pr.isDraft = cached.isDraft;
+        }
       }
 
       for (let i = 1; i < session.prs.length; i++) {
@@ -857,6 +861,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (session.metadata[metaKey] !== secondaryBlob) {
           updateMetadata(sessionsDir, session.id, { [metaKey]: secondaryBlob });
           session.metadata[metaKey] = secondaryBlob;
+        }
+        // Keep in-memory isDraft in sync with enrichment data
+        if (secondaryCached.isDraft !== undefined) {
+          secondaryPR.isDraft = secondaryCached.isDraft;
         }
       }
     }

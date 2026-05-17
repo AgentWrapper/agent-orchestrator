@@ -3,6 +3,7 @@
 import { memo, useState, useEffect, useRef } from "react";
 import {
   type DashboardSession,
+  type DashboardPR,
   getAttentionLevel,
   isPRRateLimited,
   isPRUnenriched,
@@ -126,6 +127,18 @@ function getDoneStatusInfo(session: DashboardSession): {
       </svg>
     ),
   };
+}
+
+function getPRDotClass(p: DashboardPR): string {
+  if (!p.enriched) return "bg-[var(--color-text-tertiary)] opacity-30";
+  if (p.state === "merged") return "bg-[var(--color-status-merge)]";
+  if (p.state === "closed") return "bg-[var(--color-text-muted)]";
+  if (p.ciStatus === "failing" || p.reviewDecision === "changes_requested")
+    return "bg-[var(--color-status-error)]";
+  if (p.isDraft) return "bg-[var(--color-text-muted)]";
+  if (p.ciStatus === "passing") return "bg-[var(--color-status-merge)]";
+  if (p.ciStatus === "pending") return "bg-[var(--color-status-pending)]";
+  return "bg-[var(--color-text-tertiary)] opacity-30";
 }
 
 function SessionCardView({
@@ -359,8 +372,9 @@ function SessionCardView({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="done-meta-chip font-[var(--font-mono)] font-bold text-[var(--color-text-primary)] no-underline underline-offset-2 hover:underline"
+                className="done-meta-chip inline-flex items-center gap-1 font-[var(--font-mono)] font-bold text-[var(--color-text-primary)] no-underline underline-offset-2 hover:underline"
               >
+                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", getPRDotClass(p))} />
                 #{p.number}
               </a>
             ))
@@ -615,8 +629,9 @@ function SessionCardView({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="card__pr"
+                className="card__pr inline-flex items-center gap-1"
               >
+                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", getPRDotClass(p))} />
                 #{p.number}
               </a>
             ))

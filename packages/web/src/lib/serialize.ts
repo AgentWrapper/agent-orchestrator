@@ -338,6 +338,7 @@ export function readPREnrichmentFromMetadata(
       title: e.title ?? "",
       additions: e.additions ?? 0,
       deletions: e.deletions ?? 0,
+      isDraft: e.isDraft as boolean | undefined,
       ciStatus: e.ciStatus ?? "none",
       ciChecks: (e.ciChecks ?? []).map(
         (c: { name: string; status: string; url?: string }) => ({
@@ -379,6 +380,7 @@ export function enrichSessionPR(
   if (data.title) dashboard.pr.title = data.title;
   dashboard.pr.additions = data.additions;
   dashboard.pr.deletions = data.deletions;
+  if (data.isDraft !== undefined) dashboard.pr.isDraft = data.isDraft;
   dashboard.pr.ciStatus = data.ciStatus;
   dashboard.pr.ciChecks = data.ciChecks;
   dashboard.pr.reviewDecision = data.reviewDecision;
@@ -386,6 +388,13 @@ export function enrichSessionPR(
   dashboard.pr.unresolvedThreads = data.unresolvedThreads;
   dashboard.pr.unresolvedComments = data.unresolvedComments;
   dashboard.pr.enriched = true;
+
+  // prs[0] represents the same PR as dashboard.pr — sync enrichment so the
+  // per-PR status dot on the badge reflects live data.
+  const primaryInPrs = dashboard.prs?.[0];
+  if (primaryInPrs && primaryInPrs.url === dashboard.pr.url) {
+    Object.assign(primaryInPrs, dashboard.pr);
+  }
 
   // Enrich secondary PRs from their per-PR metadata blobs (prEnrichment_1, prEnrichment_2, …)
   if (dashboard.prs && dashboard.prs.length > 1) {
@@ -404,6 +413,7 @@ export function enrichSessionPR(
       if (secondaryData.title) secondaryPR.title = secondaryData.title;
       secondaryPR.additions = secondaryData.additions;
       secondaryPR.deletions = secondaryData.deletions;
+      if (secondaryData.isDraft !== undefined) secondaryPR.isDraft = secondaryData.isDraft;
       secondaryPR.ciStatus = secondaryData.ciStatus;
       secondaryPR.ciChecks = secondaryData.ciChecks;
       secondaryPR.reviewDecision = secondaryData.reviewDecision;
