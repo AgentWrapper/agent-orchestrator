@@ -858,7 +858,7 @@ function ProjectSidebarInner({
                             aria-label={`Open ${title}`}
                           >
                             <SessionDot level={level} />
-                            <div className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0 overflow-hidden">
                               <span
                                 className={cn(
                                   "project-sidebar__sess-label",
