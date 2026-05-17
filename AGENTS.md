@@ -49,7 +49,22 @@ Agents working on this repo should use these checked-in skills:
 
 **Always pull latest main before triaging.** Stale code = bad triage. No exceptions.
 
-## Key Files
+### PR Review (`skills/pr-review/`)
+
+**When to use:** Any time a PR needs review — requested by a team member, flagged in chat, or before merging agent-spawned PRs.
+
+**What it covers:**
+- Scope & hygiene check (mandatory first step): submodules, unrelated files, stray docs/plans, config drift
+- Correctness: types (optional fields!), cross-platform (`isWindows()`), lifecycle state, config nullability
+- Code quality: surgical changes, no speculative features, no stray debug statements
+- Testing: bug fixes need reproducing tests, features need proportional coverage
+- PR metadata: conventional commits, linkified refs, issue linking
+
+**How to load:** Read `skills/pr-review/SKILL.md` and follow the step-by-step review workflow.
+
+**Scope violations block merge.** If a PR contains unrelated changes, explicitly tell the contributor they must be removed.
+
+## Key Files:
 
 - `packages/core/src/types.ts` — All plugin interfaces (Agent, Runtime, Workspace, etc.)
 - `packages/core/src/session-manager.ts` — Session CRUD + stale runtime reconciliation (detects dead runtimes, persists `runtime_lost`)
