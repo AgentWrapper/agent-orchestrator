@@ -15,10 +15,8 @@ import { join, dirname } from "node:path";
 import type { ActivityState, ActivityLogEntry, ActivityDetection } from "./types.js";
 
 /**
- * Maximum age (ms) for `waiting_input`/`blocked` entries before they're
- * considered stale. If no new terminal output overwrites the entry within
- * this window, the state falls through to downstream fallbacks instead of
- * keeping the session stuck in `needs_input` on the dashboard forever.
+ * @deprecated Actionable states no longer decay on wallclock. Retained until
+ * the activity-reducer cleanup removes the old activity-log module.
  */
 export const ACTIVITY_INPUT_STALENESS_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -129,7 +127,7 @@ export async function readLastActivityEntry(
 /**
  * Check the AO activity JSONL for actionable states only.
  *
- * Only returns `waiting_input`/`blocked` (with a staleness cap).
+ * Only returns `waiting_input`/`blocked`.
  * Non-critical states (`active`, `ready`, `idle`) always return `null` so
  * callers fall through to their native signals (git commits, chat history,
  * API queries, native JSONL). This prevents the lifecycle manager's
@@ -144,18 +142,12 @@ export function checkActivityLogState(
   const { entry } = activityResult;
 
   if (entry.state === "waiting_input" || entry.state === "blocked") {
-    // Use the entry's own timestamp for staleness — not file mtime, which
-    // gets refreshed every poll cycle by recordActivity and would prevent
-    // stale entries from ever being detected.
     const entryTs = new Date(entry.ts);
     if (Number.isNaN(entryTs.getTime())) return null;
-    const ageMs = Date.now() - entryTs.getTime();
-    if (ageMs <= ACTIVITY_INPUT_STALENESS_MS) {
-      return { state: entry.state, timestamp: entryTs };
-    }
+    return { state: entry.state, timestamp: entryTs };
   }
 
-  // Non-critical states and stale entries — fall through to native signals
+  // Non-critical states fall through to native signals
   return null;
 }
 
@@ -178,16 +170,8 @@ export function getActivityFallbackState(
   const entryTs = new Date(entry.ts);
   if (Number.isNaN(entryTs.getTime())) return null;
 
-  // Actionable states use the same staleness cap as checkActivityLogState.
-  // If the entry is stale, fall through to age-based decay instead of
-  // re-surfacing a waiting_input/blocked that checkActivityLogState already filtered.
   if (entry.state === "waiting_input" || entry.state === "blocked") {
-    const ageMs = Date.now() - entryTs.getTime();
-    if (ageMs <= ACTIVITY_INPUT_STALENESS_MS) {
-      return { state: entry.state, timestamp: entryTs };
-    }
-    // Stale actionable entry — treat as idle
-    return { state: "idle", timestamp: entryTs };
+    return { state: entry.state, timestamp: entryTs };
   }
 
   // Age-based decay: active→ready→idle, but never promote past the
