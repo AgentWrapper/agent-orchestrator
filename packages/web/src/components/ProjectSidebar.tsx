@@ -273,7 +273,7 @@ function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
 function ProjectSidebarInner({
   projects,
   sessions,
-  orchestrators: _orchestrators,
+  orchestrators,
   activeProjectId,
   activeSessionId,
   loading = false,
@@ -414,6 +414,10 @@ function ProjectSidebarInner({
     [visibleProjects],
   );
 
+  const orchestratorByProject = useMemo(
+    () => new Map((orchestrators ?? []).map((o) => [o.projectId, o])),
+    [orchestrators],
+  );
 
   // Stable ref so sessionsByProject can read latest sessions without depending
   // on the array reference (which changes every SSE tick even when content is unchanged).
@@ -733,6 +737,14 @@ function ProjectSidebarInner({
           // sessionsByProject already applies the showDone filter consistently.
           const visibleSessions = workerSessions;
           const hasActiveSessions = visibleSessions.length > 0;
+          const orchestratorLink = orchestratorByProject.get(project.id) ?? null;
+          // Look up the full session object so navigate() can cache it in
+          // sessionStorage — prevents the "Session unavailable" flash on
+          // first load. Orchestrators are filtered out of sessionsByProject
+          // but still present in the raw sessions prop.
+          const orchestratorSession = orchestratorLink
+            ? (sessions?.find((s) => s.id === orchestratorLink.id) ?? null)
+            : null;
 
           return (
             <div key={project.id} className="project-sidebar__project">
@@ -834,6 +846,38 @@ function ProjectSidebarInner({
                   </Link>
                 ) : null}
 
+                {!isDegraded && orchestratorLink && (
+                  <a
+                    href={projectSessionPath(project.id, orchestratorLink.id)}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      navigate(
+                        projectSessionPath(project.id, orchestratorLink.id),
+                        orchestratorSession ?? undefined,
+                      );
+                    }}
+                    className="project-sidebar__proj-action"
+                    aria-label={`Open ${project.name} orchestrator`}
+                    title="Orchestrator"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                      <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                      <circle cx="6" cy="17" r="2" />
+                      <circle cx="12" cy="17" r="2" />
+                      <circle cx="18" cy="17" r="2" />
+                    </svg>
+                  </a>
+                )}
 
                 <div
                   className="project-sidebar__proj-menu"
@@ -872,6 +916,22 @@ function ProjectSidebarInner({
                       role="menu"
                       aria-label={`${project.name} actions`}
                     >
+                      {orchestratorLink ? (
+                        <button
+                          type="button"
+                          className="project-sidebar__proj-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            setProjectMenuOpenId(null);
+                            navigate(
+                              projectSessionPath(project.id, orchestratorLink.id),
+                              orchestratorSession ?? undefined,
+                            );
+                          }}
+                        >
+                          Open orchestrator
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="project-sidebar__proj-menu-item"
