@@ -6,6 +6,10 @@ import {
   PROCESS_PROBE_INDETERMINATE,
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  recordTerminalActivity,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -947,6 +951,13 @@ function createClaudeCodeAgent(): Agent {
       return classifyTerminalOutput(terminalOutput);
     },
 
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
+    },
+
     async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       const pid = await findClaudeProcess(handle);
       if (pid === PROCESS_PROBE_INDETERMINATE) return PROCESS_PROBE_INDETERMINATE;
@@ -976,51 +987,67 @@ function createClaudeCodeAgent(): Agent {
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       const sessionFile = await findLatestSessionFile(projectDir);
-      if (!sessionFile) {
-        // No session file yet — process is running but no conversation started.
-        // Treat as idle (waiting for first task).
-        return { state: "idle", timestamp: session.createdAt };
+      let staleNativeState: ActivityDetection | null = null;
+      if (sessionFile) {
+        const entry = await readLastJsonlEntry(sessionFile);
+        if (entry) {
+          // If the JSONL entry predates this session, it's from a previous session
+          // in the same worktree. Fall through to the AO safety net first: the
+          // terminal may have already surfaced waiting_input/blocked before
+          // Claude writes this session's first native JSONL entry.
+          if (session.createdAt && entry.modifiedAt < session.createdAt) {
+            staleNativeState = { state: "idle", timestamp: session.createdAt };
+          } else {
+            const ageMs = Date.now() - entry.modifiedAt.getTime();
+            const timestamp = entry.modifiedAt;
+
+            const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+            switch (entry.lastType) {
+              case "user":
+              case "tool_use":
+              case "progress":
+                if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+                return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+              case "assistant":
+              case "system":
+              case "summary":
+              case "result":
+                return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+              case "permission_request":
+                return { state: "waiting_input", timestamp };
+
+              case "error":
+                return { state: "blocked", timestamp };
+
+              default:
+                if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+                return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+            }
+          }
+        }
+
+        // Session file exists but no parseable entry — fall through to AO JSONL
+        // checks below instead of returning early, so terminal-derived
+        // waiting_input/blocked can still be detected.
       }
 
-      const entry = await readLastJsonlEntry(sessionFile);
-      if (!entry) {
-        // Empty file or read error — cannot determine activity
-        return null;
-      }
+      // Fallback: check AO activity JSONL (terminal-derived) for
+      // waiting_input/blocked when Claude's native JSONL is unavailable.
+      const activityResult = await readLastActivityEntry(session.workspacePath);
+      const activityState = checkActivityLogState(activityResult);
+      if (activityState) return activityState;
 
-      // If the JSONL entry predates this session, it's from a previous session
-      // in the same worktree. Treat as no data (agent hasn't written yet).
-      if (session.createdAt && entry.modifiedAt < session.createdAt) {
-        return { state: "idle", timestamp: session.createdAt };
-      }
-
-      const ageMs = Date.now() - entry.modifiedAt.getTime();
-      const timestamp = entry.modifiedAt;
-
+      // Last fallback: use the AO entry with age-based decay when native
+      // session lookup is missing or unparseable (e.g. Claude project slug drift).
       const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
-      switch (entry.lastType) {
-        case "user":
-        case "tool_use":
-        case "progress":
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
 
-        case "assistant":
-        case "system":
-        case "summary":
-        case "result":
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+      if (staleNativeState) return staleNativeState;
 
-        case "permission_request":
-          return { state: "waiting_input", timestamp };
-
-        case "error":
-          return { state: "blocked", timestamp };
-
-        default:
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-      }
+      return null;
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {

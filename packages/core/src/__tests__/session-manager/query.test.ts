@@ -8,6 +8,7 @@ import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
   readMetadataRaw,
+  updateMetadata,
 } from "../../metadata.js";
 import { createInitialCanonicalLifecycle } from "../../lifecycle-state.js";
 import type {
@@ -61,6 +62,47 @@ describe("list", () => {
 
     expect(sessions).toHaveLength(2);
     expect(sessions.map((s) => s.id).sort()).toEqual(["app-1", "app-2"]);
+  });
+
+  it("skips dead-runtime agent metadata discovery when native restore metadata is already persisted", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: config.projects["my-app"]!.path,
+      branch: "feat/a",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", { codexThreadId: "thread-1" });
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const agentWithSessionInfo: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: null,
+        agentSessionId: "rollout-1",
+        metadata: { codexThreadId: "thread-1" },
+      }),
+    };
+    const registryWithDeadRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return agentWithSessionInfo;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithDeadRuntime });
+    await sm.list("my-app");
+    await sm.list("my-app");
+
+    expect(agentWithSessionInfo.getSessionInfo).not.toHaveBeenCalled();
+    expect(readMetadataRaw(sessionsDir, "app-1")!["codexThreadId"]).toBe("thread-1");
   });
 
   it("does not backfill role onto foreign bare-id orchestrator records (issue #1048)", async () => {
@@ -220,7 +262,9 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const sessions = await sm.list();
 
-    expect(sessions[0].status).toBe("killed");
+    // sm.list() persists "detecting" (not "terminated") so the lifecycle
+    // manager's probe pipeline makes the final terminal decision (#1735).
+    expect(sessions[0].status).toBe("detecting");
     expect(sessions[0].activity).toBe("exited");
   });
 
@@ -336,7 +380,8 @@ describe("list", () => {
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0].runtimeHandle?.id).toBe(expectedTmuxName);
-    expect(sessions[0].status).toBe("killed");
+    // sm.list() persists "detecting" so the lifecycle manager decides (#1735).
+    expect(sessions[0].status).toBe("detecting");
     expect(sessions[0].activity).toBe("exited");
     expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
   });

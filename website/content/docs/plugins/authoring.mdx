@@ -468,7 +468,7 @@ All utilities are exported from `@aoagents/ao-core`. The source lives in `packag
 |--------|-------|
 | `DEFAULT_READY_THRESHOLD_MS` | `300_000` (5 min) — ready → idle threshold |
 | `DEFAULT_ACTIVE_WINDOW_MS` | `30_000` (30 s) — active → ready window |
-| `ACTIVITY_INPUT_STALENESS_MS` | `300_000` (5 min) — waiting_input/blocked expiry |
+| `ACTIVITY_INPUT_STALENESS_MS` | Deprecated compatibility export (`300_000`); waiting_input/blocked no longer expire by wallclock |
 | `PREFERRED_GH_PATH` | `/usr/local/bin/gh` |
 | `CI_STATUS` | `{ PENDING, PASSING, FAILING, NONE }` |
 | `ACTIVITY_STATE` | `{ ACTIVE, READY, IDLE, WAITING_INPUT, BLOCKED, EXITED }` |
