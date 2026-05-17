@@ -273,7 +273,7 @@ function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
 function ProjectSidebarInner({
   projects,
   sessions,
-  orchestrators,
+  orchestrators: _orchestrators,
   activeProjectId,
   activeSessionId,
   loading = false,
@@ -414,13 +414,6 @@ function ProjectSidebarInner({
     [visibleProjects],
   );
 
-  // The API (selectPreferredOrchestratorId) sends at most one entry per
-  // project, so collapsing into a Map keyed by projectId is lossless. If a
-  // future API change starts emitting multiples, the last one wins here.
-  const orchestratorByProject = useMemo(
-    () => new Map((orchestrators ?? []).map((o) => [o.projectId, o])),
-    [orchestrators],
-  );
 
   // Stable ref so sessionsByProject can read latest sessions without depending
   // on the array reference (which changes every SSE tick even when content is unchanged).
@@ -434,7 +427,7 @@ function ProjectSidebarInner({
       (sessions ?? [])
         .map(
           (s) =>
-            `${s.id}:${s.status}:${s.activity ?? ""}:${s.projectId}:${s.displayName ?? ""}:${s.displayNameUserSet ? "1" : "0"}:${s.branch ?? ""}`,
+            `${s.id}:${s.status}:${s.activity ?? ""}:${s.projectId}:${s.displayName ?? ""}:${s.displayNameUserSet ? "1" : "0"}:${s.branch ?? ""}:${s.issueTitle ?? ""}:${s.pr?.title ?? ""}:${s.summary ?? ""}`,
         )
         .join("|"),
     [sessions],
@@ -465,16 +458,6 @@ function ProjectSidebarInner({
     return map;
   }, [sessionsKey, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
 
-  const totalSessionsByProject = useMemo(() => {
-    const map = new Map<string, number>();
-    const validProjectIds = new Set(visibleProjects.map((p) => p.id));
-    for (const s of sessionsRef.current ?? []) {
-      if (!validProjectIds.has(s.projectId)) continue;
-      if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
-      map.set(s.projectId, (map.get(s.projectId) ?? 0) + 1);
-    }
-    return map;
-  }, [sessionsKey, prefixByProject, allPrefixes, visibleProjects]);
 
   // Clear an optimistic rename once the prop session.displayName catches up.
   // Without this, we'd keep masking the server value forever after a save.
@@ -751,8 +734,6 @@ function ProjectSidebarInner({
           const visibleSessions = workerSessions;
           const hasActiveSessions = visibleSessions.length > 0;
 
-          const orchestratorLink = orchestratorByProject.get(project.id) ?? null;
-
           return (
             <div key={project.id} className="project-sidebar__project">
               {/* Project row: toggle + action buttons */}
@@ -822,7 +803,7 @@ function ProjectSidebarInner({
                         hasActiveSessions && "project-sidebar__proj-badge--active",
                       )}
                     >
-                      {totalSessionsByProject.get(project.id) ?? 0}
+                      {sessionsByProject.get(project.id)?.length ?? 0}
                     </span>
                   </button>
                 )}
@@ -852,34 +833,6 @@ function ProjectSidebarInner({
                   </Link>
                 ) : null}
 
-                {/* Orchestrator button */}
-                {!isDegraded && orchestratorLink && (
-                  <Link
-                    href={projectSessionPath(project.id, orchestratorLink.id)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onMobileClose?.();
-                    }}
-                    className="project-sidebar__proj-action"
-                    aria-label={`Open ${project.name} orchestrator`}
-                    title="Orchestrator"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                      <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                      <circle cx="6" cy="17" r="2" />
-                      <circle cx="12" cy="17" r="2" />
-                      <circle cx="18" cy="17" r="2" />
-                    </svg>
-                  </Link>
-                )}
 
                 <div
                   className="project-sidebar__proj-menu"
@@ -918,19 +871,6 @@ function ProjectSidebarInner({
                       role="menu"
                       aria-label={`${project.name} actions`}
                     >
-                      {orchestratorLink ? (
-                        <button
-                          type="button"
-                          className="project-sidebar__proj-menu-item"
-                          role="menuitem"
-                          onClick={() => {
-                            setProjectMenuOpenId(null);
-                            navigate(projectSessionPath(project.id, orchestratorLink.id));
-                          }}
-                        >
-                          Open orchestrator
-                        </button>
-                      ) : null}
                       <button
                         type="button"
                         className="project-sidebar__proj-menu-item"

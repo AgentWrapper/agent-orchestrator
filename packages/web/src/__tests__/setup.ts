@@ -16,7 +16,7 @@ const localStorageMock = (() => {
     key: (i: number) => Object.keys(store)[i] ?? null,
   };
 })();
-Object.defineProperty(window, "localStorage", { value: localStorageMock, writable: true });
+Object.defineProperty(window, "localStorage", { value: localStorageMock, writable: true, configurable: true });
 
 expect.extend(matchers);
 afterEach(() => {

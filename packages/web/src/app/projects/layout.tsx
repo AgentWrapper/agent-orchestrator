@@ -8,7 +8,11 @@ export default async function ProjectLayout({ children }: { children: ReactNode 
   const pageData = await getDashboardPageData("all");
 
   return (
-    <ProjectLayoutClient initialSessions={pageData.sessions} initialProjects={pageData.projects}>
+    <ProjectLayoutClient
+      initialSessions={pageData.sessions}
+      initialProjects={pageData.projects}
+      initialOrchestrators={pageData.orchestrators}
+    >
       {children}
     </ProjectLayoutClient>
   );

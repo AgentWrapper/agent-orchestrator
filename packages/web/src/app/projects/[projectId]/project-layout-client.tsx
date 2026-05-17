@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, type ReactNode } from "react";
 import { useParams, usePathname } from "next/navigation";
-import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
-import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { ProjectSidebar, type ProjectSidebarOrchestrator } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import type { DashboardSession } from "@/lib/types";
@@ -21,12 +20,14 @@ interface ProjectLayoutClientProps {
   children: ReactNode;
   initialSessions: DashboardSession[];
   initialProjects: ProjectInfo[];
+  initialOrchestrators: ProjectSidebarOrchestrator[];
 }
 
 export function ProjectLayoutClient({
   children,
   initialSessions,
   initialProjects,
+  initialOrchestrators,
 }: ProjectLayoutClientProps) {
   const params = useParams();
   const pathname = usePathname();
@@ -37,6 +38,11 @@ export function ProjectLayoutClient({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+  // Close mobile overlay whenever the route changes within the layout.
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [pathname]);
+
   const mux = useMuxOptional();
   const { sessions, liveSessionsResolved } = useSessionEvents({
     initialSessions,
@@ -44,25 +50,6 @@ export function ProjectLayoutClient({
     muxLastError: mux?.lastError,
     attentionZones: "simple",
   });
-
-  const allSessionPrefixes = useMemo(
-    () => initialProjects.map((p) => p.sessionPrefix ?? p.id),
-    [initialProjects],
-  );
-
-  const sidebarOrchestrators = useMemo(
-    () =>
-      (sessions ?? [])
-        .filter((s) =>
-          isOrchestratorSession(
-            s,
-            initialProjects.find((p) => p.id === s.projectId)?.sessionPrefix ?? s.projectId,
-            allSessionPrefixes,
-          ),
-        )
-        .map((s) => ({ id: s.id, projectId: s.projectId })),
-    [sessions, initialProjects, allSessionPrefixes],
-  );
 
   const handleToggleSidebar = useCallback(() => {
     if (isMobile) {
@@ -84,7 +71,7 @@ export function ProjectLayoutClient({
             <ProjectSidebar
               projects={initialProjects}
               sessions={sessions}
-              orchestrators={sidebarOrchestrators}
+              orchestrators={initialOrchestrators}
               activeProjectId={projectId}
               activeSessionId={activeSessionId}
               loading={!liveSessionsResolved}
