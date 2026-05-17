@@ -252,10 +252,10 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     // Linear API has eventual consistency — poll until the issue appears in list results
     const found = await pollUntil(
       async () => {
-        const issues = await tracker.listIssues!({ state: "open", limit: 50 }, project);
+        const issues = await tracker.listIssues!({ state: "open", limit: 100 }, project);
         return issues.find((i: { id: string }) => i.id === issueIdentifier);
       },
-      { timeoutMs: 5_000, intervalMs: 500 },
+      { timeoutMs: 15_000, intervalMs: 1_000 },
     );
 
     expect(found).toBeDefined();
