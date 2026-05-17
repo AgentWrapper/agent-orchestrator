@@ -901,6 +901,37 @@ describe("spawn", () => {
     );
   });
 
+  it("persists spawn-time permissions/model/subagent into session metadata (issue #1475)", async () => {
+    // Each session must remember the values it was actually launched with,
+    // independent of subsequent project-config edits. The restore path
+    // reads these back via persistedPermissions / persistedModel /
+    // persistedSubagent so the conversation comes back with its original
+    // effective config.
+    const configWithDefaults: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            permissions: "permissionless",
+            model: "claude-spawn-model",
+            subagent: "oracle",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithDefaults, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["spawnedPermissions"]).toBe("permissionless");
+    expect(meta!["spawnedModel"]).toBe("claude-spawn-model");
+    expect(meta!["spawnedSubagent"]).toBe("oracle");
+  });
+
   it("validates issue exists when issueId provided", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",

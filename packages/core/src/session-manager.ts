@@ -922,6 +922,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: string,
     metadata: Record<string, string>,
   ) {
+    // resolveAgentSelectionForSession reads the spawn-time persisted values
+    // (spawnedPermissions/Model/Subagent) back from metadata so a restored
+    // session keeps its original selection even after project config drift.
+    // See issue #1475.
     return resolveAgentSelectionForSession({
       sessionId,
       metadata,
@@ -1493,6 +1497,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
           ...(spawnConfig.prompt ? { userPrompt: spawnConfig.prompt } : {}),
           ...(displayName ? { displayName } : {}),
+          // Persist resolved per-session values so restore preserves the
+          // session's original spawn-time selection even after project
+          // config drift. See issue #1475.
+          ...(selection.permissions ? { spawnedPermissions: selection.permissions } : {}),
+          ...(selection.model ? { spawnedModel: selection.model } : {}),
+          ...(selection.subagent ? { spawnedSubagent: selection.subagent } : {}),
         },
       };
 
@@ -1979,6 +1989,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       metadata: {
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
         ...(displayName ? { displayName } : {}),
+        // Persist resolved per-session values so restore preserves the
+        // orchestrator's spawn-time selection. The restore path still
+        // forces permissions:"permissionless" for orchestrator role (see
+        // projectConfigForLaunch/agentLaunchConfig construction below),
+        // but model and subagent must round-trip. See issue #1475.
+        ...(selection.permissions ? { spawnedPermissions: selection.permissions } : {}),
+        ...(selection.model ? { spawnedModel: selection.model } : {}),
+        ...(selection.subagent ? { spawnedSubagent: selection.subagent } : {}),
       },
     };
 

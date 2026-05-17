@@ -536,6 +536,155 @@ describe("restore", () => {
     expect(createCall.launchCommand).toBe("claude --resume abc123");
   });
 
+  it("preserves spawn-time permissions/model/subagent via persisted metadata on restore (issue #1475)", async () => {
+    // Repro: project default is "suggest" but the session was originally
+    // spawned with selection.permissions === "permissionless" (resolved at
+    // spawn time and persisted as `spawnedPermissions`). Restore must pass
+    // the *persisted* value into projectConfigForLaunch.agentConfig so the
+    // agent plugin's getRestoreCommand sees the original effective config.
+    const wsPath = join(tmpDir, "ws-app-persisted-perms");
+    mkdirSync(wsPath, { recursive: true });
+
+    const configWithSuggestDefault: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            permissions: "suggest",
+            model: "project-default-model",
+            subagent: "project-default-subagent",
+          },
+        },
+      },
+    };
+
+    const capturedProjectConfigs: Array<{
+      permissions: unknown;
+      model: unknown;
+      subagent: unknown;
+    }> = [];
+    const mockAgentWithRestore: Agent = {
+      ...mockAgent,
+      getRestoreCommand: vi.fn().mockImplementation(async (_session, projectArg) => {
+        capturedProjectConfigs.push({
+          permissions: projectArg.agentConfig?.permissions,
+          model: projectArg.agentConfig?.model,
+          subagent: projectArg.agentConfig?.subagent,
+        });
+        return "agent --resume";
+      }),
+    };
+
+    const registryWithAgentRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgentWithRestore;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-PERSIST",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      spawnedPermissions: "permissionless",
+      spawnedModel: "spawned-model",
+      spawnedSubagent: "spawned-subagent",
+    });
+
+    const sm = createSessionManager({
+      config: configWithSuggestDefault,
+      registry: registryWithAgentRestore,
+    });
+    await sm.restore("app-1");
+
+    expect(capturedProjectConfigs).toHaveLength(1);
+    expect(capturedProjectConfigs[0]).toEqual({
+      permissions: "permissionless",
+      model: "spawned-model",
+      subagent: "spawned-subagent",
+    });
+  });
+
+  it("falls back to project defaults when legacy session has no spawned* metadata (issue #1475)", async () => {
+    // Legacy sessions persisted before #1475 lack spawnedPermissions etc.
+    // Per the issue's accepted scope, those continue to resolve against
+    // current project config — they were already losing this on restore;
+    // we're not regressing them, just fixing the path for new sessions.
+    const wsPath = join(tmpDir, "ws-app-legacy-perms");
+    mkdirSync(wsPath, { recursive: true });
+
+    const configWithSuggestDefault: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            permissions: "suggest",
+            model: "project-default-model",
+            subagent: "project-default-subagent",
+          },
+        },
+      },
+    };
+
+    const capturedProjectConfigs: Array<{
+      permissions: unknown;
+      model: unknown;
+      subagent: unknown;
+    }> = [];
+    const mockAgentWithRestore: Agent = {
+      ...mockAgent,
+      getRestoreCommand: vi.fn().mockImplementation(async (_session, projectArg) => {
+        capturedProjectConfigs.push({
+          permissions: projectArg.agentConfig?.permissions,
+          model: projectArg.agentConfig?.model,
+          subagent: projectArg.agentConfig?.subagent,
+        });
+        return "agent --resume";
+      }),
+    };
+
+    const registryWithAgentRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgentWithRestore;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-LEGACY",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+
+    const sm = createSessionManager({
+      config: configWithSuggestDefault,
+      registry: registryWithAgentRestore,
+    });
+    await sm.restore("app-1");
+
+    expect(capturedProjectConfigs[0]).toEqual({
+      permissions: "suggest",
+      model: "project-default-model",
+      subagent: "project-default-subagent",
+    });
+  });
+
   it("falls back to getLaunchCommand when getRestoreCommand returns null", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });
