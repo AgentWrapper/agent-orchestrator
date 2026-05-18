@@ -368,6 +368,8 @@ export interface SessionSpawnConfig {
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
+  /** Custom display name for the session (overrides auto-derived name) */
+  displayName?: string;
 }
 
 /** Config for creating an orchestrator session */

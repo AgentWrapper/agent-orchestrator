@@ -1408,10 +1408,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // enrichment (which is a live tracker API call), this value is captured at
       // spawn time and persisted, so the dashboard has a good name even when the
       // tracker is unavailable or the session has no attached PR yet.
-      const displayName = deriveDisplayName({
+      // A user-supplied displayName (via --name) always takes priority.
+      const autoDisplayName = deriveDisplayName({
         issueTitle: resolvedIssue?.title,
         prompt: spawnConfig.prompt,
       });
+      const displayName = spawnConfig.displayName?.trim()
+        ? spawnConfig.displayName!.trim().slice(0, DISPLAY_NAME_MAX_LENGTH)
+        : autoDisplayName;
 
       // Write metadata and run post-launch setup
       const createdAt = new Date();
