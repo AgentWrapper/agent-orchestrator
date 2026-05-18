@@ -6,7 +6,7 @@ import {
   type SCMWebhookEvent,
   type Session,
 } from "@aoagents/ao-core";
-import { eventMatchesProject, findAffectedSessions } from "./scm-webhooks";
+import { eventMatchesProject, findAffectedSessions, findRestorableSessionsForCI } from "./scm-webhooks";
 
 const project: ProjectConfig = {
   name: "my-app",
@@ -162,5 +162,100 @@ describe("findAffectedSessions", () => {
 
     const affected = findAffectedSessions(sessions, "my-app", event);
     expect(affected.map((s) => s.id)).toEqual(["s1"]);
+  });
+});
+
+
+describe("findRestorableSessionsForCI", () => {
+  const killedLifecycle = createInitialCanonicalLifecycle("worker", new Date());
+  killedLifecycle.session.state = "terminated";
+  killedLifecycle.session.reason = "manually_killed";
+  killedLifecycle.session.startedAt = killedLifecycle.session.lastTransitionAt;
+  killedLifecycle.runtime.state = "exited";
+  killedLifecycle.runtime.reason = "process_missing";
+
+  const mergedLifecycle = createInitialCanonicalLifecycle("worker", new Date());
+  mergedLifecycle.session.state = "idle";
+  mergedLifecycle.session.reason = "merged_waiting_decision";
+  mergedLifecycle.session.startedAt = mergedLifecycle.session.lastTransitionAt;
+  mergedLifecycle.pr.state = "merged";
+  mergedLifecycle.pr.reason = "merged";
+  mergedLifecycle.runtime.state = "exited";
+  mergedLifecycle.runtime.reason = "process_missing";
+
+  const killedSession: Session = {
+    id: "s-killed",
+    projectId: "my-app",
+    status: "killed",
+    activity: "exited",
+    activitySignal: createActivitySignal("valid", {
+      activity: "exited",
+      timestamp: new Date(),
+      source: "runtime",
+    }),
+    lifecycle: killedLifecycle,
+    branch: "feat/fix",
+    issueId: null,
+    pr: { number: 42, url: "u", title: "t", owner: "acme", repo: "my-app", branch: "feat/fix", baseBranch: "main", isDraft: false },
+    workspacePath: null,
+    runtimeHandle: null,
+    agentInfo: null,
+    createdAt: new Date(),
+    lastActivityAt: new Date(),
+    metadata: {},
+  };
+
+  const mergedSession: Session = {
+    id: "s-merged",
+    projectId: "my-app",
+    status: "merged",
+    activity: "exited",
+    activitySignal: createActivitySignal("valid", {
+      activity: "exited",
+      timestamp: new Date(),
+      source: "runtime",
+    }),
+    lifecycle: mergedLifecycle,
+    branch: "feat/fix",
+    issueId: null,
+    pr: { number: 42, url: "u", title: "t", owner: "acme", repo: "my-app", branch: "feat/fix", baseBranch: "main", isDraft: false },
+    workspacePath: null,
+    runtimeHandle: null,
+    agentInfo: null,
+    createdAt: new Date(),
+    lastActivityAt: new Date(),
+    metadata: {},
+  };
+
+  it("returns empty for non-ci events", () => {
+    const event: SCMWebhookEvent = {
+      provider: "github", kind: "pull_request", action: "synchronize",
+      rawEventType: "pull_request", prNumber: 42, data: {},
+    };
+    expect(findRestorableSessionsForCI([killedSession], "my-app", event)).toEqual([]);
+  });
+
+  it("returns empty for ci events without prNumber", () => {
+    const event: SCMWebhookEvent = {
+      provider: "github", kind: "ci", action: "completed",
+      rawEventType: "workflow_run", data: {},
+    };
+    expect(findRestorableSessionsForCI([killedSession], "my-app", event)).toEqual([]);
+  });
+
+  it("matches a killed session by pr number", () => {
+    const event: SCMWebhookEvent = {
+      provider: "github", kind: "ci", action: "completed",
+      rawEventType: "workflow_run", prNumber: 42, data: {},
+    };
+    expect(findRestorableSessionsForCI([killedSession, mergedSession], "my-app", event)).toEqual([killedSession]);
+  });
+
+  it("skips merged sessions even when pr number matches", () => {
+    const event: SCMWebhookEvent = {
+      provider: "github", kind: "ci", action: "completed",
+      rawEventType: "workflow_run", prNumber: 42, data: {},
+    };
+    expect(findRestorableSessionsForCI([mergedSession], "my-app", event)).toEqual([]);
   });
 });

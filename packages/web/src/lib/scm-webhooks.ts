@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   TERMINAL_STATUSES,
+  isRestorable,
   type OrchestratorConfig,
   type PluginRegistry,
   type ProjectConfig,
@@ -82,4 +83,19 @@ export function buildWebhookRequest(
     path: url.pathname,
     query: Object.fromEntries(url.searchParams.entries()),
   };
+}
+
+export function findRestorableSessionsForCI(
+  sessions: Session[],
+  projectId: string,
+  event: SCMWebhookEvent,
+): Session[] {
+  if (event.kind !== "ci" || event.prNumber === undefined) return [];
+  return sessions.filter((session) => {
+    if (session.projectId !== projectId) return false;
+    if (!isRestorable(session)) return false;
+    if (event.prNumber !== undefined && session.pr?.number === event.prNumber) return true;
+    if (event.branch && session.branch === event.branch) return true;
+    return false;
+  });
 }
