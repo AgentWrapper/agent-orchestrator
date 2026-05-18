@@ -1896,6 +1896,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
+    // Check for a stale reservation file: `get()` returned null (no valid
+    // metadata) but the file may exist on disk from a previous crashed/killed
+    // run. `reserveSessionId` will see it as occupied and throw. Unconditionally
+    // attempt cleanup — if the file doesn't exist this is a no-op, and if it
+    // does but a concurrent process just wrote valid metadata, the O_EXCL in
+    // reserveSessionId protects it (deleteMetadata won't remove a file that
+    // was re-created after our stat).
+    const sessionsDir = getProjectSessionsDir(orchestratorConfig.projectId);
+    try {
+      deleteMetadata(sessionsDir, sessionId);
+    } catch {
+      /* best effort — file may not exist, that's fine */
+    }
+
     try {
       return await spawnOrchestrator(orchestratorConfig);
     } catch (err) {
@@ -1903,9 +1917,29 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         throw err;
       }
 
+      // Reservation still failed after cleanup — check for a concurrent
+      // orchestrator that won the race between our cleanup and spawn.
       const concurrent = await waitForConcurrentOrchestrator(sessionId);
       if (concurrent) return concurrent;
-      throw err;
+
+      // Stale file was recreated during the race — one more cleanup attempt.
+      try {
+        deleteMetadata(sessionsDir, sessionId);
+      } catch {
+        /* best effort */
+      }
+
+      try {
+        return await spawnOrchestrator(orchestratorConfig);
+      } catch (retryErr) {
+        // Third attempt failed — surface original error with retry context
+        // rather than the raw "already exists" message.
+        throw new Error(
+          `Orchestrator session "${sessionId}" could not be created after retry. ` +
+            `Another process may be creating it concurrently. Original error: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+          { cause: retryErr },
+        );
+      }
     }
   }
 

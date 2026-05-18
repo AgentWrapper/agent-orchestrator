@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
@@ -12,6 +12,7 @@ import {
   writeMetadata,
   readMetadata,
   readMetadataRaw,
+  reserveSessionId,
 } from "../../metadata.js";
 import { getProjectDir, getProjectWorktreesDir } from "../../paths.js";
 import type {
@@ -1699,6 +1700,43 @@ describe("spawn", () => {
         'canonical orchestrator session is terminal with status "done"',
       );
       expect(mockWorkspace.create).not.toHaveBeenCalled();
+    });
+
+    it("ensureOrchestrator recovers from stale empty reservation file", async () => {
+      // Simulate a previous crashed/killed `ao start` that reserved the
+      // orchestrator session ID (empty file) but never wrote metadata.
+      reserveSessionId(sessionsDir, "app-orchestrator");
+
+      // Verify the pre-condition: file exists but readMetadataRaw returns null.
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
+      expect(existsSync(join(sessionsDir, "app-orchestrator.json"))).toBe(true);
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      // ensureOrchestrator should clean up the stale file and succeed.
+      const session = await sm.ensureOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
+
+      // Verify the metadata file now has valid content.
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
+      expect(meta?.["role"]).toBe("orchestrator");
+    });
+
+    it("ensureOrchestrator recovers from stale corrupt reservation file", async () => {
+      // Simulate a corrupt metadata file (not empty, but not valid JSON either).
+      writeFileSync(join(sessionsDir, "app-orchestrator.json"), "corrupt");
+
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toBeNull();
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.ensureOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
     });
 
     it("cleans up reserved metadata on workspace creation failure", async () => {
