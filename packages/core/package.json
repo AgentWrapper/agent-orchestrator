@@ -87,6 +87,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },

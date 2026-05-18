@@ -22,6 +22,10 @@ import {
   normalizeDashboardNotificationLimit,
   recordActivityEvent,
   readDashboardNotificationsFromFile,
+  startArtifactWatcher,
+  type Artifact,
+  type ArtifactEvent,
+  type ArtifactWatcher,
   type DashboardNotificationRecord,
 } from "@aoagents/ao-core";
 import {
@@ -43,7 +47,32 @@ type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
+  | { ch: "subscribe"; topics: Array<"sessions" | "artifacts" | "notifications"> };
+
+// ── Artifact events (server → client) ──
+// Mirror of the same types in src/lib/mux-protocol.ts. Each wraps a
+// ArtifactEvent from @aoagents/ao-core with `ch: "artifacts"` for mux routing.
+type ArtifactUpdateEvent = {
+  ch: "artifacts";
+  type: "artifact-update";
+  sessionId: string;
+  artifact: Artifact;
+};
+
+type ArtifactErrorEvent = {
+  ch: "artifacts";
+  type: "artifact-error";
+  sessionId: string;
+  artifactId: string;
+  errors: { path: string[]; message: string }[];
+};
+
+type ArtifactDeleteEvent = {
+  ch: "artifacts";
+  type: "artifact-delete";
+  sessionId: string;
+  artifactId: string;
+};
 
 // ── Server → Client ──
 type ServerMessage =
@@ -60,6 +89,9 @@ type ServerMessage =
       limit: number;
     }
   | { ch: "notifications"; type: "error"; error: string }
+  | ArtifactUpdateEvent
+  | ArtifactErrorEvent
+  | ArtifactDeleteEvent
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
@@ -377,6 +409,113 @@ export class NotificationBroadcaster {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+  }
+}
+
+/** Injection point for the artifact watcher (tests stub this). */
+export type StartArtifactWatcherFn = typeof startArtifactWatcher;
+
+/**
+ * Bridges core's artifact watcher to subscribed mux WebSocket clients.
+ *
+ * On the first subscriber, lazily starts a single shared `startArtifactWatcher`
+ * instance and forwards every `ArtifactEvent` to all subscribers wrapped as a
+ * `ServerMessage` on the "artifacts" channel. When the last subscriber leaves
+ * (or `close()` is called), the watcher is stopped to release the filesystem
+ * watch.
+ */
+export class ArtifactBroadcaster {
+  private subscribers = new Set<(event: ArtifactEvent) => void>();
+  private watcher: ArtifactWatcher | null = null;
+  /**
+   * Tracks an in-flight `startArtifactWatcher` so concurrent subscribers don't
+   * each spawn their own chokidar instance during the async start window.
+   */
+  private starting: Promise<ArtifactWatcher> | null = null;
+  private closed = false;
+  private readonly startWatcher: StartArtifactWatcherFn;
+
+  constructor(startWatcher: StartArtifactWatcherFn = startArtifactWatcher) {
+    this.startWatcher = startWatcher;
+  }
+
+  /**
+   * Subscribe to artifact events. Returns an unsubscribe function. The watcher
+   * is started on the first subscriber and stopped after the last unsubscribes.
+   */
+  subscribe(callback: (event: ArtifactEvent) => void): () => void {
+    if (this.closed) {
+      // Mirrors SessionBroadcaster: a no-op unsubscribe is safer than throwing
+      // here since subscribe is called from per-message handlers.
+      return () => {};
+    }
+    const wasEmpty = this.subscribers.size === 0;
+    this.subscribers.add(callback);
+
+    if (wasEmpty && !this.watcher && !this.starting) {
+      this.starting = this.startWatcher({
+        onEvent: (event) => this.broadcast(event),
+      })
+        .then((watcher) => {
+          // The broadcaster may have been closed (or every subscriber may have
+          // unsubscribed) while we were awaiting the watcher start. In that
+          // case immediately stop the freshly-started watcher to avoid leaking
+          // a chokidar instance.
+          if (this.closed || this.subscribers.size === 0) {
+            void watcher.stop();
+            return watcher;
+          }
+          this.watcher = watcher;
+          return watcher;
+        })
+        .catch((err) => {
+          console.error("[MuxServer] ArtifactBroadcaster failed to start watcher:", err);
+          throw err;
+        })
+        .finally(() => {
+          this.starting = null;
+        });
+    }
+
+    return () => {
+      this.subscribers.delete(callback);
+      if (this.subscribers.size === 0) {
+        this.stopWatcher();
+      }
+    };
+  }
+
+  private broadcast(event: ArtifactEvent): void {
+    for (const callback of this.subscribers) {
+      try {
+        callback(event);
+      } catch (err) {
+        console.error("[MuxServer] Artifact broadcast subscriber threw:", err);
+      }
+    }
+  }
+
+  private stopWatcher(): void {
+    const watcher = this.watcher;
+    this.watcher = null;
+    if (watcher) {
+      void watcher.stop().catch((err) => {
+        console.warn("[MuxServer] ArtifactBroadcaster watcher.stop() threw:", err);
+      });
+    }
+  }
+
+  /** Stop the watcher and drop all subscribers. Idempotent. */
+  async close(): Promise<void> {
+    this.closed = true;
+    this.subscribers.clear();
+    const watcher = this.watcher;
+    this.watcher = null;
+    if (watcher) {
+      await watcher.stop().catch((err) => {
+        console.warn("[MuxServer] ArtifactBroadcaster watcher.stop() threw:", err);
+      });
     }
   }
 }
@@ -1074,6 +1213,17 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
   const nextPort = process.env.PORT || "3000";
   const broadcaster = new SessionBroadcaster(nextPort);
   const notificationBroadcaster = new NotificationBroadcaster();
+  const artifactBroadcaster = new ArtifactBroadcaster();
+
+  // Keep the artifact watcher running for the lifetime of the server. Without
+  // this internal subscriber, the watcher is lazy-started on first client
+  // subscribe — meaning agents that publish via `ao artifact publish` while no
+  // dashboard tab is open to a session-detail page get stuck-in-staging files
+  // that never ingest. Staging files should always ingest regardless of
+  // dashboard subscription state; subscription is for live push, not for ingest.
+  artifactBroadcaster.subscribe(() => {
+    /* keep-alive — actual broadcasting goes through per-WS subscribers */
+  });
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -1104,6 +1254,7 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
     const winPipeBuffers = new Map<string, Buffer>();
     let sessionUnsubscribe: (() => void) | null = null;
     let notificationUnsubscribe: (() => void) | null = null;
+    let artifactUnsubscribe: (() => void) | null = null;
     let missedPongs = 0;
     let heartbeatLostEmitted = false;
     const MAX_MISSED_PONGS = 3;
@@ -1349,6 +1500,19 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
               },
             );
           }
+          if (msg.topics.includes("artifacts") && !artifactUnsubscribe) {
+            artifactUnsubscribe = artifactBroadcaster.subscribe((event) => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
+                console.warn("[MuxServer] Skipping artifact event — socket backpressured");
+                return;
+              }
+              // ArtifactEvent shares the `type` discriminant we need; widening
+              // with `ch: "artifacts"` produces a valid ServerMessage variant.
+              const artifactMsg: ServerMessage = { ch: "artifacts", ...event };
+              ws.send(JSON.stringify(artifactMsg));
+            });
+          }
         }
       } catch (err) {
         console.error("[MuxServer] Failed to parse message:", err);
@@ -1398,6 +1562,8 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
       sessionUnsubscribe = null;
       notificationUnsubscribe?.();
       notificationUnsubscribe = null;
+      artifactUnsubscribe?.();
+      artifactUnsubscribe = null;
       for (const unsub of subscriptions.values()) {
         unsub();
       }

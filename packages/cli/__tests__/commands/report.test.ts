@@ -72,6 +72,14 @@ describe("report commands", () => {
     mockApplyAgentReport.mockReturnValue({
       previousState: "working",
       nextState: "started",
+      legacyStatus: "working",
+      previousLegacyStatus: "working",
+      report: {
+        state: "started",
+        timestamp: "2026-05-16T07:00:00.000Z",
+        actor: "codex",
+        source: "acknowledge",
+      },
     });
   });
 

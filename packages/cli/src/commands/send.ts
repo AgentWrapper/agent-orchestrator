@@ -8,6 +8,7 @@ import {
   type OpenCodeSessionManager,
   type Session,
   loadConfig,
+  sendMessageToSession,
 } from "@aoagents/ao-core";
 import { exec, tmux } from "../lib/shell.js";
 import { getAgentByName, getAgentByNameFromRegistry } from "../lib/plugins.js";
@@ -30,11 +31,18 @@ async function resolveSessionContext(sessionName: string): Promise<{
     const sm = await getSessionManager(config);
     const session = await sm.get(sessionName);
     if (session) {
-      const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
+      // Inline tmux-target resolution: a session backed by a runtime handle
+      // exposes its handle id as the tmux send-keys target. When no handle
+      // is available, fall back to the user-supplied session name and let
+      // the `tmux has-session` probe in the caller validate it.
+      const handle = session.runtimeHandle;
+      const resolvedTmuxTarget = handle && handle.id ? handle.id : null;
+      const resolvedRuntimeName = handle && handle.id ? handle.runtimeName : null;
+      const tmuxTarget = resolvedTmuxTarget ?? sessionName;
       const project = config.projects[session.projectId];
       const agentName = session.metadata["agent"]!;
       const runtimeName =
-        session.runtimeHandle?.runtimeName ?? project?.runtime ?? config.defaults.runtime;
+        resolvedRuntimeName ?? project?.runtime ?? config.defaults.runtime;
       return {
         tmuxTarget,
         runtimeName,
@@ -86,11 +94,23 @@ async function readMessageInput(opts: { file?: string }, messageParts: string[])
   }
 }
 
+// Adapter so the shared `sendMessageToSession` helper drives our existing
+// shell `exec()` (which is what the test suite mocks). Without this the
+// helper would shell out via `execFile` directly and bypass the mocks.
+const tmuxRunner = async (args: string[]): Promise<void> => {
+  await exec("tmux", args);
+};
+
+
+
 async function sendViaTmux(tmuxTarget: string, message: string): Promise<void> {
   await exec("tmux", ["send-keys", "-t", tmuxTarget, "C-u"]);
   await sleep(200);
 
   if (message.includes("\n") || message.length > 200) {
+    // Long / multi-line messages: stage via load-buffer + paste-buffer, then
+    // submit with Enter. Doesn't fit the simple "literal + Enter" shape of
+    // sendMessageToSession, so it stays inline.
     const tmpFile = join(tmpdir(), `ao-send-${Date.now()}.txt`);
     writeFileSync(tmpFile, message);
     try {
@@ -103,12 +123,14 @@ async function sendViaTmux(tmuxTarget: string, message: string): Promise<void> {
         // ignore cleanup failure
       }
     }
-  } else {
-    await exec("tmux", ["send-keys", "-t", tmuxTarget, "-l", message]);
+    await sleep(300);
+    await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
+    return;
   }
 
-  await sleep(300);
-  await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
+  // Short, single-line path — goes through the shared helper for the
+  // literal-send + Enter shape.
+  await sendMessageToSession({ tmuxTarget, message, tmuxRunner });
 }
 
 export function registerSend(program: Command): void {

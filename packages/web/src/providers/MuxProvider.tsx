@@ -6,7 +6,12 @@ import type {
   DashboardNotificationRecord,
   ServerMessage,
   SessionPatch,
+  ArtifactUpdateEvent,
+  ArtifactErrorEvent,
+  ArtifactDeleteEvent,
 } from "@/lib/mux-protocol";
+
+export type ArtifactMuxEvent = ArtifactUpdateEvent | ArtifactErrorEvent | ArtifactDeleteEvent;
 
 interface MuxContextValue {
   subscribeTerminal: (
@@ -18,6 +23,15 @@ interface MuxContextValue {
   openTerminal: (id: string, projectId?: string, tmuxName?: string) => void;
   closeTerminal: (id: string, projectId?: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number, projectId?: string) => void;
+  /**
+   * Subscribe to artifact events for a specific session. Returns an unsubscribe.
+   * The provider always subscribes to the global "artifacts" topic on the mux;
+   * this callback fan-out filters by sessionId on the client side.
+   */
+  subscribeArtifacts: (
+    sessionId: string,
+    callback: (event: ArtifactMuxEvent) => void,
+  ) => () => void;
   status: "connecting" | "connected" | "reconnecting" | "disconnected";
   sessions: SessionPatch[];
   notifications: DashboardNotificationRecord[];
@@ -113,6 +127,7 @@ function terminalKey(id: string, projectId?: string): string {
 export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
+  const artifactSubscribersRef = useRef(new Map<string, Set<(event: ArtifactMuxEvent) => void>>());
   const openedTerminalsRef = useRef(
     new Map<string, { id: string; projectId?: string; tmuxName?: string }>(),
   );
@@ -164,10 +179,10 @@ export function MuxProvider({ children }: { children: ReactNode }) {
           ws.send(JSON.stringify(openMsg));
         }
 
-        // Always subscribe to sessions
+        // Always subscribe to sessions + artifacts
         const subMsg: ClientMessage = {
           ch: "subscribe",
-          topics: ["sessions", "notifications"],
+          topics: ["sessions", "artifacts", "notifications"],
         };
         ws.send(JSON.stringify(subMsg));
       });
@@ -229,6 +244,18 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               setNotificationError(null);
             } else if (msg.type === "error") {
               setNotificationError(msg.error);
+            }
+          } else if (msg.ch === "artifacts") {
+            // artifact-update / artifact-error / artifact-delete — fan out by sessionId
+            const subs = artifactSubscribersRef.current.get(msg.sessionId);
+            if (subs) {
+              for (const callback of subs) {
+                try {
+                  callback(msg);
+                } catch (err) {
+                  console.error("[MuxProvider] artifact subscriber threw:", err);
+                }
+              }
             }
           }
         } catch (err) {
@@ -392,6 +419,24 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const subscribeArtifacts = useCallback(
+    (sessionId: string, callback: (event: ArtifactMuxEvent) => void): (() => void) => {
+      let subs = artifactSubscribersRef.current.get(sessionId);
+      if (!subs) {
+        subs = new Set();
+        artifactSubscribersRef.current.set(sessionId, subs);
+      }
+      subs.add(callback);
+      return () => {
+        const s = artifactSubscribersRef.current.get(sessionId);
+        if (!s) return;
+        s.delete(callback);
+        if (s.size === 0) artifactSubscribersRef.current.delete(sessionId);
+      };
+    },
+    [],
+  );
+
   const contextValue: MuxContextValue = useMemo(
     () => ({
       subscribeTerminal,
@@ -399,6 +444,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       openTerminal,
       closeTerminal,
       resizeTerminal,
+      subscribeArtifacts,
       status,
       sessions,
       notifications,
@@ -412,6 +458,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       openTerminal,
       closeTerminal,
       resizeTerminal,
+      subscribeArtifacts,
       status,
       sessions,
       notifications,

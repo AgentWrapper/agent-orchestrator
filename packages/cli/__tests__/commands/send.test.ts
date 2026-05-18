@@ -54,6 +54,23 @@ vi.mock("@aoagents/ao-core", () => ({
     }
     return mockConfigRef.current;
   },
+  // Light stand-in for the real helper: drive the provided tmuxRunner the
+  // same way the production code does (send-keys -l <msg>, then Enter). The
+  // CLI passes a runner that delegates to `exec`, which is itself mocked by
+  // these tests — keeping the existing exec-based assertions intact.
+  sendMessageToSession: async (opts: {
+    tmuxTarget: string;
+    message: string;
+    tmuxRunner?: (args: string[]) => Promise<void>;
+  }) => {
+    const runner =
+      opts.tmuxRunner ??
+      (async () => {
+        /* default: noop in tests */
+      });
+    await runner(["send-keys", "-t", opts.tmuxTarget, "-l", opts.message]);
+    await runner(["send-keys", "-t", opts.tmuxTarget, "Enter"]);
+  },
 }));
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({

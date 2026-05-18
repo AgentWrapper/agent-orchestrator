@@ -4,6 +4,7 @@ import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
 import { registerSession } from "./commands/session.js";
 import { registerSend } from "./commands/send.js";
 import { registerAcknowledge, registerReport } from "./commands/report.js";
+import { registerArtifact } from "./commands/artifact.js";
 import { registerReviewCheck } from "./commands/review-check.js";
 import { registerReview } from "./commands/review.js";
 import { registerDashboard } from "./commands/dashboard.js";
@@ -40,6 +41,7 @@ export function createProgram(): Command {
   registerSend(program);
   registerAcknowledge(program);
   registerReport(program);
+  registerArtifact(program);
   registerReviewCheck(program);
   registerReview(program);
   registerDashboard(program);

@@ -24,6 +24,15 @@ vi.mock("../DirectTerminal", () => ({
   ),
 }));
 
+// ArtifactRail mounts a fetch via useArtifacts. Stub it out so the desktop layout
+// tests don't trigger async state updates outside `act` after the test body
+// returns.
+vi.mock("../ArtifactRail", () => ({
+  ArtifactRail: ({ sessionId }: { sessionId: string }) => (
+    <aside data-testid="artifact-rail" data-session-id={sessionId} />
+  ),
+}));
+
 function mockDesktopViewport() {
   Object.defineProperty(window, "matchMedia", {
     writable: true,

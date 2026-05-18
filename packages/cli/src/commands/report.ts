@@ -22,6 +22,7 @@ import {
   getProjectSessionsDir,
   loadConfig,
   normalizeAgentReportedState,
+  writeAgentStatusArtifact,
   type AgentReportedState,
 } from "@aoagents/ao-core";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -85,6 +86,10 @@ async function writeReport(
     if (note) {
       console.log(chalk.dim(`  note: ${note}`));
     }
+
+    // Auto-render an "agent status" artifact so the user sees the report
+    // live in the right rail. Best-effort — never blocks the report itself.
+    await writeAgentStatusArtifact(session.projectId, sessionName, result.report);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(chalk.red(`Report rejected: ${message}`));

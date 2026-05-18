@@ -345,6 +345,9 @@ export {
   getProjectWorktreesDir,
   getProjectCodeReviewsDir,
   getProjectFeedbackReportsDir,
+  getProjectArtifactsDir,
+  getSessionArtifactsDir,
+  getSessionArtifactsStagingDir,
   getOrchestratorPath,
   getSessionPath,
   parseTmuxNameV2,
@@ -562,3 +565,46 @@ export {
   getActivityEventStats,
 } from "./query-activity-events.js";
 export type { ActivityEventFilter, ActivityEventStats } from "./query-activity-events.js";
+
+// Artifact schema — public types and validation schemas.
+export {
+  ArtifactSchema,
+  ARTIFACT_ID_PATTERN,
+  ARTIFACT_RESERVED_PREFIX,
+  ARTIFACT_MAX_BYTES,
+  ARTIFACT_MAX_PER_SESSION,
+} from "./artifact-schema.js";
+export type {
+  Artifact,
+  ArtifactType,
+  ArtifactPublishInput,
+  ArtifactProducer,
+} from "./artifact-schema.js";
+
+// Artifact store
+export {
+  writeCanonicalArtifact,
+  readArtifacts,
+  readCanonicalArtifactIfExists,
+  deleteCanonicalArtifact,
+} from "./artifact-store.js";
+
+// Agent status artifact — auto-rendered from ao acknowledge / ao report.
+export { writeAgentStatusArtifact } from "./agent-status-artifact.js";
+
+// Artifact delivery — shared tmux message-send helper used by `ao send`.
+export { sendMessageToSession } from "./artifact-delivery.js";
+export type {
+  SendMessageOptions,
+  TmuxRunner,
+} from "./artifact-delivery.js";
+
+// Artifact watcher — observes ~/.agent-orchestrator/projects/*/artifacts/ and
+// emits artifact-update / artifact-error / artifact-delete events. Consumed by the
+// web mux WebSocket to push live artifact updates to dashboards.
+export { startArtifactWatcher } from "./artifact-watcher.js";
+export type {
+  ArtifactEvent,
+  ArtifactWatcher,
+  ArtifactWatcherOptions,
+} from "./artifact-watcher.js";

@@ -2092,3 +2092,24 @@ export interface PortfolioSession {
   session: Session;
   project: PortfolioProject;
 }
+
+// =============================================================================
+// ARTIFACT TYPES (re-exported from artifact-schema)
+// =============================================================================
+
+export type {
+  Artifact,
+  ArtifactType,
+  ArtifactPublishInput,
+  ArtifactProducer,
+} from "./artifact-schema.js";
+
+export {
+  ArtifactSchema,
+  ARTIFACT_ID_PATTERN,
+  ARTIFACT_RESERVED_PREFIX,
+  ARTIFACT_MAX_BYTES,
+  ARTIFACT_MAX_PER_SESSION,
+  MARKDOWN_MAX_CHARS,
+  HTML_MAX_CHARS,
+} from "./artifact-schema.js";

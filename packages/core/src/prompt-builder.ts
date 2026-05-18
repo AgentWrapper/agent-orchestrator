@@ -54,7 +54,18 @@ Rules:
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+- Respond to every review comment, even if just to acknowledge it.
+
+## Artifacts
+You can publish structured cards to the user's session detail right rail via \`ao artifact publish\`. Two types:
+
+- \`--type markdown\` — formatted text. No HTML pass-through.
+- \`--type html\` — HTML rendered in a sandboxed iframe (safe).
+
+Artifacts are non-blocking — publishing returns immediately. Continue working while the user reads.
+
+Example:
+  \`ao artifact publish --type markdown --id plan-v1 --title "Plan" --content "# Steps..."\``;
 
 /** Trimmed base prompt for projects without a configured repo/remote. */
 export const BASE_AGENT_PROMPT_NO_REPO = `You are an AI coding agent managed by the Agent Orchestrator (ao).
@@ -73,7 +84,10 @@ Do NOT self-report \`done\` or \`terminated\` — AO owns those transitions.
 
 ## Git Workflow
 - Always create a feature branch from the default branch (never commit directly to it).
-- Use conventional commit messages (feat:, fix:, chore:, etc.).`;
+- Use conventional commit messages (feat:, fix:, chore:, etc.).
+
+## Artifacts
+You can publish structured cards to the user's session detail right rail via \`ao artifact publish\` (\`--type markdown | html\`). Publishing is non-blocking.`;
 
 // =============================================================================
 // TYPES

@@ -321,4 +321,14 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
     expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
   });
+
+  it("documents artifacts", () => {
+    expect(BASE_AGENT_PROMPT).toContain("## Artifacts");
+    expect(BASE_AGENT_PROMPT).toContain("ao artifact publish");
+    // v1 ships markdown + html only.
+    expect(BASE_AGENT_PROMPT).not.toContain("[ao-artifact-response]");
+    expect(BASE_AGENT_PROMPT).not.toContain("--type prompt");
+    expect(BASE_AGENT_PROMPT_NO_REPO).toContain("ao artifact publish");
+    expect(BASE_AGENT_PROMPT_NO_REPO).not.toContain("[ao-artifact-response]");
+  });
 });

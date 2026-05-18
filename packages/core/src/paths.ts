@@ -135,6 +135,34 @@ export function getProjectFeedbackReportsDir(projectId: string): string {
   return join(getProjectDir(projectId), "feedback-reports");
 }
 
+/**
+ * Get the artifacts directory for a project.
+ *
+ * Stored adjacent to sessions under AO's project metadata directory, NOT
+ * inside the workspace — so artifact files never pollute the worktree or
+ * end up in git operations.
+ */
+export function getProjectArtifactsDir(projectId: string): string {
+  return join(getProjectDir(projectId), "artifacts");
+}
+
+/** Get the artifacts directory for a specific session. */
+export function getSessionArtifactsDir(projectId: string, sessionId: string): string {
+  assertSafeSessionIdComponent(sessionId);
+  return join(getProjectArtifactsDir(projectId), sessionId);
+}
+
+/** Get the staging directory for a session (agent writes JSON files here). */
+export function getSessionArtifactsStagingDir(projectId: string, sessionId: string): string {
+  return join(getSessionArtifactsDir(projectId, sessionId), ".staging");
+}
+
+function assertSafeSessionIdComponent(sessionId: string): void {
+  if (!sessionId || sessionId.includes("/") || sessionId.includes("..") || sessionId.includes("\\")) {
+    throw new Error(`Unsafe session ID: "${sessionId}"`);
+  }
+}
+
 /** Get the orchestrator metadata file path for a project. */
 export function getOrchestratorPath(projectId: string): string {
   return join(getProjectDir(projectId), "orchestrator.json");
