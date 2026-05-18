@@ -2192,6 +2192,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const killReason: LifecycleKillReason = options?.reason ?? "manually_killed";
     const cleanupAgent = resolveSelectionForSession(project, sessionId, raw).agentName;
 
+    const runtimeReason =
+      killReason === "pr_merged"
+        ? "pr_merged_cleanup"
+        : killReason === "auto_cleanup"
+          ? "auto_cleanup"
+          : "manual_kill_requested";
+    const terminatedLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
+      next.session.state = "terminated";
+      next.session.reason = killReason;
+      next.session.terminatedAt = new Date().toISOString();
+      next.session.lastTransitionAt = next.session.terminatedAt;
+    });
+
+    // Persist the user/business terminal reason before tearing down the runtime.
+    // Otherwise a concurrent list() can observe the dead runtime and relabel the
+    // session as runtime_lost before this kill path writes its final state.
+    updateMetadata(sessionsDir, sessionId, lifecycleMetadataUpdates(raw, terminatedLifecycle));
+    invalidateCache();
+
     // Destroy runtime — prefer handle.runtimeName to find the correct plugin
     if (raw["runtimeHandle"]) {
       const handle = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
@@ -2244,28 +2263,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const runtimeReason =
-      killReason === "pr_merged"
-        ? "pr_merged_cleanup"
-        : killReason === "auto_cleanup"
-          ? "auto_cleanup"
-          : "manual_kill_requested";
-    const terminatedLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
-      next.session.state = "terminated";
-      next.session.reason = killReason;
-      next.session.terminatedAt = new Date().toISOString();
-      next.session.lastTransitionAt = next.session.terminatedAt;
+    const postTeardownLifecycle = buildUpdatedLifecycle(sessionId, raw, (next) => {
+      next.session = { ...terminatedLifecycle.session };
       next.runtime.state = raw["runtimeHandle"] || raw["tmuxName"] ? "missing" : "exited";
       next.runtime.reason = runtimeReason;
       next.runtime.lastObservedAt = new Date().toISOString();
     });
-    updateMetadata(sessionsDir, sessionId, {
-      ...lifecycleMetadataUpdates(raw, terminatedLifecycle),
-      ...(didPurgeOpenCodeSession && {
+    updateMetadata(sessionsDir, sessionId, lifecycleMetadataUpdates(raw, postTeardownLifecycle));
+
+    if (didPurgeOpenCodeSession) {
+      updateMetadata(sessionsDir, sessionId, {
         opencodeSessionId: "",
         opencodeCleanedAt: new Date().toISOString(),
-      }),
-    });
+      });
+    }
 
     invalidateCache();
     recordActivityEvent({

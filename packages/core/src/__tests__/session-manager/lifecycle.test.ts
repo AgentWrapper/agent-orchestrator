@@ -13,6 +13,7 @@ import {
   updateMetadata,
 } from "../../metadata.js";
 import { getProjectSessionsDir, getProjectWorktreesDir } from "../../paths.js";
+import { parseCanonicalLifecycle } from "../../lifecycle-state.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -66,6 +67,48 @@ describe("kill", () => {
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta).not.toBeNull();
     expect(meta!["status"]).toMatch(/killed|terminated/);
+  });
+
+  it("persists manually_killed before runtime teardown can race with list reconciliation", async () => {
+    const managedWorktree = join(getProjectWorktreesDir("my-app"), "app-1");
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    let sm: ReturnType<typeof createSessionManager>;
+    let reasonObservedDuringDestroy: string | undefined;
+    const racingRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+      destroy: vi.fn().mockImplementation(async () => {
+        await sm.list();
+        const meta = readMetadataRaw(sessionsDir, "app-1");
+        reasonObservedDuringDestroy = meta
+          ? parseCanonicalLifecycle(meta).session.reason
+          : undefined;
+      }),
+    };
+    const registryWithRacingRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return racingRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    sm = createSessionManager({ config, registry: registryWithRacingRuntime });
+    await sm.kill("app-1");
+
+    expect(reasonObservedDuringDestroy).toBe("manually_killed");
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(parseCanonicalLifecycle(meta!).session.reason).toBe("manually_killed");
   });
 
   it("does not destroy workspace paths outside managed roots", async () => {
