@@ -250,6 +250,10 @@ export function listDashboardOrchestrators(
       id: session.id,
       projectId: session.projectId,
       projectName: projects[session.projectId]?.name ?? session.projectId,
+      status: session.status,
+      activity: session.activity,
+      createdAt: session.createdAt.toISOString(),
+      lastActivityAt: session.lastActivityAt.toISOString(),
     }))
     .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
 }

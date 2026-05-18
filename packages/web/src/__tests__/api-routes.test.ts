@@ -358,8 +358,24 @@ describe("API Routes", () => {
 
       expect(data.orchestratorId).toBeNull();
       expect(data.orchestrators).toEqual([
-        { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
-        { id: "app-orchestrator", projectId: "my-app", projectName: "My App" },
+        expect.objectContaining({
+          id: "docs-orchestrator",
+          projectId: "docs-app",
+          projectName: "Docs App",
+          status: "working",
+          activity: "active",
+          createdAt: expect.any(String),
+          lastActivityAt: expect.any(String),
+        }),
+        expect.objectContaining({
+          id: "app-orchestrator",
+          projectId: "my-app",
+          projectName: "My App",
+          status: "working",
+          activity: "active",
+          createdAt: expect.any(String),
+          lastActivityAt: expect.any(String),
+        }),
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual([
         "backend-3",
@@ -382,7 +398,15 @@ describe("API Routes", () => {
 
       expect(data.orchestratorId).toBe("docs-orchestrator");
       expect(data.orchestrators).toEqual([
-        { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
+        expect.objectContaining({
+          id: "docs-orchestrator",
+          projectId: "docs-app",
+          projectName: "Docs App",
+          status: "working",
+          activity: "active",
+          createdAt: expect.any(String),
+          lastActivityAt: expect.any(String),
+        }),
       ]);
       expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
       expect(mockSessionManager.listCached).toHaveBeenCalledWith("docs-app");

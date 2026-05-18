@@ -56,7 +56,17 @@ describe("getDashboardPageData fast path", () => {
     hoisted.getPrimaryProjectIdMock.mockReturnValue("docs");
     hoisted.getProjectNameMock.mockReturnValue("Docs");
     hoisted.resolveGlobalPauseMock.mockReturnValue({ reason: "paused" });
-    hoisted.listDashboardOrchestratorsMock.mockReturnValue([{ id: "orch-1", projectId: "docs", projectName: "Docs" }]);
+    hoisted.listDashboardOrchestratorsMock.mockReturnValue([
+      {
+        id: "orch-1",
+        projectId: "docs",
+        projectName: "Docs",
+        status: "working",
+        activity: "active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastActivityAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
     hoisted.enrichSessionsMetadataFastMock.mockResolvedValue(undefined);
   });
 
