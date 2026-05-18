@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { pathsEqual, canonicalCompareKey } from "../../src/lib/path-equality.js";
 
@@ -77,13 +77,26 @@ describe("pathsEqual", () => {
 });
 
 describe("canonicalCompareKey", () => {
-  it("expands ~ to HOME", () => {
+  it("expands ~ to the OS home directory", () => {
     const originalHome = process.env["HOME"];
     process.env["HOME"] = tmpDir;
     try {
       const key = canonicalCompareKey("~");
       // On Windows the result is lowercased; on POSIX it's case-preserved.
-      expect(key.toLowerCase()).toBe(tmpDir.toLowerCase());
+      expect(key.toLowerCase()).toBe(canonicalCompareKey(homedir()).toLowerCase());
+    } finally {
+      if (originalHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = originalHome;
+    }
+  });
+
+  it("does not collapse ~ to the current directory when HOME is missing", () => {
+    const originalHome = process.env["HOME"];
+    delete process.env["HOME"];
+
+    try {
+      expect(canonicalCompareKey("~")).toBe(canonicalCompareKey(homedir()));
+      expect(canonicalCompareKey("~")).not.toBe(canonicalCompareKey(resolve("")));
     } finally {
       if (originalHome === undefined) delete process.env["HOME"];
       else process.env["HOME"] = originalHome;

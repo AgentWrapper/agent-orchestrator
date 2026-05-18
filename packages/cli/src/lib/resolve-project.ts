@@ -15,6 +15,7 @@
  */
 
 import { existsSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathsEqual } from "./path-equality.js";
 import { cwd } from "node:process";
@@ -333,7 +334,7 @@ async function fromUrl(arg: string, deps: ResolveDeps, opts: ResolveOptions): Pr
 }
 
 async function fromPath(arg: string, deps: ResolveDeps, opts: ResolveOptions): Promise<Resolved> {
-  const resolvedPath = resolve(arg.replace(/^~/, process.env["HOME"] || ""));
+  const resolvedPath = resolve(arg.replace(/^~/, homedir()));
 
   // When a daemon is already running, register against the global config
   // (the daemon's source of truth) instead of whatever cwd-local config

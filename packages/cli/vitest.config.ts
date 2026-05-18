@@ -69,6 +69,10 @@ export default defineConfig({
         find: "@aoagents/ao-plugin-scm-github",
         replacement: resolve(__dirname, "../plugins/scm-github/src/index.ts"),
       },
+      {
+        find: "@aoagents/ao-plugin-runtime-process",
+        replacement: resolve(__dirname, "../plugins/runtime-process/src/index.ts"),
+      },
     ],
   },
 });

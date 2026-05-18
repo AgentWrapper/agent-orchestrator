@@ -16,6 +16,7 @@
  */
 
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { isWindows } from "@aoagents/ao-core";
 
@@ -39,7 +40,7 @@ function canonicalize(p: string): string {
  * caller needs a stable key for `Map`/`Set` lookups across many paths.
  */
 export function canonicalCompareKey(input: string): string {
-  const expanded = input.replace(/^~/, process.env["HOME"] ?? "");
+  const expanded = input.replace(/^~/, homedir());
   const canonical = canonicalize(resolve(expanded));
   return isWindows() ? canonical.toLowerCase() : canonical;
 }

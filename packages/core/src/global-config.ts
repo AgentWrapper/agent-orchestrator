@@ -10,7 +10,7 @@ import { withFileLockSync } from "./file-lock.js";
 import { ProjectResolveError } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
-import { getDefaultRuntime } from "./platform.js";
+import { getDefaultRuntime, isWindows } from "./platform.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -99,7 +99,23 @@ export function getGlobalConfigPath(): string {
 
 export function isCanonicalGlobalConfigPath(configPath: string | undefined): boolean {
   if (!configPath) return false;
-  return resolve(configPath) === resolve(getGlobalConfigPath());
+  return registryPathCompareKey(configPath) === registryPathCompareKey(getGlobalConfigPath());
+}
+
+function registryPathCompareKey(path: string): string {
+  let resolved = resolve(path);
+  try {
+    resolved = realpathSync(resolved);
+  } catch {
+    // The global config file itself, or a hand-edited registry path, may not
+    // exist yet. Fall back to the resolved path while preserving Windows casing
+    // behavior below.
+  }
+  return isWindows() ? resolved.toLowerCase() : resolved;
+}
+
+function registryPathsEqual(a: string, b: string): boolean {
+  return registryPathCompareKey(a) === registryPathCompareKey(b);
 }
 
 // =============================================================================
@@ -716,7 +732,7 @@ export function registerProjectInGlobalConfig(
         | (GlobalProjectEntry & Record<string, unknown>)
         | undefined;
 
-      if (hashedExisting?.path && resolve(hashedExisting.path) === normalizedProjectPath) {
+      if (hashedExisting?.path && registryPathsEqual(hashedExisting.path, normalizedProjectPath)) {
         effectiveProjectId = hashedId;
         existing = hashedExisting;
       } else if (!hashedExisting) {
@@ -729,7 +745,7 @@ export function registerProjectInGlobalConfig(
       }
     }
 
-    if (existing?.path && resolve(existing.path) !== normalizedProjectPath) {
+    if (existing?.path && !registryPathsEqual(existing.path, normalizedProjectPath)) {
       throw new Error(
         `Project id "${effectiveProjectId}" is already registered for "${existing.path}". ` +
           `Choose a different configProjectKey to add "${normalizedProjectPath}" as a separate project.`,
@@ -738,7 +754,7 @@ export function registerProjectInGlobalConfig(
 
     for (const [existingProjectId, entry] of Object.entries(globalConfig.projects)) {
       if (existingProjectId === effectiveProjectId) continue;
-      if (resolve(entry.path) === normalizedProjectPath) {
+      if (registryPathsEqual(entry.path, normalizedProjectPath)) {
         throw new Error(
           `Project "${existingProjectId}" is already registered at "${normalizedProjectPath}". ` +
             `Choose a different project ID or path.`,

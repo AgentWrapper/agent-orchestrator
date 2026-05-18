@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   generateExternalId,
+  isCanonicalGlobalConfigPath,
   loadGlobalConfig,
   migrateToGlobalConfig,
   repairWrappedLocalProjectConfig,
@@ -17,6 +18,7 @@ describe("global-config storage identity", () => {
   let configPath: string;
   let originalHome: string | undefined;
   let originalUserProfile: string | undefined;
+  let originalPlatform: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     tempRoot = join(
@@ -27,6 +29,7 @@ describe("global-config storage identity", () => {
     configPath = join(tempRoot, "config.yaml");
     originalHome = process.env["HOME"];
     originalUserProfile = process.env["USERPROFILE"];
+    originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
     process.env["HOME"] = tempRoot;
     process.env["USERPROFILE"] = tempRoot;
   });
@@ -34,6 +37,9 @@ describe("global-config storage identity", () => {
   afterEach(() => {
     process.env["HOME"] = originalHome;
     process.env["USERPROFILE"] = originalUserProfile;
+    if (originalPlatform) {
+      Object.defineProperty(process, "platform", originalPlatform);
+    }
     rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
@@ -500,5 +506,20 @@ describe("global-config storage identity", () => {
     const config = loadGlobalConfig(configPath);
     const expected = process.platform === "win32" ? "process" : "tmux";
     expect(config?.defaults?.runtime).toBe(expected);
+  });
+
+  it("matches canonical global config paths case-insensitively on Windows", () => {
+    const originalGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    process.env["AO_GLOBAL_CONFIG"] = "C:\\Users\\Priya\\.agent-orchestrator\\config.yaml";
+
+    try {
+      expect(
+        isCanonicalGlobalConfigPath("c:\\Users\\Priya\\.agent-orchestrator\\config.yaml"),
+      ).toBe(true);
+    } finally {
+      if (originalGlobalConfig === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = originalGlobalConfig;
+    }
   });
 });

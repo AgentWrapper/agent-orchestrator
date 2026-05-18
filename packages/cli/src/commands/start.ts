@@ -11,6 +11,7 @@
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve, basename, dirname } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
@@ -637,7 +638,7 @@ async function addProjectToConfig(
   config: OrchestratorConfig,
   projectPath: string,
 ): Promise<string> {
-  const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
+  const resolvedPath = resolve(projectPath.replace(/^~/, homedir()));
 
   // Check if this path is already registered under any project name.
   // pathsEqual canonicalizes via realpathSync and lowercases on Windows so
