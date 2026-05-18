@@ -749,6 +749,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-decoration: none;
 }
 
+.session-ended-summary__primary:focus-visible,
+.session-ended-summary__secondary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .session-ended-summary__evidence {
   display: grid;
   gap: 6px;
