@@ -659,7 +659,7 @@ async function addProjectToConfig(
 
   await ensureGit("adding projects");
 
-  let projectId = basename(resolvedPath);
+  let projectId = basename(resolvedPath).replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || basename(resolvedPath);
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
