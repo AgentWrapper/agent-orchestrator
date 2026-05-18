@@ -1224,6 +1224,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-decoration: none;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   transition:
     background 100ms ease,
     border-color 100ms ease,
@@ -7605,7 +7606,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 /* Project name + pills: inline on desktop, stacked column on mobile */
