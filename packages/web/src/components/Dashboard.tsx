@@ -221,8 +221,13 @@ function DashboardInner({
   const isInsideLayout = parentCtx !== null;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const prevProjectParamRef = useRef(searchParams.get("project"));
   useEffect(() => {
-    if (!isInsideLayout) setMobileSidebarOpen(false);
+    const current = searchParams.get("project");
+    if (!isInsideLayout && prevProjectParamRef.current !== current) {
+      setMobileSidebarOpen(false);
+      prevProjectParamRef.current = current;
+    }
   }, [isInsideLayout, searchParams]);
   const handleToggleSidebar = useCallback(() => {
     if (isInsideLayout && parentCtx) { parentCtx.onToggleSidebar(); return; }
