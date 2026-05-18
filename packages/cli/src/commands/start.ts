@@ -138,8 +138,8 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
   const rawProjectId = basename(projectPath);
   // Sanitize project ID to conform to Zod validation: [a-zA-Z0-9_-]+
   // Fixes #1877 — folder names like "llama.cpp" must become "llama-cpp"
-  const projectId =
-    rawProjectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || rawProjectId;
+  const sanitized = rawProjectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
+  const projectId = sanitized || `project-${rawProjectId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 10) || "unnamed"}`;
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -155,10 +155,12 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
       : await detectDefaultBranch(projectPath, repo ?? null);
   const prefix = generateSessionPrefix(projectId);
 
+  const idLabel =
+    rawProjectId === projectId
+      ? `"${projectId}"`
+      : `"${rawProjectId}" → "${projectId}"`;
   console.log(
-    chalk.dim(
-      `\n  Registering project "${rawProjectId}" → "${projectId}" in global config...\n`,
-    ),
+    chalk.dim(`\n  Registering project ${idLabel} in global config...\n`),
   );
 
   const registeredProjectId = registerProjectInGlobalConfig(projectId, rawProjectId, projectPath, {
