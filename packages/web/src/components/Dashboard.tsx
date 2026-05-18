@@ -26,7 +26,6 @@ import { UpdateBanner } from "./UpdateBanner";
 import { CopyDebugBundleButton } from "./CopyDebugBundleButton";
 import { SidebarContext, useSidebarContext } from "./workspace/SidebarContext";
 import { ProjectSidebar } from "./ProjectSidebar";
-import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { BottomSheet } from "./BottomSheet";
 
@@ -177,24 +176,6 @@ function DashboardInner({
     return sessions.filter((s) => s.projectId === projectId);
   }, [sessions, projectId]);
 
-  const allSessionPrefixes = useMemo(
-    () => projects.map((p) => p.sessionPrefix ?? p.id),
-    [projects],
-  );
-
-  const sidebarOrchestrators = useMemo(
-    () =>
-      sessions
-        .filter((s) =>
-          isOrchestratorSession(
-            s,
-            projects.find((p) => p.id === s.projectId)?.sessionPrefix ?? s.projectId,
-            allSessionPrefixes,
-          ),
-        )
-        .map((s) => ({ id: s.id, projectId: s.projectId })),
-    [sessions, projects, allSessionPrefixes],
-  );
   const connectionStatus: "connected" | "reconnecting" | "disconnected" =
     mux?.status === "disconnected"
       ? "disconnected"
@@ -221,6 +202,14 @@ function DashboardInner({
   const isInsideLayout = parentCtx !== null;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const prevProjectParamRef = useRef(searchParams.get("project"));
+  useEffect(() => {
+    const current = searchParams.get("project");
+    if (!isInsideLayout && prevProjectParamRef.current !== current) {
+      setMobileSidebarOpen(false);
+      prevProjectParamRef.current = current;
+    }
+  }, [isInsideLayout, searchParams]);
   const handleToggleSidebar = useCallback(() => {
     if (isInsideLayout && parentCtx) { parentCtx.onToggleSidebar(); return; }
     if (isMobile) {
@@ -854,7 +843,7 @@ function DashboardInner({
             <ProjectSidebar
               projects={projects}
               sessions={sessions}
-              orchestrators={sidebarOrchestrators}
+              orchestrators={activeOrchestrators}
               activeProjectId={projectId}
               activeSessionId={activeSessionId}
               loading={!liveSessionsResolved}

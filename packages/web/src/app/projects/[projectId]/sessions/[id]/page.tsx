@@ -114,8 +114,10 @@ export default function ProjectSessionPage() {
   const id = params.id as string;
   const expectedProjectId = typeof params.projectId === "string" ? params.projectId : undefined;
 
-  // Read optimistic session data written by sidebar navigation
-  const cachedSession = (() => {
+  // Read optimistic session data written by sidebar navigation.
+  // Lazy initialiser ensures the sessionStorage read+remove runs exactly once
+  // per mount — safe under React Strict Mode's double-invocation.
+  const [session, setSession] = useState<DashboardSession | null>(() => {
     if (typeof sessionStorage === "undefined") return null;
     try {
       const raw = sessionStorage.getItem(`ao-session-nav:${id}`);
@@ -127,15 +129,13 @@ export default function ProjectSessionPage() {
       /* ignore */
     }
     return null;
-  })();
-
-  const [session, setSession] = useState<DashboardSession | null>(cachedSession);
+  });
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(
     undefined,
   );
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [loading, setLoading] = useState(cachedSession === null);
+  const [loading, setLoading] = useState(session === null);
   const [routeError, setRouteError] = useState<Error | null>(null);
   const [sessionMissing, setSessionMissing] = useState(false);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
@@ -150,7 +150,7 @@ export default function ProjectSessionPage() {
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
-  const hasLoadedSessionRef = useRef(cachedSession !== null);
+  const hasLoadedSessionRef = useRef(session !== null);
   const fetchingSessionRef = useRef(false);
   const fetchingProjectSessionsRef = useRef(false);
   const sessionFetchControllerRef = useRef<AbortController | null>(null);
