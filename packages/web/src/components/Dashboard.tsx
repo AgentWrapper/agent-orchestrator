@@ -221,6 +221,9 @@ function DashboardInner({
   const isInsideLayout = parentCtx !== null;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  useEffect(() => {
+    if (!isInsideLayout) setMobileSidebarOpen(false);
+  }, [isInsideLayout, searchParams]);
   const handleToggleSidebar = useCallback(() => {
     if (isInsideLayout && parentCtx) { parentCtx.onToggleSidebar(); return; }
     if (isMobile) {

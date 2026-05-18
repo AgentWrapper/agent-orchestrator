@@ -276,7 +276,7 @@ function ProjectSidebarInner({
   orchestrators,
   activeProjectId,
   activeSessionId,
-  loading = false,
+  loading: _loading = false,
   error = false,
   onRetry,
   collapsed = false,
@@ -284,7 +284,6 @@ function ProjectSidebarInner({
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const _isLoading = loading || sessions === null;
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () =>
