@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import {
   getShell,
   isWindows,
+  recordActivityEvent,
   type PluginModule,
   type Workspace,
   type WorkspaceCreateConfig,
@@ -361,7 +362,21 @@ export function create(config?: Record<string, unknown>): Workspace {
 
         // Branch already exists. It may be a stale session branch left behind
         // from an earlier spawn, so compare it with the freshly-resolved base
-        // before reusing it.
+        // before reusing it. Surface the collision shape for RCA before the
+        // recovery path decides whether to reuse or reset the local branch.
+        recordActivityEvent({
+          projectId: cfg.projectId,
+          sessionId: cfg.sessionId,
+          source: "workspace",
+          kind: "workspace.branch_collision",
+          level: "warn",
+          summary: `branch "${cfg.branch}" already exists; falling back to worktree recovery`,
+          data: {
+            plugin: "workspace-worktree",
+            branch: cfg.branch,
+            errorMessage: msg,
+          },
+        });
         const baseSha = await git(repoPath, "rev-parse", baseRef);
         const branchRef = `refs/heads/${cfg.branch}`;
         const existingBranchSha = (await refExists(repoPath, branchRef))
@@ -453,8 +468,24 @@ export function create(config?: Record<string, unknown>): Workspace {
         // pre-existing local branches unrelated to this workspace (any branch
         // containing "/" would have been deleted). Stale branches can be
         // cleaned up separately via `git branch --merged` or similar.
-      } catch {
+      } catch (err) {
         // If git commands fail, try to clean up the directory.
+        // The worktree metadata may be left stale in `git worktree list`
+        // because we couldn't run `worktree remove`. Surface so RCA can
+        // explain why a path was deleted but `git worktree list` still
+        // references it.
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        recordActivityEvent({
+          source: "workspace",
+          kind: "workspace.destroy_fell_back",
+          level: "warn",
+          summary: "destroy fell back to rmSync; git worktree metadata may be stale",
+          data: {
+            plugin: "workspace-worktree",
+            workspacePath,
+            errorMessage,
+          },
+        });
         // On Windows, retry with backoff for the file-handle drain race
         // (just-killed pty-host children still hold handles inside the worktree).
         if (existsSync(workspacePath)) {
@@ -661,10 +692,31 @@ export function create(config?: Record<string, unknown>): Workspace {
       if (project.postCreate) {
         const shell = getShell();
         for (const command of project.postCreate) {
-          await execFileAsync(shell.cmd, shell.args(command), {
-            cwd: info.path,
-            windowsHide: true,
-          });
+          try {
+            await execFileAsync(shell.cmd, shell.args(command), {
+              cwd: info.path,
+              windowsHide: true,
+            });
+          } catch (err) {
+            // Surface which postCreate command failed. Lifecycle records
+            // a generic spawn_failed but loses the specific command and
+            // its sanitized error output.
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            recordActivityEvent({
+              projectId: info.projectId,
+              sessionId: info.sessionId,
+              source: "workspace",
+              kind: "workspace.post_create_failed",
+              level: "error",
+              summary: `postCreate command failed for session ${info.sessionId}`,
+              data: {
+                plugin: "workspace-worktree",
+                command,
+                errorMessage,
+              },
+            });
+            throw err;
+          }
         }
       }
     },

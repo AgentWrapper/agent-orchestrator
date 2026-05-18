@@ -436,12 +436,9 @@ export function isDashboardSessionRestorable(session: DashboardSession): boolean
       isDashboardSessionTerminated(session) ||
       session.lifecycle.runtimeState === "missing" ||
       session.lifecycle.runtimeState === "exited";
-    return (
-      terminalByCoreTruth && session.lifecycle.prState !== "merged" && session.status !== "merged"
-    );
+    return terminalByCoreTruth && !NON_RESTORABLE_STATUSES.has(session.status);
   }
-  if (!isDashboardSessionTerminal(session)) return false;
-  return session.pr?.state !== "merged" && session.status !== "merged";
+  return isDashboardSessionTerminal(session) && !NON_RESTORABLE_STATUSES.has(session.status);
 }
 
 /**

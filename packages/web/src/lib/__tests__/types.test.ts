@@ -264,7 +264,7 @@ describe("getAttentionLevel", () => {
   });
 
   describe("restore affordances", () => {
-    it("should not mark merged sessions as restorable", () => {
+    it("should not mark a running merged session as restorable (runtime still alive)", () => {
       const session = createSession({
         status: "merged",
         lifecycle: {
@@ -297,6 +297,41 @@ describe("getAttentionLevel", () => {
       });
 
       expect(isDashboardSessionRestorable(session)).toBe(false);
+    });
+
+    it("should mark a pr_merged-cleanup session as restorable", () => {
+      const session = createSession({
+        status: "cleanup",
+        lifecycle: {
+          sessionState: "terminated",
+          sessionReason: "pr_merged",
+          prState: "merged",
+          prReason: "merged",
+          runtimeState: "missing",
+          runtimeReason: "pr_merged_cleanup",
+          session: {
+            state: "terminated",
+            reason: "pr_merged",
+            label: "terminated",
+            reasonLabel: "pr merged",
+          },
+          pr: { state: "merged", reason: "merged", label: "merged", reasonLabel: "merged" },
+          runtime: {
+            state: "missing",
+            reason: "pr_merged_cleanup",
+            label: "missing",
+            reasonLabel: "pr merged cleanup",
+          },
+          legacyStatus: "cleanup",
+          evidence: null,
+          detectingAttempts: 0,
+          detectingEscalatedAt: null,
+          summary: "Session cleaned up after PR merge",
+          guidance: null,
+        },
+      });
+
+      expect(isDashboardSessionRestorable(session)).toBe(true);
     });
   });
 

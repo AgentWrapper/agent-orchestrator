@@ -9,6 +9,7 @@ import {
   loadConfig,
   loadGlobalConfig,
   loadLocalProjectConfigDetailed,
+  recordActivityEvent,
   repairWrappedLocalProjectConfig,
   unregisterProject,
   writeLocalProjectConfig,
@@ -23,6 +24,7 @@ import { stopStaleWindowsPtyHosts } from "@/lib/windows-pty-cleanup";
 export const dynamic = "force-dynamic";
 
 const IDENTITY_FIELDS = new Set(["projectId", "path", "repo", "defaultBranch"]);
+const EDITABLE_CONFIG_FIELDS = new Set(["agent", "runtime", "tracker", "scm", "reactions"]);
 
 function sanitizeString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -112,7 +114,10 @@ function getProjectState(projectId: string) {
   };
 }
 
-function degradedPayload(projectId: string, degradedProject: NonNullable<ReturnType<typeof getProjectState>["degradedProject"]>) {
+function degradedPayload(
+  projectId: string,
+  degradedProject: NonNullable<ReturnType<typeof getProjectState>["degradedProject"]>,
+) {
   return {
     error: degradedProject.resolveError,
     projectId,
@@ -126,10 +131,7 @@ function degradedPayload(projectId: string, degradedProject: NonNullable<ReturnT
   };
 }
 
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
     const state = getProjectState(id);
@@ -172,10 +174,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
-  request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
@@ -200,7 +199,10 @@ export async function PATCH(
     }
     const projectPath = state.globalEntry?.path;
     if (!projectPath) {
-      return NextResponse.json({ error: `Project "${id}" is missing a registry path.` }, { status: 409 });
+      return NextResponse.json(
+        { error: `Project "${id}" is missing a registry path.` },
+        { status: 409 },
+      );
     }
 
     const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
@@ -211,7 +213,8 @@ export async function PATCH(
       return NextResponse.json({ error: localConfigResult.error }, { status: 400 });
     }
 
-    const currentConfig: LocalProjectConfig = localConfigResult.kind === "loaded" ? { ...localConfigResult.config } : {};
+    const currentConfig: LocalProjectConfig =
+      localConfigResult.kind === "loaded" ? { ...localConfigResult.config } : {};
     const nextConfig: LocalProjectConfig = {
       ...currentConfig,
     };
@@ -231,8 +234,7 @@ export async function PATCH(
               ...(body["tracker"] as Record<string, unknown>),
             } as LocalProjectConfig["tracker"])
           : undefined;
-      nextConfig.tracker =
-        nextTracker;
+      nextConfig.tracker = nextTracker;
     }
     if (hasOwn("scm")) {
       const nextScm =
@@ -242,8 +244,7 @@ export async function PATCH(
               ...(body["scm"] as Record<string, unknown>),
             } as LocalProjectConfig["scm"])
           : undefined;
-      nextConfig.scm =
-        nextScm;
+      nextConfig.scm = nextScm;
     }
     if (hasOwn("reactions")) {
       nextConfig.reactions =
@@ -261,6 +262,16 @@ export async function PATCH(
     invalidatePortfolioServicesCache();
     revalidateProjectPaths(id);
 
+    // Record only changed *keys*, never values — config can contain tokens.
+    const changedKeys = Object.keys(body).filter((k) => EDITABLE_CONFIG_FIELDS.has(k));
+    recordActivityEvent({
+      projectId: id,
+      source: "api",
+      kind: "api.project_updated",
+      summary: `project updated: ${id}`,
+      data: { changedKeys },
+    });
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(
@@ -270,19 +281,14 @@ export async function PATCH(
   }
 }
 
-export async function PUT(
-  request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function PUT(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   return PATCH(request, context);
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function DELETE(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  let id: string | undefined;
   try {
-    const { id } = await context.params;
+    ({ id } = await context.params);
     const state = getProjectState(id);
     if (!state.globalEntry && !state.project && !state.degradedProject) {
       return NextResponse.json({ error: `Unknown project: ${id}` }, { status: 404 });
@@ -299,7 +305,8 @@ export async function DELETE(
       return NextResponse.json({ error: `Invalid project ID: ${id}` }, { status: 400 });
     }
 
-    const workspacePluginName = state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
+    const workspacePluginName =
+      state.project?.workspace ?? state.config.defaults.workspace ?? "worktree";
     const { registry, sessionManager } = await getServices();
     await stopProjectSessions(id, sessionManager);
     await stopStaleWindowsPtyHosts(projectDir);
@@ -310,23 +317,34 @@ export async function DELETE(
     invalidatePortfolioServicesCache();
     revalidateProjectPaths(id);
 
+    recordActivityEvent({
+      projectId: id,
+      source: "api",
+      kind: "api.project_removed",
+      summary: `project removed: ${id}`,
+      data: { removedStorageDir: hadStorageDir },
+    });
+
     return NextResponse.json({
       ok: true,
       projectId: id,
       removedStorageDir: hadStorageDir,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to delete project" },
-      { status: 500 },
-    );
+    const reason = error instanceof Error ? error.message : "Failed to delete project";
+    recordActivityEvent({
+      projectId: id,
+      source: "api",
+      kind: "api.project_remove_failed",
+      level: "error",
+      summary: `project remove failed: ${reason}`,
+      data: { reason },
+    });
+    return NextResponse.json({ error: reason }, { status: 500 });
   }
 }
 
-export async function POST(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function POST(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
     const state = getProjectState(id);
@@ -337,7 +355,9 @@ export async function POST(
       return NextResponse.json({ error: "Project does not need repair." }, { status: 400 });
     }
 
-    const isWrappedConfigError = state.degradedProject.resolveError.includes("wrapped projects: format");
+    const isWrappedConfigError = state.degradedProject.resolveError.includes(
+      "wrapped projects: format",
+    );
     if (!isWrappedConfigError) {
       return NextResponse.json(
         { error: "Automatic repair is not available for this degraded config." },
@@ -348,6 +368,13 @@ export async function POST(
     repairWrappedLocalProjectConfig(id, state.degradedProject.path);
     invalidatePortfolioServicesCache();
     revalidateProjectPaths(id);
+
+    recordActivityEvent({
+      projectId: id,
+      source: "api",
+      kind: "api.project_repaired",
+      summary: `project repaired: ${id}`,
+    });
 
     return NextResponse.json({ ok: true, repaired: true, projectId: id });
   } catch (error) {

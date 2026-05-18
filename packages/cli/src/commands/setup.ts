@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { recordActivityEvent } from "@aoagents/ao-core";
 import {
   DesktopSetupError,
   runDesktopSetupAction,
@@ -332,6 +333,16 @@ export function registerSetup(program: Command): void {
       try {
         await runSetupAction(opts);
       } catch (err) {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.setup_failed",
+          level: "error",
+          summary: "ao setup openclaw failed",
+          data: {
+            aborted: err instanceof OpenClawSetupError && err.exitCode === 0,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
         if (err instanceof OpenClawSetupError) {
           console.error(err.message);
           process.exit(err.exitCode);

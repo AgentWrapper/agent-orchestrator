@@ -1,9 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt } from "@aoagents/ao-core";
+import { generateOrchestratorPrompt, recordActivityEvent } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
 
-function classifySpawnError(projectId: string, error: unknown): {
+function classifySpawnError(
+  projectId: string,
+  error: unknown,
+): {
   status: number;
   payload: Record<string, unknown>;
 } {
@@ -60,6 +63,14 @@ export async function POST(request: NextRequest) {
     const session = clean
       ? await sessionManager.relaunchOrchestrator({ projectId, systemPrompt })
       : await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+
+    recordActivityEvent({
+      projectId,
+      sessionId: session.id,
+      source: "api",
+      kind: "api.orchestrator_spawn_requested",
+      summary: `orchestrator spawn requested for ${projectId}`,
+    });
 
     return NextResponse.json(
       {

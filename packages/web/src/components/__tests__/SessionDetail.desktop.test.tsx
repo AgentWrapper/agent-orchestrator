@@ -223,6 +223,32 @@ describe("SessionDetail desktop layout", () => {
       "/projects/my-app",
     );
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+    // The ended-session body also exposes a prominent "Restore session" button
+    // so users don't have to find the small icon in the header.
+    expect(
+      within(screen.getByRole("region", { name: "Session ended summary" })).getByRole("button", {
+        name: "Restore session",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Restore button in the ended-summary for pr_merged sessions (status=cleanup)", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-pr-merged",
+          projectId: "my-app",
+          status: "cleanup",
+          activity: "exited",
+          pr: makePR({ number: 1904, state: "merged" }),
+        })}
+      />,
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Session ended summary" })).getByRole("button", {
+        name: "Restore session",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("keeps restored working sessions live when terminatedAt is stale", () => {

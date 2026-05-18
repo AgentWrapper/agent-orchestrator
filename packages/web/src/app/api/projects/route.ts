@@ -8,6 +8,7 @@ import {
   getGlobalConfigPath,
   loadConfig,
   migrateToGlobalConfig,
+  recordActivityEvent,
   registerProjectInGlobalConfig,
 } from "@aoagents/ao-core";
 import { revalidatePath } from "next/cache";
@@ -108,6 +109,12 @@ export async function POST(request: NextRequest) {
     );
     invalidatePortfolioServicesCache();
     revalidatePortfolioPaths(registeredProjectId);
+    recordActivityEvent({
+      projectId: registeredProjectId,
+      source: "api",
+      kind: "api.project_added",
+      summary: `project added: ${registeredProjectId}`,
+    });
     return NextResponse.json({ ok: true, projectId: registeredProjectId }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to add project";
@@ -124,6 +131,14 @@ export async function POST(request: NextRequest) {
     if (pathAlreadyRegistered) {
       const existingProjectId = pathAlreadyRegistered[1];
       const suggestedProjectId = generateExternalId(resolvedPath);
+      recordActivityEvent({
+        projectId,
+        source: "api",
+        kind: "api.project_add_rejected",
+        level: "warn",
+        summary: `project add rejected: path already registered`,
+        data: { reason: "path_already_registered", existingProjectId, statusCode: 409 },
+      });
       return NextResponse.json(
         {
           error: message,
@@ -138,6 +153,14 @@ export async function POST(request: NextRequest) {
     if (idAlreadyRegistered) {
       const existingProjectId = idAlreadyRegistered[1];
       const suggestedProjectId = generateExternalId(resolvedPath);
+      recordActivityEvent({
+        projectId,
+        source: "api",
+        kind: "api.project_add_rejected",
+        level: "warn",
+        summary: `project add rejected: id already registered`,
+        data: { reason: "id_already_registered", existingProjectId, statusCode: 409 },
+      });
       return NextResponse.json(
         {
           error: message,

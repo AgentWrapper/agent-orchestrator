@@ -32,6 +32,7 @@ import {
   findPidByPort,
   killProcessTree,
   loadLocalProjectConfigDetailed,
+  recordActivityEvent,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
   type OrchestratorConfig,
@@ -116,6 +117,17 @@ import { projectSessionUrl } from "../lib/routes.js";
 // HELPERS
 // =============================================================================
 
+class CliFailureEventRecordedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CliFailureEventRecordedError";
+  }
+}
+
+function isCliFailureEventRecordedError(err: unknown): boolean {
+  return err instanceof CliFailureEventRecordedError;
+}
+
 function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
   const localConfig = loadLocalProjectConfigDetailed(projectPath);
   if (localConfig.kind === "loaded") {
@@ -160,6 +172,15 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
     defaultBranch,
     sessionPrefix: prefix,
     ...(repo ? { repo } : {}),
+  });
+
+  recordActivityEvent({
+    projectId: registeredProjectId,
+    source: "cli",
+    kind: "cli.config_migrated",
+    level: "info",
+    summary: `flat config registered into global config`,
+    data: { projectPath, configPath },
   });
 
   console.log(chalk.green(`  ✓ Registered "${registeredProjectId}"\n`));
@@ -940,10 +961,21 @@ async function runStartup(
       }
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.start_failed",
+        level: "error",
+        summary: `orchestrator setup failed`,
+        data: {
+          reason: "orchestrator_setup",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
-      throw new Error(
+      throw new CliFailureEventRecordedError(
         `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
@@ -953,14 +985,25 @@ async function runStartup(
   if (shouldStartLifecycle) {
     try {
       spinner.start("Starting project supervisor");
-      await startProjectSupervisor();
+      await startProjectSupervisor({ configPath: config.configPath });
       spinner.succeed("Lifecycle project supervisor started");
     } catch (err) {
       spinner.fail("Project supervisor failed to start");
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.start_failed",
+        level: "error",
+        summary: `project supervisor failed to start`,
+        data: {
+          reason: "supervisor_start",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
-      throw new Error(
+      throw new CliFailureEventRecordedError(
         `Failed to start project supervisor: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
@@ -974,12 +1017,21 @@ async function runStartup(
       if (lastStop && lastStop.sessionIds.length > 0) {
         const stoppedAgo = `stopped at ${new Date(lastStop.stoppedAt).toLocaleString()}`;
         const otherProjects = lastStop.otherProjects ?? [];
+        const restoreProjectBySessionId = new Map<string, string>();
 
         // Build flat list of all sessions to restore, grouped for display
         const allRestoreSessions: string[] = [
           ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
           ...otherProjects.flatMap((p) => p.sessionIds),
         ];
+        for (const sessionId of lastStop.sessionIds) {
+          restoreProjectBySessionId.set(sessionId, lastStop.projectId);
+        }
+        for (const otherProject of otherProjects) {
+          for (const sessionId of otherProject.sessionIds) {
+            restoreProjectBySessionId.set(sessionId, otherProject.projectId);
+          }
+        }
 
         // Display grouped by project
         const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
@@ -1005,6 +1057,17 @@ async function runStartup(
         if (allRestoreSessions.length > 0) {
           const shouldRestore = await promptConfirm("Restore these sessions?", true);
           if (shouldRestore) {
+            recordActivityEvent({
+              projectId,
+              source: "cli",
+              kind: "cli.restore_started",
+              level: "info",
+              summary: `restoring ${allRestoreSessions.length} session(s) from last-stop`,
+              data: {
+                sessionCount: allRestoreSessions.length,
+                stoppedAt: lastStop.stoppedAt,
+              },
+            });
             // Use global config so the session manager can see all projects
             let restoreConfig = config;
             if (otherProjects.length > 0) {
@@ -1029,11 +1092,33 @@ async function runStartup(
                 restoredCount++;
               } catch (err) {
                 failedSessionIds.add(sessionId);
+                const restoreProjectId = restoreProjectBySessionId.get(sessionId) ?? projectId;
+                recordActivityEvent({
+                  projectId: restoreProjectId,
+                  sessionId,
+                  source: "cli",
+                  kind: "cli.restore_session_failed",
+                  level: "warn",
+                  summary: `failed to restore session`,
+                  data: { errorMessage: err instanceof Error ? err.message : String(err) },
+                });
                 warnings.push(
                   `  Warning: could not restore ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
                 );
               }
             }
+            recordActivityEvent({
+              projectId,
+              source: "cli",
+              kind: "cli.restore_completed",
+              level: "info",
+              summary: `restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
+              data: {
+                requested: allRestoreSessions.length,
+                restored: restoredCount,
+                failed: failedSessionIds.size,
+              },
+            });
             if (restoredCount === allRestoreSessions.length) {
               restoreSpinner.succeed(
                 `Restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
@@ -1086,7 +1171,15 @@ async function runStartup(
           await clearLastStop();
         }
       }
-    } catch {
+    } catch (err) {
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.last_stop_read_failed",
+        level: "warn",
+        summary: `failed to read or process last-stop state during startup`,
+        data: { errorMessage: err instanceof Error ? err.message : String(err) },
+      });
       // Non-fatal: don't block startup if last-stop handling fails
     }
   }
@@ -1359,6 +1452,21 @@ export function registerStart(program: Command): void {
           reapOrphans?: boolean;
         },
       ) => {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.start_invoked",
+          level: "info",
+          summary: "ao start invoked",
+          data: {
+            projectArg: projectArg ?? null,
+            dashboard: opts?.dashboard !== false,
+            orchestrator: opts?.orchestrator !== false,
+            rebuild: opts?.rebuild === true,
+            dev: opts?.dev === true,
+            interactive: opts?.interactive === true,
+          },
+        });
+
         let releaseStartupLock: (() => void) | undefined;
         let startupLockReleased = false;
         const unlockStartup = (): void => {
@@ -1491,6 +1599,13 @@ export function registerStart(program: Command): void {
                 // Resolve happens below; the suffix mutation runs after.
                 startNewOrchestrator = true;
               } else if (choice === "restart") {
+                recordActivityEvent({
+                  source: "cli",
+                  kind: "cli.daemon_restart",
+                  level: "info",
+                  summary: `user chose restart, killing existing daemon`,
+                  data: { existingPid: running.pid, existingPort: running.port },
+                });
                 await killExistingDaemon(running);
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
                 running = null;
@@ -1649,6 +1764,18 @@ export function registerStart(program: Command): void {
           // Ctrl+C and `ao stop` (which sends SIGTERM) perform a full
           // graceful shutdown via the handler installed inside runStartup().
         } catch (err) {
+          if (!isCliFailureEventRecordedError(err)) {
+            recordActivityEvent({
+              source: "cli",
+              kind: "cli.start_failed",
+              level: "error",
+              summary: `ao start action failed`,
+              data: {
+                reason: "outer",
+                errorMessage: err instanceof Error ? err.message : String(err),
+              },
+            });
+          }
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);
           } else {
@@ -1720,6 +1847,17 @@ export function registerStop(program: Command): void {
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .option("--all", "Stop all running AO instances")
     .action(async (projectArg?: string, opts: { purgeSession?: boolean; all?: boolean } = {}) => {
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.stop_invoked",
+        level: "info",
+        summary: "ao stop invoked",
+        data: {
+          projectArg: projectArg ?? null,
+          all: opts.all === true,
+          purgeSession: opts.purgeSession === true,
+        },
+      });
       try {
         // Check running.json first
         const running = await getRunning();
@@ -1796,6 +1934,15 @@ export function registerStop(program: Command): void {
                   killedSessionIds.push(session.id);
                 }
               } catch (err) {
+                recordActivityEvent({
+                  projectId: session.projectId ?? _projectId,
+                  sessionId: session.id,
+                  source: "cli",
+                  kind: "cli.stop_session_failed",
+                  level: "warn",
+                  summary: `failed to kill session during ao stop`,
+                  data: { errorMessage: err instanceof Error ? err.message : String(err) },
+                });
                 warnings.push(
                   `  Warning: failed to stop ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
                 );
@@ -1840,12 +1987,48 @@ export function registerStop(program: Command): void {
               otherProjects.push({ projectId: pid, sessionIds: ids });
             }
 
-            await writeLastStop({
-              stoppedAt: new Date().toISOString(),
-              projectId: _projectId,
-              sessionIds: killedSessionIds.filter((id) => targetActive.some((s) => s.id === id)),
-              otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
-            });
+            const targetSessionIds = killedSessionIds.filter((id) =>
+              targetActive.some((s) => s.id === id),
+            );
+            try {
+              await writeLastStop({
+                stoppedAt: new Date().toISOString(),
+                projectId: _projectId,
+                sessionIds: targetSessionIds,
+                otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
+              });
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.last_stop_written",
+                level: "info",
+                summary: `last-stop state written with ${killedSessionIds.length} session(s)`,
+                data: {
+                  targetSessionCount: targetSessionIds.length,
+                  otherProjectCount: otherProjects.length,
+                  totalKilled: killedSessionIds.length,
+                },
+              });
+            } catch (err) {
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.last_stop_write_failed",
+                level: "error",
+                summary: `failed to write last-stop state during ao stop`,
+                data: {
+                  targetSessionCount: targetSessionIds.length,
+                  otherProjectCount: otherProjects.length,
+                  totalKilled: killedSessionIds.length,
+                  errorMessage: err instanceof Error ? err.message : String(err),
+                },
+              });
+              console.log(
+                chalk.yellow(
+                  `  Could not write last-stop state: ${err instanceof Error ? err.message : String(err)}`,
+                ),
+              );
+            }
           }
         } catch (err) {
           console.log(
@@ -1872,7 +2055,29 @@ export function registerStop(program: Command): void {
             // 0x800700e8). No-op on non-Windows.
             await sweepWindowsPtyHostsBeforeParentKill();
             await sweepRegisteredDaemonChildren(running.pid);
-            await killProcessTree(running.pid, "SIGTERM");
+            try {
+              await killProcessTree(running.pid, "SIGTERM");
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.daemon_killed",
+                level: "info",
+                summary: `SIGTERM sent to parent ao start`,
+                data: { pid: running.pid, port: running.port },
+              });
+            } catch (err) {
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.daemon_killed",
+                level: "warn",
+                summary: `parent ao start was already dead`,
+                data: {
+                  pid: running.pid,
+                  errorMessage: err instanceof Error ? err.message : String(err),
+                },
+              });
+            }
             await unregister();
           } else {
             await sweepRegisteredDaemonChildren();
@@ -1892,6 +2097,16 @@ export function registerStop(program: Command): void {
           console.log(chalk.dim(`  Projects: ${Object.keys(config.projects).join(", ")}\n`));
         }
       } catch (err) {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.stop_failed",
+          level: "error",
+          summary: `ao stop action failed`,
+          data: {
+            projectArg: projectArg ?? null,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
         if (err instanceof Error) {
           console.error(chalk.red("\nError:"), err.message);
         } else {

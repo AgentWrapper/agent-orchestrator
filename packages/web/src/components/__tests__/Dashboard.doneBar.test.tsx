@@ -60,10 +60,10 @@ describe("Dashboard done bar", () => {
     expect(screen.queryByText(/No active sessions/i)).not.toBeInTheDocument();
   });
 
-  it("does not render a restore action for merged sessions", () => {
+  it("renders a restore action for merged sessions", () => {
     render(<Dashboard initialSessions={[DONE_SESSION]} />);
     const toggle = screen.getByText("Done / Terminated").closest("button")!;
     fireEvent.click(toggle);
-    expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /restore/i })).toBeInTheDocument();
   });
 });

@@ -1,14 +1,23 @@
 import {
   getNotificationDataV3,
-  type NotificationCICheck,
-  type NotificationDataV3,
-  type PluginModule,
+  recordActivityEvent,
+  type EventPriority,
   type Notifier,
-  type OrchestratorEvent,
   type NotifyAction,
   type NotifyContext,
-  type EventPriority,
+  type NotificationCICheck,
+  type NotificationDataV3,
+  type OrchestratorEvent,
+  type PluginModule,
 } from "@aoagents/ao-core";
+
+// Module-level guard so we only emit notifier.dep_missing once per process.
+let depMissingEmitted = false;
+
+/** Test-only: reset the once-per-process dep_missing guard. */
+export function _resetDepMissingEmittedForTesting(): void {
+  depMissingEmitted = false;
+}
 
 export const manifest = {
   name: "composio",
@@ -193,6 +202,22 @@ async function loadComposioSDK(apiKey: string): Promise<ComposioToolsClient | nu
       message.includes("MODULE_NOT_FOUND") ||
       code === "ERR_MODULE_NOT_FOUND"
     ) {
+      // User-actionable. Emit once per process so RCA can answer
+      // "why is the composio notifier silent?" without spamming on every notify call.
+      if (!depMissingEmitted) {
+        depMissingEmitted = true;
+        recordActivityEvent({
+          source: "notifier",
+          kind: "notifier.dep_missing",
+          level: "error",
+          summary: "Composio SDK (composio-core) is not installed",
+          data: {
+            plugin: "notifier-composio",
+            package: "composio-core",
+            installHint: "pnpm add composio-core",
+          },
+        });
+      }
       return null;
     }
     throw err;

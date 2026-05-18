@@ -19,6 +19,7 @@ import type {
   PluginRegistry,
   OrchestratorConfig,
 } from "./types.js";
+import { recordActivityEvent } from "./activity-events.js";
 
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
@@ -102,8 +103,9 @@ function collectNotifierRegistrations(
   const defaultNotifiers = Array.isArray(config.defaults?.notifiers)
     ? config.defaults.notifiers
     : [];
-  const routingNotifiers = Object.values(config.notificationRouting ?? {})
-    .flatMap((value) => (Array.isArray(value) ? value : []));
+  const routingNotifiers = Object.values(config.notificationRouting ?? {}).flatMap((value) =>
+    Array.isArray(value) ? value : [],
+  );
   const isReferencedByName =
     defaultNotifiers.includes(pluginName) || routingNotifiers.includes(pluginName);
 
@@ -494,9 +496,23 @@ export function createPluginRegistry(): PluginRegistry {
               this.register(mod);
             }
           } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             process.stderr.write(
               `[plugin-registry] Failed to load built-in plugin "${builtin.name}": ${error}\n`,
             );
+            recordActivityEvent({
+              source: "plugin-registry",
+              kind: "plugin-registry.load_failed",
+              level: "error",
+              summary: `built-in plugin ${builtin.name} failed to load`,
+              data: {
+                plugin: builtin.name,
+                slot: builtin.slot,
+                pkg: builtin.pkg,
+                builtin: true,
+                error: message,
+              },
+            });
           }
         }
       }
@@ -521,6 +537,16 @@ export function createPluginRegistry(): PluginRegistry {
           process.stderr.write(
             `[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`,
           );
+          recordActivityEvent({
+            source: "plugin-registry",
+            kind: "plugin-registry.specifier_failed",
+            level: "error",
+            summary: `could not resolve specifier for plugin ${plugin.name}`,
+            data: {
+              plugin: plugin.name,
+              source: plugin.source ?? null,
+            },
+          });
           continue;
         }
 
@@ -543,9 +569,27 @@ export function createPluginRegistry(): PluginRegistry {
               // Log validation errors but don't abort - other projects can still use the plugin.
               // The misconfigured project will fail later when it tries to use the plugin
               // with the wrong name, giving a clearer error at point of use.
+              const message =
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError);
               process.stderr.write(
                 `[plugin-registry] Config validation failed for ${externalEntry.source}: ${validationError}\n`,
               );
+              recordActivityEvent({
+                source: "plugin-registry",
+                kind: "plugin-registry.validation_failed",
+                level: "error",
+                summary: `plugin manifest validation failed for ${plugin.name}`,
+                data: {
+                  plugin: plugin.name,
+                  externalSource: externalEntry.source,
+                  specifier,
+                  manifestName: mod.manifest.name,
+                  manifestSlot: mod.manifest.slot,
+                  error: message,
+                },
+              });
             }
           }
 
@@ -555,9 +599,23 @@ export function createPluginRegistry(): PluginRegistry {
             this.register(mod);
           }
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           process.stderr.write(
             `[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`,
           );
+          recordActivityEvent({
+            source: "plugin-registry",
+            kind: "plugin-registry.load_failed",
+            level: "error",
+            summary: `external plugin ${plugin.name} failed to load`,
+            data: {
+              plugin: plugin.name,
+              specifier,
+              source: plugin.source ?? null,
+              builtin: false,
+              error: message,
+            },
+          });
         }
       }
     },

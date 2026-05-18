@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { ConfigNotFoundError, getGlobalConfigPath, loadConfig } from "@aoagents/ao-core";
+import {
+  ConfigNotFoundError,
+  getGlobalConfigPath,
+  loadConfig,
+  recordActivityEvent,
+} from "@aoagents/ao-core";
 import { invalidatePortfolioServicesCache } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -25,10 +30,19 @@ export async function POST() {
     invalidatePortfolioServicesCache();
     const config = loadReloadConfig();
 
+    const projectCount = Object.keys(config.projects).length;
+    const degradedCount = Object.keys(config.degradedProjects).length;
+    recordActivityEvent({
+      source: "api",
+      kind: "api.config_reloaded",
+      summary: `config reloaded: ${projectCount} projects, ${degradedCount} degraded`,
+      data: { projectCount, degradedCount },
+    });
+
     return NextResponse.json({
       reloaded: true,
-      projectCount: Object.keys(config.projects).length,
-      degradedCount: Object.keys(config.degradedProjects).length,
+      projectCount,
+      degradedCount,
     });
   } catch (error) {
     return NextResponse.json(

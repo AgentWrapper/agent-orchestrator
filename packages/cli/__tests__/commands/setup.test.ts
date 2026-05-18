@@ -91,14 +91,8 @@ const SLACK_SECRET_WEBHOOK_URL = testHttpsUrl(
   ["hooks", "slack", "com"],
   "/services/T000/B000/secret",
 );
-const SLACK_BAD_WEBHOOK_URL = testHttpsUrl(
-  ["hooks", "slack", "com"],
-  "/services/T000/B000/bad",
-);
-const SLACK_NEW_WEBHOOK_URL = testHttpsUrl(
-  ["hooks", "slack", "com"],
-  "/services/TNEW/BNEW/new",
-);
+const SLACK_BAD_WEBHOOK_URL = testHttpsUrl(["hooks", "slack", "com"], "/services/T000/B000/bad");
+const SLACK_NEW_WEBHOOK_URL = testHttpsUrl(["hooks", "slack", "com"], "/services/TNEW/BNEW/new");
 
 vi.mock("@aoagents/ao-core", () => ({
   CONFIG_SCHEMA_URL:
@@ -119,6 +113,7 @@ vi.mock("@aoagents/ao-core", () => ({
     return Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 50;
   },
   readDashboardNotificationsFromFile: () => [],
+  recordActivityEvent: vi.fn(),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -177,6 +172,7 @@ vi.mock("@composio/core", () => {
 
 vi.mock("@clack/prompts", () => mockClack);
 
+import { recordActivityEvent } from "@aoagents/ao-core";
 import { registerSetup } from "../../src/commands/setup.js";
 import { applyNotifierRoutingPreset } from "../../src/lib/notifier-routing.js";
 
@@ -2042,6 +2038,7 @@ describe("setup openclaw command", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(recordActivityEvent).mockClear();
     mockFindConfigFile.mockReturnValue("/tmp/agent-orchestrator.yaml");
     mockReadFileSync.mockReturnValue(MINIMAL_CONFIG);
     mockWriteFileSync.mockImplementation(() => {});
