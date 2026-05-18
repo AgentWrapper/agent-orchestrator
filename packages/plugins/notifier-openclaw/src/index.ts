@@ -9,6 +9,7 @@ import {
   type OrchestratorEvent,
   type PluginModule,
   getObservabilityBaseDir,
+  recordActivityEvent,
 } from "@aoagents/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@aoagents/ao-core/utils";
 
@@ -39,6 +40,13 @@ export const manifest = {
 };
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const UNREACHABLE_NETWORK_ERROR_CODES = [
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "ENETUNREACH",
+] as const;
+type UnreachableNetworkErrorCode = (typeof UNREACHABLE_NETWORK_ERROR_CODES)[number];
 
 type WakeMode = "now" | "next-heartbeat";
 
@@ -117,6 +125,10 @@ function recordHealthFailure(path: string | null, error: unknown): void {
   writeHealthSummary(path, summary);
 }
 
+function getUnreachableNetworkErrorCode(error: Error): UnreachableNetworkErrorCode | undefined {
+  return UNREACHABLE_NETWORK_ERROR_CODES.find((code) => error.message.includes(code));
+}
+
 async function postWithRetry(
   url: string,
   payload: OpenClawWebhookPayload,
@@ -130,6 +142,7 @@ async function postWithRetry(
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    let shouldRethrowResponseError = false;
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -143,17 +156,33 @@ async function postWithRetry(
       const body = await response.text();
 
       if (response.status === 401 || response.status === 403) {
+        // User-actionable: distinct from generic 5xx — token expired or wrong.
+        recordActivityEvent({
+          sessionId: context.sessionId,
+          source: "notifier",
+          kind: "notifier.auth_failed",
+          level: "error",
+          summary: `OpenClaw rejected auth token (HTTP ${response.status})`,
+          data: {
+            plugin: "notifier-openclaw",
+            status: response.status,
+            url,
+            fixHint: "ao setup openclaw",
+          },
+        });
         lastError = new Error(
           `OpenClaw rejected the auth token (HTTP ${response.status}).\n` +
             `  Check that hooks.token in your OpenClaw config matches the token configured for AO.\n` +
             `  Reconfigure: ao setup openclaw`,
         );
+        shouldRethrowResponseError = true;
         throw lastError;
       }
 
       lastError = new Error(`OpenClaw webhook failed (${response.status}): ${body}`);
 
       if (!isRetryableHttpStatus(response.status)) {
+        shouldRethrowResponseError = true;
         throw lastError;
       }
 
@@ -163,10 +192,24 @@ async function postWithRetry(
         );
       }
     } catch (err) {
-      if (err === lastError) throw err;
+      if (shouldRethrowResponseError && err === lastError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
 
-      if (lastError.message.includes("ECONNREFUSED")) {
+      const unreachableCode = getUnreachableNetworkErrorCode(lastError);
+      if (unreachableCode && (unreachableCode === "ECONNREFUSED" || attempt >= retries)) {
+        recordActivityEvent({
+          sessionId: context.sessionId,
+          source: "notifier",
+          kind: "notifier.unreachable",
+          level: "warn",
+          summary: `OpenClaw gateway unreachable at ${url}`,
+          data: {
+            plugin: "notifier-openclaw",
+            url,
+            errorMessage: lastError.message,
+            fixHint: "openclaw status",
+          },
+        });
         throw new Error(
           `Can't reach OpenClaw gateway at ${url}.\n` +
             `  Is OpenClaw running? Check: openclaw status\n` +

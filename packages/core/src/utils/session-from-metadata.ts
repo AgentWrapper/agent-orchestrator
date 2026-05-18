@@ -14,6 +14,7 @@ import { safeJsonParse, validateStatus } from "./validation.js";
 
 interface SessionFromMetadataOptions {
   projectId?: string;
+  workspacePathFallback?: string;
   status?: SessionStatus;
   sessionKind?: SessionKind;
   activity?: Session["activity"];
@@ -86,7 +87,7 @@ export function sessionFromMetadata(
           };
         })()
       : null,
-    workspacePath: meta["worktree"] || null,
+    workspacePath: meta["worktree"] || options.workspacePathFallback || null,
     runtimeHandle: lifecycle.runtime.handle ?? runtimeHandle,
     agentInfo: meta["summary"] ? { summary: meta["summary"], agentSessionId: null } : null,
     createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (options.createdAt ?? new Date()),

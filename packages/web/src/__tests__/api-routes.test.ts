@@ -129,6 +129,7 @@ const mockSessionManager: SessionManager = {
   cleanup: vi.fn(async () => ({ killed: [], skipped: [], errors: [] })),
   spawnOrchestrator: vi.fn(),
   ensureOrchestrator: vi.fn(),
+  relaunchOrchestrator: vi.fn(),
   remap: vi.fn(async () => "ses_mock"),
   restore: vi.fn(async (id: string) => {
     const session = testSessions.find((s) => s.id === id);
@@ -232,7 +233,7 @@ import {
   GET as sessionDetailGET,
   PATCH as sessionDetailPATCH,
 } from "@/app/api/sessions/[id]/route";
-import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -1173,53 +1174,49 @@ describe("API Routes", () => {
       expect(data.recovery).toBe("reuse-or-recreate-workspace");
       expect(data.error).toContain('AO found an older orchestrator workspace for "my-app"');
     });
-  });
 
-  describe("GET /api/orchestrators", () => {
-    it("returns orchestrators for a project", async () => {
-      const orchestrator = makeSession({
-        id: "my-app-orchestrator",
-        projectId: "my-app",
-        metadata: { role: "orchestrator" },
+    it("calls relaunchOrchestrator instead of spawnOrchestrator when clean is true", async () => {
+      (mockSessionManager.relaunchOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+        }),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", clean: true }),
+        headers: { "Content-Type": "application/json" },
       });
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+      const res = await orchestratorsPOST(req);
 
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.orchestrators).toHaveLength(1);
-      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
-      expect(data.projectName).toBe("My App");
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.relaunchOrchestrator).toHaveBeenCalledWith({
+        projectId: "my-app",
+        systemPrompt: expect.stringContaining("# My App Orchestrator"),
+      });
+      expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
     });
 
-    it("returns 400 when project parameter is missing", async () => {
-      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toMatch(/Missing project query parameter/);
-    });
+    it("uses spawnOrchestrator when clean is false or omitted", async () => {
+      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+        }),
+      );
 
-    it("returns 404 for unknown project", async () => {
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
-      );
-      expect(res.status).toBe(404);
-      const data = await res.json();
-      expect(data.error).toMatch(/Unknown project/);
-    });
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", clean: false }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await orchestratorsPOST(req);
 
-    it("returns 500 when list fails", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("boom"),
-      );
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(500);
-      const data = await res.json();
-      expect(data.error).toBe("boom");
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalled();
+      expect(mockSessionManager.relaunchOrchestrator).not.toHaveBeenCalled();
     });
   });
 

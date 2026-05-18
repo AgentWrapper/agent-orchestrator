@@ -399,6 +399,8 @@ describe("ProjectSidebar", () => {
       />,
     );
 
+    // Only the killed-but-still-needs-attention session is counted; the merged
+    // session is filtered out by sessionsByProject (showDone = false by default).
     expect(screen.getByRole("button", { name: /^Project One 1$/ })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Open Runtime missing but needs review" }),

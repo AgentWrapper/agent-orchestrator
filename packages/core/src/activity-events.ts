@@ -20,8 +20,12 @@ export type ActivityEventSource =
   | "scm"
   | "runtime"
   | "agent"
+  | "tracker"
+  | "workspace"
+  | "notifier"
   | "reaction"
-  | "report-watcher";
+  | "report-watcher"
+  | "recovery";
 
 export type ActivityEventKind =
   | "session.spawn_started"
@@ -41,6 +45,20 @@ export type ActivityEventKind =
   | "runtime.probe_failed"
   | "agent.process_probe_failed"
   | "agent.activity_probe_failed"
+  // Plugin-internal failure shapes (issue #1659)
+  | "scm.gh_unavailable"
+  | "scm.batch_enrich_pr_failed"
+  | "scm.ci_summary_failclosed"
+  | "workspace.post_create_failed"
+  | "workspace.branch_collision"
+  | "workspace.destroy_fell_back"
+  | "workspace.corrupt_clone_skipped"
+  | "tracker.dep_missing"
+  | "tracker.api_timeout"
+  | "notifier.auth_failed"
+  | "notifier.unreachable"
+  | "notifier.rate_limited"
+  | "notifier.dep_missing"
   // Reaction lifecycle
   | "reaction.escalated"
   | "reaction.send_to_agent_failed"
@@ -64,7 +82,13 @@ export type ActivityEventKind =
   | "ui.terminal_heartbeat_lost"
   | "ui.terminal_pty_lost"
   | "ui.terminal_protocol_error"
-  | "ui.session_broadcast_failed";
+  | "ui.session_broadcast_failed"
+  // Recovery/forensic instrumentation
+  | "recovery.session_failed"
+  | "recovery.action_failed"
+  | "metadata.corrupt_detected"
+  | "api.agent_report.session_not_found"
+  | "api.agent_report.transition_rejected";
 
 export type ActivityEventLevel = "debug" | "info" | "warn" | "error";
 

@@ -1845,6 +1845,13 @@ export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  /**
+   * Replace the canonical orchestrator with a fresh one. If an orchestrator
+   * already exists for the project, it is killed, its metadata deleted, and a
+   * new orchestrator spawned with no carryover state. Ignores
+   * `orchestratorSessionStrategy` — replacement is the whole point.
+   */
+  relaunchOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;

@@ -9,16 +9,34 @@
  */
 
 import { request } from "node:https";
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  recordActivityEvent,
+  type CreateIssueInput,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type PluginModule,
+  type ProjectConfig,
+  type Tracker,
 } from "@aoagents/ao-core";
 import type { Composio } from "@composio/core";
+
+// Module-level guard so we only emit tracker.dep_missing once per process
+// even if multiple sessions trigger the missing-SDK path.
+let depMissingEmitted = false;
+
+/** Test-only: reset the once-per-process dep_missing guard. */
+export function _resetDepMissingEmittedForTesting(): void {
+  depMissingEmitted = false;
+}
+
+function recordTransportActivityEvent(event: Parameters<typeof recordActivityEvent>[0]): void {
+  try {
+    recordActivityEvent(event);
+  } catch {
+    // Activity logging must never prevent timeout promises from settling.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Transport abstraction
@@ -111,6 +129,17 @@ function createDirectTransport(): GraphQLTransport {
       req.setTimeout(30_000, () => {
         settle(() => {
           req.destroy();
+          recordTransportActivityEvent({
+            source: "tracker",
+            kind: "tracker.api_timeout",
+            level: "warn",
+            summary: "Linear API request timed out after 30s",
+            data: {
+              plugin: "tracker-linear",
+              transport: "direct",
+              timeoutMs: 30_000,
+            },
+          });
           reject(new Error("Linear API request timed out after 30s"));
         });
       });
@@ -147,6 +176,21 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
             msg.includes("Cannot find package") ||
             msg.includes("ERR_MODULE_NOT_FOUND")
           ) {
+            // User-actionable, system-wide. Emit once per process.
+            if (!depMissingEmitted) {
+              depMissingEmitted = true;
+              recordActivityEvent({
+                source: "tracker",
+                kind: "tracker.dep_missing",
+                level: "error",
+                summary: "Composio SDK (@composio/core) is not installed",
+                data: {
+                  plugin: "tracker-linear",
+                  package: "@composio/core",
+                  installHint: "pnpm add @composio/core",
+                },
+              });
+            }
             throw new Error(
               "Composio SDK (@composio/core) is not installed. " +
                 "Install it with: pnpm add @composio/core",
@@ -175,6 +219,17 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        recordTransportActivityEvent({
+          source: "tracker",
+          kind: "tracker.api_timeout",
+          level: "warn",
+          summary: "Composio Linear API request timed out after 30s",
+          data: {
+            plugin: "tracker-linear",
+            transport: "composio",
+            timeoutMs: 30_000,
+          },
+        });
         reject(new Error("Composio Linear API request timed out after 30s"));
       }, 30_000);
     });

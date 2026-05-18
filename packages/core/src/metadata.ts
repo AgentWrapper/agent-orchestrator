@@ -22,9 +22,10 @@ import {
   closeSync,
   constants,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import type { CanonicalSessionLifecycle, RuntimeHandle, SessionId, SessionMetadata } from "./types.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { recordActivityEvent, type ActivityEventSource } from "./activity-events.js";
 import {
   buildLifecycleMetadataPatch,
   cloneLifecycle,
@@ -330,6 +331,11 @@ export function applyMetadataUpdates(
   return next;
 }
 
+interface MutateMetadataOptions {
+  createIfMissing?: boolean;
+  activityEventSource?: ActivityEventSource;
+}
+
 function normalizeMetadataRecord(data: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== undefined && value !== ""),
@@ -340,7 +346,7 @@ export function mutateMetadata(
   dataDir: string,
   sessionId: SessionId,
   updater: (existing: Record<string, string>) => Record<string, string>,
-  options: { createIfMissing?: boolean } = {},
+  options: MutateMetadataOptions = {},
 ): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   const lockPath = `${path}.lock`;
@@ -368,8 +374,10 @@ export function mutateMetadata(
           // that anything was wrong — the file just becomes "not
           // corrupt anymore — and missing fields".
           const corruptPath = `${path}.corrupt-${Date.now()}`;
+          let renamed = false;
           try {
             renameSync(path, corruptPath);
+            renamed = true;
             // eslint-disable-next-line no-console
             console.warn(
               `[metadata] corrupt JSON at ${path}; preserved as ${corruptPath} before rewriting`,
@@ -377,6 +385,31 @@ export function mutateMetadata(
           } catch {
             // best effort — proceed even if the rename fails (e.g. EACCES)
           }
+          // Forensic activity event so RCA can find every silent overwrite.
+          // Truncate the bad-JSON sample to 200 chars (B11 invariant — full file
+          // could be 16KB+ and would be dropped by the sanitizer cap).
+          const contentSample =
+            content.length > 200 ? content.slice(0, 200) : content;
+          // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
+          const inferredProjectId = basename(dirname(dataDir));
+          const summary = renamed
+            ? `Corrupt metadata for session ${sessionId} renamed to ${basename(corruptPath)}`
+            : `Corrupt metadata detected for session ${sessionId}; failed to rename forensic copy before rewrite`;
+          recordActivityEvent({
+            projectId: inferredProjectId || undefined,
+            sessionId,
+            source: options.activityEventSource ?? "session-manager",
+            kind: "metadata.corrupt_detected",
+            level: "error",
+            summary,
+            data: {
+              path,
+              renamedTo: renamed ? corruptPath : null,
+              renameSucceeded: renamed,
+              contentSample,
+              contentLength: content.length,
+            },
+          });
         }
       }
     } else if (!options.createIfMissing) {

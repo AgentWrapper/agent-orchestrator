@@ -18,7 +18,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   CanonicalSessionLifecycle,
   CanonicalSessionReason,
@@ -26,6 +26,7 @@ import type {
   SessionId,
   SessionStatus,
 } from "./types.js";
+import { recordActivityEvent } from "./activity-events.js";
 import { mutateMetadata, readMetadataRaw } from "./metadata.js";
 import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus, parseCanonicalLifecycle } from "./lifecycle-state.js";
 import { parsePrFromUrl } from "./utils/pr.js";
@@ -254,6 +255,11 @@ function buildAuditDir(dataDir: string): string {
   return join(dataDir, ".agent-report-audit");
 }
 
+function inferProjectIdFromDataDir(dataDir: string): string | undefined {
+  // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
+  return basename(dirname(dataDir)) || undefined;
+}
+
 const AGENT_REPORT_AUDIT_MAX_BYTES = 256 * 1024;
 const AGENT_REPORT_AUDIT_MAX_ENTRIES = 200;
 
@@ -383,8 +389,22 @@ export function applyAgentReport(
   sessionId: SessionId,
   input: ApplyAgentReportInput,
 ): ApplyAgentReportResult {
+  const projectId = inferProjectIdFromDataDir(dataDir);
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) {
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "api",
+      kind: "api.agent_report.session_not_found",
+      level: "warn",
+      summary: `applyAgentReport: session not found: ${sessionId}`,
+      data: {
+        reportState: input.state,
+        actor: input.actor,
+        source: input.source,
+      },
+    });
     throw new Error(`Session not found: ${sessionId}`);
   }
 
@@ -439,6 +459,7 @@ export function applyAgentReport(
     before = buildAuditSnapshot(current, previousLegacyStatus);
     const validation = validateAgentReportTransition(current, input.state);
     if (!validation.ok) {
+      const rejectionReason = validation.reason ?? "transition rejected";
       appendAgentReportAuditEntry(dataDir, sessionId, {
         timestamp: now,
         actor,
@@ -449,11 +470,28 @@ export function applyAgentReport(
         prUrl: trimmedPrUrl,
         prIsDraft,
         accepted: false,
-        rejectionReason: validation.reason ?? "transition rejected",
+        rejectionReason,
         before,
         after: before,
       });
-      throw new Error(validation.reason ?? "transition rejected");
+      recordActivityEvent({
+        projectId,
+        sessionId,
+        source: "api",
+        kind: "api.agent_report.transition_rejected",
+        level: "warn",
+        summary: `applyAgentReport rejected ${input.state} for ${sessionId}: ${rejectionReason}`,
+        data: {
+          reportState: input.state,
+          rejectionReason,
+          actor,
+          reportSource: source,
+          fromState: current.session.state,
+          fromReason: current.session.reason,
+          legacyStatus: previousLegacyStatus,
+        },
+      });
+      throw new Error(rejectionReason);
     }
     const mapped = mapAgentReportToLifecycle(input.state);
     previousState = current.session.state;
@@ -512,7 +550,7 @@ export function applyAgentReport(
       }
     }
     return next;
-  });
+  }, { activityEventSource: "api" });
 
   if (!nextMetadata || !before || !previousState || !nextState || !legacyStatus) {
     throw new Error(`Failed to apply agent report for session ${sessionId}`);

@@ -1230,6 +1230,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     color 100ms ease,
     transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
+.dashboard-app-btn--icon {
+  width: 27px;
+  padding: 0;
+  justify-content: center;
+}
 
 .dashboard-app-btn:hover {
   background: var(--color-bg-subtle);
@@ -1327,6 +1332,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 .topbar-status-pill__label {
   color: inherit;
+}
+.topbar-status-pill__dot--working {
+  background: var(--color-status-working);
+}
+.topbar-status-pill__dot--attention {
+  background: var(--color-status-attention);
 }
 
 /* Branch pill — compact topbar variant */
@@ -3846,7 +3857,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px 8px;
+  height: 48px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--sidebar-border);
   flex-shrink: 0;
 }
@@ -4483,6 +4495,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__sess-row--active {
   background: transparent;
+  border-left: 2px solid var(--color-accent-amber);
+  padding-left: 24px;
 }
 
 /* Session label */
@@ -4625,6 +4639,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-align: center;
   color: var(--color-text-muted);
   font-size: 11px;
+}
+
+.project-sidebar__empty-hint {
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+  color: var(--color-text-muted);
 }
 
 .project-sidebar__footer {

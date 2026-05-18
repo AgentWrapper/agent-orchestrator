@@ -11,19 +11,28 @@
  *    If not (common with nvm/fnm/volta), rebuilds from source via npx node-gyp.
  *    See: https://github.com/ComposioHQ/agent-orchestrator/issues/987
  *
- * 3. Clears stale Next.js runtime cache (.next/cache) from @composio/ao-web
+ * 3. Verifies better-sqlite3 has a native binding for this Node ABI.
+ *    Node majors can ship new NODE_MODULE_VERSION values before better-sqlite3
+ *    publishes matching prebuilds; global installs must rebuild from source.
+ *    See: https://github.com/ComposioHQ/agent-orchestrator/issues/1822
+ *
+ * 4. Clears stale Next.js runtime cache (.next/cache) from @composio/ao-web
  *    after a version upgrade, so `ao start` serves fresh dashboard assets.
  *    Writes a version stamp (.next/AO_VERSION) to skip cleanup on subsequent runs.
  */
 
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function findPackageUp(startDir, ...segments) {
+function isWindows() {
+  return process.platform === "win32";
+}
+
+export function findPackageUp(startDir, ...segments) {
   let dir = resolve(startDir);
   while (true) {
     const candidate = resolve(dir, "node_modules", ...segments);
@@ -35,12 +44,12 @@ function findPackageUp(startDir, ...segments) {
   return null;
 }
 
-function resolveNodeModulesPackage(fromDir, ...segments) {
+export function resolveNodeModulesPackage(fromDir, ...segments) {
   const packageDir = resolve(fromDir, "node_modules", ...segments);
   return existsSync(resolve(packageDir, "package.json")) ? packageDir : null;
 }
 
-function findWebDir() {
+export function findWebDir() {
   const directWebDir = findPackageUp(__dirname, "@aoagents", "ao-web");
   if (directWebDir) return directWebDir;
 
@@ -50,8 +59,112 @@ function findWebDir() {
   return resolveNodeModulesPackage(cliDir, "@aoagents", "ao-web");
 }
 
-// --- 1 & 2. Fix node-pty spawn-helper permissions and verify ABI (non-Windows only) ---
-if (process.platform !== "win32") {
+export function findBetterSqlite3Dir() {
+  const directBetterSqlite3Dir = findPackageUp(__dirname, "better-sqlite3");
+  if (directBetterSqlite3Dir) return directBetterSqlite3Dir;
+
+  const cliDir = findPackageUp(__dirname, "@aoagents", "ao-cli");
+  if (!cliDir) return null;
+
+  const coreDir = resolveNodeModulesPackage(cliDir, "@aoagents", "ao-core");
+  if (!coreDir) return null;
+
+  return (
+    resolveNodeModulesPackage(coreDir, "better-sqlite3") ?? findPackageUp(coreDir, "better-sqlite3")
+  );
+}
+
+export function betterSqlite3BindingCandidates(
+  packageDir,
+  {
+    platform = process.platform,
+    arch = process.arch,
+    modules = process.versions.modules,
+    nodeVersion = process.versions.node,
+  } = {},
+) {
+  return [
+    resolve(packageDir, "build", "better_sqlite3.node"),
+    resolve(packageDir, "build", "Debug", "better_sqlite3.node"),
+    resolve(packageDir, "build", "Release", "better_sqlite3.node"),
+    resolve(packageDir, "out", "Debug", "better_sqlite3.node"),
+    resolve(packageDir, "Debug", "better_sqlite3.node"),
+    resolve(packageDir, "out", "Release", "better_sqlite3.node"),
+    resolve(packageDir, "Release", "better_sqlite3.node"),
+    resolve(packageDir, "build", "default", "better_sqlite3.node"),
+    resolve(packageDir, "compiled", nodeVersion, platform, arch, "better_sqlite3.node"),
+    resolve(packageDir, "addon-build", "release", "install-root", "better_sqlite3.node"),
+    resolve(packageDir, "addon-build", "debug", "install-root", "better_sqlite3.node"),
+    resolve(packageDir, "addon-build", "default", "install-root", "better_sqlite3.node"),
+    resolve(
+      packageDir,
+      "lib",
+      "binding",
+      `node-v${modules}-${platform}-${arch}`,
+      "better_sqlite3.node",
+    ),
+  ];
+}
+
+export function hasBetterSqlite3Binding(packageDir, options = {}) {
+  const fileExists = options.existsSync ?? existsSync;
+  return betterSqlite3BindingCandidates(packageDir, options).some((candidate) =>
+    fileExists(candidate),
+  );
+}
+
+export function betterSqlite3RebuildCommand(packageDir, env = process.env) {
+  const packageManager =
+    `${env.npm_config_user_agent ?? ""} ${env.npm_execpath ?? ""}`.toLowerCase();
+  if (packageManager.includes("npm") && !packageManager.includes("pnpm")) {
+    return { command: "npm", args: ["rebuild"], display: `cd ${packageDir} && npm rebuild` };
+  }
+  return {
+    command: "pnpm",
+    args: ["--dir", packageDir, "rebuild"],
+    display: `pnpm --dir ${packageDir} rebuild`,
+  };
+}
+
+function checkBetterSqlite3Binding() {
+  const betterSqlite3Dir = findBetterSqlite3Dir();
+  if (!betterSqlite3Dir) {
+    console.warn(
+      "⚠️  better-sqlite3 package not found; skipping activity-events native binding check",
+    );
+    return;
+  }
+
+  const abi = process.versions.modules;
+  if (hasBetterSqlite3Binding(betterSqlite3Dir)) {
+    console.log(
+      `✓ better-sqlite3 native binding present for Node ${process.version} (ABI v${abi})`,
+    );
+    return;
+  }
+
+  const { command, args, display } = betterSqlite3RebuildCommand(betterSqlite3Dir);
+  try {
+    execFileSync(command, args, {
+      cwd: betterSqlite3Dir,
+      stdio: "ignore",
+      timeout: 120000,
+      shell: isWindows(),
+      windowsHide: true,
+    });
+    console.log(
+      `✓ better-sqlite3 native binding rebuilt for Node ${process.version} (ABI v${abi})`,
+    );
+  } catch {
+    console.warn(
+      `⚠️  better-sqlite3 rebuild failed for Node ${process.version} (ABI v${abi}) — activity events may be unavailable. Manual fix: ${display}`,
+    );
+  }
+}
+
+function fixNodePty() {
+  if (isWindows()) return;
+
   const nodePtyDir = findPackageUp(__dirname, "node-pty");
   if (nodePtyDir) {
     const spawnHelper = resolve(
@@ -84,7 +197,11 @@ if (process.platform !== "win32") {
         },
       );
     } catch {
-      console.log("⚠️  node-pty prebuilt binary incompatible with Node.js " + process.version + ", rebuilding...");
+      console.log(
+        "⚠️  node-pty prebuilt binary incompatible with Node.js " +
+          process.version +
+          ", rebuilding...",
+      );
       try {
         execSync("npx --yes node-gyp rebuild", {
           cwd: nodePtyDir,
@@ -100,27 +217,43 @@ if (process.platform !== "win32") {
   }
 }
 
-// --- 3. Clear stale Next.js runtime cache after version upgrade ---
-try {
-  const webDir = findWebDir();
-  if (webDir) {
-    const pkgPath = resolve(webDir, "package.json");
-    if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-      const version = pkg.version;
-      const cacheDir = resolve(webDir, ".next", "cache");
-      const stampPath = resolve(webDir, ".next", "AO_VERSION");
+function clearDashboardCache() {
+  try {
+    const webDir = findWebDir();
+    if (webDir) {
+      const pkgPath = resolve(webDir, "package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        const version = pkg.version;
+        const cacheDir = resolve(webDir, ".next", "cache");
+        const stampPath = resolve(webDir, ".next", "AO_VERSION");
 
-      if (existsSync(cacheDir)) {
-        rmSync(cacheDir, { recursive: true, force: true });
-        console.log("✓ Cleared stale .next/cache");
-      }
-      if (existsSync(resolve(webDir, ".next"))) {
-        writeFileSync(stampPath, version, "utf8");
-        console.log(`✓ Dashboard version stamp set to ${version}`);
+        if (existsSync(cacheDir)) {
+          rmSync(cacheDir, { recursive: true, force: true });
+          console.log("✓ Cleared stale .next/cache");
+        }
+        if (existsSync(resolve(webDir, ".next"))) {
+          writeFileSync(stampPath, version, "utf8");
+          console.log(`✓ Dashboard version stamp set to ${version}`);
+        }
       }
     }
+  } catch (err) {
+    console.warn(`⚠️  Could not clear dashboard cache (non-critical): ${err.message}`);
   }
-} catch (err) {
-  console.warn(`⚠️  Could not clear dashboard cache (non-critical): ${err.message}`);
+}
+
+export function runPostinstall() {
+  // --- 1 & 2. Fix node-pty spawn-helper permissions and verify ABI (non-Windows only) ---
+  fixNodePty();
+
+  // --- 3. Ensure better-sqlite3 has a native binding for this Node ABI ---
+  checkBetterSqlite3Binding();
+
+  // --- 4. Clear stale Next.js runtime cache after version upgrade ---
+  clearDashboardCache();
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runPostinstall();
 }
