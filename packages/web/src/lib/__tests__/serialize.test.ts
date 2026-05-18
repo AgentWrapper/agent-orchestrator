@@ -714,6 +714,130 @@ describe("enrichSessionAgentSummary", () => {
   });
 });
 
+describe("enrichSessionIssue", () => {
+  function makeProject(overrides?: Partial<ProjectConfig>): ProjectConfig {
+    return {
+      name: "test",
+      repo: "test/repo",
+      path: "/test",
+      defaultBranch: "main",
+      sessionPrefix: "test",
+      ...overrides,
+    };
+  }
+
+  function makeDashboard(overrides?: Partial<DashboardSession>): DashboardSession {
+    return {
+      id: "test-1",
+      projectId: "test",
+      status: "working",
+      activity: "active",
+      branch: "feat/test",
+      issueId: null,
+      issueUrl: null,
+      issueLabel: null,
+      issueTitle: null,
+      summary: null,
+      summaryIsFallback: false,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      pr: null,
+      metadata: {},
+      ...overrides,
+    };
+  }
+
+  function createMockTracker(): Tracker {
+    return {
+      name: "mock",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "42",
+        title: "Test issue",
+        description: "",
+        url: "https://github.com/test/repo/issues/42",
+        state: "open",
+        labels: [],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue("https://icyghost.atlassian.net/browse/TT-42"),
+      issueLabel: vi.fn().mockReturnValue("TT-42"),
+      branchName: vi.fn().mockReturnValue("feat/TT-42"),
+      generatePrompt: vi.fn().mockResolvedValue("prompt"),
+    };
+  }
+
+  it("should resolve non-URL issueUrl via tracker.issueUrl and set label to the raw key", () => {
+    const tracker = createMockTracker();
+    const project = makeProject();
+    const dashboard = makeDashboard({ issueUrl: "TT-42" });
+
+    enrichSessionIssue(dashboard, tracker, project);
+
+    expect(tracker.issueUrl).toHaveBeenCalledWith("TT-42", project);
+    expect(dashboard.issueUrl).toBe("https://icyghost.atlassian.net/browse/TT-42");
+    expect(dashboard.issueLabel).toBe("TT-42");
+  });
+
+  it("should fall through to issueLabel when tracker.issueUrl throws for a non-URL key", () => {
+    const tracker = createMockTracker();
+    (tracker.issueUrl as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("not supported");
+    });
+    const project = makeProject();
+    const dashboard = makeDashboard({ issueUrl: "TT-99" });
+
+    enrichSessionIssue(dashboard, tracker, project);
+
+    // Should fall through and call issueLabel
+    expect(tracker.issueLabel).toHaveBeenCalledWith("TT-99", project);
+    expect(dashboard.issueLabel).toBe("TT-42");
+  });
+
+  it("should use tracker.issueLabel for HTTP URLs", () => {
+    const tracker = createMockTracker();
+    const project = makeProject();
+    const dashboard = makeDashboard({
+      issueUrl: "https://github.com/test/repo/issues/42",
+    });
+
+    enrichSessionIssue(dashboard, tracker, project);
+
+    expect(tracker.issueUrl).not.toHaveBeenCalled();
+    expect(tracker.issueLabel).toHaveBeenCalledWith(
+      "https://github.com/test/repo/issues/42",
+      project,
+    );
+    expect(dashboard.issueLabel).toBe("TT-42");
+  });
+
+  it("should fall back to URL-based label when issueLabel throws", () => {
+    const tracker = createMockTracker();
+    (tracker.issueLabel as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("parse error");
+    });
+    const project = makeProject();
+    const dashboard = makeDashboard({
+      issueUrl: "https://github.com/test/repo/issues/42",
+    });
+
+    enrichSessionIssue(dashboard, tracker, project);
+
+    expect(dashboard.issueLabel).toBe("42");
+  });
+
+  it("should skip enrichment when issueUrl is null", () => {
+    const tracker = createMockTracker();
+    const project = makeProject();
+    const dashboard = makeDashboard({ issueUrl: null });
+
+    enrichSessionIssue(dashboard, tracker, project);
+
+    expect(tracker.issueUrl).not.toHaveBeenCalled();
+    expect(tracker.issueLabel).not.toHaveBeenCalled();
+    expect(dashboard.issueLabel).toBeNull();
+  });
+});
+
 describe("enrichSessionIssueTitle", () => {
   function makeProject(overrides?: Partial<ProjectConfig>): ProjectConfig {
     return {

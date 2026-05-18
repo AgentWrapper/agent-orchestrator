@@ -52,6 +52,7 @@
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-github": "workspace:*",
+    "@aoagents/ao-plugin-tracker-jira": "workspace:*",
     "@aoagents/ao-plugin-tracker-linear": "workspace:*",
     "@aoagents/ao-plugin-workspace-worktree": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",

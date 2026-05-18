@@ -51,6 +51,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "workspace", name: "clone", pkg: "@aoagents/ao-plugin-workspace-clone" },
   // Trackers
   { slot: "tracker", name: "github", pkg: "@aoagents/ao-plugin-tracker-github" },
+  { slot: "tracker", name: "jira", pkg: "@aoagents/ao-plugin-tracker-jira" },
   { slot: "tracker", name: "linear", pkg: "@aoagents/ao-plugin-tracker-linear" },
   { slot: "tracker", name: "gitlab", pkg: "@aoagents/ao-plugin-tracker-gitlab" },
   // SCM

@@ -49,6 +49,14 @@
     "latestVersion": "0.1.0"
   },
   {
+    "id": "tracker-jira",
+    "package": "@aoagents/ao-plugin-tracker-jira",
+    "slot": "tracker",
+    "description": "Tracker plugin: Jira issues",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
     "id": "tracker-gitlab",
     "package": "@aoagents/ao-plugin-tracker-gitlab",
     "slot": "tracker",

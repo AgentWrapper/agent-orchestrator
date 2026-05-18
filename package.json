@@ -23,6 +23,7 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm -r build && changeset publish",
+    "link:cli": "cd packages/ao && pnpm link --global",
     "prepare": "husky",
     "postinstall": "node scripts/rebuild-node-pty.js"
   },

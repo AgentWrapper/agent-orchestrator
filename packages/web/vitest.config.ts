@@ -49,6 +49,10 @@ export default defineConfig({
         replacement: resolve(__dirname, "../plugins/agent-codex/src/index.ts"),
       },
       {
+        find: "@aoagents/ao-plugin-agent-cursor",
+        replacement: resolve(__dirname, "../plugins/agent-cursor/src/index.ts"),
+      },
+      {
         find: "@aoagents/ao-plugin-agent-opencode",
         replacement: resolve(__dirname, "../plugins/agent-opencode/src/index.ts"),
       },
@@ -63,6 +67,10 @@ export default defineConfig({
       {
         find: "@aoagents/ao-plugin-tracker-github",
         replacement: resolve(__dirname, "../plugins/tracker-github/src/index.ts"),
+      },
+      {
+        find: "@aoagents/ao-plugin-tracker-jira",
+        replacement: resolve(__dirname, "../plugins/tracker-jira/src/index.ts"),
       },
       {
         find: "@aoagents/ao-plugin-tracker-linear",

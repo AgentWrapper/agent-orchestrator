@@ -14,6 +14,7 @@ const {
   worktreePlugin,
   scmPlugin,
   trackerGithubPlugin,
+  trackerJiraPlugin,
   trackerLinearPlugin,
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
@@ -48,6 +49,7 @@ const {
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
     trackerGithubPlugin: { manifest: { name: "github" } },
+    trackerJiraPlugin: { manifest: { name: "jira" } },
     trackerLinearPlugin: { manifest: { name: "linear" } },
   };
 });
@@ -70,10 +72,12 @@ vi.mock("@aoagents/ao-core", () => ({
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
+vi.mock("@aoagents/ao-plugin-agent-cursor", () => ({ default: { manifest: { name: "cursor" } } }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
+vi.mock("@aoagents/ao-plugin-tracker-jira", () => ({ default: trackerJiraPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-linear", () => ({ default: trackerLinearPlugin }));
 
 describe("services", () => {
@@ -118,6 +122,14 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
+  });
+
+  it("registers the Jira tracker plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(trackerJiraPlugin);
   });
 
   it("caches initialized services across repeated calls", async () => {

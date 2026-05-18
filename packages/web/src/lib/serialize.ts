@@ -426,6 +426,19 @@ export function enrichSessionIssue(
 
   if (!dashboard.issueUrl) return;
 
+  // If issueUrl is not a real URL (e.g. Jira key "TT-622"), resolve it via
+  // the tracker plugin's issueUrl() method.
+  if (!/^https?:\/\//.test(dashboard.issueUrl)) {
+    try {
+      const resolved = tracker.issueUrl(dashboard.issueUrl, project);
+      dashboard.issueLabel = dashboard.issueUrl; // Use the raw key as label
+      dashboard.issueUrl = resolved;
+      return;
+    } catch {
+      // Fall through to normal enrichment
+    }
+  }
+
   // Use tracker plugin to extract human-readable label from URL
   if (tracker.issueLabel) {
     try {
