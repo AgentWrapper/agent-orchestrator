@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
 
-const { mockCreatePluginRegistry, mockFindConfigFile, mockLoadConfig, mockRegistry } = vi.hoisted(
-  () => ({
+const {
+  mockCreatePluginRegistry,
+  mockCreateProjectObserver,
+  mockFindConfigFile,
+  mockLoadConfig,
+  mockRecordNotificationDelivery,
+  mockRegistry,
+} = vi.hoisted(() => ({
     mockCreatePluginRegistry: vi.fn(),
+    mockCreateProjectObserver: vi.fn(),
     mockFindConfigFile: vi.fn(),
     mockLoadConfig: vi.fn(),
+    mockRecordNotificationDelivery: vi.fn(),
     mockRegistry: {
       loadFromConfig: vi.fn(),
       get: vi.fn(),
@@ -13,8 +21,7 @@ const { mockCreatePluginRegistry, mockFindConfigFile, mockLoadConfig, mockRegist
       register: vi.fn(),
       loadBuiltins: vi.fn(),
     },
-  }),
-);
+  }));
 
 vi.mock("@aoagents/ao-core", () => {
   function buildSubject(input: {
@@ -43,8 +50,10 @@ vi.mock("@aoagents/ao-core", () => {
 
   return {
     createPluginRegistry: (...args: unknown[]) => mockCreatePluginRegistry(...args),
+    createProjectObserver: (...args: unknown[]) => mockCreateProjectObserver(...args),
     findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
     loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+    recordNotificationDelivery: (...args: unknown[]) => mockRecordNotificationDelivery(...args),
     resolveNotifierTarget: (
       config: { notifiers?: Record<string, { plugin?: string }> },
       reference: string,
@@ -163,6 +172,12 @@ describe("notify command", () => {
     mockLoadConfig.mockReturnValue(makeConfig());
     mockCreatePluginRegistry.mockReset();
     mockCreatePluginRegistry.mockReturnValue(mockRegistry);
+    mockCreateProjectObserver.mockReset();
+    mockCreateProjectObserver.mockReturnValue({
+      recordOperation: vi.fn(),
+      setHealth: vi.fn(),
+    });
+    mockRecordNotificationDelivery.mockReset();
     mockRegistry.loadFromConfig.mockReset();
     mockRegistry.loadFromConfig.mockResolvedValue(undefined);
     mockRegistry.get.mockReset();

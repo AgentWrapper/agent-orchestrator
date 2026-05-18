@@ -79,7 +79,38 @@ export function sanitizeNotificationDeliveryReason(reason: string): string {
 }
 
 function notificationSurface(reference: string): string {
-  const suffix = reference.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  let suffix = "";
+  let lastNonHyphenLength = 0;
+  let previousWasGeneratedHyphen = false;
+
+  for (const ch of reference) {
+    const code = ch.charCodeAt(0);
+    const isAlphaNumeric =
+      (code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a);
+    const isAllowed = isAlphaNumeric || ch === "_" || ch === "-";
+
+    if (!isAllowed) {
+      if (suffix.length > 0 && !previousWasGeneratedHyphen) {
+        suffix += "-";
+        previousWasGeneratedHyphen = true;
+      }
+      continue;
+    }
+
+    if (ch === "-" && suffix.length === 0) {
+      continue;
+    }
+
+    suffix += ch;
+    previousWasGeneratedHyphen = false;
+    if (ch !== "-") {
+      lastNonHyphenLength = suffix.length;
+    }
+  }
+
+  suffix = suffix.slice(0, lastNonHyphenLength);
   return `notification.delivery.${suffix || "target"}`;
 }
 
