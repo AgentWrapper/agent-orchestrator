@@ -1,0 +1,41 @@
+docs/session-store-proposal.md
+  s_2a236fcab1a4da::t_b81edfd6413187 1-365
+docs/FRONTEND_STATE_MANAGEMENT_PLAN.md
+  s_2a236fcab1a4da::t_20c2eb02ea1968 1-736
+docs/state-management-improvements.md
+  s_0a37d3ad140d4b::t_bf6772c64e1936 1-162
+docs/FRONTEND_ARCHITECTURE_CHANGE_PLAN.md
+  s_7585044059d8ff::t_77849ad640df1a 1-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "0836711fc96531781994994dc60daf8d04c9caa9",
+  "prompts": {},
+  "sessions": {
+    "s_0a37d3ad140d4b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1cabe3681ffeTvzDohdXcAW5IA",
+        "model": "glm-5.1"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_2a236fcab1a4da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbdf50c6-8787-476f-a352-af8db5a660ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_7585044059d8ff": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019e3593-cd71-70b3-bbfd-b4a79ef67b0f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
