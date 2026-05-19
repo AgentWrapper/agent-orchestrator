@@ -276,6 +276,19 @@ export function classifyTerminalOutput(terminalOutput: string): ActivityState {
   // The ❯ is Claude Code's prompt character.
   if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
 
+  // Check for blocked BEFORE waiting_input. Claude's static UI footer always
+  // contains "bypass permissions on (shift+tab to cycle)" which the
+  // waiting_input regex would match; we want a real blocked state to win.
+  //
+  // Patterns observed empirically by capturing tmux output during a real
+  // api-blocked retry loop (see PR #1932 description):
+  //   ⎿  Unable to connect to API (ConnectionRefused)
+  //      Retrying in 19s · attempt 7/10
+  // Either line is a sufficient signal — Claude is mid-retry-loop or has
+  // given up. Searches the full input window (caller passes last ~10 lines).
+  if (/Unable to connect to API/i.test(terminalOutput)) return "blocked";
+  if (/Retrying in \d+s.*attempt \d+\/\d+/i.test(terminalOutput)) return "blocked";
+
   // Check the bottom of the buffer for permission prompts BEFORE checking
   // full-buffer active indicators. Historical "Thinking"/"Reading" text in
   // the buffer must not override a current permission prompt at the bottom.

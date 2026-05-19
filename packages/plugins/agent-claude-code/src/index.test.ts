@@ -569,6 +569,46 @@ describe("detectActivity", () => {
   it("returns active for non-empty output with no special patterns", () => {
     expect(agent.detectActivity("some random terminal output\n")).toBe("active");
   });
+
+  // Blocked detection from terminal regex — empirically captured from real
+  // Claude output during api.anthropic.com block (see PR #1932).
+  it("returns blocked for 'Unable to connect to API' error line", () => {
+    const real = [
+      "❯ what is 2+2? answer in one word.",
+      "  ⎿  Unable to connect to API (ConnectionRefused)",
+      "     Retrying in 19s · attempt 7/10",
+      "",
+      "✽ Germinating… (56s)",
+      "",
+    ].join("\n");
+    expect(agent.detectActivity(real)).toBe("blocked");
+  });
+
+  it("returns blocked for FailedToOpenSocket error variant", () => {
+    expect(
+      agent.detectActivity("  ⎿  Unable to connect to API (FailedToOpenSocket)\n"),
+    ).toBe("blocked");
+  });
+
+  it("returns blocked for retry counter alone (Retrying in Ns · attempt N/M)", () => {
+    // If only the retry line is in the visible window (error scrolled off),
+    // the retry counter is still a sufficient signal.
+    expect(agent.detectActivity("     Retrying in 30s · attempt 9/10\n")).toBe("blocked");
+  });
+
+  it("blocked takes precedence over waiting_input when both 'bypass permissions' footer and api-error are present", () => {
+    // Claude's static UI footer always contains "bypass permissions on …",
+    // which the existing waiting_input regex matches. A real blocked state
+    // must win over that incidental match.
+    const real = [
+      "  ⎿  Unable to connect to API (ConnectionRefused)",
+      "     Retrying in 1s · attempt 5/10",
+      "",
+      "────────────────────────────────────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt",
+    ].join("\n");
+    expect(agent.detectActivity(real)).toBe("blocked");
+  });
 });
 
 // =========================================================================
