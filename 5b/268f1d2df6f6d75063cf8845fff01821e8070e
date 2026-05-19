@@ -1,0 +1,27 @@
+packages/web/package.json
+  s_b7b217c04be2eb::t_4ab01af817339b 30
+packages/web/server/start-all.ts
+  s_b7b217c04be2eb::t_6fb457ee0b6856 8-9,11,23-27,33-40,47-48,107-111,113-115,117,121-149,157-160,162-167,174-186,194,199
+  s_b7b217c04be2eb::t_a7e155af235e63 28-32,161,168-173
+packages/web/scripts/dev-next-proxy.mjs
+  s_b7b217c04be2eb::t_a7e155af235e63 53,60-65
+  s_b7b217c04be2eb::t_4ab01af817339b 1-52,54-59,66-79
+packages/web/src/providers/MuxProvider.tsx
+  s_b7b217c04be2eb::t_4ab01af817339b 81-92,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "5b268f1d2df6f6d75063cf8845fff01821e8070e",
+  "prompts": {},
+  "sessions": {
+    "s_b7b217c04be2eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e359c-796d-7131-8965-c7ff7baa872c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
