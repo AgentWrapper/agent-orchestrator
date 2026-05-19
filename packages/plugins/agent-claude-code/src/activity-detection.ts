@@ -289,11 +289,14 @@ export async function getClaudeActivityState(
 
           case "system":
             // Claude writes API errors as `{type:"system", subtype:"api_error",
-            // level:"error", cause:{...}}`. When the LAST entry is an error,
-            // Claude is mid-retry-loop or has given up — surface as blocked so
-            // stuck-detection can fire. Other system subtypes (compact_boundary,
-            // local_command, turn_duration, etc.) are normal turn-end markers.
-            if (entry.lastLevel === "error") return { state: "blocked", timestamp };
+            // level:"error", cause:{...}}`. Require BOTH the subtype AND the
+            // level so a future error-level diagnostic that isn't actually
+            // fatal doesn't get silently classified as blocked. Other system
+            // subtypes (compact_boundary, local_command, turn_duration, etc.)
+            // are normal turn-end markers.
+            if (entry.lastSubtype === "api_error" && entry.lastLevel === "error") {
+              return { state: "blocked", timestamp };
+            }
             return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
           case "assistant":

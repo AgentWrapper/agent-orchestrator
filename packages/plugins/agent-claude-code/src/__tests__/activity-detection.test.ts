@@ -269,6 +269,13 @@ describe("Claude Code Activity Detection", () => {
         expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
       });
 
+      it("requires BOTH api_error subtype AND error level for 'blocked'", async () => {
+        // A future error-level diagnostic that isn't api_error must NOT be
+        // silently classified as blocked.
+        writeJsonl([{ type: "system", subtype: "future_diagnostic", level: "error" }]);
+        expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
+      });
+
       it("returns 'active' for recent 'file-history-snapshot' (bookkeeping)", async () => {
         writeJsonl([{ type: "file-history-snapshot" }]);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("active");
