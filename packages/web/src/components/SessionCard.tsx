@@ -47,7 +47,6 @@ function getDoneStatusInfo(session: DashboardSession): {
 } {
   const activity = session.activity;
   const status = session.status;
-  // TODO(#1821): session.prs[] contains all PRs; display uses primary PR only for now
   const prState = session.lifecycle?.prState ?? session.pr?.state;
 
   if (prState === "merged" || status === "merged") {
@@ -141,6 +140,45 @@ function getPRDotClass(p: DashboardPR): string {
   return "bg-[var(--color-text-tertiary)] opacity-30";
 }
 
+function getPRChipColorClass(p: DashboardPR): string {
+  if (!p.enriched)
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.state === "merged")
+    return "bg-[var(--color-status-merge)]/15 text-[var(--color-status-merge)]";
+  if (p.state === "closed")
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.ciStatus === "failing" || p.reviewDecision === "changes_requested")
+    return "bg-[var(--color-status-error)]/15 text-[var(--color-status-error)]";
+  if (p.isDraft)
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.ciStatus === "passing")
+    return "bg-[var(--color-status-merge)]/15 text-[var(--color-status-merge)]";
+  if (p.ciStatus === "pending")
+    return "bg-[var(--color-status-pending)]/15 text-[var(--color-status-pending)]";
+  return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+}
+
+function getPRStatusLabel(p: DashboardPR): string {
+  if (!p.enriched) return "";
+  if (p.state === "merged") return "merged";
+  if (p.state === "closed") return "closed";
+  if (p.ciStatus === "failing") return "CI failing";
+  if (p.reviewDecision === "changes_requested") return "changes requested";
+  if (p.isDraft) return "draft";
+  if (p.reviewDecision === "approved") return "approved";
+  if (p.ciStatus === "passing") return "needs review";
+  if (p.ciStatus === "pending") return "CI running";
+  return "";
+}
+
+function getRepoInitials(repo: string): string {
+  return repo
+    .split("-")
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 3);
+}
+
 function SessionCardView({
   session,
   onSend,
@@ -179,6 +217,11 @@ function SessionCardView({
   const level = getAttentionLevel(session);
   const pr = session.pr;
   const prs = session.prs ?? [];
+  const isMultiRepo = new Set(prs.map((p) => p.repo)).size > 1;
+  // For multi-PR sessions, track which PR's details are shown in the card body.
+  const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  const safeIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const selectedPR = prs.length > 1 ? (prs[safeIndex] ?? pr) : pr;
 
   const handleQuickReply = async (message: string): Promise<boolean> => {
     const trimmedMessage = message.trim();
@@ -234,7 +277,7 @@ function SessionCardView({
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
   const prUnenriched = pr ? isPRUnenriched(pr) : false;
-  const alerts = getAlerts(session);
+  const alerts = getAlerts(session, prs.length > 1 ? selectedPR : undefined);
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
@@ -253,10 +296,12 @@ function SessionCardView({
         `Runtime ${getRuntimeTruthLabel(session)}`,
       ].join(" · ")
     : null;
-  const secondaryText = session.issueLabel
-    ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
-    : (session.issueTitle ??
-      (session.summary && session.summary !== title ? session.summary : null));
+  const secondaryText = prs.length > 1 && selectedPR?.title
+    ? selectedPR.title
+    : session.issueLabel
+      ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
+      : (session.issueTitle ??
+        (session.summary && session.summary !== title ? session.summary : null));
   const cardFrameClass = isReadyToMerge
     ? "session-card--merge-frame"
     : alerts.length > 0
@@ -616,51 +661,103 @@ function SessionCardView({
 
         <div className="card__meta">
           {session.branch && <span className="card__branch">{session.branch}</span>}
-          {session.branch && pr ? (
-            <span className="card__meta-sep" aria-hidden="true">
-              ·
-            </span>
-          ) : null}
-          {prs.length > 0 ? (
-            prs.map((p) => (
+          {prs.length === 1 && (
+            <>
+              {session.branch && (
+                <span className="card__meta-sep" aria-hidden="true">·</span>
+              )}
               <a
-                key={p.url}
-                href={p.url}
+                href={prs[0].url}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 className="card__pr inline-flex items-center gap-1"
               >
-                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", getPRDotClass(p))} />
-                #{p.number}
+                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", getPRDotClass(prs[0]))} />
+                #{prs[0].number}
               </a>
-            ))
-          ) : pr ? (
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="card__pr"
-            >
-              #{pr.number}
-            </a>
-          ) : null}
-          {pr &&
-            !rateLimited &&
-            (prUnenriched ? (
-              <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
-            ) : (
-              <span className="card__diff inline-flex items-center">
-                <span className="card__diff-add">+{pr.additions}</span>{" "}
-                <span className="card__diff-del">-{pr.deletions}</span>{" "}
-                <span className="card__diff-size">{getSizeLabel(pr.additions, pr.deletions)}</span>
-                <span className="sr-only">
-                  {`+${pr.additions} -${pr.deletions} ${getSizeLabel(pr.additions, pr.deletions)}`}
-                </span>
-              </span>
-            ))}
+              {!rateLimited &&
+                (prUnenriched ? (
+                  <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+                ) : pr ? (
+                  <span className="card__diff inline-flex items-center">
+                    <span className="card__diff-add">+{pr.additions}</span>{" "}
+                    <span className="card__diff-del">-{pr.deletions}</span>{" "}
+                    <span className="card__diff-size">{getSizeLabel(pr.additions, pr.deletions)}</span>
+                    <span className="sr-only">
+                      {`+${pr.additions} -${pr.deletions} ${getSizeLabel(pr.additions, pr.deletions)}`}
+                    </span>
+                  </span>
+                ) : null)}
+            </>
+          )}
         </div>
+
+        {/* Per-PR rows: shown only when session has more than one PR.
+            Clicking a row selects it — the alerts/actions below update to that PR. */}
+        {prs.length > 1 && (
+          <div className="px-[10px] pb-[5px] flex flex-col gap-[2px]">
+            {prs.map((p, i) => {
+              const statusLabel = getPRStatusLabel(p);
+              const isSelected = i === safeIndex;
+              return (
+                <div
+                  key={p.url}
+                  role="button"
+                  tabIndex={0}
+                  className={cn(
+                    "flex items-center gap-1.5 min-w-0 rounded px-1 -mx-1 cursor-pointer",
+                    isSelected
+                      ? "bg-[var(--color-bg-subtle)]"
+                      : "hover:bg-[var(--color-bg-subtle)]/50",
+                  )}
+                  onClick={(e) => { e.stopPropagation(); setSelectedPRIndex(i); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); setSelectedPRIndex(i); } }}
+                >
+                  {isMultiRepo && (
+                    <span className="shrink-0 font-[var(--font-mono)] text-[9px] text-[var(--color-text-tertiary)] bg-[var(--color-bg-subtle)] px-1 py-0.5 rounded leading-none">
+                      {getRepoInitials(p.repo)}
+                    </span>
+                  )}
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => { e.stopPropagation(); setSelectedPRIndex(i); }}
+                    className={cn(
+                      "shrink-0 inline-flex items-center font-[var(--font-mono)] text-[10px] font-bold px-1.5 py-0.5 rounded leading-none no-underline",
+                      getPRChipColorClass(p),
+                    )}
+                  >
+                    #{p.number}
+                  </a>
+                  {p.title ? (
+                    <span
+                      className="flex-1 truncate text-[11px] text-[var(--color-text-secondary)]"
+                      title={p.title}
+                    >
+                      {p.title}
+                    </span>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  {p.enriched && (
+                    <span className="shrink-0 font-[var(--font-mono)] text-[10px]">
+                      <span className="text-[var(--color-status-merge)]">+{p.additions}</span>{" "}
+                      <span className="text-[var(--color-status-error)]">-{p.deletions}</span>{" "}
+                      <span className="text-[var(--color-text-muted)]">{getSizeLabel(p.additions, p.deletions)}</span>
+                    </span>
+                  )}
+                  {statusLabel && statusLabel !== "needs review" && (
+                    <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
+                      · {statusLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {secondaryText && (
           <div className="px-[10px] pb-[5px]">
@@ -1036,8 +1133,8 @@ interface Alert {
   actionMessage?: string;
 }
 
-function getAlerts(session: DashboardSession): Alert[] {
-  const pr = session.pr;
+function getAlerts(session: DashboardSession, prOverride?: DashboardPR | null): Alert[] {
+  const pr = prOverride !== undefined ? prOverride : session.pr;
   if (!pr || pr.state !== "open") return [];
   if (isPRRateLimited(pr)) return [];
   if (isPRUnenriched(pr)) return [];
