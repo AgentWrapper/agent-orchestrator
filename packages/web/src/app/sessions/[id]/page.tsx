@@ -727,7 +727,7 @@ export default function SessionPage() {
     // re-running on every state change that the effect itself produces.
     const currentSidebarSessions = sidebarSessionsRef.current;
     const next = applyMuxSessionPatches(currentSidebarSessions, mux.sessions);
-    if (next !== currentSidebarSessions) {
+    if (next !== null && next !== currentSidebarSessions) {
       cachedSidebarSessions = next;
       sidebarSessionsRef.current = next;
       queryClient.setQueryData<SidebarSessionsQueryData>(SIDEBAR_SESSIONS_QUERY_KEY, (current) => ({

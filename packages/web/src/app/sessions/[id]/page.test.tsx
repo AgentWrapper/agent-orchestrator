@@ -4,6 +4,12 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSession } from "@/lib/types";
 import type { SessionPatch } from "@/lib/mux-protocol";
 
+const SIDEBAR_SESSIONS_QUERY_KEY = ["session-detail", "sidebar-sessions"] as const;
+
+interface SidebarSessionsQueryData {
+  sessions: DashboardSession[];
+}
+
 const sessionDetailSpy = vi.fn();
 const projectSidebarSpy = vi.fn();
 const replaceSpy = vi.fn();
@@ -72,8 +78,8 @@ async function flushAsyncWork(): Promise<void> {
   });
 }
 
-function renderWithQueryClient(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
+function createTestQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: {
         gcTime: 0,
@@ -81,8 +87,18 @@ function renderWithQueryClient(ui: React.ReactElement) {
       },
     },
   });
+}
 
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = createTestQueryClient();
+  return {
+    ...render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>),
+    queryClient,
+  };
+}
+
+function getSidebarQueryData(queryClient: QueryClient): SidebarSessionsQueryData | undefined {
+  return queryClient.getQueryData<SidebarSessionsQueryData>(SIDEBAR_SESSIONS_QUERY_KEY);
 }
 
 describe("SessionPage project polling", () => {
@@ -172,14 +188,8 @@ describe("SessionPage project polling", () => {
     renderWithQueryClient(<SessionPage />);
     await flushAsyncWork();
 
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/projects",
-      expect.any(Object),
-    );
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/worker-1",
-      expect.any(Object),
-    );
+    expect(fetch).toHaveBeenCalledWith("/api/projects", expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1", expect.any(Object));
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?view=sidebar",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -474,7 +484,6 @@ describe("SessionPage project polling", () => {
     expect(screen.getAllByText("Failed to load session").length).toBeGreaterThan(0);
   });
 
-
   it("revalidates projects and sidebar sessions on remount even when cache exists", async () => {
     const workerSession = makeWorkerSession();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -527,9 +536,9 @@ describe("SessionPage project polling", () => {
     await flushAsyncWork();
 
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/projects")).toHaveLength(2);
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?view=sidebar")).toHaveLength(
-      2,
-    );
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === "/api/sessions?view=sidebar"),
+    ).toHaveLength(2);
   });
 
   it("silences aborted sidebar refreshes during unmount", async () => {
@@ -591,8 +600,7 @@ describe("SessionPage project polling", () => {
     );
   });
 
-
-it("marks sidebar data as loading until the sessions list resolves", async () => {
+  it("marks sidebar data as loading until the sessions list resolves", async () => {
     const workerSession = makeWorkerSession();
     let resolveSidebarSessions: ((value: Response) => void) | null = null;
 
@@ -635,17 +643,11 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
 
     const { default: SessionPage } = await import("./page");
 
-    renderWithQueryClient(<SessionPage />);
+    const { queryClient } = renderWithQueryClient(<SessionPage />);
     await flushAsyncWork();
 
-    const latestBeforeSidebarResolve = projectSidebarSpy.mock.lastCall?.[0] as {
-      loading?: boolean;
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestBeforeSidebarResolve.loading).toBe(true);
-    expect(latestBeforeSidebarResolve.sessions).toBeNull();
     expect(resolveSidebarSessions).not.toBeNull();
+    expect(queryClient.getQueryState(SIDEBAR_SESSIONS_QUERY_KEY)?.status).toBe("pending");
 
     await act(async () => {
       resolveSidebarSessions?.({
@@ -658,13 +660,8 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
     });
     await flushAsyncWork();
 
-    const latestAfterSidebarResolve = projectSidebarSpy.mock.lastCall?.[0] as {
-      loading?: boolean;
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestAfterSidebarResolve.loading).toBe(false);
-    expect(latestAfterSidebarResolve.sessions).toEqual([workerSession]);
+    expect(queryClient.getQueryState(SIDEBAR_SESSIONS_QUERY_KEY)?.status).toBe("success");
+    expect(getSidebarQueryData(queryClient)?.sessions).toEqual([workerSession]);
   });
 
   it("surfaces sidebar fetch failures instead of leaving the loading skeleton active", async () => {
@@ -711,20 +708,13 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
 
     const { default: SessionPage } = await import("./page");
 
-    renderWithQueryClient(<SessionPage />);
+    const { queryClient } = renderWithQueryClient(<SessionPage />);
     await flushAsyncWork();
 
-    const latestProps = projectSidebarSpy.mock.lastCall?.[0] as {
-      error?: boolean;
-      errorMessage?: string;
-      loading?: boolean;
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestProps.loading).toBe(false);
-    expect(latestProps.error).toBe(true);
-    expect(latestProps.errorMessage).toBe("HTTP 500");
-    expect(latestProps.sessions).toEqual([]);
+    const queryState = queryClient.getQueryState(SIDEBAR_SESSIONS_QUERY_KEY);
+    expect(queryState?.status).toBe("error");
+    expect(queryState?.error).toEqual(expect.objectContaining({ message: "HTTP 500" }));
+    expect(getSidebarQueryData(queryClient)).toBeUndefined();
   });
 
   it("keeps the last sidebar sessions visible when a background refresh fails", async () => {
@@ -781,25 +771,21 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
 
     const { default: SessionPage } = await import("./page");
 
-    renderWithQueryClient(<SessionPage />);
+    const { queryClient } = renderWithQueryClient(<SessionPage />);
     await flushAsyncWork();
+
+    expect(getSidebarQueryData(queryClient)?.sessions).toEqual([workerSession]);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000);
     });
     await flushAsyncWork();
 
-    const latestProps = projectSidebarSpy.mock.lastCall?.[0] as {
-      error?: boolean;
-      errorMessage?: string;
-      loading?: boolean;
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestProps.loading).toBe(false);
-    expect(latestProps.error).toBe(true);
-    expect(latestProps.errorMessage).toBe("GitHub API rate limited");
-    expect(latestProps.sessions).toEqual([workerSession]);
+    expect(sidebarFetchCount).toBeGreaterThanOrEqual(2);
+    expect(getSidebarQueryData(queryClient)?.sessions).toEqual([workerSession]);
+    expect(queryClient.getQueryState(SIDEBAR_SESSIONS_QUERY_KEY)?.error).toEqual(
+      expect.objectContaining({ message: "GitHub API rate limited" }),
+    );
   });
 
   it("applies mux snapshots that arrive before the initial sidebar fetch resolves", async () => {
@@ -859,7 +845,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
 
     const { default: SessionPage } = await import("./page");
 
-    renderWithQueryClient(<SessionPage />);
+    const { queryClient } = renderWithQueryClient(<SessionPage />);
     await flushAsyncWork();
 
     await act(async () => {
@@ -873,11 +859,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
     });
     await flushAsyncWork();
 
-    const latestProps = projectSidebarSpy.mock.lastCall?.[0] as {
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestProps.sessions).toEqual([
+    expect(getSidebarQueryData(queryClient)?.sessions).toEqual([
       {
         ...workerSession,
         activity: "ready",
@@ -942,14 +924,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
     }) as typeof fetch;
 
     const { default: SessionPage } = await import("./page");
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          gcTime: 0,
-          retry: false,
-        },
-      },
-    });
+    const queryClient = createTestQueryClient();
     const view = render(
       <QueryClientProvider client={queryClient}>
         <SessionPage />
@@ -992,11 +967,7 @@ it("marks sidebar data as loading until the sessions list resolves", async () =>
     });
     await flushAsyncWork();
 
-    const latestProps = projectSidebarSpy.mock.lastCall?.[0] as {
-      sessions?: DashboardSession[] | null;
-    };
-
-    expect(latestProps.sessions?.map((session) => session.id)).toEqual([
+    expect(getSidebarQueryData(queryClient)?.sessions.map((session) => session.id)).toEqual([
       "worker-1",
       "worker-2",
     ]);
