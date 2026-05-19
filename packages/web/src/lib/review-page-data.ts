@@ -1,6 +1,5 @@
 import "server-only";
 
-import { cache } from "react";
 import {
   createCodeReviewStore,
   isOrchestratorSession,
@@ -56,9 +55,7 @@ export function resolveReviewProjectFilter(project?: string): string {
   return getPrimaryProjectId();
 }
 
-export const getReviewPageData = cache(async function getReviewPageData(
-  project?: string,
-): Promise<ReviewPageData> {
+export async function getReviewPageData(project?: string): Promise<ReviewPageData> {
   const projectFilter = resolveReviewProjectFilter(project);
   const pageData: ReviewPageData = {
     runs: [],
@@ -131,7 +128,7 @@ export const getReviewPageData = cache(async function getReviewPageData(
         status: session.status,
         activity: session.activity ?? null,
         runtimeState: session.lifecycle.runtime.state,
-        hasRuntime: session.runtimeHandle !== null,
+        hasRuntime: session.runtimeHandle !== null && session.runtimeHandle !== undefined,
         prNumber: session.pr?.number ?? null,
         prUrl: session.pr?.url ?? null,
       };
@@ -151,23 +148,23 @@ export const getReviewPageData = cache(async function getReviewPageData(
 
       runs.push(
         ...store.listRunSummaries().map((run) => {
-        const worker = workerSessionsById.get(run.linkedSessionId);
-        return {
-          ...run,
-          projectName: project.name,
-          workerTitle:
-            worker?.metadata["displayName"] ??
-            worker?.metadata["issueTitle"] ??
-            worker?.metadata["pinnedSummary"] ??
-            worker?.agentInfo?.summary ??
-            null,
-          workerBranch: worker?.branch ?? null,
-          workerPrUrl: worker?.pr?.url ?? run.prUrl ?? null,
-          workerStatus: worker?.status ?? null,
-          workerActivity: worker?.activity ?? null,
-          workerRuntimeState: worker?.lifecycle.runtime.state ?? null,
-          workerHasRuntime: worker?.runtimeHandle !== null && worker?.runtimeHandle !== undefined,
-        };
+          const worker = workerSessionsById.get(run.linkedSessionId);
+          return {
+            ...run,
+            projectName: project.name,
+            workerTitle:
+              worker?.metadata["displayName"] ??
+              worker?.metadata["issueTitle"] ??
+              worker?.metadata["pinnedSummary"] ??
+              worker?.agentInfo?.summary ??
+              null,
+            workerBranch: worker?.branch ?? null,
+            workerPrUrl: worker?.pr?.url ?? run.prUrl ?? null,
+            workerStatus: worker?.status ?? null,
+            workerActivity: worker?.activity ?? null,
+            workerRuntimeState: worker?.lifecycle.runtime.state ?? null,
+            workerHasRuntime: worker?.runtimeHandle !== null && worker?.runtimeHandle !== undefined,
+          };
         }),
       );
     }
@@ -178,4 +175,4 @@ export const getReviewPageData = cache(async function getReviewPageData(
   }
 
   return pageData;
-});
+}

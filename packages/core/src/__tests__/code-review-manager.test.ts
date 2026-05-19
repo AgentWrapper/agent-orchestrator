@@ -8,6 +8,7 @@ import { createActivitySignal } from "../activity-signal.js";
 import { createCodeReviewStore, type CodeReviewStore } from "../code-review-store.js";
 import {
   buildCodexCodeReviewArgs,
+  CodeReviewNoOpenFindingsError,
   executeCodeReviewRun,
   markOutdatedCodeReviewRunsForSession,
   parseReviewerOutput,
@@ -173,6 +174,40 @@ describe("triggerCodeReviewForSession", () => {
     );
 
     expect(run.reviewerSessionId).toBe("app-rev-8");
+  });
+
+  it("allocates unique reviewer ids for concurrent review requests", async () => {
+    let resolveGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    });
+    let shaLookups = 0;
+    const options = {
+      config,
+      sessionManager: makeSessionManager(makeSession()),
+      storeFactory: () => store,
+      resolveTargetSha: async () => {
+        shaLookups++;
+        if (shaLookups === 2) {
+          resolveGate?.();
+        }
+        await gate;
+        return "abc123";
+      },
+    };
+
+    const [first, second] = await Promise.all([
+      triggerCodeReviewForSession(options, { sessionId: "app-1", requestedBy: "web" }),
+      triggerCodeReviewForSession(options, { sessionId: "app-1", requestedBy: "web" }),
+    ]);
+
+    expect(new Set([first.reviewerSessionId, second.reviewerSessionId]).size).toBe(2);
+    expect(
+      store
+        .listRuns()
+        .map((run) => run.reviewerSessionId)
+        .sort(),
+    ).toEqual(["app-rev-1", "app-rev-2"]);
   });
 
   it("marks previous review runs for older worker SHAs as outdated", async () => {
@@ -508,7 +543,7 @@ describe("sendCodeReviewFindingsToAgent", () => {
         },
         { projectId: "app", runId: run.id },
       ),
-    ).rejects.toThrow(/No open review findings/);
+    ).rejects.toBeInstanceOf(CodeReviewNoOpenFindingsError);
 
     expect(sentMessages).toEqual([]);
     expect(store.getRun(run.id)?.status).toBe("clean");
@@ -608,6 +643,32 @@ describe("parseReviewerOutput", () => {
     expect(parseReviewerOutput("No findings.")).toEqual([]);
     expect(parseReviewerOutput("Unexpected reviewer text")).toMatchObject([
       { severity: "warning", title: "Reviewer output", body: "Unexpected reviewer text" },
+    ]);
+  });
+
+  it("does not drop structured findings whose text mentions no findings", () => {
+    expect(
+      parseReviewerOutput(
+        JSON.stringify({
+          findings: [
+            {
+              severity: "warning",
+              title: "No findings banner is stale",
+              body: "The UI still says no findings even when the reviewer found one.",
+              filePath: "src/review.ts",
+              startLine: 42,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject([
+      {
+        severity: "warning",
+        title: "No findings banner is stale",
+        body: "The UI still says no findings even when the reviewer found one.",
+        filePath: "src/review.ts",
+        startLine: 42,
+      },
     ]);
   });
 });

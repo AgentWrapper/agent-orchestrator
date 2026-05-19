@@ -2005,11 +2005,14 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
+export type ProjectResolveErrorKind = "malformed" | "invalid" | "old-format";
+
 /** Thrown when a project cannot be resolved into an effective runtime config. */
 export class ProjectResolveError extends Error {
   constructor(
     public readonly projectId: string,
     message: string,
+    public readonly reasonKind?: ProjectResolveErrorKind,
   ) {
     super(message);
     this.name = "ProjectResolveError";

@@ -3,7 +3,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // ---------------------------------------------------------------------------
 // Mock node:child_process — glab CLI calls go through execFileAsync
 // ---------------------------------------------------------------------------
-const { glabMock } = vi.hoisted(() => ({ glabMock: vi.fn() }));
+const { glabMock, recordActivityEventMock } = vi.hoisted(() => ({
+  glabMock: vi.fn(),
+  recordActivityEventMock: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => {
   const execFile = Object.assign(vi.fn(), {
@@ -12,8 +15,22 @@ vi.mock("node:child_process", () => {
   return { execFile };
 });
 
-import { create, manifest } from "../src/index.js";
-import { createActivitySignal, type PRInfo, type Session, type ProjectConfig, type SCMWebhookRequest } from "@aoagents/ao-core";
+vi.mock("@aoagents/ao-core", async () => {
+  const actual = (await vi.importActual("@aoagents/ao-core")) as Record<string, unknown>;
+  return {
+    ...actual,
+    recordActivityEvent: recordActivityEventMock,
+  };
+});
+
+import { create, manifest, _resetGitLabActivityEventDedupeForTesting } from "../src/index.js";
+import {
+  createActivitySignal,
+  type PRInfo,
+  type Session,
+  type ProjectConfig,
+  type SCMWebhookRequest,
+} from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -104,6 +121,7 @@ describe("scm-gitlab plugin", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetGitLabActivityEventDedupeForTesting();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     scm = create();
     delete process.env["GITLAB_WEBHOOK_SECRET"];
@@ -701,6 +719,34 @@ describe("scm-gitlab plugin", () => {
       expect(await scm.getCISummary(pr)).toBe("failing");
     });
 
+    it("dedupes fail-closed activity events per MR", async () => {
+      mockGlabError("pipeline error");
+      mockGlabError("network error");
+      mockGlabError("pipeline error again");
+      mockGlabError("network error again");
+
+      expect(await scm.getCISummary(pr)).toBe("failing");
+      expect(await scm.getCISummary(pr)).toBe("failing");
+
+      const failClosedCalls = recordActivityEventMock.mock.calls.filter(
+        ([event]) => event.kind === "scm.ci_summary_failclosed",
+      );
+      expect(failClosedCalls).toHaveLength(1);
+      expect(failClosedCalls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          source: "scm",
+          kind: "scm.ci_summary_failclosed",
+          level: "warn",
+          data: expect.objectContaining({
+            plugin: "scm-gitlab",
+            prNumber: 42,
+            prOwner: "acme",
+            prRepo: "repo",
+          }),
+        }),
+      );
+    });
+
     it('returns "none" when all jobs are skipped', async () => {
       mockGlab([{ id: 1 }]);
       mockGlab([
@@ -804,6 +850,34 @@ describe("scm-gitlab plugin", () => {
       expect(reviews[0]).toMatchObject({ author: "alice", state: "approved" });
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("getReviews: discussions fetch failed for MR !42"),
+      );
+    });
+
+    it("dedupes review fetch failed activity events per MR", async () => {
+      mockGlab({ approved_by: [] });
+      mockGlabError("discussions fetch failed");
+      mockGlab({ approved_by: [] });
+      mockGlabError("discussions fetch failed again");
+
+      expect(await scm.getReviews(pr)).toEqual([]);
+      expect(await scm.getReviews(pr)).toEqual([]);
+
+      const reviewFetchCalls = recordActivityEventMock.mock.calls.filter(
+        ([event]) => event.kind === "scm.review_fetch_failed",
+      );
+      expect(reviewFetchCalls).toHaveLength(1);
+      expect(reviewFetchCalls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          source: "scm",
+          kind: "scm.review_fetch_failed",
+          level: "warn",
+          data: expect.objectContaining({
+            plugin: "scm-gitlab",
+            prNumber: 42,
+            prOwner: "acme",
+            prRepo: "repo",
+          }),
+        }),
       );
     });
 

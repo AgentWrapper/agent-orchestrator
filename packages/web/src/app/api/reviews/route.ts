@@ -1,4 +1,8 @@
-import { SessionNotFoundError, triggerCodeReviewForSession } from "@aoagents/ao-core";
+import {
+  CodeReviewInvalidSessionError,
+  SessionNotFoundError,
+  triggerCodeReviewForSession,
+} from "@aoagents/ao-core";
 import { getReviewPageData, resolveReviewProjectFilter } from "@/lib/review-page-data";
 import { getCorrelationId, jsonWithCorrelation } from "@/lib/observability";
 import { getServices } from "@/lib/services";
@@ -72,6 +76,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof SessionNotFoundError) {
       return jsonWithCorrelation({ error: error.message }, { status: 404 }, correlationId);
+    }
+    if (error instanceof CodeReviewInvalidSessionError) {
+      return jsonWithCorrelation({ error: error.message }, { status: 400 }, correlationId);
     }
 
     const message = error instanceof Error ? error.message : "Failed to request review";

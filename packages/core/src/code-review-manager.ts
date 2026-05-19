@@ -1,5 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   type CodeReviewFinding,
@@ -19,10 +30,13 @@ import {
   type Session,
   type SessionManager,
 } from "./types.js";
-import { getShell, isWindows } from "./platform.js";
+import { getShell, isWindows, killProcessTree } from "./platform.js";
 
 const REVIEW_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const REVIEW_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
+const REVIEW_RUN_CREATION_LOCK_FILE = ".create-run.lock";
+const REVIEW_RUN_CREATION_LOCK_WAIT_MS = 5_000;
+const REVIEW_RUN_CREATION_LOCK_STALE_MS = 30_000;
 
 async function execFileAsync(
   file: string,
@@ -60,6 +74,7 @@ async function execFileWithClosedStdin(
       env: options.env,
       shell: options.shell,
       windowsHide: options.windowsHide ?? true,
+      detached: !isWindows(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const maxBuffer = options.maxBuffer ?? REVIEW_COMMAND_MAX_BUFFER;
@@ -72,6 +87,14 @@ async function execFileWithClosedStdin(
       settled = true;
       if (timer) clearTimeout(timer);
       callback();
+    };
+
+    const terminateChild = () => {
+      if (child.pid !== undefined) {
+        return killProcessTree(child.pid).catch(() => undefined);
+      }
+      child.kill("SIGTERM");
+      return Promise.resolve();
     };
 
     const fail = (message: string, code?: number | null, signal?: NodeJS.Signals | null) => {
@@ -91,10 +114,9 @@ async function execFileWithClosedStdin(
     const timer =
       options.timeout && options.timeout > 0
         ? setTimeout(() => {
-            child.kill("SIGTERM");
-            finish(() =>
-              fail(`Command timed out after ${options.timeout}ms`, null, "SIGTERM"),
-            );
+            void terminateChild().finally(() => {
+              finish(() => fail(`Command timed out after ${options.timeout}ms`, null, "SIGTERM"));
+            });
           }, options.timeout)
         : null;
 
@@ -104,7 +126,7 @@ async function execFileWithClosedStdin(
       else stderr += next;
 
       if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) <= maxBuffer) return;
-      child.kill("SIGTERM");
+      void terminateChild();
       finish(() => fail(`Command output exceeded maxBuffer ${maxBuffer}`));
     };
 
@@ -236,6 +258,25 @@ export class CodeReviewRunNotExecutableError extends Error {
     this.runId = run.id;
     this.reviewerSessionId = run.reviewerSessionId;
     this.status = run.status;
+  }
+}
+
+export class CodeReviewInvalidSessionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodeReviewInvalidSessionError";
+  }
+}
+
+export class CodeReviewNoOpenFindingsError extends Error {
+  readonly runId: string;
+  readonly reviewerSessionId: string;
+
+  constructor(run: CodeReviewRun) {
+    super(`No open review findings to send for ${run.reviewerSessionId}.`);
+    this.name = "CodeReviewNoOpenFindingsError";
+    this.runId = run.id;
+    this.reviewerSessionId = run.reviewerSessionId;
   }
 }
 
@@ -371,7 +412,7 @@ function normalizeFinding(value: unknown, fallbackIndex: number): CodeReviewRunn
 
 export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
   const trimmed = output.trim();
-  if (!trimmed || /\bno findings?\b/i.test(trimmed)) return [];
+  if (!trimmed) return [];
 
   const parsed = tryParseJsonCandidate(trimmed);
   const parsedRecord = asRecord(parsed);
@@ -386,6 +427,8 @@ export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
       .map((finding, index) => normalizeFinding(finding, index + 1))
       .filter((finding): finding is CodeReviewRunnerFinding => finding !== null);
   }
+
+  if (/^no findings?\.?$/i.test(trimmed)) return [];
 
   return [
     {
@@ -410,6 +453,76 @@ function allocateReviewerSessionId(existingRuns: CodeReviewRun[], sessionPrefix:
   }
 
   return `${sessionPrefix}-rev-${max + 1}`;
+}
+
+function isFsErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+async function acquireReviewRunCreationLock(store: CodeReviewStore): Promise<() => void> {
+  mkdirSync(store.storeDir, { recursive: true });
+  const lockPath = join(store.storeDir, REVIEW_RUN_CREATION_LOCK_FILE);
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      const fd = openSync(lockPath, "wx");
+      writeFileSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        try {
+          closeSync(fd);
+        } catch {
+          // The descriptor may already be closed if process cleanup raced with release.
+        }
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // Another process may already have cleaned up a stale lock.
+        }
+      };
+    } catch (error) {
+      if (!isFsErrorWithCode(error, "EEXIST")) {
+        throw error;
+      }
+
+      try {
+        const lockAgeMs = Date.now() - statSync(lockPath).mtimeMs;
+        if (lockAgeMs > REVIEW_RUN_CREATION_LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch (staleError) {
+        if (isFsErrorWithCode(staleError, "ENOENT")) {
+          continue;
+        }
+      }
+
+      if (Date.now() - startedAt > REVIEW_RUN_CREATION_LOCK_WAIT_MS) {
+        throw new Error("Timed out waiting for code review run creation lock");
+      }
+      await delay(25);
+    }
+  }
+}
+
+async function withReviewRunCreationLock<T>(
+  store: CodeReviewStore,
+  callback: () => T | Promise<T>,
+): Promise<T> {
+  const release = await acquireReviewRunCreationLock(store);
+  try {
+    return await callback();
+  } finally {
+    release();
+  }
 }
 
 const SUPERSEDABLE_RUN_STATUSES: ReadonlySet<CodeReviewRunStatus> = new Set([
@@ -578,14 +691,7 @@ export function createShellCodeReviewRunner(command: string): CodeReviewRunner {
 }
 
 export function buildCodexCodeReviewArgs(outputFile: string, prompt: string): string[] {
-  return [
-    "exec",
-    "--sandbox",
-    "read-only",
-    "--output-last-message",
-    outputFile,
-    prompt,
-  ];
+  return ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, prompt];
 }
 
 export async function runCodexCodeReview(
@@ -670,7 +776,9 @@ export async function triggerCodeReviewForSession(
 
   const project = config.projects[session.projectId];
   if (!project) {
-    throw new Error(`Unknown project for session ${session.id}: ${session.projectId}`);
+    throw new CodeReviewInvalidSessionError(
+      `Unknown project for session ${session.id}: ${session.projectId}`,
+    );
   }
 
   const sessionPrefix = project.sessionPrefix ?? session.projectId;
@@ -678,46 +786,51 @@ export async function triggerCodeReviewForSession(
     ([projectId, projectConfig]) => projectConfig.sessionPrefix ?? projectId,
   );
   if (isOrchestratorSession(session, sessionPrefix, allSessionPrefixes)) {
-    throw new Error(`Cannot request code review for orchestrator session: ${session.id}`);
+    throw new CodeReviewInvalidSessionError(
+      `Cannot request code review for orchestrator session: ${session.id}`,
+    );
   }
 
   const store = storeFactory(session.projectId);
-  const existingRuns = store.listRuns();
-  const reviewerSessionId = allocateReviewerSessionId(existingRuns, sessionPrefix);
   const prUrl = session.pr?.url ?? session.metadata["pr"];
   const prNumber = session.pr?.number ?? parsePrNumber(prUrl);
   const targetSha = await resolveTargetSha(session);
   const requestedBy = input.requestedBy ?? "system";
 
-  markSupersededReviewRuns({
-    store,
-    existingRuns,
-    linkedSessionId: session.id,
-    targetSha,
-    now,
-  });
+  return withReviewRunCreationLock(store, () => {
+    const existingRuns = store.listRuns();
+    const reviewerSessionId = allocateReviewerSessionId(existingRuns, sessionPrefix);
 
-  const run = store.createRun(
-    {
+    markSupersededReviewRuns({
+      store,
+      existingRuns,
       linkedSessionId: session.id,
-      reviewerSessionId,
-      status: input.status ?? "queued",
       targetSha,
-      prNumber,
-      prUrl,
-      summary: input.summary ?? defaultReviewSummary(session, requestedBy),
-    },
-    now,
-  );
+      now,
+    });
 
-  return {
-    ...run,
-    findingCount: 0,
-    openFindingCount: 0,
-    dismissedFindingCount: 0,
-    sentFindingCount: 0,
-    resolvedFindingCount: 0,
-  };
+    const run = store.createRun(
+      {
+        linkedSessionId: session.id,
+        reviewerSessionId,
+        status: input.status ?? "queued",
+        targetSha,
+        prNumber,
+        prUrl,
+        summary: input.summary ?? defaultReviewSummary(session, requestedBy),
+      },
+      now,
+    );
+
+    return {
+      ...run,
+      findingCount: 0,
+      openFindingCount: 0,
+      dismissedFindingCount: 0,
+      sentFindingCount: 0,
+      resolvedFindingCount: 0,
+    };
+  });
 }
 
 function summarizeRun(store: CodeReviewStore, runId: string): CodeReviewRunSummary {
@@ -861,7 +974,7 @@ export async function sendCodeReviewFindingsToAgent(
 
   const findings = store.listFindings({ runId: run.id, status: "open" });
   if (findings.length === 0) {
-    throw new Error(`No open review findings to send for ${run.reviewerSessionId}.`);
+    throw new CodeReviewNoOpenFindingsError(run);
   }
 
   const message = formatCodeReviewFindingsForAgent({ run, findings, session });

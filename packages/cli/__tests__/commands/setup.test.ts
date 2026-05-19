@@ -31,6 +31,7 @@ vi.mock("@aoagents/ao-core", () => ({
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   isCanonicalGlobalConfigPath: (configPath: string | undefined) =>
     configPath === join(homedir(), ".agent-orchestrator", "config.yaml"),
+  recordActivityEvent: vi.fn(),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -52,6 +53,7 @@ vi.mock("../../src/lib/openclaw-probe.js", () => ({
   HOOKS_PATH: "/hooks/agent",
 }));
 
+import { recordActivityEvent } from "@aoagents/ao-core";
 import { registerSetup } from "../../src/commands/setup.js";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,9 @@ function createProgram(): Command {
   return program;
 }
 
+const recordedEvents = (): Array<Record<string, unknown>> =>
+  vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0] as Record<string, unknown>);
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -99,6 +104,7 @@ describe("setup openclaw command", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(recordActivityEvent).mockClear();
     mockFindConfigFile.mockReturnValue("/tmp/agent-orchestrator.yaml");
     mockReadFileSync.mockReturnValue(MINIMAL_CONFIG);
     mockWriteFileSync.mockImplementation(() => {});
@@ -483,6 +489,44 @@ projects:
       ]);
 
       expect(mockWriteFileSync.mock.calls[0][0]).toBe("/custom/path/agent-orchestrator.yaml");
+    });
+
+    it("emits setup_degraded instead of setup_failed when OpenClaw JSON write falls back to manual instructions", async () => {
+      const openclawConfigPath = join(homedir(), ".openclaw", "openclaw.json");
+      mockWriteFileSync.mockImplementation((path: string) => {
+        if (path === openclawConfigPath) {
+          throw new Error("permission denied");
+        }
+      });
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const events = recordedEvents();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: "cli.setup_degraded",
+          source: "cli",
+          level: "warn",
+          data: expect.objectContaining({ reason: "openclaw_json_write_failed" }),
+        }),
+      );
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          kind: "cli.setup_failed",
+          data: expect.objectContaining({ reason: "openclaw_json_write_failed" }),
+        }),
+      );
     });
   });
 

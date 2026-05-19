@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { EventEmitter } from "node:events";
-import type { SessionManager } from "@aoagents/ao-core";
+import { recordActivityEvent, type SessionManager } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -153,6 +153,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     sweepDaemonChildren: mockSweepDaemonChildren,
     scanAoOrphans: mockScanAoOrphans,
     reapAoOrphans: mockReapAoOrphans,
+    recordActivityEvent: vi.fn(),
   };
 });
 
@@ -336,6 +337,7 @@ beforeEach(async () => {
   program.exitOverride();
   registerStart(program);
   registerStop(program);
+  vi.mocked(recordActivityEvent).mockClear();
 
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -504,6 +506,9 @@ function makeProject(overrides: Record<string, unknown> = {}): Record<string, un
     ...overrides,
   };
 }
+
+const recordedEvents = (): Array<Record<string, unknown>> =>
+  vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0] as Record<string, unknown>);
 
 /** Mock process.cwd() to return a specific directory (avoids process.chdir in workers). */
 function mockCwd(dir: string): void {
@@ -1571,6 +1576,19 @@ describe("start command — orchestrator session strategy display", () => {
     await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
 
     expect(releaseStartupLock).toHaveBeenCalledTimes(1);
+    const startFailedEvents = recordedEvents().filter((e) => e.kind === "cli.start_failed");
+    expect(startFailedEvents).toHaveLength(1);
+    expect(startFailedEvents[0]).toEqual(
+      expect.objectContaining({
+        projectId: "my-app",
+        source: "cli",
+        level: "error",
+        data: expect.objectContaining({
+          reason: "orchestrator_setup",
+          errorMessage: "Spawn failed",
+        }),
+      }),
+    );
   });
 
   it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {
@@ -1649,6 +1667,56 @@ describe("start command — orchestrator session strategy display", () => {
     expect(written.sessionIds).toEqual(["app-2"]);
     expect(written.projectId).toBe("my-app");
     expect(written.stoppedAt).toBe("2026-04-28T10:00:00.000Z");
+  });
+
+  it("attributes other-project restore failures to the owning project", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "my-app",
+      sessionIds: ["app-1"],
+      otherProjects: [{ projectId: "other-app", sessionIds: ["other-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject(),
+      "other-app": makeProject({ name: "Other App", sessionPrefix: "other" }),
+    });
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.restore.mockImplementation((id: string) => {
+      if (id === "other-1") return Promise.reject(new Error("workspace gone"));
+      return Promise.resolve(undefined);
+    });
+
+    await program.parseAsync(["node", "test", "start", "my-app", "--no-orchestrator"]);
+
+    const restoreFailedEvents = recordedEvents().filter(
+      (e) => e.kind === "cli.restore_session_failed",
+    );
+    expect(restoreFailedEvents).toHaveLength(1);
+    expect(restoreFailedEvents[0]).toEqual(
+      expect.objectContaining({
+        projectId: "other-app",
+        sessionId: "other-1",
+        source: "cli",
+        level: "warn",
+        data: expect.objectContaining({ errorMessage: "workspace gone" }),
+      }),
+    );
+
+    const written = mockWriteLastStop.mock.calls[0][0];
+    expect(written).toEqual(
+      expect.objectContaining({
+        projectId: "my-app",
+        sessionIds: [],
+        otherProjects: [{ projectId: "other-app", sessionIds: ["other-1"] }],
+      }),
+    );
   });
 
   it("clears last-stop record when every session restored successfully", async () => {

@@ -5,6 +5,7 @@ import type {
   Runtime,
   Workspace,
 } from "../types.js";
+import { recordActivityEvent } from "../activity-events.js";
 import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
 import { validateStatus } from "../utils/validation.js";
@@ -146,11 +147,25 @@ export async function recoverSession(
       session,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "recovery",
+      kind: "recovery.action_failed",
+      level: "error",
+      summary: `recoverSession threw for ${sessionId}: ${errorMessage}`,
+      data: {
+        action: "recover",
+        recoveryCount,
+        errorMessage,
+      },
+    });
     return {
       success: false,
       sessionId,
       action: "recover",
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     };
   }
 }

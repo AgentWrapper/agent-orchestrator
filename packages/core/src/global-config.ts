@@ -7,10 +7,11 @@ import { z } from "zod";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { detectScmPlatform } from "./config-generator.js";
 import { withFileLockSync } from "./file-lock.js";
-import { ProjectResolveError } from "./types.js";
+import { ProjectResolveError, type ProjectResolveErrorKind } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
 import { getDefaultRuntime } from "./platform.js";
+import { recordActivityEvent } from "./activity-events.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -347,6 +348,12 @@ export function loadGlobalConfig(
   if (migrationSummary) {
     // eslint-disable-next-line no-console -- required migration visibility for stale shadow stripping
     console.info(migrationSummary);
+    recordActivityEvent({
+      source: "config",
+      kind: "config.migrated",
+      summary: "global config migrated",
+      data: { migrationSummary },
+    });
   }
 
   const config = GlobalConfigSchema.parse(parsed);
@@ -882,6 +889,7 @@ export function resolveProjectIdentity(
       defaultBranch: string;
       sessionPrefix: string;
       resolveError?: string;
+      resolveErrorKind?: ProjectResolveErrorKind;
     })
   | null {
   const entry = globalConfig.projects[projectId] as
@@ -960,15 +968,48 @@ export function resolveProjectIdentity(
     };
   }
 
+  if (localConfigResult.kind === "malformed") {
+    recordActivityEvent({
+      projectId,
+      source: "config",
+      kind: "config.project_malformed",
+      level: "error",
+      summary: `local config for ${projectId} could not be parsed`,
+      data: {
+        path: localConfigResult.path,
+        error: localConfigResult.error,
+      },
+    });
+  } else if (localConfigResult.kind === "invalid") {
+    recordActivityEvent({
+      projectId,
+      source: "config",
+      kind: "config.project_invalid",
+      level: "error",
+      summary: `local config for ${projectId} failed validation`,
+      data: {
+        path: localConfigResult.path,
+        error: localConfigResult.error,
+      },
+    });
+  }
+
   const resolveError =
     localConfigResult.kind !== "missing"
       ? (localConfigResult.error ?? "Failed to load local config")
+      : undefined;
+  const resolveErrorKind: ProjectResolveErrorKind | undefined =
+    localConfigResult.kind === "malformed" ||
+    localConfigResult.kind === "invalid" ||
+    localConfigResult.kind === "old-format"
+      ? localConfigResult.kind
       : undefined;
 
   return {
     ...(resolveError ? {} : applyBehaviorDefaults({})),
     ...identityFields,
     ...(resolveError ? { resolveError } : {}),
+    ...(resolveErrorKind ? { resolveErrorKind } : {}),
   };
 }
 

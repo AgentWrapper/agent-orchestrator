@@ -336,6 +336,13 @@ function ReviewDashboardInner({
             : entry,
         ),
       );
+      if (data.run.status === "failed") {
+        showToast(
+          `Review failed: ${data.run.terminationReason ?? "Reviewer execution failed"}`,
+          "error",
+        );
+        return;
+      }
       showToast(
         data.run.openFindingCount > 0 ? "Review findings ready" : "Review completed clean",
         "success",
@@ -412,7 +419,9 @@ function ReviewDashboardInner({
         `Sent ${pluralize(data.sentFindingCount ?? 0, "finding")} to ${run.linkedSessionId}`,
         "success",
       );
-      router.push(projectSessionHashPath(run.projectId, run.linkedSessionId, "#session-terminal-section"));
+      router.push(
+        projectSessionHashPath(run.projectId, run.linkedSessionId, "#session-terminal-section"),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send review findings";
       showToast(`Feedback failed: ${message}`, "error");

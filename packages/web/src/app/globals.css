@@ -719,10 +719,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   justify-content: center;
   min-height: 36px;
   border-radius: 999px;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 650;
   padding: 0 15px;
   text-decoration: none;
+  cursor: pointer;
   transition:
     transform 120ms ease,
     border-color 120ms ease,
@@ -745,6 +747,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-ended-summary__secondary:hover {
   transform: translateY(-1px);
   text-decoration: none;
+}
+
+.session-ended-summary__primary:focus-visible,
+.session-ended-summary__secondary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .session-ended-summary__evidence {

@@ -38,15 +38,28 @@ const canRun = hasCredentials && Boolean(LINEAR_TEAM_ID);
 // Helpers
 // ---------------------------------------------------------------------------
 
+interface LinearGraphQLOptions {
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  timeoutMs?: number;
+}
+
 /**
  * Direct GraphQL call for test setup/cleanup.
  * Only available when LINEAR_API_KEY is set.
  */
-function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+function linearGraphQL<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  options: LinearGraphQLOptions = {},
+): Promise<T> {
   if (!LINEAR_API_KEY) {
     throw new Error("linearGraphQL requires LINEAR_API_KEY");
   }
   const body = JSON.stringify({ query, variables });
+  const maxAttempts = options.maxAttempts ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
 
   async function executeWithRetry(attempt = 1): Promise<T> {
     try {
@@ -95,9 +108,9 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
           },
         );
 
-        req.setTimeout(30_000, () => {
+        req.setTimeout(timeoutMs, () => {
           req.destroy();
-          reject(new Error("Linear API request timed out"));
+          reject(new Error(`Linear API request timed out after ${timeoutMs}ms`));
         });
 
         req.on("error", (err) => reject(err));
@@ -105,8 +118,8 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
         req.end();
       });
     } catch (err) {
-      if (attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         return executeWithRetry(attempt + 1);
       }
       throw err;
@@ -179,7 +192,18 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     if (!issueIdentifier) return;
 
     try {
-      if (issueUuid && LINEAR_API_KEY) {
+      if (LINEAR_API_KEY) {
+        const cleanupRequest = { maxAttempts: 1, timeoutMs: 5_000 };
+        if (!issueUuid) {
+          const data = await linearGraphQL<{ issue: { id: string } }>(
+            `query($id: String!) { issue(id: $id) { id } }`,
+            { id: issueIdentifier },
+            cleanupRequest,
+          );
+          issueUuid = data.issue.id;
+        }
+
+        if (!issueUuid) return;
         await linearGraphQL(
           `mutation($id: String!) {
             issueUpdate(id: $id, input: { trashed: true }) {
@@ -187,6 +211,7 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
             }
           }`,
           { id: issueUuid },
+          cleanupRequest,
         );
       } else {
         // Composio-only: best-effort close via plugin

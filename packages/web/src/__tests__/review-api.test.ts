@@ -58,7 +58,7 @@ function makeRequest(url: string, init?: RequestInit): NextRequest {
   );
 }
 
-function makeSession(): Session {
+function makeSession(overrides: Partial<Session> = {}): Session {
   const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2026-05-10T10:00:00.000Z"));
   lifecycle.session.state = "idle";
   lifecycle.session.reason = "awaiting_external_review";
@@ -98,6 +98,7 @@ function makeSession(): Session {
     createdAt: new Date("2026-05-10T09:00:00.000Z"),
     lastActivityAt: new Date("2026-05-10T10:00:00.000Z"),
     metadata: {},
+    ...overrides,
   };
 }
 
@@ -147,6 +148,40 @@ describe("POST /api/reviews", () => {
       status: "queued",
     });
     expect(createCodeReviewStore("app").listRuns()).toHaveLength(1);
+  });
+
+  it("returns 400 when a session belongs to an unknown project", async () => {
+    mockSessionManager.get.mockResolvedValueOnce(makeSession({ projectId: "missing-project" }));
+
+    const response = await POST(
+      makeRequest("/api/reviews", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "app-1" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Unknown project for session app-1: missing-project",
+    });
+  });
+
+  it("returns 400 when a review is requested for an orchestrator session", async () => {
+    mockSessionManager.get.mockResolvedValueOnce(
+      makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } }),
+    );
+
+    const response = await POST(
+      makeRequest("/api/reviews", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "app-orchestrator" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Cannot request code review for orchestrator session: app-orchestrator",
+    });
   });
 });
 
@@ -230,6 +265,28 @@ describe("POST /api/reviews/send", () => {
       expect.stringContaining("Missing empty state"),
     );
     expect(store.getFinding(finding.id)).toMatchObject({ status: "sent_to_agent" });
+  });
+
+  it("returns 409 when there are no open findings to send", async () => {
+    const store = createCodeReviewStore("app");
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "clean",
+    });
+
+    const response = await POST_SEND(
+      makeRequest("/api/reviews/send", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "app", runId: run.id }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "No open review findings to send for app-rev-1.",
+    });
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
   });
 });
 

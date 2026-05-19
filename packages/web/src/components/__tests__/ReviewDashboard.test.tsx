@@ -142,4 +142,47 @@ describe("ReviewDashboard", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
+
+  it("surfaces a completed failed review run as a failure", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        run: makeRun({
+          id: "review-run-1",
+          reviewerSessionId: "app-rev-1",
+          status: "failed",
+          findingCount: 0,
+          openFindingCount: 0,
+          dismissedFindingCount: 0,
+          terminationReason: "Codex review failed: invalid arguments",
+        }),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReviewDashboard
+        runs={[
+          makeRun({
+            id: "review-run-1",
+            reviewerSessionId: "app-rev-1",
+            linkedSessionId: "app-1",
+            status: "queued",
+            findingCount: 0,
+            openFindingCount: 0,
+            dismissedFindingCount: 0,
+          }),
+        ]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(
+      await screen.findByText(/Review failed: Codex review failed: invalid arguments/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Review completed clean")).not.toBeInTheDocument();
+  });
 });

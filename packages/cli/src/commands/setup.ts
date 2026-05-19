@@ -14,7 +14,12 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { parse as yamlParse, parseDocument } from "yaml";
-import { CONFIG_SCHEMA_URL, findConfigFile, isCanonicalGlobalConfigPath } from "@aoagents/ao-core";
+import {
+  CONFIG_SCHEMA_URL,
+  findConfigFile,
+  isCanonicalGlobalConfigPath,
+  recordActivityEvent,
+} from "@aoagents/ao-core";
 import {
   probeGateway,
   validateToken,
@@ -512,6 +517,16 @@ export function registerSetup(program: Command): void {
       try {
         await runSetupAction(opts);
       } catch (err) {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.setup_failed",
+          level: "error",
+          summary: `ao setup openclaw failed`,
+          data: {
+            aborted: err instanceof SetupAbortedError,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
         if (err instanceof SetupAbortedError) {
           console.error(err.message);
           process.exit(err.exitCode);
@@ -574,6 +589,14 @@ export async function runSetupAction(opts: SetupOptions): Promise<void> {
   const openclawConfigWritten = writeOpenClawJsonConfig(resolved.token);
   if (openclawConfigWritten && nonInteractive) {
     console.log(chalk.green("✓ Wrote hooks config to ~/.openclaw/openclaw.json"));
+  } else if (!openclawConfigWritten) {
+    recordActivityEvent({
+      source: "cli",
+      kind: "cli.setup_degraded",
+      level: "warn",
+      summary: `ao setup openclaw completed without writing ~/.openclaw/openclaw.json`,
+      data: { reason: "openclaw_json_write_failed" },
+    });
   }
 
   // --- Write shell export --------------------------------------------------

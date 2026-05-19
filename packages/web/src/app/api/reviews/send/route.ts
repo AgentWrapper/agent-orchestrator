@@ -1,4 +1,5 @@
 import {
+  CodeReviewNoOpenFindingsError,
   CodeReviewRunNotFoundError,
   sendCodeReviewFindingsToAgent,
   SessionNotFoundError,
@@ -45,9 +46,11 @@ export async function POST(request: Request) {
     if (error instanceof CodeReviewRunNotFoundError) {
       return jsonWithCorrelation({ error: error.message }, { status: 404 }, correlationId);
     }
+    if (error instanceof CodeReviewNoOpenFindingsError) {
+      return jsonWithCorrelation({ error: error.message }, { status: 409 }, correlationId);
+    }
 
     const message = error instanceof Error ? error.message : "Failed to send review findings";
-    const status = message.startsWith("No open review findings") ? 409 : 500;
-    return jsonWithCorrelation({ error: message }, { status }, correlationId);
+    return jsonWithCorrelation({ error: message }, { status: 500 }, correlationId);
   }
 }
