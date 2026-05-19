@@ -383,7 +383,19 @@ function resolvePluginSpecifier(
   }
 }
 
-export function createPluginRegistry(): PluginRegistry {
+export interface CreatePluginRegistryOptions {
+  /**
+   * When true, suppress console.warn emitted by notifier plugins during
+   * their create() initialization. Defaults to true — warnings are only
+   * shown when running `ao doctor`.
+   */
+  suppressNotifierWarnings?: boolean;
+}
+
+export function createPluginRegistry(
+  options: CreatePluginRegistryOptions = {},
+): PluginRegistry {
+  const { suppressNotifierWarnings = true } = options;
   const plugins: PluginMap = new Map();
 
   function registerInstance(
@@ -395,6 +407,22 @@ export function createPluginRegistry(): PluginRegistry {
     plugins.set(makeKey(slot, name), { manifest, instance });
   }
 
+  /**
+   * Run a function with console.warn temporarily silenced.
+   * Used to suppress noisy notifier misconfiguration warnings that
+   * should only appear during `ao doctor` diagnostics.
+   */
+  function withSuppressedWarn<T>(fn: () => T): T {
+    if (!suppressNotifierWarnings) return fn();
+    const original = console.warn;
+    console.warn = () => {};
+    try {
+      return fn();
+    } finally {
+      console.warn = original;
+    }
+  }
+
   function registerNotifier(
     plugin: PluginModule,
     config: OrchestratorConfig,
@@ -404,12 +432,13 @@ export function createPluginRegistry(): PluginRegistry {
     const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
     if (registrations.length === 0) {
-      registerInstance(manifest.slot, manifest.name, manifest, plugin.create(undefined));
+      const instance = withSuppressedWarn(() => plugin.create(undefined));
+      registerInstance(manifest.slot, manifest.name, manifest, instance);
       return;
     }
 
     for (const [index, registration] of registrations.entries()) {
-      const instance = plugin.create(registration.config);
+      const instance = withSuppressedWarn(() => plugin.create(registration.config));
       registerInstance(manifest.slot, registration.registrationName, manifest, instance);
 
       if (index === 0 && registration.registrationName !== manifest.name) {

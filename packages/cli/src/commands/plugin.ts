@@ -233,18 +233,12 @@ async function verifyPluginDescriptor(
     name: imported.manifest.name,
   };
 
-  const registry = createPluginRegistry();
+  const registry = createPluginRegistry({ suppressNotifierWarnings: true });
   const tempConfig: OrchestratorConfig = {
     ...config,
     plugins: upsertInstalledPlugin(config.plugins ?? [], normalizedDescriptor),
   };
-  const originalWarn = console.warn;
-  console.warn = () => {};
-  try {
-    await registry.loadFromConfig(tempConfig, importPluginModuleFromSource);
-  } finally {
-    console.warn = originalWarn;
-  }
+  await registry.loadFromConfig(tempConfig, importPluginModuleFromSource);
 
   const registered = registry.get(imported.manifest.slot, imported.manifest.name);
   if (!registered) {

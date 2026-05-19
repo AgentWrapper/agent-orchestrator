@@ -62,7 +62,8 @@ interface PluginReference {
 }
 
 async function loadPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
-  const registry = createPluginRegistry();
+  // Doctor should show notifier warnings — they're diagnostic info
+  const registry = createPluginRegistry({ suppressNotifierWarnings: false });
   await registry.loadFromConfig(config, importPluginModuleFromSource);
   return registry;
 }

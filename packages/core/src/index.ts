@@ -22,6 +22,7 @@ export { isPortfolioEnabled } from "./feature-flags.js";
 // Plugin registry
 export {
   createPluginRegistry,
+  type CreatePluginRegistryOptions,
   isPluginModule,
   normalizeImportedPluginModule,
   resolveLocalPluginEntrypoint,
