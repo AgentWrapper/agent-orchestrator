@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  writeFileSync,
+  rmSync,
+  utimesSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { toClaudeProjectPath, create } from "../index.js";
@@ -120,7 +128,6 @@ describe("Claude Code Activity Detection", () => {
       // slug matches what Claude wrote), so the test setup must do the same — otherwise
       // the test JSONL lives under one slug and the code looks under another.
       // homedir() is mocked to fakeHome, so its realpath flows through naturally.
-      const { realpathSync } = require("node:fs");
       fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "ao-activity-test-")));
       workspacePath = join(fakeHome, "workspace");
       mkdirSync(workspacePath, { recursive: true });
