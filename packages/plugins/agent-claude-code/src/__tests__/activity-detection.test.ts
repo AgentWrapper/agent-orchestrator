@@ -407,9 +407,19 @@ describe("Claude Code Activity Detection", () => {
         expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
       });
 
-      it("returns 'ready' for recent 'pr-link' (bookkeeping)", async () => {
-        writeJsonl([{ type: "pr-link" }]);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
+      it("returns 'idle' (not 'ready') for recent 'pr-link' — re-snapshot noise", async () => {
+        // Empirical evidence (ao-160): the SAME PR (#1911) was written as
+        // pr-link 33 times in the last 200 lines, with new timestamps each
+        // time. It's a periodic state snapshot, not a one-shot event.
+        // Treat as noise so dormant sessions don't show as "ready" forever.
+        writeJsonl([
+          {
+            type: "pr-link",
+            prNumber: 1911,
+            prUrl: "https://github.com/owner/repo/pull/1911",
+          },
+        ]);
+        expect((await agent.getActivityState(makeSession()))?.state).toBe("idle");
       });
 
       it("returns 'ready' for recent 'attachment' (bookkeeping)", async () => {

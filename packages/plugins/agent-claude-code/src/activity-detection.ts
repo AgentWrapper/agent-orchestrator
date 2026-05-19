@@ -352,6 +352,14 @@ const NOISE_JSONL_TYPES: ReadonlySet<string> = new Set([
   "agent-color",
   "agent-name",
   "custom-title",
+  // pr-link is also re-snapshot noise — verified on ao-160's JSONL where the
+  // SAME PR (#1911) was written as a `pr-link` entry three times within
+  // minutes (count: 33 pr-link vs 21 user messages in the last 200 lines).
+  // The first emission is real; subsequent re-emissions are state snapshots.
+  // We can't distinguish first vs Nth from the last line alone, so treat
+  // all pr-link as noise. Real PR creation is still observable via the
+  // assistant message and the gh-tracker side.
+  "pr-link",
 ]);
 
 /**
@@ -443,14 +451,14 @@ export async function getClaudeActivityState(
           case "summary":
             return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
-          // Bookkeeping types Claude writes AFTER finishing a turn (file
-          // edits, PR creation, attachment context). Map to ready/idle by
-          // age, same as assistant/summary. Pure UI-noise types
-          // (permission-mode, ai-title, agent-*, custom-title) are handled
-          // separately by the NOISE_JSONL_TYPES check above the switch.
+          // Bookkeeping types Claude writes AFTER a real event (file edits,
+          // attachment context, queue housekeeping, prompt submit). Map to
+          // ready/idle by age, same as assistant/summary. The pure re-snapshot
+          // types (permission-mode, ai-title, agent-*, custom-title, pr-link)
+          // are filtered out earlier by NOISE_JSONL_TYPES — they get written
+          // continuously without indicating activity.
           case "file-history-snapshot":
           case "attachment":
-          case "pr-link":
           case "queue-operation":
           case "last-prompt":
             return { state: ageMs > threshold ? "idle" : "ready", timestamp };
