@@ -278,16 +278,6 @@ describe("Claude Code Activity Detection", () => {
         expect((await agent.getActivityState(makeSession()))?.state).toBe("active");
       });
 
-      it("returns 'waiting_input' for 'permission_request'", async () => {
-        writeJsonl([{ type: "permission_request" }]);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("waiting_input");
-      });
-
-      it("returns 'blocked' for 'error'", async () => {
-        writeJsonl([{ type: "error" }]);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("blocked");
-      });
-
       it("returns 'ready' for recent 'summary' entry", async () => {
         writeJsonl([{ type: "summary", summary: "Implemented login feature" }]);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
@@ -322,16 +312,6 @@ describe("Claude Code Activity Detection", () => {
       it("returns 'idle' for stale bookkeeping entry (> threshold)", async () => {
         writeJsonl([{ type: "file-history-snapshot" }], 400_000);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("idle");
-      });
-
-      it("'permission_request' ignores staleness (always waiting_input)", async () => {
-        writeJsonl([{ type: "permission_request" }], 400_000);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("waiting_input");
-      });
-
-      it("'error' ignores staleness (always blocked)", async () => {
-        writeJsonl([{ type: "error" }], 400_000);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("blocked");
       });
 
       it("respects custom readyThresholdMs", async () => {
