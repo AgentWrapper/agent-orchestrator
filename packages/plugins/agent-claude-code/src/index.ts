@@ -26,10 +26,11 @@ import {
   findLatestSessionFile,
   getClaudeActivityState,
   isClaudeProcessAlive,
+  resolveWorkspaceForClaude,
   toClaudeProjectPath,
 } from "./activity-detection.js";
 
-export { resetPsCache, toClaudeProjectPath } from "./activity-detection.js";
+export { resetPsCache, resolveWorkspaceForClaude, toClaudeProjectPath } from "./activity-detection.js";
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -767,7 +768,7 @@ function createClaudeCodeAgent(): Agent {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectPath = toClaudeProjectPath(resolveWorkspaceForClaude(session.workspacePath));
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       // Find the latest session JSONL file
@@ -797,7 +798,7 @@ function createClaudeCodeAgent(): Agent {
         if (!session.workspacePath) return null;
 
         // Find Claude's project directory for this workspace
-        const projectPath = toClaudeProjectPath(session.workspacePath);
+        const projectPath = toClaudeProjectPath(resolveWorkspaceForClaude(session.workspacePath));
         const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
         // Find the latest session JSONL file

@@ -115,7 +115,13 @@ describe("Claude Code Activity Detection", () => {
     const agent = create();
 
     beforeEach(() => {
-      fakeHome = mkdtempSync(join(tmpdir(), "ao-activity-test-"));
+      // realpathSync because /var/folders/... is a symlink to /private/var/folders/...
+      // on macOS. getClaudeActivityState resolves symlinks before slugifying (so the
+      // slug matches what Claude wrote), so the test setup must do the same — otherwise
+      // the test JSONL lives under one slug and the code looks under another.
+      // homedir() is mocked to fakeHome, so its realpath flows through naturally.
+      const { realpathSync } = require("node:fs");
+      fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "ao-activity-test-")));
       workspacePath = join(fakeHome, "workspace");
       mkdirSync(workspacePath, { recursive: true });
 
@@ -193,6 +199,25 @@ describe("Claude Code Activity Detection", () => {
       } finally {
         warn.mockRestore();
       }
+    });
+
+    it("resolves symlinked workspace paths so slugs match what Claude wrote", async () => {
+      // Claude resolves the symlink target before slugifying. If AO records
+      // the symlink path and slugifies without realpath, the two slugs
+      // diverge and findLatestSessionFile returns null forever. This test
+      // confirms the realpath fix: write JSONL under the SLUG OF THE TARGET,
+      // call getActivityState with the SYMLINK PATH, expect to find it.
+      const { symlinkSync } = await import("node:fs");
+      const target = workspacePath; // the real workspace dir
+      const link = join(fakeHome, "symlinked-workspace");
+      symlinkSync(target, link);
+
+      // JSONL is already in projectDir (which slugifies the real path).
+      writeJsonl([{ type: "assistant", message: { content: "Done!" } }]);
+
+      // Calling with the SYMLINK should still find the file because of realpath.
+      const result = await agent.getActivityState(makeSession({ workspacePath: link }));
+      expect(result?.state).toBe("ready");
     });
 
     it("returns null when project directory does not exist and AO activity is unavailable", async () => {

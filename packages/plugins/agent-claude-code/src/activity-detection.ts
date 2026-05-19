@@ -14,6 +14,7 @@ import {
   type Session,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,25 @@ const execFileAsync = promisify(execFile);
 export function toClaudeProjectPath(workspacePath: string): string {
   const normalized = workspacePath.replace(/\\/g, "/");
   return normalized.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
+/**
+ * Resolve a workspace path through any symlinks BEFORE slugifying so AO's
+ * computed Claude project dir matches what Claude itself writes.
+ *
+ * Without this, if AO records `workspacePath` as a symlink (e.g.
+ * `/Users/me/symlinks/repo`) and Claude resolves it to the target
+ * (`/Users/me/code/repo`) before computing its on-disk slug, the two slugs
+ * diverge — AO looks in an empty `~/.claude/projects/<wrong-slug>/` dir
+ * forever and the session looks permanently `idle`. Falls back to the
+ * literal path on error (dangling symlink, race, etc.).
+ */
+export function resolveWorkspaceForClaude(workspacePath: string): string {
+  try {
+    return realpathSync(workspacePath);
+  } catch {
+    return workspacePath;
+  }
 }
 
 // =============================================================================
@@ -277,7 +297,7 @@ export async function getClaudeActivityState(
 
   if (!session.workspacePath) return null;
 
-  const projectPath = toClaudeProjectPath(session.workspacePath);
+  const projectPath = toClaudeProjectPath(resolveWorkspaceForClaude(session.workspacePath));
   const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
   const sessionFile = await findLatestSessionFile(projectDir);
