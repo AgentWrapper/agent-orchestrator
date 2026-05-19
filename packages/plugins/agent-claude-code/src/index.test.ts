@@ -538,6 +538,23 @@ describe("detectActivity", () => {
     );
   });
 
+  it("does NOT match Claude's persistent UI footer 'bypass permissions on (shift+tab to cycle)'", () => {
+    // Regression test: the old `/bypass.*permissions/i` regex matched this
+    // footer toggle (visible on EVERY Claude session) and falsely fired
+    // waiting_input for every session that fell through to the AO JSONL
+    // pipeline. ao-143/144/151 all flipped to waiting_input on dormant
+    // sessions until this was tightened to require "all future".
+    const footerOnly = [
+      "✻ Crunched for 11s",
+      "",
+      "──────────────────────────────────────────────────────────",
+      "❯ ",
+      "──────────────────────────────────────────────────────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    ].join("\n");
+    expect(agent.detectActivity(footerOnly)).not.toBe("waiting_input");
+  });
+
   it("returns active when queued message indicator is visible", () => {
     expect(agent.detectActivity("Press up to edit queued messages\n")).toBe("active");
   });

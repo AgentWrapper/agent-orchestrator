@@ -310,7 +310,13 @@ export function classifyTerminalOutput(terminalOutput: string): ActivityState {
   const tail = lines.slice(-5).join("\n");
   if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
   if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-  if (/bypass.*permissions/i.test(tail)) return "waiting_input";
+  // Match the ACTUAL permission-bypass prompt — "bypass all future permissions
+  // for this session" — not the persistent UI footer "bypass permissions on
+  // (shift+tab to cycle)" which is visible on EVERY Claude session. The
+  // earlier `/bypass.*permissions/i` was too broad and false-fired on every
+  // session that fell through to the AO JSONL pipeline (real-world repro:
+  // ao-143/144/151 all flipped to waiting_input on dormant sessions).
+  if (/bypass\s+all\s+future\s+permissions/i.test(tail)) return "waiting_input";
 
   return "active";
 }
