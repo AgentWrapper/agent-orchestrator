@@ -57,8 +57,10 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { PROCESS_PROBE_INDETERMINATE } from "@aoagents/ao-core";
+import { PROCESS_PROBE_INDETERMINATE, isWindows } from "@aoagents/ao-core";
 import { create, detect, manifest, default as defaultExport } from "./index.js";
+
+const itIfNotWindows = isWindows() ? it.skip : it;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -185,7 +187,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).toMatch(/^copilot --no-auto-update --resume='[0-9a-f-]+' --model 'gpt-5\.4'$/);
     expect(extractResumeId(cmd)).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
   });
 
@@ -239,8 +241,8 @@ describe("getEnvironment", () => {
     expect(env["AO_SESSION_ID"]).toBe("sess-1");
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
     expect(env["COPILOT_AUTO_UPDATE"]).toBe("false");
-    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
-    expect(env["PATH"]).toContain(".ao/bin");
+    expect(env["GH_PATH"]).toBeUndefined();
+    expect(env["PATH"]).toBeUndefined();
   });
 
   it("includes AO_ISSUE_ID when provided", () => {
@@ -252,7 +254,7 @@ describe("getEnvironment", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when copilot is on tmux pane", async () => {
+  itIfNotWindows("returns true when copilot is on tmux pane", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") {
         return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
@@ -269,7 +271,7 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns false when tmux process is missing", async () => {
+  itIfNotWindows("returns false when tmux process is missing", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
       if (cmd === "ps") {
@@ -280,7 +282,7 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
-  it("returns indeterminate when tmux probing fails", async () => {
+  itIfNotWindows("returns indeterminate when tmux probing fails", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux timed out"));
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(PROCESS_PROBE_INDETERMINATE);
   });
@@ -370,7 +372,7 @@ describe("getActivityState", () => {
     expect(state).toMatchObject({ state: "exited" });
   });
 
-  it("returns null when process probe is indeterminate", async () => {
+  itIfNotWindows("returns null when process probe is indeterminate", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux timed out"));
     const state = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(state).toBeNull();

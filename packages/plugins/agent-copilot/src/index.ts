@@ -2,8 +2,6 @@ import {
   DEFAULT_ACTIVE_WINDOW_MS,
   DEFAULT_READY_THRESHOLD_MS,
   PROCESS_PROBE_INDETERMINATE,
-  PREFERRED_GH_PATH,
-  buildAgentPath,
   checkActivityLogState,
   getActivityFallbackState,
   isWindows,
@@ -46,6 +44,7 @@ const execFileAsync = promisify(execFile);
 const COPILOT_EXECUTABLE = "copilot";
 const COPILOT_PROCESS_RE = /(?:^|\/)copilot(?:\s|$)/;
 const COPILOT_SESSION_NAMESPACE = "ao-agent-copilot";
+const UUID_VERSION_8_CUSTOM = 0x80;
 
 const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
@@ -57,7 +56,7 @@ function makeCopilotSessionId(sessionId: string): string {
     .update(`${COPILOT_SESSION_NAMESPACE}:${sessionId}`)
     .digest()
     .subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[6] = (bytes[6] & 0x0f) | UUID_VERSION_8_CUSTOM;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -165,8 +164,6 @@ function createCopilotAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
       env["COPILOT_AUTO_UPDATE"] = "false";
 
       return env;
@@ -212,7 +209,7 @@ function createCopilotAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
-          if (isWindows()) return PROCESS_PROBE_INDETERMINATE;
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],

@@ -279,6 +279,10 @@ function deriveDisplayName(input: { issueTitle?: string; prompt?: string }): str
   return undefined;
 }
 
+function buildPostLaunchInitialPrompt(input: { systemPrompt: string; taskPrompt: string }): string {
+  return `${input.systemPrompt.trim()}\n\n## User Request\n${input.taskPrompt.trim()}`;
+}
+
 const SEND_RESTORE_READY_TIMEOUT_MS = 5_000;
 const SEND_RESTORE_READY_POLL_MS = 500;
 const SEND_CONFIRMATION_ATTEMPTS = 6;
@@ -1504,6 +1508,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await plugins.agent.postLaunchSetup(session);
       }
 
+      if (plugins.agent.promptDelivery === "post-launch" && taskPrompt?.trim()) {
+        await plugins.runtime.sendMessage(
+          handle,
+          buildPostLaunchInitialPrompt({ systemPrompt, taskPrompt }),
+        );
+      }
+
       if (
         plugins.agent.name === "opencode" &&
         opencodeIssueSessionStrategy === "reuse" &&
@@ -1977,6 +1988,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
+      }
+
+      if (
+        plugins.agent.promptDelivery === "post-launch" &&
+        orchestratorConfig.systemPrompt?.trim()
+      ) {
+        await plugins.runtime.sendMessage(handle, orchestratorConfig.systemPrompt);
       }
 
       if (
