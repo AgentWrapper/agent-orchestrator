@@ -716,7 +716,7 @@ function DashboardInner({
           </div>
         </header>
 
-        <main className="dashboard-main flex-1 min-h-0 overflow-hidden">
+        <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
           <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
           <div className="dashboard-main__subhead">
             <h1 className="dashboard-main__title">Dashboard</h1>

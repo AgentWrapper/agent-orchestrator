@@ -24,7 +24,7 @@ export default function ProjectRouteLoading() {
         <div className="dashboard-app-header__spacer" />
       </header>
 
-      <main className="dashboard-main flex-1 min-h-0 overflow-hidden">
+      <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
         <div className="board-wrapper" aria-hidden="true">
           <div className="kanban-ghost">
             {["Working", "Pending", "Review", "Respond", "Merge"].map((label) => (
