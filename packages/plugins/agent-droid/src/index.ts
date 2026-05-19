@@ -22,9 +22,10 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import which from "which";
 
@@ -44,6 +45,9 @@ const DROID_SETTINGS_DIR = ".factory";
 const DROID_SETTINGS_FILE = "settings.local.json";
 const DROID_SESSION_HOOK_DIR = ".ao/droid";
 const DROID_SESSION_HOOK_FILE = "session-hook.cjs";
+const DROID_SESSION_HOOK_ASSET = fileURLToPath(
+  new URL("./assets/session-hook.cjs", import.meta.url),
+);
 const DROID_SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`,
@@ -149,51 +153,6 @@ function classifyDroidTerminalOutput(terminalOutput: string): ActivityState {
   return "active";
 }
 
-function buildSessionHookScript(): string {
-  return `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
-
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-});
-process.stdin.on("end", () => {
-  try {
-    const event = JSON.parse(input || "{}");
-    const droidSessionId = typeof event.session_id === "string" ? event.session_id.trim() : "";
-    if (!/^[A-Za-z0-9._:-]{1,200}$/.test(droidSessionId)) return;
-
-    const aoDataDir = process.env.AO_DATA_DIR;
-    const aoSession = process.env.AO_SESSION || process.env.AO_SESSION_ID;
-    if (!aoDataDir || !aoSession || !/^[A-Za-z0-9._:-]{1,200}$/.test(aoSession)) return;
-
-    const metadataPath = path.join(aoDataDir, aoSession + ".json");
-    let metadata = {};
-    try {
-      metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) metadata = {};
-    } catch {
-      metadata = {};
-    }
-
-    metadata.droidSessionId = droidSessionId;
-    if (typeof event.transcript_path === "string" && event.transcript_path.trim()) {
-      metadata.droidTranscriptPath = event.transcript_path.trim();
-    }
-
-    fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
-    const tmpPath = metadataPath + ".tmp-" + process.pid;
-    fs.writeFileSync(tmpPath, JSON.stringify(metadata, null, 2) + "\n");
-    fs.renameSync(tmpPath, metadataPath);
-  } catch {
-    // Best effort: metadata capture must never affect Droid startup or prompts.
-  }
-});
-`;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -251,7 +210,7 @@ async function writeDroidWorkspaceFiles(workspacePath: string): Promise<void> {
   const settingsPath = getDroidSettingsPath(workspacePath);
   await mkdir(hookDir, { recursive: true });
   await mkdir(settingsDir, { recursive: true });
-  await writeFile(hookScriptPath, buildSessionHookScript(), "utf8");
+  await copyFile(DROID_SESSION_HOOK_ASSET, hookScriptPath);
   await chmod(hookScriptPath, 0o755);
   const existingSettings = await readDroidSettings(settingsPath);
   await writeFile(settingsPath, buildDroidSettings(existingSettings, hookScriptPath), "utf8");
