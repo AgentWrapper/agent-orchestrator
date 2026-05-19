@@ -144,17 +144,17 @@ function getPRChipColorClass(p: DashboardPR): string {
   if (!p.enriched)
     return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
   if (p.state === "merged")
-    return "bg-[var(--color-status-merge)]/15 text-[var(--color-status-merge)]";
+    return "bg-[color-mix(in_srgb,var(--color-status-merge)_15%,transparent)] text-[var(--color-status-merge)]";
   if (p.state === "closed")
     return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
   if (p.ciStatus === "failing" || p.reviewDecision === "changes_requested")
-    return "bg-[var(--color-status-error)]/15 text-[var(--color-status-error)]";
+    return "bg-[color-mix(in_srgb,var(--color-status-error)_15%,transparent)] text-[var(--color-status-error)]";
   if (p.isDraft)
     return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
   if (p.ciStatus === "passing")
-    return "bg-[var(--color-status-merge)]/15 text-[var(--color-status-merge)]";
+    return "bg-[color-mix(in_srgb,var(--color-status-merge)_15%,transparent)] text-[var(--color-status-merge)]";
   if (p.ciStatus === "pending")
-    return "bg-[var(--color-status-pending)]/15 text-[var(--color-status-pending)]";
+    return "bg-[color-mix(in_srgb,var(--color-status-pending)_15%,transparent)] text-[var(--color-status-pending)]";
   return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
 }
 
@@ -275,18 +275,19 @@ function SessionCardView({
     }
   };
 
-  const rateLimited = pr ? isPRRateLimited(pr) : false;
-  const prUnenriched = pr ? isPRUnenriched(pr) : false;
+  const effectivePR = prs.length > 1 ? selectedPR : pr;
+  const rateLimited = effectivePR ? isPRRateLimited(effectivePR) : false;
+  const prUnenriched = effectivePR ? isPRUnenriched(effectivePR) : false;
   const alerts = getAlerts(session, prs.length > 1 ? selectedPR : undefined);
-  const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
+  const isReadyToMerge = !rateLimited && effectivePR?.mergeability.mergeable && effectivePR.state === "open";
   const isTerminal = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
 
   const title = getSessionTitle(session);
   const footerStatus = getFooterStatusLabel(session, level, Boolean(isReadyToMerge));
   const visiblePassingChecks =
-    !rateLimited && pr && !prUnenriched
-      ? pr.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
+    !rateLimited && effectivePR && !prUnenriched
+      ? effectivePR.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
       : [];
   const isDone = isDashboardSessionDone(session) || level === "done";
   const truthLine = session.lifecycle
@@ -296,12 +297,14 @@ function SessionCardView({
         `Runtime ${getRuntimeTruthLabel(session)}`,
       ].join(" · ")
     : null;
-  const secondaryText = prs.length > 1 && selectedPR?.title
-    ? selectedPR.title
-    : session.issueLabel
-      ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
-      : (session.issueTitle ??
-        (session.summary && session.summary !== title ? session.summary : null));
+  const issueSecondaryText = session.issueLabel
+    ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
+    : (session.issueTitle ??
+      (session.summary && session.summary !== title ? session.summary : null));
+  const secondaryText =
+    prs.length > 1 && safeIndex > 0 && selectedPR?.title
+      ? selectedPR.title
+      : issueSecondaryText;
   const cardFrameClass = isReadyToMerge
     ? "session-card--merge-frame"
     : alerts.length > 0
@@ -706,10 +709,10 @@ function SessionCardView({
                   role="button"
                   tabIndex={0}
                   className={cn(
-                    "flex items-center gap-1.5 min-w-0 rounded px-1 -mx-1 cursor-pointer",
+                    "flex items-center gap-1.5 min-w-0 rounded px-1 -mx-1 cursor-pointer transition-colors",
                     isSelected
-                      ? "bg-[var(--color-bg-subtle)]"
-                      : "hover:bg-[var(--color-bg-subtle)]/50",
+                      ? "bg-[var(--color-bg-subtle)] border-l-2 border-[var(--color-accent)] pl-[2px]"
+                      : "hover:bg-[var(--color-bg-subtle)] border-l-2 border-transparent pl-[2px]",
                   )}
                   onClick={(e) => { e.stopPropagation(); setSelectedPRIndex(i); }}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); setSelectedPRIndex(i); } }}
@@ -790,7 +793,7 @@ function SessionCardView({
           </div>
         )}
 
-        {rateLimited && pr?.state === "open" && (
+        {rateLimited && effectivePR?.state === "open" && (
           <div className="px-[10px] pb-[5px]">
             <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
               <svg
@@ -987,7 +990,7 @@ function SessionCardView({
               : footerStatus}
           </span>
 
-          {isReadyToMerge && pr ? (
+          {isReadyToMerge && effectivePR ? (
             <div className="session-card__footer-actions">
               {onReview ? (
                 <button
@@ -997,6 +1000,7 @@ function SessionCardView({
                   className="session-card__control session-card__review-control"
                   aria-label="Request review"
                 >
+
                   <svg
                     className="session-card__control-icon"
                     fill="none"
@@ -1013,7 +1017,7 @@ function SessionCardView({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onMerge?.(pr.number);
+                  onMerge?.(effectivePR.number);
                 }}
                 className="session-card__control session-card__merge-control"
               >
@@ -1029,7 +1033,7 @@ function SessionCardView({
                   <circle cx="18" cy="6" r="2" />
                   <path d="M8 6h5a3 3 0 0 1 3 3v7" />
                 </svg>
-                Merge PR #{pr.number}
+                Merge PR #{effectivePR.number}
               </button>
             </div>
           ) : (
