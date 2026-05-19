@@ -1,0 +1,39 @@
+packages/web/src/lib/remote-access-manager.ts
+  s_3c12ffb1648181::t_94739bf8525466 28,72
+  s_3c12ffb1648181::t_f0b74d95171e15 4,111-132,135,141-142,148,159
+  s_3c12ffb1648181::t_d32538acb367c9 45,268-269,275-283,285-286,288-292
+packages/web/server/start-all.ts
+  s_3c12ffb1648181::t_4c96985e4004e8 121,134
+packages/web/server/terminal-proxy.ts
+  s_3c12ffb1648181::t_d32538acb367c9 70-72,76
+packages/web/server/remote-auth.ts
+  s_3c12ffb1648181::t_94739bf8525466 30,41,147
+  s_3c12ffb1648181::t_3269263b6bc7c6 106
+  s_3c12ffb1648181::t_2b4c18daf1e8bc 15,47-58,93,97,101-102
+packages/cli/src/commands/start.ts
+  s_3c12ffb1648181::t_d32538acb367c9 928-935
+packages/web/server/dev-next-server.ts
+  s_3c12ffb1648181::t_4c96985e4004e8 29,37
+packages/web/src/middleware.ts
+  s_3c12ffb1648181::t_d32538acb367c9 52-60,70
+  s_3c12ffb1648181::t_4c96985e4004e8 65-69
+packages/web/src/middleware.test.ts
+  s_3c12ffb1648181::t_91e21b3ea0bc12 5-9,11,15-20,57-70
+  s_3c12ffb1648181::t_a14d2c0effd624 71-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "939b85f63e4ddb89a344f8c2b8b516b1318bbef1",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
