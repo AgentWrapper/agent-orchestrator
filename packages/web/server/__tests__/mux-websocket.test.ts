@@ -298,12 +298,7 @@ describe("SessionBroadcaster", () => {
     it("delivers patches to all subscribers on each poll", async () => {
       const patches = [makePatch("s1"), makePatch("s2")];
 
-      // Initial snapshot for first subscriber
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ sessions: patches }),
-      });
-      // Initial snapshot for second subscriber
+      // Shared initial snapshot for both subscribers
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ sessions: patches }),
@@ -324,6 +319,7 @@ describe("SessionBroadcaster", () => {
       // Both callbacks should have received initial snapshot
       expect(cb1).toHaveBeenCalledWith(patches);
       expect(cb2).toHaveBeenCalledWith(patches);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // Advance past poll interval (3s) and add buffer for promise resolution
       await vi.advanceTimersByTimeAsync(3010);
@@ -331,6 +327,7 @@ describe("SessionBroadcaster", () => {
       // Should be called again from polling
       expect(cb1).toHaveBeenCalledTimes(2);
       expect(cb2).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
     it("isolates subscriber errors — one throw does not skip others", async () => {
