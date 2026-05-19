@@ -28,9 +28,9 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.cjs",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "tsc && vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -520,7 +520,7 @@ describe("preLaunchSetup", () => {
     const settingsPath = join(workspace, ".factory/settings.local.json");
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(
-      join(workspace, ".ao/droid/session-hook.cjs"),
+      join(workspace, ".ao/droid/session-hook.mjs"),
     );
     expect(mockSetupPathWrapperWorkspace).not.toHaveBeenCalled();
   });
@@ -537,7 +537,7 @@ describe("setupWorkspaceHooks", () => {
 
     expect(mockSetupPathWrapperWorkspace).toHaveBeenCalledWith(workspace);
     const settingsPath = join(workspace, ".factory/settings.local.json");
-    const hookPath = join(workspace, ".ao/droid/session-hook.cjs");
+    const hookPath = join(workspace, ".ao/droid/session-hook.mjs");
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(hookPath);
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(hookPath);

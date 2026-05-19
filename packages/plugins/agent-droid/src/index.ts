@@ -22,7 +22,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -44,10 +44,11 @@ const execFileAsync = promisify(execFile);
 const DROID_SETTINGS_DIR = ".factory";
 const DROID_SETTINGS_FILE = "settings.local.json";
 const DROID_SESSION_HOOK_DIR = ".ao/droid";
-const DROID_SESSION_HOOK_FILE = "session-hook.cjs";
-const DROID_SESSION_HOOK_ASSET = fileURLToPath(
-  new URL("./assets/session-hook.cjs", import.meta.url),
-);
+const DROID_SESSION_HOOK_FILE = "session-hook.mjs";
+const DROID_SESSION_HOOK_ASSET_CANDIDATES = [
+  fileURLToPath(new URL("./session-hook.mjs", import.meta.url)),
+  fileURLToPath(new URL("../dist/session-hook.mjs", import.meta.url)),
+];
 const DROID_SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`,
@@ -153,6 +154,20 @@ function classifyDroidTerminalOutput(terminalOutput: string): ActivityState {
   return "active";
 }
 
+async function getDroidSessionHookAssetPath(): Promise<string> {
+  for (const candidate of DROID_SESSION_HOOK_ASSET_CANDIDATES) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next location. Source-based tests build the hook into dist first.
+    }
+  }
+  throw new Error(
+    "Droid session hook asset is missing; run the plugin build before launching Droid.",
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -210,7 +225,7 @@ async function writeDroidWorkspaceFiles(workspacePath: string): Promise<void> {
   const settingsPath = getDroidSettingsPath(workspacePath);
   await mkdir(hookDir, { recursive: true });
   await mkdir(settingsDir, { recursive: true });
-  await copyFile(DROID_SESSION_HOOK_ASSET, hookScriptPath);
+  await copyFile(await getDroidSessionHookAssetPath(), hookScriptPath);
   await chmod(hookScriptPath, 0o755);
   const existingSettings = await readDroidSettings(settingsPath);
   await writeFile(settingsPath, buildDroidSettings(existingSettings, hookScriptPath), "utf8");
