@@ -35,8 +35,10 @@ import { getShell, isWindows, killProcessTree } from "./platform.js";
 const REVIEW_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const REVIEW_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
 const REVIEW_RUN_CREATION_LOCK_FILE = ".create-run.lock";
+const REVIEW_RUN_EXECUTION_LOCK_PREFIX = ".execute-run-";
 const REVIEW_RUN_CREATION_LOCK_WAIT_MS = 5_000;
 const REVIEW_RUN_CREATION_LOCK_STALE_MS = 30_000;
+const REVIEW_LOCK_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 async function execFileAsync(
   file: string,
@@ -464,9 +466,23 @@ function isFsErrorWithCode(error: unknown, code: string): boolean {
   );
 }
 
-async function acquireReviewRunCreationLock(store: CodeReviewStore): Promise<() => void> {
+function assertSafeReviewLockId(id: string, label: string): void {
+  if (!id || id === "." || id === ".." || !REVIEW_LOCK_ID_PATTERN.test(id)) {
+    throw new Error(`Unsafe ${label}: "${id}"`);
+  }
+}
+
+async function acquireCodeReviewStoreLock({
+  store,
+  lockFileName,
+  label,
+}: {
+  store: CodeReviewStore;
+  lockFileName: string;
+  label: string;
+}): Promise<() => void> {
   mkdirSync(store.storeDir, { recursive: true });
-  const lockPath = join(store.storeDir, REVIEW_RUN_CREATION_LOCK_FILE);
+  const lockPath = join(store.storeDir, lockFileName);
   const startedAt = Date.now();
 
   while (true) {
@@ -506,7 +522,7 @@ async function acquireReviewRunCreationLock(store: CodeReviewStore): Promise<() 
       }
 
       if (Date.now() - startedAt > REVIEW_RUN_CREATION_LOCK_WAIT_MS) {
-        throw new Error("Timed out waiting for code review run creation lock", { cause: error });
+        throw new Error(`Timed out waiting for ${label} lock`, { cause: error });
       }
       await delay(25);
     }
@@ -517,7 +533,29 @@ async function withReviewRunCreationLock<T>(
   store: CodeReviewStore,
   callback: () => T | Promise<T>,
 ): Promise<T> {
-  const release = await acquireReviewRunCreationLock(store);
+  const release = await acquireCodeReviewStoreLock({
+    store,
+    lockFileName: REVIEW_RUN_CREATION_LOCK_FILE,
+    label: "code review run creation",
+  });
+  try {
+    return await callback();
+  } finally {
+    release();
+  }
+}
+
+async function withReviewRunExecutionLock<T>(
+  store: CodeReviewStore,
+  runId: string,
+  callback: () => T | Promise<T>,
+): Promise<T> {
+  assertSafeReviewLockId(runId, "review run id");
+  const release = await acquireCodeReviewStoreLock({
+    store,
+    lockFileName: `${REVIEW_RUN_EXECUTION_LOCK_PREFIX}${runId}.lock`,
+    label: `code review run ${runId} execution`,
+  });
   try {
     return await callback();
   } finally {
@@ -847,6 +885,10 @@ function getExecutableRun(store: CodeReviewStore, runId: string, force: boolean)
     throw new CodeReviewRunNotFoundError(runId);
   }
 
+  if (run.status === "preparing" || run.status === "running") {
+    throw new CodeReviewRunNotExecutableError(run);
+  }
+
   if (!force && !["queued", "failed"].includes(run.status)) {
     throw new CodeReviewRunNotExecutableError(run);
   }
@@ -872,23 +914,29 @@ export async function executeCodeReviewRun(
   }
 
   const store = storeFactory(projectId);
-  let run = getExecutableRun(store, runId, force);
-  const session = await sessionManager.get(run.linkedSessionId);
-  if (!session) {
-    throw new SessionNotFoundError(run.linkedSessionId);
-  }
+  const claimed = await withReviewRunExecutionLock(store, runId, async () => {
+    const executableRun = getExecutableRun(store, runId, force);
+    const session = await sessionManager.get(executableRun.linkedSessionId);
+    if (!session) {
+      throw new SessionNotFoundError(executableRun.linkedSessionId);
+    }
 
-  const startedAt = now();
-  run = store.updateRun(
-    run.id,
-    {
-      status: "preparing",
-      startedAt: run.startedAt ?? startedAt.toISOString(),
-      completedAt: undefined,
-      terminationReason: undefined,
-    },
-    startedAt,
-  );
+    const startedAt = now();
+    const run = store.updateRun(
+      executableRun.id,
+      {
+        status: "preparing",
+        startedAt: executableRun.startedAt ?? startedAt.toISOString(),
+        completedAt: undefined,
+        terminationReason: undefined,
+      },
+      startedAt,
+    );
+
+    return { run, session };
+  });
+  let run = claimed.run;
+  const session = claimed.session;
 
   try {
     const workspacePath = await prepareWorkspace({ projectId, project, session, run });

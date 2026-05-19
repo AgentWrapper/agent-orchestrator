@@ -390,6 +390,70 @@ describe("executeCodeReviewRun", () => {
     expect(summary.status).toBe("clean");
   });
 
+  it("allows only one concurrent execution to claim the same queued review run", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+      targetSha: "abc123",
+    });
+    let resolveSessionLookup: (() => void) | undefined;
+    const sessionLookupGate = new Promise<void>((resolve) => {
+      resolveSessionLookup = resolve;
+    });
+    let sessionLookups = 0;
+    let prepareCalls = 0;
+    const sessionManager = makeSessionManager(makeSession(), {
+      get: async () => {
+        sessionLookups++;
+        if (sessionLookups === 2) {
+          resolveSessionLookup?.();
+        }
+        await sessionLookupGate;
+        return makeSession();
+      },
+    });
+
+    const first = executeCodeReviewRun(
+      {
+        config,
+        sessionManager,
+        storeFactory: () => store,
+        prepareWorkspace: async () => {
+          prepareCalls++;
+          return "/tmp/reviews/app-rev-1";
+        },
+        runReviewer: async () => ({ findings: [] }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+    while (sessionLookups === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const second = executeCodeReviewRun(
+      {
+        config,
+        sessionManager,
+        storeFactory: () => store,
+        prepareWorkspace: async () => {
+          prepareCalls++;
+          return "/tmp/reviews/app-rev-1";
+        },
+        runReviewer: async () => ({ findings: [] }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+    await Promise.resolve();
+    resolveSessionLookup?.();
+
+    const results = await Promise.allSettled([first, second]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(prepareCalls).toBe(1);
+    expect(store.getRun(run.id)?.status).toBe("clean");
+  });
+
   it("marks clean reviews clean and records failed reviewer executions", async () => {
     const cleanRun = store.createRun({
       linkedSessionId: "app-1",
