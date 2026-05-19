@@ -114,14 +114,9 @@ jobs:
             node << 'SCRIPT'
               const cfg = require('./.changeset/config.json');
               const pkgs = cfg.linked.flat();
-              let body = '---
-';
-              pkgs.forEach(p => body += '"' + p + '": patch
-');
-              body += '---
-
-chore: canary build
-';
+              let body = '---\n';
+              pkgs.forEach(p => body += '"' + p + '": patch\n');
+              body += '---\n\nchore: canary build\n';
               require('fs').writeFileSync('.changeset/canary-temp.md', body);
             SCRIPT
           fi
