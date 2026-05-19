@@ -506,7 +506,7 @@ async function acquireReviewRunCreationLock(store: CodeReviewStore): Promise<() 
       }
 
       if (Date.now() - startedAt > REVIEW_RUN_CREATION_LOCK_WAIT_MS) {
-        throw new Error("Timed out waiting for code review run creation lock");
+        throw new Error("Timed out waiting for code review run creation lock", { cause: error });
       }
       await delay(25);
     }
