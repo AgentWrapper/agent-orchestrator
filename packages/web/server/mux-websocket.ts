@@ -70,6 +70,21 @@ interface SessionPatch {
   lastActivityAt: string;
 }
 
+const SESSION_SNAPSHOT_TIMEOUT_MS = 4_000;
+
+type SessionSnapshotResult = {
+  sessions: SessionPatch[] | null;
+  error: string | null;
+};
+
+interface InFlightSessionSnapshot {
+  controller: AbortController;
+  promise: Promise<SessionSnapshotResult>;
+  timeoutId: ReturnType<typeof setTimeout>;
+  timedOut: boolean;
+  abortedByDisconnect: boolean;
+}
+
 /**
  * Manages polling of session patches from Next.js /api/sessions/patches.
  * Broadcasts to all subscribed callbacks.
@@ -80,6 +95,7 @@ export class SessionBroadcaster {
   private errorSubscribers = new Set<(error: string) => void>();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private polling = false;
+  private inFlightSnapshot: InFlightSessionSnapshot | null = null;
   // Tracks the last fetch outcome so we only emit ui.session_broadcast_failed on
   // the healthy → failing transition (not every 3s during an outage).
   private lastFetchOk = true;
@@ -121,7 +137,7 @@ export class SessionBroadcaster {
     // Start polling if this is the first subscriber
     if (wasEmpty) {
       this.intervalId = setInterval(() => {
-        if (this.polling) return;
+        if (this.polling || this.inFlightSnapshot) return;
         this.polling = true;
         void this.fetchSnapshot()
           .then((result) => {
@@ -164,33 +180,60 @@ export class SessionBroadcaster {
   }
 
   /** One-shot HTTP fetch of the current session list. */
-  private async fetchSnapshot(): Promise<{
-    sessions: SessionPatch[] | null;
-    error: string | null;
-  }> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    try {
-      const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) {
-        const msg = `Session fetch failed: HTTP ${res.status}`;
-        console.warn(`[SessionBroadcaster] ${msg}`);
-        this.recordFetchFailure(msg, { httpStatus: res.status });
-        return { sessions: null, error: msg };
-      }
-      const data = (await res.json()) as { sessions?: SessionPatch[] };
-      this.lastFetchOk = true;
-      return { sessions: data.sessions ?? null, error: null };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
-      this.recordFetchFailure(msg);
-      return { sessions: null, error: msg };
+  private fetchSnapshot(): Promise<SessionSnapshotResult> {
+    if (this.inFlightSnapshot) {
+      return this.inFlightSnapshot.promise;
     }
+
+    const controller = new AbortController();
+    const snapshot: InFlightSessionSnapshot = {
+      controller,
+      promise: Promise.resolve({ sessions: null, error: null }),
+      timeoutId: setTimeout(() => {
+        snapshot.timedOut = true;
+        controller.abort();
+      }, SESSION_SNAPSHOT_TIMEOUT_MS),
+      timedOut: false,
+      abortedByDisconnect: false,
+    };
+
+    snapshot.promise = (async (): Promise<SessionSnapshotResult> => {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const msg = `Session fetch failed: HTTP ${res.status}`;
+          console.warn(`[SessionBroadcaster] ${msg}`);
+          this.recordFetchFailure(msg, { httpStatus: res.status });
+          return { sessions: null, error: msg };
+        }
+        const data = (await res.json()) as { sessions?: SessionPatch[] };
+        this.lastFetchOk = true;
+        return { sessions: data.sessions ?? null, error: null };
+      } catch (err) {
+        if (snapshot.abortedByDisconnect) {
+          return { sessions: null, error: null };
+        }
+
+        const msg = snapshot.timedOut
+          ? `Session fetch timed out after ${SESSION_SNAPSHOT_TIMEOUT_MS}ms`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+        console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+        this.recordFetchFailure(msg);
+        return { sessions: null, error: msg };
+      } finally {
+        clearTimeout(snapshot.timeoutId);
+        if (this.inFlightSnapshot === snapshot) {
+          this.inFlightSnapshot = null;
+        }
+      }
+    })();
+
+    this.inFlightSnapshot = snapshot;
+    return snapshot.promise;
   }
 
   /**
@@ -218,6 +261,13 @@ export class SessionBroadcaster {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+    const inFlightSnapshot = this.inFlightSnapshot;
+    if (inFlightSnapshot) {
+      inFlightSnapshot.abortedByDisconnect = true;
+      clearTimeout(inFlightSnapshot.timeoutId);
+      inFlightSnapshot.controller.abort();
+      this.inFlightSnapshot = null;
     }
   }
 }

@@ -179,7 +179,7 @@ describe("SessionBroadcaster", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("does not start a second polling interval for additional subscribers", async () => {
+    it("shares the immediate snapshot request across additional subscribers", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ sessions: [] }),
@@ -189,12 +189,85 @@ describe("SessionBroadcaster", () => {
       broadcaster.subscribe(vi.fn());
       await vi.advanceTimersByTimeAsync(0);
 
-      // 1 snapshot for sub1 + 1 snapshot for sub2 = 2
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // Both subscribers can attach before the first snapshot resolves; they
+      // should share that in-flight request instead of doubling pressure on
+      // the Next.js API route.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // After 3 seconds, only one polling fetch happens
       await vi.advanceTimersByTimeAsync(3000);
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("aborts an in-flight snapshot request when the last subscriber leaves", async () => {
+      let signal: AbortSignal | undefined;
+      mockFetch.mockImplementationOnce((_url, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        });
+      });
+
+      const unsub = broadcaster.subscribe(vi.fn());
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(signal?.aborted).toBe(false);
+
+      unsub();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(signal?.aborted).toBe(true);
+    });
+
+    it("does not reuse an aborted snapshot request for a later subscriber", async () => {
+      mockFetch.mockImplementationOnce(() => new Promise(() => {}));
+
+      const unsub = broadcaster.subscribe(vi.fn());
+      await vi.advanceTimersByTimeAsync(0);
+      unsub();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const patches = [makePatch("s1")];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions: patches }),
+      });
+
+      const callback = vi.fn();
+      broadcaster.subscribe(callback);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(callback).toHaveBeenCalledWith(patches);
+    });
+
+    it("keeps the snapshot timeout active while reading the response body", async () => {
+      let signal: AbortSignal | undefined;
+      mockFetch.mockImplementationOnce((_url, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return Promise.resolve({
+          ok: true,
+          json: async () =>
+            new Promise((_resolve, reject) => {
+              signal?.addEventListener(
+                "abort",
+                () => reject(new DOMException("The operation was aborted.", "AbortError")),
+                { once: true },
+              );
+            }),
+        });
+      });
+
+      const onError = vi.fn();
+      broadcaster.subscribe(vi.fn(), onError);
+      await vi.advanceTimersByTimeAsync(4_010);
+
+      expect(signal?.aborted).toBe(true);
+      expect(onError).toHaveBeenCalledWith("Session fetch timed out after 4000ms");
     });
 
     it("returns an unsubscribe function that stops polling when last subscriber leaves", async () => {
