@@ -348,8 +348,12 @@ export async function getClaudeActivityState(
 
         const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
         switch (entry.lastType) {
+          // In-progress turn markers: very recent → active, older → ready/idle.
+          // Removed `tool_use` and `result` cases that were in the spec but
+          // never actually emitted by Claude (verified by disk survey for
+          // #1927). The `default` branch handles them with the same semantics
+          // if Claude ever introduces them.
           case "user":
-          case "tool_use":
           case "progress":
             if (ageMs <= activeWindowMs) return { state: "active", timestamp };
             return { state: ageMs > threshold ? "idle" : "ready", timestamp };
@@ -368,7 +372,6 @@ export async function getClaudeActivityState(
 
           case "assistant":
           case "summary":
-          case "result":
             return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
           // Bookkeeping types Claude writes AFTER finishing a turn (UI metadata,

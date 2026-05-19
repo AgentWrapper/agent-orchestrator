@@ -408,19 +408,19 @@ describe("Claude Code Activity Detection", () => {
     // -----------------------------------------------------------------------
 
     describe("agent interface spec types", () => {
-      it("returns 'active' for recent 'tool_use' entry", async () => {
-        writeJsonl([{ type: "tool_use" }]);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("active");
-      });
-
       it("returns 'ready' for recent 'summary' entry", async () => {
         writeJsonl([{ type: "summary", summary: "Implemented login feature" }]);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
       });
 
-      it("returns 'ready' for recent 'result' entry", async () => {
-        writeJsonl([{ type: "result" }]);
-        expect((await agent.getActivityState(makeSession()))?.state).toBe("ready");
+      it("unknown types fall through to default branch — fresh → active", async () => {
+        // Claude doesn't emit `tool_use` or `result` as top-level types (verified
+        // on disk for #1927). Their explicit switch cases were removed and they
+        // now fall to `default`, which maps fresh unknown types to active. This
+        // test locks the default-branch semantics so future Claude type
+        // additions are handled predictably until someone adds an explicit case.
+        writeJsonl([{ type: "some-future-claude-type" }]);
+        expect((await agent.getActivityState(makeSession()))?.state).toBe("active");
       });
     });
 
