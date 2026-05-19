@@ -5184,6 +5184,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   position: relative;
   margin-top: 14px;
   overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .board-section-head {
@@ -5801,6 +5802,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 /* ── Done / Terminated collapsible bar ────────────────────────────────── */
+
+.done-bar {
+  flex-shrink: 0;
+}
 
 .done-bar__toggle {
   display: flex;
