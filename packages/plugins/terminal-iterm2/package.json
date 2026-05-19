@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-terminal-iterm2",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Terminal plugin: macOS iTerm2",
   "license": "MIT",
   "type": "module",

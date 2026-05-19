@@ -108,9 +108,10 @@ export function CopyDebugBundleButton({ projectId }: CopyDebugBundleButtonProps)
   return (
     <button
       type="button"
-      className="orchestrator-btn flex min-h-[44px] min-w-[44px] items-center gap-2 px-4 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+      className="dashboard-app-btn dashboard-app-btn--icon"
       onClick={() => void handleClick()}
       disabled={busy}
+      title="Copy debug bundle"
       aria-label="Copy debug bundle for issue reports"
     >
       <svg
@@ -125,7 +126,6 @@ export function CopyDebugBundleButton({ projectId }: CopyDebugBundleButtonProps)
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
-      Copy debug info
     </button>
   );
 }

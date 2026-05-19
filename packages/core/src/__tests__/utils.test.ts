@@ -116,6 +116,33 @@ describe("readLastJsonlEntry", () => {
     expect(result!.lastType).toBe("x");
     expect(result!.payloadType).toBeNull();
   });
+
+  it("extracts top-level subtype and level (Claude system-entry shape)", async () => {
+    // Real Claude writes API errors as {"type":"system","subtype":"api_error",
+    // "level":"error","cause":{...}}. Consumers (e.g. claude-code plugin's
+    // getClaudeActivityState) need both fields to classify activity correctly.
+    const path = setup(
+      '{"type":"system","subtype":"api_error","level":"error","cause":{"code":"ConnectionRefused"}}\n',
+    );
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastType).toBe("system");
+    expect(result!.lastSubtype).toBe("api_error");
+    expect(result!.lastLevel).toBe("error");
+  });
+
+  it("returns lastSubtype/lastLevel null when fields are absent", async () => {
+    const path = setup('{"type":"assistant","message":"hello"}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastSubtype).toBeNull();
+    expect(result!.lastLevel).toBeNull();
+  });
+
+  it("returns lastSubtype/lastLevel null when fields are non-string", async () => {
+    const path = setup('{"type":"x","subtype":42,"level":{"nested":true}}\n');
+    const result = await readLastJsonlEntry(path);
+    expect(result!.lastSubtype).toBeNull();
+    expect(result!.lastLevel).toBeNull();
+  });
 });
 
 describe("isGitBranchNameSafe", () => {

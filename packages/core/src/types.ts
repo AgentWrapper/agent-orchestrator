@@ -458,6 +458,17 @@ export interface AttachInfo {
  * Agent adapter for a specific AI coding tool.
  * Knows how to launch, detect activity, and extract session info.
  */
+
+export const PROCESS_PROBE_INDETERMINATE = "indeterminate" as const;
+
+export type ProcessProbeResult = boolean | typeof PROCESS_PROBE_INDETERMINATE;
+
+export function isProcessProbeIndeterminate(
+  result: ProcessProbeResult,
+): result is typeof PROCESS_PROBE_INDETERMINATE {
+  return result === PROCESS_PROBE_INDETERMINATE;
+}
+
 export interface Agent {
   readonly name: string;
 
@@ -483,8 +494,14 @@ export interface Agent {
    */
   getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
 
-  /** Check if agent process is running (given runtime handle) */
-  isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
+  /**
+   * Check if agent process is running (given runtime handle).
+   *
+   * Returns "indeterminate" when the probe could not reliably determine
+   * liveness (for example, `ps`/`tmux` timed out or failed). Callers must
+   * treat that as no verdict, not as a missing process.
+   */
+  isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult>;
 
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
@@ -811,6 +828,9 @@ export interface SCM {
   /** Get individual CI check statuses */
   getCIChecks(pr: PRInfo): Promise<CICheck[]>;
 
+  /** Get failed CI jobs/steps with a bounded failed-log tail, if supported. */
+  getCIFailureSummary?(pr: PRInfo, failedChecks?: CICheck[]): Promise<CIFailureSummary | null>;
+
   /** Get overall CI summary */
   getCISummary(pr: PRInfo): Promise<CIStatus>;
 
@@ -991,6 +1011,15 @@ export interface CICheck {
   conclusion?: string;
   startedAt?: Date;
   completedAt?: Date;
+}
+
+export interface CIFailureSummary {
+  failedJobs: Array<{
+    name: string;
+    failedStep?: string;
+    runUrl: string;
+    logTail?: string;
+  }>;
 }
 
 export type CIStatus = "pending" | "passing" | "failing" | "none";
@@ -1305,6 +1334,13 @@ export interface LifecycleConfig {
   mergeCleanupIdleGraceMs: number;
 }
 
+export interface ObservabilityConfig {
+  /** Minimum structured log level to persist/mirror. Defaults to "warn". */
+  logLevel: ObservabilityLevel;
+  /** Mirror structured observability logs to stderr. Defaults to false. */
+  stderr: boolean;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /** Optional JSON Schema hint for editor autocomplete/validation. */
@@ -1339,6 +1375,12 @@ export interface OrchestratorConfig {
    * than dereferencing directly. Mirrors the `power?` pattern above.
    */
   lifecycle?: LifecycleConfig;
+
+  /**
+   * Process observability settings. Populated with defaults by Zod when loaded
+   * from YAML, but optional for hand-constructed tests.
+   */
+  observability?: ObservabilityConfig;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;
@@ -1816,6 +1858,13 @@ export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  /**
+   * Replace the canonical orchestrator with a fresh one. If an orchestrator
+   * already exists for the project, it is killed, its metadata deleted, and a
+   * new orchestrator spawned with no carryover state. Ignores
+   * `orchestratorSessionStrategy` — replacement is the whole point.
+   */
+  relaunchOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
@@ -1969,11 +2018,14 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
+export type ProjectResolveErrorKind = "malformed" | "invalid" | "old-format";
+
 /** Thrown when a project cannot be resolved into an effective runtime config. */
 export class ProjectResolveError extends Error {
   constructor(
     public readonly projectId: string,
     message: string,
+    public readonly reasonKind?: ProjectResolveErrorKind,
   ) {
     super(message);
     this.name = "ProjectResolveError";

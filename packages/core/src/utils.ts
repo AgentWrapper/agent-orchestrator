@@ -140,11 +140,17 @@ async function readLastLine(filePath: string): Promise<string | null> {
  * Reads backwards from end of file — pure Node.js, no external binaries.
  *
  * @param filePath - Path to the JSONL file
- * @returns Object containing the last entry's type and file mtime, or null if empty/invalid
+ * @returns Object containing the last entry's `type`, nested `payload.type` (Codex shape),
+ *          top-level `subtype` and `level` (Claude `system`-entry shape), and the file mtime.
+ *          Returns null if the file is empty or unreadable.
  */
-export async function readLastJsonlEntry(
-  filePath: string,
-): Promise<{ lastType: string | null; payloadType: string | null; modifiedAt: Date } | null> {
+export async function readLastJsonlEntry(filePath: string): Promise<{
+  lastType: string | null;
+  payloadType: string | null;
+  lastSubtype: string | null;
+  lastLevel: string | null;
+  modifiedAt: Date;
+} | null> {
   try {
     const [line, fileStat] = await Promise.all([readLastLine(filePath), stat(filePath)]);
 
@@ -154,15 +160,23 @@ export async function readLastJsonlEntry(
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       const obj = parsed as Record<string, unknown>;
       const lastType = typeof obj.type === "string" ? obj.type : null;
+      const lastSubtype = typeof obj.subtype === "string" ? obj.subtype : null;
+      const lastLevel = typeof obj.level === "string" ? obj.level : null;
       let payloadType: string | null = null;
       if (typeof obj.payload === "object" && obj.payload !== null && !Array.isArray(obj.payload)) {
         const payload = obj.payload as Record<string, unknown>;
         if (typeof payload.type === "string") payloadType = payload.type;
       }
-      return { lastType, payloadType, modifiedAt: fileStat.mtime };
+      return { lastType, payloadType, lastSubtype, lastLevel, modifiedAt: fileStat.mtime };
     }
 
-    return { lastType: null, payloadType: null, modifiedAt: fileStat.mtime };
+    return {
+      lastType: null,
+      payloadType: null,
+      lastSubtype: null,
+      lastLevel: null,
+      modifiedAt: fileStat.mtime,
+    };
   } catch {
     return null;
   }

@@ -8,11 +8,11 @@ import {
   getObservabilityBaseDir,
   loadConfig,
   resolveNotifierTarget,
-  type Notifier,
   type OrchestratorConfig,
   type PluginRegistry,
   type PluginSlot,
 } from "@aoagents/ao-core";
+import { runNotifyTest } from "../lib/notify-test.js";
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
 import { importPluginModuleFromSource } from "../lib/plugin-store.js";
@@ -338,54 +338,34 @@ async function sendTestNotifications(
   registry: PluginRegistry,
   fail: (msg: string) => void,
 ): Promise<void> {
-  const activeNotifierNames = config.defaults?.notifiers ?? [];
-  const targets = new Map<string, ReturnType<typeof resolveNotifierTarget>>();
+  const result = await runNotifyTest(config, registry, {
+    templateName: "basic",
+    all: true,
+    message: "Test notification from ao doctor --test-notify",
+    sessionId: "doctor-test",
+    projectId: "doctor",
+    data: { source: "ao-doctor" },
+  });
 
-  for (const name of Object.keys(config.notifiers ?? {})) {
-    targets.set(name, resolveNotifierTarget(config, name));
-  }
-
-  for (const name of activeNotifierNames) {
-    const target = resolveNotifierTarget(config, name);
-    if (!targets.has(target.reference)) {
-      targets.set(target.reference, target);
-    }
-  }
-
-  if (targets.size === 0) {
+  if (result.targets.length === 0) {
     warn("No notifiers to test. Fix: configure notifiers in your agent-orchestrator.yaml");
     return;
   }
 
-  console.log(`\nSending test notification to ${targets.size} notifier(s)...\n`);
+  console.log(`\nSending test notification to ${result.targets.length} notifier(s)...\n`);
 
-  for (const target of targets.values()) {
-    const notifier =
-      registry.get<Notifier>("notifier", target.reference) ??
-      registry.get<Notifier>("notifier", target.pluginName);
-    if (!notifier) {
-      warn(`${target.reference}: plugin "${target.pluginName}" not loaded (may not be installed)`);
-      continue;
+  for (const delivery of result.deliveries) {
+    if (delivery.status === "sent") {
+      pass(`${delivery.reference}: test notification sent`);
+    } else if (delivery.status === "unresolved") {
+      warn(`${delivery.reference}: plugin "${delivery.pluginName}" not loaded (may not be installed)`);
+    } else if (delivery.error) {
+      fail(delivery.error);
     }
+  }
 
-    try {
-      const testEvent = {
-        id: `doctor-test-${Date.now()}`,
-        type: "summary.all_complete" as const,
-        priority: "info" as const,
-        sessionId: "doctor-test",
-        projectId: "doctor",
-        timestamp: new Date(),
-        message: "Test notification from ao doctor --test-notify",
-        data: { source: "ao-doctor" },
-      };
-
-      await notifier.notify(testEvent);
-      pass(`${target.reference}: test notification sent`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      fail(`${target.reference}: ${message}`);
-    }
+  for (const warning of result.warnings) {
+    warn(warning);
   }
 }
 

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionCard } from "../SessionCard";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -134,5 +134,16 @@ describe("SessionCard diff coverage", () => {
     expect(laterRemount.container.querySelector(".session-card")).not.toHaveClass(
       "kanban-card-enter",
     );
+  });
+
+  it("requests a review from active worker cards", async () => {
+    const onReview = vi.fn(async () => {});
+    render(<SessionCard session={makeSession({ id: "reviewable-1" })} onReview={onReview} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
+
+    await waitFor(() => {
+      expect(onReview).toHaveBeenCalledWith("reviewable-1");
+    });
   });
 });

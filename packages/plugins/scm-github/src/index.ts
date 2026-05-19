@@ -11,6 +11,7 @@ import {
   CI_STATUS,
   execGhObserved,
   memoizeAsync,
+  recordActivityEvent,
   type PluginModule,
   type PreflightContext,
   type SCM,
@@ -23,6 +24,7 @@ import {
   type PRState,
   type MergeMethod,
   type CICheck,
+  type CIFailureSummary,
   type CIStatus,
   type Review,
   type ReviewDecision,
@@ -59,6 +61,14 @@ const BOT_AUTHORS = new Set([
   "snyk-bot",
   "lgtm-com[bot]",
 ]);
+
+const CI_FAILURE_LOG_TAIL_LINES = 120;
+const ciSummaryFailClosedEmitted = new Set<string>();
+
+/** Test-only: reset once-per-PR activity event guards. */
+export function _resetGitHubActivityEventDedupeForTesting(): void {
+  ciSummaryFailClosedEmitted.clear();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -165,6 +175,77 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
   }
 
   return "skipped";
+}
+
+function isFailedCheck(check: CICheck): boolean {
+  return check.status === "failed" || check.conclusion?.toUpperCase() === "FAILURE";
+}
+
+function isDecimalId(value: string): boolean {
+  return value.length > 0 && [...value].every((char) => char >= "0" && char <= "9");
+}
+
+function extractActionRunReference(
+  check: CICheck,
+): { runId: string; jobId?: string; runUrl: string } | null {
+  if (!check.url) return null;
+  let pathParts: string[];
+  try {
+    pathParts = new URL(check.url).pathname.split("/").filter(Boolean);
+  } catch {
+    return null;
+  }
+
+  const actionsIndex = pathParts.findIndex(
+    (part, index) => part === "actions" && pathParts[index + 1] === "runs",
+  );
+  const runId = actionsIndex >= 0 ? pathParts[actionsIndex + 2] : undefined;
+  if (!runId || !isDecimalId(runId)) return null;
+
+  const jobIndex = pathParts.findIndex((part, index) => index > actionsIndex && part === "job");
+  const jobId = jobIndex >= 0 ? pathParts[jobIndex + 1] : undefined;
+
+  return {
+    runId,
+    ...(jobId && isDecimalId(jobId) ? { jobId } : {}),
+    runUrl: check.url,
+  };
+}
+
+function tailLines(text: string, maxLines: number): string | undefined {
+  const lines = text.split(/\r?\n/);
+  const tail = lines.slice(-maxLines).join("\n").trimEnd();
+  return tail.length > 0 ? tail : undefined;
+}
+
+function extractFailedStep(log: string): string | undefined {
+  let lastStep: string | undefined;
+  for (const line of log.split(/\r?\n/)) {
+    const parts = line.split("\t");
+    const step = parts.length >= 3 ? parts[1]?.trim() : undefined;
+    if (step) lastStep = step;
+  }
+  return lastStep;
+}
+
+async function getFailedJobLog(
+  pr: PRInfo,
+  runReference: { runId: string; jobId?: string },
+): Promise<string> {
+  try {
+    return await gh([
+      "run",
+      "view",
+      runReference.runId,
+      "--repo",
+      repoFlag(pr),
+      "--log-failed",
+      ...(runReference.jobId ? ["--job", runReference.jobId] : []),
+    ]);
+  } catch (err) {
+    if (!runReference.jobId) throw err;
+    return gh(["api", `repos/${pr.owner}/${pr.repo}/actions/jobs/${runReference.jobId}/logs`]);
+  }
 }
 
 async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
@@ -443,6 +524,10 @@ function parseGitHubWebhookEvent(
 
 function repoFlag(pr: PRInfo): string {
   return `${pr.owner}/${pr.repo}`;
+}
+
+function prEventKey(pr: PRInfo): string {
+  return `${repoFlag(pr)}#${pr.number}`;
 }
 
 function parseDate(val: string | undefined | null): Date {
@@ -811,11 +896,51 @@ function createGitHubSCM(): SCM {
       });
     },
 
+    async getCIFailureSummary(
+      pr: PRInfo,
+      providedFailedChecks?: CICheck[],
+    ): Promise<CIFailureSummary | null> {
+      try {
+        const failedChecks = (providedFailedChecks ?? (await this.getCIChecks(pr))).filter(
+          isFailedCheck,
+        );
+        if (failedChecks.length === 0) return null;
+
+        const failedJobs: CIFailureSummary["failedJobs"] = [];
+        const seenRuns = new Set<string>();
+
+        for (const check of failedChecks) {
+          const runReference = extractActionRunReference(check);
+          if (!runReference) continue;
+
+          const seenKey = `${runReference.runId}:${runReference.jobId ?? ""}`;
+          if (seenRuns.has(seenKey)) continue;
+          seenRuns.add(seenKey);
+
+          const log = await getFailedJobLog(pr, runReference);
+
+          const failedJob: CIFailureSummary["failedJobs"][number] = {
+            name: check.name,
+            runUrl: runReference.runUrl,
+          };
+          const failedStep = extractFailedStep(log);
+          if (failedStep) failedJob.failedStep = failedStep;
+          const logTail = tailLines(log, CI_FAILURE_LOG_TAIL_LINES);
+          if (logTail) failedJob.logTail = logTail;
+          failedJobs.push(failedJob);
+        }
+
+        return failedJobs.length > 0 ? { failedJobs } : null;
+      } catch {
+        return null;
+      }
+    },
+
     async getCISummary(pr: PRInfo): Promise<CIStatus> {
       let checks: CICheck[];
       try {
         checks = await this.getCIChecks(pr);
-      } catch {
+      } catch (err) {
         // Before fail-closing, check if the PR is merged/closed —
         // GitHub may not return check data for those, and reporting
         // "failing" for a merged PR is wrong.
@@ -826,7 +951,26 @@ function createGitHubSCM(): SCM {
           // Can't determine state either; fall through to fail-closed.
         }
         // Fail closed for open PRs: report as failing rather than
-        // "none" (which getMergeability treats as passing).
+        // "none" (which getMergeability treats as passing). Emit so RCA
+        // can distinguish "really failing" from "we couldn't tell".
+        const eventKey = prEventKey(pr);
+        if (!ciSummaryFailClosedEmitted.has(eventKey)) {
+          ciSummaryFailClosedEmitted.add(eventKey);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          recordActivityEvent({
+            source: "scm",
+            kind: "scm.ci_summary_failclosed",
+            level: "warn",
+            summary: `getCISummary failed-closed for PR #${pr.number}`,
+            data: {
+              plugin: "scm-github",
+              prNumber: pr.number,
+              prOwner: pr.owner,
+              prRepo: pr.repo,
+              errorMessage,
+            },
+          });
+        }
         return "failing";
       }
       if (checks.length === 0) return "none";
@@ -918,16 +1062,16 @@ function createGitHubSCM(): SCM {
         try {
           // Use GraphQL with variables to get review threads with actual isResolved status
           const raw = await gh([
-          "api",
-          "graphql",
-          "-f",
-          `owner=${pr.owner}`,
-          "-f",
-          `name=${pr.repo}`,
-          "-F",
-          `number=${pr.number}`,
-          "-f",
-          `query=query($owner: String!, $name: String!, $number: Int!) {
+            "api",
+            "graphql",
+            "-f",
+            `owner=${pr.owner}`,
+            "-f",
+            `name=${pr.repo}`,
+            "-F",
+            `number=${pr.number}`,
+            "-f",
+            `query=query($owner: String!, $name: String!, $number: Int!) {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $number) {
                 reviewThreads(first: 100) {
@@ -950,58 +1094,58 @@ function createGitHubSCM(): SCM {
               }
             }
           }`,
-        ]);
+          ]);
 
-        const data: {
-          data: {
-            repository: {
-              pullRequest: {
-                reviewThreads: {
-                  nodes: Array<{
-                    id: string;
-                    isResolved: boolean;
-                    comments: {
-                      nodes: Array<{
-                        id: string;
-                        author: { login: string } | null;
-                        body: string;
-                        path: string | null;
-                        line: number | null;
-                        url: string;
-                        createdAt: string;
-                      }>;
-                    };
-                  }>;
+          const data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: Array<{
+                      id: string;
+                      isResolved: boolean;
+                      comments: {
+                        nodes: Array<{
+                          id: string;
+                          author: { login: string } | null;
+                          body: string;
+                          path: string | null;
+                          line: number | null;
+                          url: string;
+                          createdAt: string;
+                        }>;
+                      };
+                    }>;
+                  };
                 };
               };
             };
-          };
-        } = JSON.parse(raw);
+          } = JSON.parse(raw);
 
-        const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+          const threads = data.data.repository.pullRequest.reviewThreads.nodes;
 
-        return threads
-          .filter((t) => {
-            if (t.isResolved) return false; // only pending (unresolved) threads
-            const c = t.comments.nodes[0];
-            if (!c) return false; // skip threads with no comments
-            const author = c.author?.login ?? "";
-            return !BOT_AUTHORS.has(author);
-          })
-          .map((t) => {
-            const c = t.comments.nodes[0];
-            return {
-              id: c.id,
-              threadId: t.id,
-              author: c.author?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? undefined,
-              isResolved: t.isResolved,
-              createdAt: parseDate(c.createdAt),
-              url: c.url,
-            };
-          });
+          return threads
+            .filter((t) => {
+              if (t.isResolved) return false; // only pending (unresolved) threads
+              const c = t.comments.nodes[0];
+              if (!c) return false; // skip threads with no comments
+              const author = c.author?.login ?? "";
+              return !BOT_AUTHORS.has(author);
+            })
+            .map((t) => {
+              const c = t.comments.nodes[0];
+              return {
+                id: c.id,
+                threadId: t.id,
+                author: c.author?.login ?? "unknown",
+                body: c.body,
+                path: c.path || undefined,
+                line: c.line ?? undefined,
+                isResolved: t.isResolved,
+                createdAt: parseDate(c.createdAt),
+                url: c.url,
+              };
+            });
         } catch (err) {
           throw new Error("Failed to fetch pending comments", { cause: err });
         }
@@ -1012,7 +1156,12 @@ function createGitHubSCM(): SCM {
       const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
 
       // Guard 3: check if review comments changed via REST ETag
-      const reviewsChanged = await checkReviewCommentsETag(pr.owner, pr.repo, pr.number, instanceObserver);
+      const reviewsChanged = await checkReviewCommentsETag(
+        pr.owner,
+        pr.repo,
+        pr.number,
+        instanceObserver,
+      );
       if (!reviewsChanged) {
         const cached = reviewThreadsCache.get(cacheKey);
         if (cached) return cached;

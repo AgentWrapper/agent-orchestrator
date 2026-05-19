@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-runtime-tmux",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Runtime plugin: tmux sessions",
   "license": "MIT",
   "type": "module",

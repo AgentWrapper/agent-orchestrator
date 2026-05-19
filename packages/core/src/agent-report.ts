@@ -18,7 +18,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   CanonicalSessionLifecycle,
   CanonicalSessionReason,
@@ -26,8 +26,14 @@ import type {
   SessionId,
   SessionStatus,
 } from "./types.js";
+import { recordActivityEvent } from "./activity-events.js";
 import { mutateMetadata, readMetadataRaw } from "./metadata.js";
-import { buildLifecycleMetadataPatch, cloneLifecycle, deriveLegacyStatus, parseCanonicalLifecycle } from "./lifecycle-state.js";
+import {
+  buildLifecycleMetadataPatch,
+  cloneLifecycle,
+  deriveLegacyStatus,
+  parseCanonicalLifecycle,
+} from "./lifecycle-state.js";
 import { parsePrFromUrl } from "./utils/pr.js";
 import { assertValidSessionIdComponent } from "./utils/session-id.js";
 import { validateStatus } from "./utils/validation.js";
@@ -254,6 +260,11 @@ function buildAuditDir(dataDir: string): string {
   return join(dataDir, ".agent-report-audit");
 }
 
+function inferProjectIdFromDataDir(dataDir: string): string | undefined {
+  // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
+  return basename(dirname(dataDir)) || undefined;
+}
+
 const AGENT_REPORT_AUDIT_MAX_BYTES = 256 * 1024;
 const AGENT_REPORT_AUDIT_MAX_ENTRIES = 200;
 
@@ -383,8 +394,22 @@ export function applyAgentReport(
   sessionId: SessionId,
   input: ApplyAgentReportInput,
 ): ApplyAgentReportResult {
+  const projectId = inferProjectIdFromDataDir(dataDir);
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) {
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "api",
+      kind: "api.agent_report.session_not_found",
+      level: "warn",
+      summary: `applyAgentReport: session not found: ${sessionId}`,
+      data: {
+        reportState: input.state,
+        actor: input.actor,
+        source: input.source,
+      },
+    });
     throw new Error(`Session not found: ${sessionId}`);
   }
 
@@ -428,93 +453,124 @@ export function applyAgentReport(
   let legacyStatus: SessionStatus | null = null;
   let previousLegacyStatus: SessionStatus | null = null;
 
-  const nextMetadata = mutateMetadata(dataDir, sessionId, (existing) => {
-    const current = cloneLifecycle(
-      parseCanonicalLifecycle(existing, {
-        sessionId,
-        status: validateStatus(existing["status"]),
-      }),
-    );
-    previousLegacyStatus = deriveLegacyStatus(current);
-    before = buildAuditSnapshot(current, previousLegacyStatus);
-    const validation = validateAgentReportTransition(current, input.state);
-    if (!validation.ok) {
-      appendAgentReportAuditEntry(dataDir, sessionId, {
-        timestamp: now,
-        actor,
-        source,
-        reportState: input.state,
-        note: trimmedNote,
-        prNumber,
-        prUrl: trimmedPrUrl,
-        prIsDraft,
-        accepted: false,
-        rejectionReason: validation.reason ?? "transition rejected",
-        before,
-        after: before,
-      });
-      throw new Error(validation.reason ?? "transition rejected");
-    }
-    const mapped = mapAgentReportToLifecycle(input.state);
-    previousState = current.session.state;
-    nextState = mapped.sessionState;
-    current.session.state = mapped.sessionState;
-    current.session.reason = mapped.sessionReason;
-    current.session.lastTransitionAt = now;
-    if (isPRWorkflowReport(input.state)) {
-      const effectivePrUrl = trimmedPrUrl ?? current.pr.url ?? existingPrUrl;
-      const effectivePrNumber =
-        prNumber ?? current.pr.number ?? existingPrNumber ?? parsedPrFromUrl?.number;
-      const canAdvancePrState =
-        effectivePrUrl !== undefined ||
-        effectivePrNumber !== undefined ||
-        current.pr.state !== "none";
-      if (canAdvancePrState) {
-        current.pr.state = "open";
-        current.pr.reason =
-          input.state === "ready_for_review" ? "review_pending" : "in_progress";
-        current.pr.lastObservedAt = now;
+  const nextMetadata = mutateMetadata(
+    dataDir,
+    sessionId,
+    (existing) => {
+      const current = cloneLifecycle(
+        parseCanonicalLifecycle(existing, {
+          sessionId,
+          status: validateStatus(existing["status"]),
+        }),
+      );
+      previousLegacyStatus = deriveLegacyStatus(current);
+      before = buildAuditSnapshot(current, previousLegacyStatus);
+      const validation = validateAgentReportTransition(current, input.state);
+      if (!validation.ok) {
+        const rejectionReason = validation.reason ?? "transition rejected";
+        appendAgentReportAuditEntry(dataDir, sessionId, {
+          timestamp: now,
+          actor,
+          source,
+          reportState: input.state,
+          note: trimmedNote,
+          prNumber,
+          prUrl: trimmedPrUrl,
+          prIsDraft,
+          accepted: false,
+          rejectionReason,
+          before,
+          after: before,
+        });
+        recordActivityEvent({
+          projectId,
+          sessionId,
+          source: "api",
+          kind: "api.agent_report.transition_rejected",
+          level: "warn",
+          summary: `applyAgentReport rejected ${input.state} for ${sessionId}: ${rejectionReason}`,
+          data: {
+            reportState: input.state,
+            rejectionReason,
+            actor,
+            reportSource: source,
+            fromState: current.session.state,
+            fromReason: current.session.reason,
+            legacyStatus: previousLegacyStatus,
+          },
+        });
+        throw new Error(rejectionReason);
       }
-      if (effectivePrUrl) {
-        current.pr.url = effectivePrUrl;
+      const mapped = mapAgentReportToLifecycle(input.state);
+      previousState = current.session.state;
+      nextState = mapped.sessionState;
+      current.session.state = mapped.sessionState;
+      current.session.reason = mapped.sessionReason;
+      current.session.lastTransitionAt = now;
+      if (isPRWorkflowReport(input.state)) {
+        const effectivePrUrl = trimmedPrUrl ?? current.pr.url ?? existingPrUrl;
+        const effectivePrNumber =
+          prNumber ?? current.pr.number ?? existingPrNumber ?? parsedPrFromUrl?.number;
+        const canAdvancePrState =
+          effectivePrUrl !== undefined ||
+          effectivePrNumber !== undefined ||
+          current.pr.state !== "none";
+        if (canAdvancePrState) {
+          current.pr.state = "open";
+          current.pr.reason = input.state === "ready_for_review" ? "review_pending" : "in_progress";
+          current.pr.lastObservedAt = now;
+        }
+        if (effectivePrUrl) {
+          current.pr.url = effectivePrUrl;
+        }
+        if (effectivePrNumber !== undefined) {
+          current.pr.number = effectivePrNumber;
+        }
       }
-      if (effectivePrNumber !== undefined) {
-        current.pr.number = effectivePrNumber;
+      if (mapped.sessionState === "working" && current.session.startedAt === null) {
+        current.session.startedAt = now;
       }
-    }
-    if (mapped.sessionState === "working" && current.session.startedAt === null) {
-      current.session.startedAt = now;
-    }
-    legacyStatus = deriveLegacyStatus(current);
-    const next = { ...existing };
-    Object.assign(
-      next,
-      buildLifecycleMetadataPatch(current),
-      {
+      legacyStatus = deriveLegacyStatus(current);
+      const next = { ...existing };
+      Object.assign(next, buildLifecycleMetadataPatch(current), {
         [AGENT_REPORT_METADATA_KEYS.STATE]: input.state,
         [AGENT_REPORT_METADATA_KEYS.AT]: now,
-      },
-    );
-    if (trimmedNote) {
-      next[AGENT_REPORT_METADATA_KEYS.NOTE] = trimmedNote;
-    } else {
-      next[AGENT_REPORT_METADATA_KEYS.NOTE] = "";
-    }
-    if (isPRWorkflowReport(input.state)) {
-      if (trimmedPrUrl) {
-        next[AGENT_REPORT_METADATA_KEYS.PR_URL] = trimmedPrUrl;
+      });
+      if (trimmedNote) {
+        next[AGENT_REPORT_METADATA_KEYS.NOTE] = trimmedNote;
+      } else {
+        next[AGENT_REPORT_METADATA_KEYS.NOTE] = "";
       }
-      if (prNumber !== undefined) {
-        next[AGENT_REPORT_METADATA_KEYS.PR_NUMBER] = String(prNumber);
+      if (isPRWorkflowReport(input.state)) {
+        if (trimmedPrUrl) {
+          next[AGENT_REPORT_METADATA_KEYS.PR_URL] = trimmedPrUrl;
+        }
+        if (prNumber !== undefined) {
+          next[AGENT_REPORT_METADATA_KEYS.PR_NUMBER] = String(prNumber);
+        }
+        if (prIsDraft !== undefined) {
+          next[AGENT_REPORT_METADATA_KEYS.PR_IS_DRAFT] = prIsDraft ? "true" : "false";
+        }
       }
-      if (prIsDraft !== undefined) {
-        next[AGENT_REPORT_METADATA_KEYS.PR_IS_DRAFT] = prIsDraft ? "true" : "false";
-      }
-    }
-    return next;
-  });
+      return next;
+    },
+    { activityEventSource: "api" },
+  );
 
   if (!nextMetadata || !before || !previousState || !nextState || !legacyStatus) {
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "api",
+      kind: "api.agent_report.apply_failed",
+      level: "error",
+      summary: `failed to apply agent report ${input.state} for ${sessionId}`,
+      data: {
+        reportState: input.state,
+        actor,
+        source,
+      },
+    });
     throw new Error(`Failed to apply agent report for session ${sessionId}`);
   }
 

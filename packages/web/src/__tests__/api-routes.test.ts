@@ -129,6 +129,7 @@ const mockSessionManager: SessionManager = {
   cleanup: vi.fn(async () => ({ killed: [], skipped: [], errors: [] })),
   spawnOrchestrator: vi.fn(),
   ensureOrchestrator: vi.fn(),
+  relaunchOrchestrator: vi.fn(),
   remap: vi.fn(async () => "ses_mock"),
   restore: vi.fn(async (id: string) => {
     const session = testSessions.find((s) => s.id === id);
@@ -232,7 +233,7 @@ import {
   GET as sessionDetailGET,
   PATCH as sessionDetailPATCH,
 } from "@/app/api/sessions/[id]/route";
-import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -313,6 +314,37 @@ describe("API Routes", () => {
 
       metadataSpy.mockRestore();
       vi.useRealTimers();
+    });
+
+    it("activeOnly keeps working sessions with stale terminatedAt annotations", async () => {
+      const staleLifecycle = createInitialCanonicalLifecycle(
+        "worker",
+        new Date("2026-05-13T19:13:20.146Z"),
+      );
+      staleLifecycle.session.state = "working";
+      staleLifecycle.session.reason = "task_in_progress";
+      staleLifecycle.session.terminatedAt = "2026-05-13T19:13:20.146Z";
+      staleLifecycle.runtime.state = "alive";
+      staleLifecycle.runtime.reason = "process_running";
+
+      (mockSessionManager.listCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "worker-restored-stale-terminal-marker",
+          status: "terminated",
+          activity: "exited",
+          lifecycle: staleLifecycle,
+        }),
+      ]);
+
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions?active=true"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual([
+        "worker-restored-stale-terminal-marker",
+      ]);
+      expect(data.sessions[0].lifecycle.sessionState).toBe("working");
+      expect(data.sessions[0].lifecycle.session.terminatedAt).toBe("2026-05-13T19:13:20.146Z");
     });
 
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {
@@ -642,29 +674,18 @@ describe("API Routes", () => {
 
       const enrichSpy = vi
         .spyOn(serialize, "enrichSessionPR")
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true);
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false);
 
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
 
       expect(res.status).toBe(200);
-      expect(enrichSpy).toHaveBeenCalledTimes(3);
+      expect(enrichSpy).toHaveBeenCalledTimes(2);
       expect(enrichSpy.mock.calls[0]).toEqual([
         expect.objectContaining({ id: "worker-live" }),
-        expect.anything(),
-        sessionsWithPRs[0]!.pr,
       ]);
       expect(enrichSpy.mock.calls[1]).toEqual([
         expect.objectContaining({ id: "worker-killed" }),
-        expect.anything(),
-        sessionsWithPRs[1]!.pr,
-        { cacheOnly: true },
-      ]);
-      expect(enrichSpy.mock.calls[2]).toEqual([
-        expect.objectContaining({ id: "worker-killed" }),
-        expect.anything(),
-        sessionsWithPRs[1]!.pr,
       ]);
 
       metadataSpy.mockRestore();
@@ -719,8 +740,6 @@ describe("API Routes", () => {
       expect(enrichSpy).toHaveBeenCalledTimes(1);
       expect(enrichSpy.mock.calls[0]).toEqual([
         expect.objectContaining({ id: "worker-open-pr" }),
-        expect.anything(),
-        sessionWithOpenPR[0]!.pr,
       ]);
 
       metadataSpy.mockRestore();
@@ -1142,53 +1161,49 @@ describe("API Routes", () => {
       expect(data.recovery).toBe("reuse-or-recreate-workspace");
       expect(data.error).toContain('AO found an older orchestrator workspace for "my-app"');
     });
-  });
 
-  describe("GET /api/orchestrators", () => {
-    it("returns orchestrators for a project", async () => {
-      const orchestrator = makeSession({
-        id: "my-app-orchestrator",
-        projectId: "my-app",
-        metadata: { role: "orchestrator" },
+    it("calls relaunchOrchestrator instead of spawnOrchestrator when clean is true", async () => {
+      (mockSessionManager.relaunchOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+        }),
+      );
+
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", clean: true }),
+        headers: { "Content-Type": "application/json" },
       });
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+      const res = await orchestratorsPOST(req);
 
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.orchestrators).toHaveLength(1);
-      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
-      expect(data.projectName).toBe("My App");
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.relaunchOrchestrator).toHaveBeenCalledWith({
+        projectId: "my-app",
+        systemPrompt: expect.stringContaining("# My App Orchestrator"),
+      });
+      expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
     });
 
-    it("returns 400 when project parameter is missing", async () => {
-      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toMatch(/Missing project query parameter/);
-    });
+    it("uses spawnOrchestrator when clean is false or omitted", async () => {
+      (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+        }),
+      );
 
-    it("returns 404 for unknown project", async () => {
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
-      );
-      expect(res.status).toBe(404);
-      const data = await res.json();
-      expect(data.error).toMatch(/Unknown project/);
-    });
+      const req = makeRequest("/api/orchestrators", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", clean: false }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await orchestratorsPOST(req);
 
-    it("returns 500 when list fails", async () => {
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("boom"),
-      );
-      const res = await orchestratorsGET(
-        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
-      );
-      expect(res.status).toBe(500);
-      const data = await res.json();
-      expect(data.error).toBe("boom");
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalled();
+      expect(mockSessionManager.relaunchOrchestrator).not.toHaveBeenCalled();
     });
   });
 
