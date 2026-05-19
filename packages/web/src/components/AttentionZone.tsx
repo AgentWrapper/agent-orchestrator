@@ -1,11 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import {
-  type DashboardSession,
-  type AttentionLevel,
-  isPRMergeReady,
-} from "@/lib/types";
+import { type DashboardSession, type AttentionLevel, isPRMergeReady } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
 import { projectSessionPath } from "@/lib/routes";
@@ -17,6 +13,7 @@ interface AttentionZoneProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onReview?: (sessionId: string) => Promise<void> | void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
   /** Accordion mode: called when the header is tapped to toggle */
@@ -82,6 +79,7 @@ function AttentionZoneView({
   onKill,
   onMerge,
   onRestore,
+  onReview,
   collapsed,
   onToggle,
   compactMobile,
@@ -121,7 +119,9 @@ function AttentionZoneView({
           <span className="accordion-header__dot" data-level={level} />
           <span className="accordion-header__label">{config.label}</span>
           <span className="accordion-header__count">{sessions.length}</span>
-          <span className="accordion-header__chevron" aria-hidden="true">▶</span>
+          <span className="accordion-header__chevron" aria-hidden="true">
+            ▶
+          </span>
         </button>
 
         <div id={`accordion-body-${level}`} className="accordion-body">
@@ -143,6 +143,7 @@ function AttentionZoneView({
                     onKill={onKill}
                     onMerge={onMerge}
                     onRestore={onRestore}
+                    onReview={onReview}
                   />
                 ),
               )}
@@ -187,6 +188,7 @@ function AttentionZoneView({
                 onKill={onKill}
                 onMerge={onMerge}
                 onRestore={onRestore}
+                onReview={onReview}
               />
             ))}
           </div>
@@ -205,6 +207,7 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
+    prev.onReview === next.onReview &&
     prev.compactMobile === next.compactMobile &&
     prev.onPreview === next.onPreview &&
     prev.resetKey === next.resetKey &&
@@ -239,11 +242,7 @@ function MobileSessionRow({
         aria-label={`Open ${getSessionTitle(session)}`}
       >
         <div className="mobile-session-row__line">
-          <span
-            className="mobile-session-row__dot"
-            data-level={level}
-            aria-hidden="true"
-          />
+          <span className="mobile-session-row__dot" data-level={level} aria-hidden="true" />
           <span className="mobile-session-row__title">{getSessionTitle(session)}</span>
         </div>
         <div className="mobile-session-row__meta">
@@ -253,7 +252,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-            href={projectSessionPath(session.projectId, session.id)}
+          href={projectSessionPath(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >

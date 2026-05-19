@@ -16,7 +16,7 @@ export async function GET(request: Request) {
         ? projectFilter
         : undefined;
 
-    const coreSessions = await sessionManager.list(requestedProjectId);
+    const coreSessions = await sessionManager.listCached(requestedProjectId);
     const visibleSessions = filterWorkerSessions(coreSessions, projectFilter, config.projects);
 
     // Convert to dashboard format

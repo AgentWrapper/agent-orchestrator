@@ -402,9 +402,18 @@ describe("isProcessRunning", () => {
     expect(mockExecFileAsync).not.toHaveBeenCalled();
   });
 
-  it("returns false when tmux command fails", async () => {
+  it("returns indeterminate when tmux command fails", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("fail"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when cached ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -996,7 +1005,11 @@ describe("hook setup — relative path (symlink-safe)", () => {
     );
     expect(scriptWrite).toBeDefined();
     expect(scriptWrite![0]).toBe(
-      pathJoin("/Users/equinox/.worktrees/integrator/integrator-5", ".claude", "metadata-updater.sh"),
+      pathJoin(
+        "/Users/equinox/.worktrees/integrator/integrator-5",
+        ".claude",
+        "metadata-updater.sh",
+      ),
     );
   });
 
@@ -1039,10 +1052,7 @@ describe("setupWorkspaceHooks on win32", () => {
   });
 
   it("writes a Node.js hook script instead of bash on Windows", async () => {
-    await agent.setupWorkspaceHooks!(
-      "C:\\\\Users\\\\dev\\\\workspace",
-      {} as WorkspaceHooksConfig,
-    );
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     // The .cjs file must have been written (.cjs forces CJS mode in ESM workspaces)
     const cjsContent = getWrittenScriptContent("metadata-updater.cjs");
@@ -1063,10 +1073,7 @@ describe("setupWorkspaceHooks on win32", () => {
   });
 
   it("uses node command in settings.json hook command on Windows", async () => {
-    await agent.setupWorkspaceHooks!(
-      "C:\\\\Users\\\\dev\\\\workspace",
-      {} as WorkspaceHooksConfig,
-    );
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     const hookCommand = getWrittenHookCommand();
     expect(hookCommand).toBe("node .claude/metadata-updater.cjs");
@@ -1074,10 +1081,7 @@ describe("setupWorkspaceHooks on win32", () => {
   });
 
   it("skips chmod on win32", async () => {
-    await agent.setupWorkspaceHooks!(
-      "C:\\\\Users\\\\dev\\\\workspace",
-      {} as WorkspaceHooksConfig,
-    );
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     expect(mockChmod).not.toHaveBeenCalled();
   });
@@ -1119,10 +1123,7 @@ describe("setupWorkspaceHooks on win32", () => {
 
   it("does not add duplicate hook entry when called twice on Windows", async () => {
     // First call creates the hook
-    await agent.setupWorkspaceHooks!(
-      "C:\\\\Users\\\\dev\\\\workspace",
-      {} as WorkspaceHooksConfig,
-    );
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     // Simulate second call: settings.json now contains the .cjs hook
     const firstSettings = mockWriteFile.mock.calls.find(
@@ -1134,10 +1135,7 @@ describe("setupWorkspaceHooks on win32", () => {
     mockIsWindows.mockReturnValue(true);
 
     // Second call — should UPDATE the existing hook, not add a duplicate
-    await agent.setupWorkspaceHooks!(
-      "C:\\\\Users\\\\dev\\\\workspace",
-      {} as WorkspaceHooksConfig,
-    );
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     const secondSettings = mockWriteFile.mock.calls.find(
       ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
@@ -1146,9 +1144,9 @@ describe("setupWorkspaceHooks on win32", () => {
     const parsed = JSON.parse(secondSettings![1] as string);
     const hookEntries = parsed.hooks.PostToolUse as Array<{ hooks: Array<{ command: string }> }>;
     // Count all hook commands matching our metadata updater
-    const metadataHooks = hookEntries.flatMap((e) => e.hooks).filter(
-      (h) => h.command.includes("metadata-updater"),
-    );
+    const metadataHooks = hookEntries
+      .flatMap((e) => e.hooks)
+      .filter((h) => h.command.includes("metadata-updater"));
     // Must be exactly 1 — no duplicates
     expect(metadataHooks).toHaveLength(1);
   });

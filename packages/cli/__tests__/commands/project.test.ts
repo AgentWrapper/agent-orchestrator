@@ -23,6 +23,7 @@ vi.mock("@aoagents/ao-core", () => ({
   isPortfolioEnabled: () => true,
   getPortfolio: mockGetPortfolio,
   getPortfolioSessionCounts: mockGetPortfolioSessionCounts,
+  recordActivityEvent: vi.fn(),
   registerProject: mockRegisterProject,
   unregisterProject: mockUnregisterProject,
   loadPreferences: mockLoadPreferences,

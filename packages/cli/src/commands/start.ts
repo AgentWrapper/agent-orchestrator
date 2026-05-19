@@ -9,7 +9,7 @@
  * (or equivalent flag) at launch time — no file writing required.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, basename, dirname } from "node:path";
 import { cwd } from "node:process";
@@ -27,9 +27,12 @@ import {
   isTerminalSession,
   getDefaultRuntime,
   isWindows,
+  isMac,
+  isLinux,
   findPidByPort,
   killProcessTree,
   loadLocalProjectConfigDetailed,
+  recordActivityEvent,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
   type OrchestratorConfig,
@@ -37,9 +40,15 @@ import {
   type ProjectConfig,
   type ParsedRepoUrl,
   writeLocalProjectConfig,
+  spawnManagedDaemonChild,
+  sweepDaemonChildren,
+  scanAoOrphans,
+  reapAoOrphans,
+  type DaemonChildSweepResult,
+  type AoOrphanProcess,
 } from "@aoagents/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { exec, execSilent, forwardSignalsToChild, git } from "../lib/shell.js";
+import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { listLifecycleWorkers } from "../lib/lifecycle-service.js";
 import { startBunTmpJanitor } from "../lib/bun-tmp-janitor.js";
@@ -96,7 +105,7 @@ import {
   tryInstallWithAttempts,
 } from "../lib/install-helpers.js";
 import { ensureGit, runtimePreflight } from "../lib/startup-preflight.js";
-import { installShutdownHandlers } from "../lib/shutdown.js";
+import { installShutdownHandlers, isShutdownInProgress } from "../lib/shutdown.js";
 import { resolveOrCreateProject } from "../lib/resolve-project.js";
 import { pathsEqual } from "../lib/path-equality.js";
 import { maybePromptForUpdateChannel } from "../lib/update-channel-onboarding.js";
@@ -107,6 +116,17 @@ import { projectSessionUrl } from "../lib/routes.js";
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+class CliFailureEventRecordedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CliFailureEventRecordedError";
+  }
+}
+
+function isCliFailureEventRecordedError(err: unknown): boolean {
+  return err instanceof CliFailureEventRecordedError;
+}
 
 function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
   const localConfig = loadLocalProjectConfigDetailed(projectPath);
@@ -152,6 +172,15 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
     defaultBranch,
     sessionPrefix: prefix,
     ...(repo ? { repo } : {}),
+  });
+
+  recordActivityEvent({
+    projectId: registeredProjectId,
+    source: "cli",
+    kind: "cli.config_migrated",
+    level: "info",
+    summary: `flat config registered into global config`,
+    data: { projectPath, configPath },
   });
 
   console.log(chalk.green(`  ✓ Registered "${registeredProjectId}"\n`));
@@ -308,10 +337,10 @@ async function promptAgentSelection(): Promise<{
 }
 
 function ghInstallAttempts(): InstallAttempt[] {
-  if (process.platform === "darwin") {
+  if (isMac()) {
     return [{ cmd: "brew", args: ["install", "gh"], label: "brew install gh" }];
   }
-  if (process.platform === "linux") {
+  if (isLinux()) {
     return [
       {
         cmd: "sudo",
@@ -801,7 +830,7 @@ async function startDashboard(
   if (useDevServer) {
     // Monorepo with --dev: use pnpm run dev (tsx watch, HMR, etc.)
     console.log(chalk.dim("  Mode: development (HMR enabled)"));
-    child = spawn("pnpm", ["run", "dev"], {
+    child = spawnManagedDaemonChild("dashboard", "pnpm", ["run", "dev"], {
       cwd: webDir,
       stdio: "inherit",
       detached: !isWindows(),
@@ -814,7 +843,7 @@ async function startDashboard(
       console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
     }
     const startScript = resolve(webDir, "dist-server", "start-all.js");
-    child = spawn("node", [startScript], {
+    child = spawnManagedDaemonChild("dashboard", "node", [startScript], {
       cwd: webDir,
       stdio: "inherit",
       detached: !isWindows(),
@@ -856,6 +885,11 @@ async function runStartup(
   // feature ships. No-op on subsequent runs (idempotent — guarded by the
   // presence of `updateChannel` in the global config).
   await maybePromptForUpdateChannel();
+
+  // Install the parent shutdown path before spawning any managed children.
+  // This guarantees a SIGINT/SIGTERM in the middle of startup still performs
+  // the full AO cleanup instead of relying on Node's default signal exit.
+  installShutdownHandlers({ configPath: config.configPath, projectId });
 
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let port = config.port ?? DEFAULT_PORT;
@@ -927,10 +961,21 @@ async function runStartup(
       }
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.start_failed",
+        level: "error",
+        summary: `orchestrator setup failed`,
+        data: {
+          reason: "orchestrator_setup",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
-      throw new Error(
+      throw new CliFailureEventRecordedError(
         `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
@@ -940,14 +985,25 @@ async function runStartup(
   if (shouldStartLifecycle) {
     try {
       spinner.start("Starting project supervisor");
-      await startProjectSupervisor();
+      await startProjectSupervisor({ configPath: config.configPath });
       spinner.succeed("Lifecycle project supervisor started");
     } catch (err) {
       spinner.fail("Project supervisor failed to start");
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.start_failed",
+        level: "error",
+        summary: `project supervisor failed to start`,
+        data: {
+          reason: "supervisor_start",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
-      throw new Error(
+      throw new CliFailureEventRecordedError(
         `Failed to start project supervisor: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
@@ -961,12 +1017,21 @@ async function runStartup(
       if (lastStop && lastStop.sessionIds.length > 0) {
         const stoppedAgo = `stopped at ${new Date(lastStop.stoppedAt).toLocaleString()}`;
         const otherProjects = lastStop.otherProjects ?? [];
+        const restoreProjectBySessionId = new Map<string, string>();
 
         // Build flat list of all sessions to restore, grouped for display
         const allRestoreSessions: string[] = [
           ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
           ...otherProjects.flatMap((p) => p.sessionIds),
         ];
+        for (const sessionId of lastStop.sessionIds) {
+          restoreProjectBySessionId.set(sessionId, lastStop.projectId);
+        }
+        for (const otherProject of otherProjects) {
+          for (const sessionId of otherProject.sessionIds) {
+            restoreProjectBySessionId.set(sessionId, otherProject.projectId);
+          }
+        }
 
         // Display grouped by project
         const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
@@ -992,6 +1057,17 @@ async function runStartup(
         if (allRestoreSessions.length > 0) {
           const shouldRestore = await promptConfirm("Restore these sessions?", true);
           if (shouldRestore) {
+            recordActivityEvent({
+              projectId,
+              source: "cli",
+              kind: "cli.restore_started",
+              level: "info",
+              summary: `restoring ${allRestoreSessions.length} session(s) from last-stop`,
+              data: {
+                sessionCount: allRestoreSessions.length,
+                stoppedAt: lastStop.stoppedAt,
+              },
+            });
             // Use global config so the session manager can see all projects
             let restoreConfig = config;
             if (otherProjects.length > 0) {
@@ -1016,11 +1092,33 @@ async function runStartup(
                 restoredCount++;
               } catch (err) {
                 failedSessionIds.add(sessionId);
+                const restoreProjectId = restoreProjectBySessionId.get(sessionId) ?? projectId;
+                recordActivityEvent({
+                  projectId: restoreProjectId,
+                  sessionId,
+                  source: "cli",
+                  kind: "cli.restore_session_failed",
+                  level: "warn",
+                  summary: `failed to restore session`,
+                  data: { errorMessage: err instanceof Error ? err.message : String(err) },
+                });
                 warnings.push(
                   `  Warning: could not restore ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
                 );
               }
             }
+            recordActivityEvent({
+              projectId,
+              source: "cli",
+              kind: "cli.restore_completed",
+              level: "info",
+              summary: `restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
+              data: {
+                requested: allRestoreSessions.length,
+                restored: restoredCount,
+                failed: failedSessionIds.size,
+              },
+            });
             if (restoredCount === allRestoreSessions.length) {
               restoreSpinner.succeed(
                 `Restored ${restoredCount}/${allRestoreSessions.length} session(s)`,
@@ -1073,7 +1171,15 @@ async function runStartup(
           await clearLastStop();
         }
       }
-    } catch {
+    } catch (err) {
+      recordActivityEvent({
+        projectId,
+        source: "cli",
+        kind: "cli.last_stop_read_failed",
+        level: "warn",
+        summary: `failed to read or process last-stop state during startup`,
+        data: { errorMessage: err instanceof Error ? err.message : String(err) },
+      });
       // Non-fatal: don't block startup if last-stop handling fails
     }
   }
@@ -1122,35 +1228,9 @@ async function runStartup(
 
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
-    const pid = dashboardProcess.pid;
-
-    // On Unix the dashboard is spawned with detached:true (own process group)
-    // so Ctrl+C only reaches AO's process group, not the dashboard's. Forward
-    // SIGINT/SIGTERM so the dashboard group is also cleaned up on exit.
-    // On Windows, detached:false keeps child in the same console —
-    // Ctrl+C reaches both processes. No signal forwarding needed.
-    if (!isWindows() && pid) {
-      forwardSignalsToChild(pid, dashboardProcess);
-    }
-
-    // Also kill the dashboard child when the parent exits for any reason
-    // (normal exit path after lifecycle flush). The `exit` event is
-    // synchronous and fires regardless of platform, so it covers the cases
-    // where forwardSignalsToChild doesn't (Windows, or non-signal exits).
-    /* c8 ignore start -- exit handler only fires on process termination */
-    const killDashboardChild = (): void => {
-      try {
-        dashboardProcess?.kill("SIGTERM");
-      } catch {
-        // already dead
-      }
-    };
-    /* c8 ignore stop */
-    process.on("exit", killDashboardChild);
-
     dashboardProcess.on("exit", (code) => {
-      process.removeListener("exit", killDashboardChild);
       if (openAbort) openAbort.abort();
+      if (isShutdownInProgress()) return;
       if (code !== 0 && code !== null) {
         console.error(chalk.red(`Dashboard exited with code ${code}`));
       }
@@ -1217,6 +1297,60 @@ async function stopDashboard(port: number): Promise<void> {
   }
 
   console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
+}
+
+function formatSweepSummary(result: DaemonChildSweepResult): string {
+  return `${result.terminated} graceful, ${result.forceKilled} force-killed${
+    result.failed > 0 ? `, ${result.failed} failed` : ""
+  }`;
+}
+
+async function sweepRegisteredDaemonChildren(ownerPid?: number): Promise<void> {
+  const result = await sweepDaemonChildren({ ownerPid });
+  if (result.attempted > 0) {
+    console.log(
+      chalk.dim(
+        `  Swept ${result.attempted} registered daemon child(ren): ${formatSweepSummary(result)}`,
+      ),
+    );
+  }
+}
+
+function describeAoOrphans(orphans: AoOrphanProcess[]): string {
+  return orphans
+    .map((orphan) => `${orphan.pid} (${orphan.role})`)
+    .slice(0, 8)
+    .join(", ");
+}
+
+async function maybeSweepAoOrphansOnStart(reapOrphans: boolean | undefined): Promise<void> {
+  const orphans = await scanAoOrphans();
+  if (orphans.length === 0) return;
+
+  if (!reapOrphans && isHumanCaller()) {
+    console.log(
+      chalk.yellow(
+        `\n  Found ${orphans.length} orphaned AO child process(es): ${describeAoOrphans(orphans)}`,
+      ),
+    );
+    reapOrphans = await promptConfirm("Kill orphaned AO child processes before starting?", true);
+  }
+
+  if (!reapOrphans) {
+    console.log(
+      chalk.yellow(
+        `  Found ${orphans.length} orphaned AO child process(es). Run \`ao start --reap-orphans\` to clean them up.`,
+      ),
+    );
+    return;
+  }
+
+  const result = await reapAoOrphans(orphans);
+  console.log(
+    chalk.green(
+      `  Reaped ${result.attempted} orphaned AO child process(es): ${formatSweepSummary(result)}`,
+    ),
+  );
 }
 
 /**
@@ -1305,6 +1439,7 @@ export function registerStart(program: Command): void {
     .option("--rebuild", "Clean and rebuild dashboard before starting")
     .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
     .option("--interactive", "Prompt to configure config settings")
+    .option("--reap-orphans", "Kill orphaned AO child processes before starting")
     .action(
       async (
         projectArg?: string,
@@ -1314,8 +1449,24 @@ export function registerStart(program: Command): void {
           rebuild?: boolean;
           dev?: boolean;
           interactive?: boolean;
+          reapOrphans?: boolean;
         },
       ) => {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.start_invoked",
+          level: "info",
+          summary: "ao start invoked",
+          data: {
+            projectArg: projectArg ?? null,
+            dashboard: opts?.dashboard !== false,
+            orchestrator: opts?.orchestrator !== false,
+            rebuild: opts?.rebuild === true,
+            dev: opts?.dev === true,
+            interactive: opts?.interactive === true,
+          },
+        });
+
         let releaseStartupLock: (() => void) | undefined;
         let startupLockReleased = false;
         const unlockStartup = (): void => {
@@ -1326,6 +1477,7 @@ export function registerStart(program: Command): void {
 
         try {
           releaseStartupLock = await acquireStartupLock();
+          await maybeSweepAoOrphansOnStart(opts?.reapOrphans);
           let config: OrchestratorConfig;
           let projectId: string;
           let project: ProjectConfig;
@@ -1447,6 +1599,13 @@ export function registerStart(program: Command): void {
                 // Resolve happens below; the suffix mutation runs after.
                 startNewOrchestrator = true;
               } else if (choice === "restart") {
+                recordActivityEvent({
+                  source: "cli",
+                  kind: "cli.daemon_restart",
+                  level: "info",
+                  summary: `user chose restart, killing existing daemon`,
+                  data: { existingPid: running.pid, existingPort: running.port },
+                });
                 await killExistingDaemon(running);
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
                 running = null;
@@ -1603,10 +1762,20 @@ export function registerStart(program: Command): void {
           });
 
           // Ctrl+C and `ao stop` (which sends SIGTERM) perform a full
-          // graceful shutdown: kill sessions, record last-stop state for
-          // restore, unregister, then exit. See lib/shutdown.ts.
-          installShutdownHandlers({ configPath: config.configPath, projectId });
+          // graceful shutdown via the handler installed inside runStartup().
         } catch (err) {
+          if (!isCliFailureEventRecordedError(err)) {
+            recordActivityEvent({
+              source: "cli",
+              kind: "cli.start_failed",
+              level: "error",
+              summary: `ao start action failed`,
+              data: {
+                reason: "outer",
+                errorMessage: err instanceof Error ? err.message : String(err),
+              },
+            });
+          }
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);
           } else {
@@ -1678,6 +1847,17 @@ export function registerStop(program: Command): void {
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .option("--all", "Stop all running AO instances")
     .action(async (projectArg?: string, opts: { purgeSession?: boolean; all?: boolean } = {}) => {
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.stop_invoked",
+        level: "info",
+        summary: "ao stop invoked",
+        data: {
+          projectArg: projectArg ?? null,
+          all: opts.all === true,
+          purgeSession: opts.purgeSession === true,
+        },
+      });
       try {
         // Check running.json first
         const running = await getRunning();
@@ -1691,6 +1871,7 @@ export function registerStop(program: Command): void {
             // protocol so node-pty disposes ConPTY gracefully (avoids WER
             // 0x800700e8). No-op on non-Windows.
             await sweepWindowsPtyHostsBeforeParentKill();
+            await sweepRegisteredDaemonChildren(running.pid);
             // killProcessTree handles process trees on Windows (taskkill /T /F)
             // and process groups on Unix; it swallows "already dead" internally.
             await killProcessTree(running.pid, "SIGTERM");
@@ -1753,6 +1934,15 @@ export function registerStop(program: Command): void {
                   killedSessionIds.push(session.id);
                 }
               } catch (err) {
+                recordActivityEvent({
+                  projectId: session.projectId ?? _projectId,
+                  sessionId: session.id,
+                  source: "cli",
+                  kind: "cli.stop_session_failed",
+                  level: "warn",
+                  summary: `failed to kill session during ao stop`,
+                  data: { errorMessage: err instanceof Error ? err.message : String(err) },
+                });
                 warnings.push(
                   `  Warning: failed to stop ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
                 );
@@ -1797,12 +1987,48 @@ export function registerStop(program: Command): void {
               otherProjects.push({ projectId: pid, sessionIds: ids });
             }
 
-            await writeLastStop({
-              stoppedAt: new Date().toISOString(),
-              projectId: _projectId,
-              sessionIds: killedSessionIds.filter((id) => targetActive.some((s) => s.id === id)),
-              otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
-            });
+            const targetSessionIds = killedSessionIds.filter((id) =>
+              targetActive.some((s) => s.id === id),
+            );
+            try {
+              await writeLastStop({
+                stoppedAt: new Date().toISOString(),
+                projectId: _projectId,
+                sessionIds: targetSessionIds,
+                otherProjects: otherProjects.length > 0 ? otherProjects : undefined,
+              });
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.last_stop_written",
+                level: "info",
+                summary: `last-stop state written with ${killedSessionIds.length} session(s)`,
+                data: {
+                  targetSessionCount: targetSessionIds.length,
+                  otherProjectCount: otherProjects.length,
+                  totalKilled: killedSessionIds.length,
+                },
+              });
+            } catch (err) {
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.last_stop_write_failed",
+                level: "error",
+                summary: `failed to write last-stop state during ao stop`,
+                data: {
+                  targetSessionCount: targetSessionIds.length,
+                  otherProjectCount: otherProjects.length,
+                  totalKilled: killedSessionIds.length,
+                  errorMessage: err instanceof Error ? err.message : String(err),
+                },
+              });
+              console.log(
+                chalk.yellow(
+                  `  Could not write last-stop state: ${err instanceof Error ? err.message : String(err)}`,
+                ),
+              );
+            }
           }
         } catch (err) {
           console.log(
@@ -1828,8 +2054,33 @@ export function registerStop(program: Command): void {
             // protocol so node-pty disposes ConPTY gracefully (avoids WER
             // 0x800700e8). No-op on non-Windows.
             await sweepWindowsPtyHostsBeforeParentKill();
-            await killProcessTree(running.pid, "SIGTERM");
+            await sweepRegisteredDaemonChildren(running.pid);
+            try {
+              await killProcessTree(running.pid, "SIGTERM");
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.daemon_killed",
+                level: "info",
+                summary: `SIGTERM sent to parent ao start`,
+                data: { pid: running.pid, port: running.port },
+              });
+            } catch (err) {
+              recordActivityEvent({
+                projectId: _projectId,
+                source: "cli",
+                kind: "cli.daemon_killed",
+                level: "warn",
+                summary: `parent ao start was already dead`,
+                data: {
+                  pid: running.pid,
+                  errorMessage: err instanceof Error ? err.message : String(err),
+                },
+              });
+            }
             await unregister();
+          } else {
+            await sweepRegisteredDaemonChildren();
           }
           await stopDashboard(running?.port ?? port);
         }
@@ -1846,6 +2097,16 @@ export function registerStop(program: Command): void {
           console.log(chalk.dim(`  Projects: ${Object.keys(config.projects).join(", ")}\n`));
         }
       } catch (err) {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.stop_failed",
+          level: "error",
+          summary: `ao stop action failed`,
+          data: {
+            projectArg: projectArg ?? null,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
         if (err instanceof Error) {
           console.error(chalk.red("\nError:"), err.message);
         } else {

@@ -223,6 +223,132 @@ describe("SessionDetail desktop layout", () => {
       "/projects/my-app",
     );
     expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+    // The ended-session body also exposes a prominent "Restore session" button
+    // so users don't have to find the small icon in the header.
+    expect(
+      within(screen.getByRole("region", { name: "Session ended summary" })).getByRole("button", {
+        name: "Restore session",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Restore button in the ended-summary for pr_merged sessions (status=cleanup)", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-pr-merged",
+          projectId: "my-app",
+          status: "cleanup",
+          activity: "exited",
+          pr: makePR({ number: 1904, state: "merged" }),
+        })}
+      />,
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Session ended summary" })).getByRole("button", {
+        name: "Restore session",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps restored working sessions live when terminatedAt is stale", () => {
+    const base = makeSession({
+      id: "worker-restored-stale-terminal-marker",
+      projectId: "my-app",
+      status: "terminated",
+      activity: "active",
+      summary: "Restored worker is live",
+      pr: null,
+    });
+    const staleLifecycle = {
+      ...base.lifecycle!,
+      sessionState: "working" as const,
+      sessionReason: "task_in_progress" as const,
+      runtimeState: "alive" as const,
+      runtimeReason: "process_running" as const,
+      session: {
+        ...base.lifecycle!.session,
+        state: "working" as const,
+        reason: "task_in_progress" as const,
+        label: "working",
+        reasonLabel: "task in progress",
+        terminatedAt: "2026-05-13T19:13:20.146Z",
+      },
+      runtime: {
+        ...base.lifecycle!.runtime,
+        state: "alive" as const,
+        reason: "process_running" as const,
+        label: "alive",
+        reasonLabel: "process running",
+      },
+      legacyStatus: "terminated" as const,
+      summary: "Session working (task in progress)",
+    };
+
+    render(<SessionDetail session={{ ...base, lifecycle: staleLifecycle }} />);
+
+    expect(screen.queryByRole("region", { name: "Session ended summary" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Terminal ended")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: "Restore" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("direct-terminal")).toHaveTextContent(
+      "worker-restored-stale-terminal-marker",
+    );
+  });
+
+  it("does not open a blank terminal when activity exited but lifecycle still reports alive", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-review-ended",
+          projectId: "my-app",
+          status: "review_pending",
+          activity: "exited",
+          summary: "Worker exited after opening a PR",
+          pr: null,
+          lifecycle: {
+            sessionState: "idle",
+            sessionReason: "awaiting_external_review",
+            prState: "open",
+            prReason: "review_pending",
+            runtimeState: "alive",
+            runtimeReason: "process_running",
+            session: {
+              state: "idle",
+              reason: "awaiting_external_review",
+              label: "idle",
+              reasonLabel: "awaiting external review",
+            },
+            pr: {
+              state: "open",
+              reason: "review_pending",
+              label: "open",
+              reasonLabel: "review pending",
+            },
+            runtime: {
+              state: "alive",
+              reason: "process_running",
+              label: "alive",
+              reasonLabel: "process running",
+            },
+            legacyStatus: "review_pending",
+            evidence: null,
+            detectingAttempts: 0,
+            detectingEscalatedAt: null,
+            summary: "Waiting for external review",
+            guidance: null,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Session ended summary" })).toBeInTheDocument();
+    expect(screen.getByText("Terminal ended")).toBeInTheDocument();
+    expect(screen.queryByTestId("direct-terminal")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: "Restore" }),
+    ).toBeInTheDocument();
   });
 
   it("shows restore for restorable orchestrator sessions", () => {
@@ -258,6 +384,161 @@ describe("SessionDetail desktop layout", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders Relaunch (clean) on live orchestrator sessions and navigates to the new session", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: {
+        ...window.location,
+        set href(value: string) {
+          hrefSetter(value);
+        },
+      },
+      writable: true,
+    });
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/orchestrators") {
+        return {
+          ok: true,
+          json: async () => ({
+            orchestrator: { id: "my-app-orchestrator", projectId: "my-app" },
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}), text: async () => "" } as Response;
+    });
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          summary: "Project orchestrator",
+        })}
+        isOrchestrator
+        orchestratorZones={{
+          merge: 0,
+          respond: 0,
+          review: 0,
+          pending: 0,
+          working: 0,
+          done: 0,
+        }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    const relaunchBtn = within(screen.getByRole("banner")).getByRole("button", {
+      name: /launch orchestrator \(clean context\)/i,
+    });
+    fireEvent.click(relaunchBtn);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await act(async () => {});
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/orchestrators", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: "my-app", clean: true }),
+    });
+    expect(hrefSetter).toHaveBeenCalledWith("/projects/my-app/sessions/my-app-orchestrator");
+
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps Relaunch (clean) visible on terminated orchestrator sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          summary: "Project orchestrator",
+          pr: null,
+        })}
+        isOrchestrator
+        orchestratorZones={{ merge: 0, respond: 0, review: 0, pending: 0, working: 0, done: 0 }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: /launch orchestrator \(clean context\)/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces a relaunch error banner when POST fails after confirm", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/orchestrators") {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ error: "kill+respawn failed" }),
+          text: async () => "kill+respawn failed",
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}), text: async () => "" } as Response;
+    });
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "my-app-orchestrator",
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          summary: "Project orchestrator",
+        })}
+        isOrchestrator
+        orchestratorZones={{ merge: 0, respond: 0, review: 0, pending: 0, working: 0, done: 0 }}
+        projectOrchestratorId="my-app-orchestrator"
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: /launch orchestrator \(clean context\)/i,
+      }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/kill\+respawn failed/i);
+    expect(alert).toHaveTextContent(/previous orchestrator may already be terminated/i);
+
+    fireEvent.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it("does not render Relaunch (clean) on worker sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-1",
+          projectId: "my-app",
+          status: "working",
+        })}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /launch orchestrator \(clean context\)/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("restores without using router refresh on the client-only session page", async () => {
     render(
       <SessionDetail
@@ -282,7 +563,7 @@ describe("SessionDetail desktop layout", () => {
     expect(routerRefreshMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the desktop orchestrator button on orchestrator session pages", () => {
+  it("hides the desktop orchestrator button on orchestrator session pages", () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -304,8 +585,8 @@ describe("SessionDetail desktop layout", () => {
     );
 
     expect(
-      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
-    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
+      within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("orchestrator")).toBeInTheDocument();
   });
 
@@ -356,8 +637,8 @@ describe("SessionDetail desktop layout", () => {
     );
 
     expect(
-      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
-    ).toHaveAttribute("href", "/projects/my-app/sessions/my-app-orchestrator");
+      within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
+    ).not.toBeInTheDocument();
   });
 
   it("routes to the project orchestrator after killing a worker session", async () => {

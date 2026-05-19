@@ -1,5 +1,11 @@
 # @aoagents/ao
 
+## 0.8.0
+
+### Patch Changes
+
+- @aoagents/ao-cli@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
@@ -41,14 +47,14 @@
   - **Cron-driven nightly canary.** `.github/workflows/canary.yml` triggers via
     `schedule: '0 18 * * 5,6,0,1,2'` (23:30 IST Fri–Tue) plus `workflow_dispatch`.
     Bake window (Wed–Thu) pauses scheduled nightlies; the captain re-cuts via
-    workflow_dispatch when a fix lands. Stable `release.yml` publishes via
+    workflow*dispatch when a fix lands. Stable `release.yml` publishes via
     `changesets/action`. `.changeset/config.json` adds the snapshot template
     (`{tag}-{commit}`). `@aoagents/ao-web` stays in the linked group and ships
-    alongside `@aoagents/ao-cli` (it's a workspace:_ runtime dep, so marking it
+    alongside `@aoagents/ao-cli` (it's a workspace:* runtime dep, so marking it
     private would 404 every `npm install -g @aoagents/ao` after publish).
     `scripts/check-publishable-deps.mjs` runs in both release.yml and canary.yml
     before the publish step and fails CI if a publishable package depends on a
-    `private: true` package via workspace:_.
+    `private: true` package via workspace:\_.
   - **Update channels.** New `updateChannel` field in the global config schema
     (`stable | nightly | manual`, default `manual` so existing users see no
     surprise installs). `update-check.ts` reads `dist-tags[channel]` from the

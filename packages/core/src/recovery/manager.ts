@@ -1,4 +1,5 @@
 import type { OrchestratorConfig, PluginRegistry, Session } from "../types.js";
+import { recordActivityEvent } from "../activity-events.js";
 import { scanAllSessions, getRecoveryLogPath } from "./scanner.js";
 import { validateSession } from "./validator.js";
 import { executeAction } from "./actions.js";
@@ -106,9 +107,10 @@ export async function runRecovery(options: RecoveryManagerOptions): Promise<Reco
           break;
       }
     } else {
+      const errorMessage = recordRecoverySessionFailed(assessment, result);
       report.errors.push({
         sessionId: assessment.sessionId,
-        error: result.error || "Unknown error",
+        error: errorMessage,
       });
     }
 
@@ -131,6 +133,32 @@ export async function runRecovery(options: RecoveryManagerOptions): Promise<Reco
     results,
     recoveredSessions,
   };
+}
+
+function recordRecoverySessionFailed(
+  assessment: RecoveryAssessment,
+  result: RecoveryResult,
+): string {
+  const errorMessage = result.error || "Unknown error";
+  // Forensic event so RCA can answer: did `ao recover` actually fix
+  // anything? Which sessions did it skip? B22: one event per failed
+  // session, not per probe step.
+  recordActivityEvent({
+    projectId: assessment.projectId,
+    sessionId: assessment.sessionId,
+    source: "recovery",
+    kind: "recovery.session_failed",
+    level: "error",
+    summary: `Recovery failed for session ${assessment.sessionId}: ${errorMessage}`,
+    data: {
+      action: result.action,
+      classification: assessment.classification,
+      recoveryRule: assessment.recoveryRule,
+      metadataStatus: assessment.metadataStatus,
+      errorMessage,
+    },
+  });
+  return errorMessage;
 }
 
 function mapActionToLogAction(
@@ -182,6 +210,10 @@ export async function recoverSessionById(
 
   if (dryRun) {
     return result;
+  }
+
+  if (!result.success) {
+    recordRecoverySessionFailed(assessment, result);
   }
 
   const logAction = mapActionToLogAction(result.action, result.success);

@@ -11,8 +11,8 @@
  *   test that proves the lifecycle check completes successfully even if
  *   recordActivityEvent itself throws (B2 invariant).
  *
- * Notifier instrumentation is intentionally omitted — the notifier subsystem
- * is undergoing larger work and AE evidence there is not currently useful.
+ * Notification delivery instrumentation is covered in lifecycle-manager.test.ts
+ * because it needs real observability snapshots in addition to activity events.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type * as ActivityEventsModule from "../activity-events.js";

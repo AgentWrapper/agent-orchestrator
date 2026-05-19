@@ -253,7 +253,7 @@ Step 4 (the JSONL entry fallback) is mandatory. Skipping it means `getActivitySt
 |---|---|---|
 | `DEFAULT_ACTIVE_WINDOW_MS` | 30 seconds | Activity newer than this is `active`; older is `ready` |
 | `DEFAULT_READY_THRESHOLD_MS` | 5 minutes | `ready` sessions older than this become `idle` |
-| `ACTIVITY_INPUT_STALENESS_MS` | 5 minutes | `waiting_input` / `blocked` JSONL entries expire after this duration |
+| `ACTIVITY_INPUT_STALENESS_MS` | 5 minutes | Deprecated compatibility export. `waiting_input` / `blocked` entries no longer expire by wallclock; they persist until process death or a newer entry overrides them. |
 
 ---
 

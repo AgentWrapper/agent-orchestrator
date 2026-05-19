@@ -8,6 +8,8 @@ interface SessionEndedSummaryProps {
   headline: string;
   pr: DashboardPR | null;
   dashboardHref: string;
+  isRestorable: boolean;
+  onRestore: () => void;
 }
 
 function formatEndedTime(isoDate: string | null | undefined): string {
@@ -42,6 +44,8 @@ export function SessionEndedSummary({
   headline,
   pr,
   dashboardHref,
+  isRestorable,
+  onRestore,
 }: SessionEndedSummaryProps) {
   const reason = getEndedSessionReason(session);
   const summary = getEndedSessionSummary(session, headline);
@@ -107,12 +111,25 @@ export function SessionEndedSummary({
           </div>
 
           <div className="session-ended-summary__links">
+            {isRestorable ? (
+              <button
+                type="button"
+                onClick={onRestore}
+                className="session-ended-summary__primary"
+              >
+                Restore session
+              </button>
+            ) : null}
             {pr ? (
               <a
                 href={pr.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="session-ended-summary__primary"
+                className={
+                  isRestorable
+                    ? "session-ended-summary__secondary"
+                    : "session-ended-summary__primary"
+                }
               >
                 Open PR #{pr.number}
               </a>

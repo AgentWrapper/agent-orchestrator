@@ -479,9 +479,18 @@ describe("isProcessRunning", () => {
     expect(mockExecFileAsync).not.toHaveBeenCalled();
   });
 
-  it("returns false on tmux command failure", async () => {
+  it("returns indeterminate on tmux command failure", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -639,11 +648,17 @@ describe("getActivityState", () => {
   });
 
   it("returns exited when process is not running", async () => {
-    mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
+    mockTmuxWithProcess("codex", false);
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     const result = await agent.getActivityState(session);
     expect(result?.state).toBe("exited");
     expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns null when process probe is indeterminate", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    await expect(agent.getActivityState(session)).resolves.toBeNull();
   });
 
   it("returns null when process is running but no workspacePath", async () => {

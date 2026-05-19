@@ -168,6 +168,7 @@ describe("MuxProvider connection lifecycle", () => {
     });
     expect(subMsg).toBeDefined();
     expect((JSON.parse(subMsg!) as Record<string, unknown>).topics).toContain("sessions");
+    expect((JSON.parse(subMsg!) as Record<string, unknown>).topics).toContain("notifications");
   });
 
   it("transitions to reconnecting on close", async () => {
@@ -507,6 +508,80 @@ describe("MuxProvider message handling", () => {
 
     expect(result.current.sessions.length).toBe(1);
     expect(result.current.sessions[0].id).toBe("s1");
+  });
+
+  it("updates notifications on snapshot and append messages", async () => {
+    const { result, ws } = await setupConnected();
+
+    act(() =>
+      ws.simulateMessage({
+        ch: "notifications",
+        type: "snapshot",
+        limit: 2,
+        notifications: [
+          {
+            id: "n1",
+            receivedAt: "2026-05-13T10:00:00.000Z",
+            event: {
+              id: "evt-1",
+              type: "summary.all_complete",
+              priority: "info",
+              sessionId: "s1",
+              projectId: "demo",
+              timestamp: "2026-05-13T10:00:00.000Z",
+              message: "Done",
+              data: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.current.notifications.map((notification) => notification.id)).toEqual(["n1"]);
+    expect(result.current.notificationLimit).toBe(2);
+
+    act(() =>
+      ws.simulateMessage({
+        ch: "notifications",
+        type: "append",
+        limit: 2,
+        notifications: [
+          {
+            id: "n2",
+            receivedAt: "2026-05-13T10:01:00.000Z",
+            event: {
+              id: "evt-2",
+              type: "session.needs_input",
+              priority: "action",
+              sessionId: "s2",
+              projectId: "demo",
+              timestamp: "2026-05-13T10:01:00.000Z",
+              message: "Needs input",
+              data: {},
+            },
+          },
+          {
+            id: "n3",
+            receivedAt: "2026-05-13T10:02:00.000Z",
+            event: {
+              id: "evt-3",
+              type: "ci.failing",
+              priority: "action",
+              sessionId: "s3",
+              projectId: "demo",
+              timestamp: "2026-05-13T10:02:00.000Z",
+              message: "CI failed",
+              data: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.current.notifications.map((notification) => notification.id)).toEqual([
+      "n2",
+      "n3",
+    ]);
   });
 
   it("handles malformed JSON message without crashing", async () => {

@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   execGhObserved,
+  recordActivityEvent,
   type BatchObserver,
   type CICheck,
   type CIStatus,
@@ -56,10 +57,10 @@ export function setExecGhAsync(
  * Configuration constants for cache sizing.
  * LRU cache automatically evicts oldest entries when these limits are reached.
  */
-const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
-const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
-const MAX_REVIEW_COMMENTS_ETAGS = 500;  // Number of PRs to cache review ETags
-const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
+const MAX_PR_LIST_ETAGS = 100; // Number of repos to cache
+const MAX_COMMIT_STATUS_ETAGS = 500; // Number of commits to cache
+const MAX_REVIEW_COMMENTS_ETAGS = 500; // Number of PRs to cache review ETags
+const MAX_PR_METADATA = 200; // Number of PRs to cache full data
 
 /**
  * ETag cache for REST API endpoints.
@@ -125,11 +126,7 @@ export function getPRListETag(owner: string, repo: string): string | undefined {
 /**
  * Get commit status ETag for a specific commit.
  */
-export function getCommitStatusETag(
-  owner: string,
-  repo: string,
-  sha: string,
-): string | undefined {
+export function getCommitStatusETag(owner: string, repo: string, sha: string): string | undefined {
   return etagCache.commitStatus.get(`${owner}/${repo}#${sha}`);
 }
 
@@ -145,12 +142,7 @@ export function setPRListETag(owner: string, repo: string, etag: string): void {
  * Set commit status ETag for a specific commit.
  * Exported for testing.
  */
-export function setCommitStatusETag(
-  owner: string,
-  repo: string,
-  sha: string,
-  etag: string,
-): void {
+export function setCommitStatusETag(owner: string, repo: string, sha: string, etag: string): void {
   etagCache.commitStatus.set(`${owner}/${repo}#${sha}`, etag);
 }
 
@@ -161,10 +153,9 @@ export function setCommitStatusETag(
  *
  * Uses LRU eviction to ensure bounded memory usage.
  */
-const prMetadataCache = new LRUCache<
-  string,
-  { headSha: string | null; ciStatus: CIStatus }
->(MAX_PR_METADATA);
+const prMetadataCache = new LRUCache<string, { headSha: string | null; ciStatus: CIStatus }>(
+  MAX_PR_METADATA,
+);
 
 /**
  * Cache for full PR enrichment data.
@@ -241,7 +232,11 @@ export async function shouldRefreshPREnrichment(
   }
 
   if (repos.size === 0) {
-    return { shouldRefresh: false, details: ["No repos to check"], prListUnchangedRepos: new Set() };
+    return {
+      shouldRefresh: false,
+      details: ["No repos to check"],
+      prListUnchangedRepos: new Set(),
+    };
   }
 
   // Guard 1: Check PR list ETag for each repository
@@ -297,9 +292,7 @@ export async function shouldRefreshPREnrichment(
       );
       if (statusChanged) {
         shouldRefresh = true;
-        details.push(
-          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
-        );
+        details.push(`CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`);
       }
     }
   }
@@ -310,10 +303,7 @@ export async function shouldRefreshPREnrichment(
 /**
  * Get cached PR metadata for testing.
  */
-export function getPRMetadataCache(): Map<
-  string,
-  { headSha: string | null; ciStatus: CIStatus }
-> {
+export function getPRMetadataCache(): Map<string, { headSha: string | null; ciStatus: CIStatus }> {
   return prMetadataCache.toMap();
 }
 
@@ -350,6 +340,11 @@ interface ErrorWithCause extends Error {
   cause?: unknown;
 }
 
+// Module-level guard so we only emit gh_unavailable once per process.
+// The error is system-wide (gh missing globally), not session-specific.
+let ghUnavailableEmitted = false;
+const batchEnrichPRFailedEmitted = new Set<string>();
+
 /**
  * Pre-flight check to verify gh CLI is available and authenticated.
  * This prevents silent failures during GraphQL batch queries.
@@ -357,13 +352,37 @@ interface ErrorWithCause extends Error {
 async function verifyGhCLI(): Promise<void> {
   try {
     await execFileAsync("gh", ["--version"], { timeout: 5000 });
-  } catch {
+  } catch (err) {
+    if (!ghUnavailableEmitted) {
+      ghUnavailableEmitted = true;
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      recordActivityEvent({
+        source: "scm",
+        kind: "scm.gh_unavailable",
+        level: "error",
+        summary: "gh CLI not available or not authenticated",
+        data: {
+          plugin: "scm-github",
+          errorMessage,
+        },
+      });
+    }
     const error = new Error(
       "gh CLI not available or not authenticated. GraphQL batch enrichment requires gh CLI to be installed and configured.",
     ) as ErrorWithCause;
     error.cause = "GH_CLI_UNAVAILABLE";
     throw error;
   }
+}
+
+/** Test-only: reset the once-per-process gh_unavailable guard. */
+export function _resetGhUnavailableEmittedForTesting(): void {
+  ghUnavailableEmitted = false;
+}
+
+/** Test-only: reset the once-per-PR batch extraction failure guard. */
+export function _resetBatchEnrichPRFailedEmittedForTesting(): void {
+  batchEnrichPRFailedEmitted.clear();
 }
 
 /**
@@ -533,7 +552,10 @@ async function checkCommitStatusETag(
     if (is304(errorMsg)) {
       return false;
     }
-    observer?.log("warn", `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`);
+    observer?.log(
+      "warn",
+      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
+    );
     return true; // Assume changed to be safe
   }
 }
@@ -596,7 +618,10 @@ export async function checkReviewCommentsETag(
     if (is304(errorMsg)) {
       return false;
     }
-    observer?.log("warn", `[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`);
+    observer?.log(
+      "warn",
+      `[ETag Guard 3] Review comments check failed for ${cacheKey}: ${errorMsg}`,
+    );
     return true; // Assume changed to be safe
   }
 }
@@ -704,9 +729,7 @@ export function generateBatchQuery(prs: PRInfo[]): {
  *
  * @throws Error if the query fails with GraphQL errors or parsing issues.
  */
-async function executeBatchQuery(
-  prs: PRInfo[],
-): Promise<Record<string, unknown>> {
+async function executeBatchQuery(prs: PRInfo[]): Promise<Record<string, unknown>> {
   const { query, variables } = generateBatchQuery(prs);
 
   // Handle empty array - no query needed
@@ -866,9 +889,7 @@ function parseCheckContexts(contexts: unknown): CICheck[] {
  * Uses only the top-level aggregate state to determine overall CI status.
  * Individual check details are parsed separately via parseCheckContexts().
  */
-function parseCIState(
-  statusCheckRollup: unknown,
-): CIStatus {
+function parseCIState(statusCheckRollup: unknown): CIStatus {
   if (!statusCheckRollup || typeof statusCheckRollup !== "object") {
     return "none";
   }
@@ -885,8 +906,7 @@ function parseCIState(
   if (state === "PENDING" || state === "EXPECTED") return "pending";
   if (state === "TIMED_OUT" || state === "CANCELLED" || state === "ACTION_REQUIRED")
     return "failing";
-  if (state === "QUEUED" || state === "IN_PROGRESS" || state === "WAITING")
-    return "pending";
+  if (state === "QUEUED" || state === "IN_PROGRESS" || state === "WAITING") return "pending";
 
   return "none";
 }
@@ -927,11 +947,7 @@ function extractPREnrichment(
   const pr = pullRequest as Record<string, unknown>;
 
   // Check for at least one required field to validate this is a valid PR object
-  if (
-    pr["state"] === undefined &&
-    pr["title"] === undefined &&
-    pr["commits"] === undefined
-  ) {
+  if (pr["state"] === undefined && pr["title"] === undefined && pr["commits"] === undefined) {
     return null;
   }
 
@@ -954,9 +970,7 @@ function extractPREnrichment(
   // Extract merge info
   const mergeable = pr["mergeable"];
   const mergeStateStatus =
-    typeof pr["mergeStateStatus"] === "string"
-      ? pr["mergeStateStatus"].toUpperCase()
-      : "";
+    typeof pr["mergeStateStatus"] === "string" ? pr["mergeStateStatus"].toUpperCase() : "";
   const hasConflicts = mergeable === "CONFLICTING";
   const isBehind = mergeStateStatus === "BEHIND";
 
@@ -974,9 +988,7 @@ function extractPREnrichment(
   // contexts(first: 20) silently truncates PRs with >20 checks — when truncated,
   // the failing check may be missing, so we set ciChecks to undefined to force
   // the getCIChecks() REST fallback in maybeDispatchCIFailureDetails.
-  const contextsField = statusCheckRollup?.["contexts"] as
-    | Record<string, unknown>
-    | undefined;
+  const contextsField = statusCheckRollup?.["contexts"] as Record<string, unknown> | undefined;
   const pageInfo = contextsField?.["pageInfo"];
   const contextsHasNextPage =
     pageInfo !== null &&
@@ -984,15 +996,12 @@ function extractPREnrichment(
     typeof pageInfo === "object" &&
     (pageInfo as Record<string, unknown>)["hasNextPage"] === true;
   const ciChecks =
-    contextsField && !contextsHasNextPage
-      ? parseCheckContexts(contextsField)
-      : undefined;
+    contextsField && !contextsHasNextPage ? parseCheckContexts(contextsField) : undefined;
 
   // Build blockers list
   const blockers: string[] = [];
   if (ciStatus === "failing") blockers.push("CI is failing");
-  if (reviewDecision === "changes_requested")
-    blockers.push("Changes requested in review");
+  if (reviewDecision === "changes_requested") blockers.push("Changes requested in review");
   if (reviewDecision === "pending") blockers.push("Review required");
   if (hasConflicts) blockers.push("Merge conflicts");
   if (isBehind) blockers.push("Branch is behind base branch");
@@ -1126,6 +1135,25 @@ export async function enrichSessionsPRBatch(
             result.set(prKey, enrichment);
             // Update PR metadata cache for future ETag checks
             updatePRMetadataCache(prKey, enrichment, headSha);
+          } else {
+            // GraphQL returned a PR object but extractPREnrichment couldn't
+            // parse it (missing fields, schema drift). Distinct from the
+            // whole-batch failure D02 catches further down.
+            if (!batchEnrichPRFailedEmitted.has(prKey)) {
+              batchEnrichPRFailedEmitted.add(prKey);
+              recordActivityEvent({
+                source: "scm",
+                kind: "scm.batch_enrich_pr_failed",
+                level: "warn",
+                summary: `batch enrich extraction failed for PR #${pr.number}`,
+                data: {
+                  plugin: "scm-github",
+                  prNumber: pr.number,
+                  prOwner: pr.owner,
+                  prRepo: pr.repo,
+                },
+              });
+            }
           }
         } else {
           // PR not found (deleted/closed/permission issue)
@@ -1147,7 +1175,10 @@ export async function enrichSessionsPRBatch(
           durationMs: batchDuration,
         };
         observer?.recordSuccess(successData);
-        observer?.log("info", `[GraphQL Batch Success] Batch ${batchIndex + 1}/${batches.length} succeeded: added ${prCountAfter - prCountBefore} PRs to cache (${batchDuration}ms)`);
+        observer?.log(
+          "info",
+          `[GraphQL Batch Success] Batch ${batchIndex + 1}/${batches.length} succeeded: added ${prCountAfter - prCountBefore} PRs to cache (${batchDuration}ms)`,
+        );
       }
     } catch (err) {
       // Calculate duration even on failure

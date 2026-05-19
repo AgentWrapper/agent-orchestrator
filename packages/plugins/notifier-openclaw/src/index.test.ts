@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { NotifyAction, OrchestratorEvent } from "@aoagents/ao-core";
+import {
+  buildCIFailureNotificationData,
+  buildSessionTransitionNotificationData,
+  type NotificationEventContext,
+  type NotifyAction,
+  type OrchestratorEvent,
+} from "@aoagents/ao-core";
 import { create, manifest } from "./index.js";
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
@@ -18,6 +24,23 @@ function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEven
     ...overrides,
   };
 }
+
+const prContext: NotificationEventContext = {
+  pr: {
+    number: 1579,
+    url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1579",
+    title: "Normalize AO notifier payloads",
+    branch: "ao/demo-notifier-harness",
+    baseBranch: "main",
+    owner: "ComposioHQ",
+    repo: "agent-orchestrator",
+    isDraft: false,
+  },
+  issueId: "AO-1579",
+  issueTitle: "Make AO notification payloads API-grade",
+  summary: "Normalize AO notifier payloads",
+  branch: "ao/demo-notifier-harness",
+};
 
 describe("notifier-openclaw", () => {
   let tempConfigDir: string;
@@ -57,23 +80,38 @@ describe("notifier-openclaw", () => {
 
   it("uses token from OPENCLAW_HOOKS_TOKEN env", async () => {
     process.env.OPENCLAW_HOOKS_TOKEN = "env-token";
+    const missingOpenClawConfigPath = join(tempConfigDir, "missing-openclaw.json");
 
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
 
-    const notifier = create();
+    const notifier = create({ openclawConfigPath: missingOpenClawConfigPath });
     await notifier.notify(makeEvent());
 
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["Authorization"]).toBe("Bearer env-token");
   });
 
+  it("uses hooks token from configured OpenClaw config path", async () => {
+    const openclawConfigPath = join(tempConfigDir, "openclaw.json");
+    writeFileSync(openclawConfigPath, JSON.stringify({ hooks: { token: "config-token" } }));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ openclawConfigPath });
+    await notifier.notify(makeEvent());
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer config-token");
+  });
+
   it("warns and sends without Authorization when token missing", async () => {
+    const missingOpenClawConfigPath = join(tempConfigDir, "missing-openclaw.json");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
 
-    const notifier = create();
+    const notifier = create({ openclawConfigPath: missingOpenClawConfigPath });
     await notifier.notify(makeEvent());
 
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
@@ -103,16 +141,123 @@ describe("notifier-openclaw", () => {
     expect(body.sessionKey).toBe("hook:ao:ao-12-x");
   });
 
-  it("notifyWithActions appends action labels", async () => {
+  it("notifyWithActions appends action links", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ token: "tok" });
-    const actions: NotifyAction[] = [{ label: "retry" }, { label: "kill" }];
+    const actions: NotifyAction[] = [
+      { label: "Open dashboard", url: "http://localhost:3000" },
+      { label: "Acknowledge", callbackEndpoint: "http://localhost:3000/api/ack" },
+    ];
     await notifier.notifyWithActions!(makeEvent(), actions);
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.message).toContain("Actions available: retry, kill");
+    expect(body.message).toContain("**Actions**");
+    expect(body.message).toContain("- [Open dashboard](http://localhost:3000)");
+    expect(body.message).toContain("- [Acknowledge](http://localhost:3000/api/ack)");
+  });
+
+  it("escapes markdown-sensitive labels and URLs in links", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok" });
+    const actions: NotifyAction[] = [
+      {
+        label: "Open [prod] (now) *please*",
+        url: "https://github.com/org/repo/pull/1?a=(test)",
+      },
+    ];
+    await notifier.notifyWithActions!(makeEvent(), actions);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.message).toContain(
+      "- [Open \\[prod\\] \\(now\\) \\*please\\*](https://github.com/org/repo/pull/1?a=%28test%29)",
+    );
+  });
+
+  it("formats v3 CI notifications as a compact OpenClaw brief", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok" });
+    await notifier.notify(
+      makeEvent({
+        type: "ci.failing",
+        priority: "action",
+        sessionId: "demo-agent-19",
+        projectId: "demo",
+        message: "CI is failing on PR #1579",
+        data: buildCIFailureNotificationData({
+          sessionId: "demo-agent-19",
+          projectId: "demo",
+          context: prContext,
+          failedChecks: [
+            {
+              name: "typecheck",
+              status: "failed",
+              conclusion: "FAILURE",
+              url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1579/checks",
+            },
+          ],
+        }),
+      }),
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.message).toContain("**AO ACTION** `ci.failing`");
+    expect(body.message).toContain("**Pull Request**");
+    expect(body.message).toContain(
+      "[#1579 - Normalize AO notifier payloads](https://github.com/ComposioHQ/agent-orchestrator/pull/1579)",
+    );
+    expect(body.message).toContain("**Checks**");
+    expect(body.message).toContain(
+      "- [typecheck](https://github.com/ComposioHQ/agent-orchestrator/pull/1579/checks): `failed/FAILURE`",
+    );
+    expect(body.message).not.toContain("Context: {");
+  });
+
+  it("formats v3 merge notifications with status and links", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok" });
+    await notifier.notify(
+      makeEvent({
+        type: "merge.ready",
+        priority: "action",
+        sessionId: "demo-agent-29",
+        projectId: "demo",
+        message: "PR #1579 is ready to merge",
+        data: buildSessionTransitionNotificationData({
+          eventType: "merge.ready",
+          sessionId: "demo-agent-29",
+          projectId: "demo",
+          context: prContext,
+          oldStatus: "approved",
+          newStatus: "mergeable",
+          enrichment: {
+            state: "open",
+            ciStatus: "passing",
+            reviewDecision: "approved",
+            mergeable: true,
+            title: "Normalize AO notifier payloads",
+            hasConflicts: false,
+            isBehind: false,
+          },
+        }),
+      }),
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.message).toContain("- Transition: `approved` -> `mergeable`");
+    expect(body.message).toContain("- CI: `passing`");
+    expect(body.message).toContain("- Review: `approved`");
+    expect(body.message).toContain("- Merge ready: yes");
+    expect(body.message).toContain(
+      "- [Pull request](https://github.com/ComposioHQ/agent-orchestrator/pull/1579)",
+    );
   });
 
   it("post uses context sessionId when provided", async () => {
@@ -190,9 +335,7 @@ describe("notifier-openclaw", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ token: "tok", retries: 0 });
-    await expect(notifier.notify(makeEvent())).rejects.toThrow(
-      "Can't reach OpenClaw gateway",
-    );
+    await expect(notifier.notify(makeEvent())).rejects.toThrow("Can't reach OpenClaw gateway");
   });
 
   it("records success telemetry when a notification is sent", async () => {

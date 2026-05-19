@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
-import { SessionNotFoundError } from "@aoagents/ao-core";
+import { SessionNotFoundError, recordActivityEvent } from "@aoagents/ao-core";
 import {
   getCorrelationId,
   jsonWithCorrelation,
@@ -34,6 +34,13 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       projectId,
       sessionId: id,
     });
+    recordActivityEvent({
+      projectId,
+      sessionId: id,
+      source: "api",
+      kind: "api.session_kill_requested",
+      summary: `session kill requested: ${id}`,
+    });
     return jsonWithCorrelation({ ok: true, sessionId: id }, { status: 200 }, correlationId);
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
@@ -56,6 +63,15 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       });
     }
     const msg = err instanceof Error ? err.message : "Failed to kill session";
+    recordActivityEvent({
+      projectId,
+      sessionId: id,
+      source: "api",
+      kind: "api.session_kill_failed",
+      level: "error",
+      summary: `session kill failed: ${msg}`,
+      data: { reason: msg },
+    });
     return jsonWithCorrelation({ error: msg }, { status: 500 }, correlationId);
   }
 }

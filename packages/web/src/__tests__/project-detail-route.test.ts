@@ -458,6 +458,37 @@ describe("/api/projects/[id]", () => {
     expect(readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8")).toContain("agent: codex");
   });
 
+  it("POST repair preserves wrapped defaults so the project can start with its intended agent", async () => {
+    const repoDir = path.join(tempRoot, "broken-defaults");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(
+      path.join(repoDir, "agent-orchestrator.yaml"),
+      [
+        "defaults:",
+        "  agent: codex",
+        "  runtime: tmux",
+        "  workspace: worktree",
+        "projects:",
+        "  broken-defaults:",
+        `    path: ${repoDir}`,
+        "    name: Broken Defaults",
+        "",
+      ].join("\n"),
+    );
+    const effectiveId = registerProjectInGlobalConfig("broken-defaults", "Broken Defaults", repoDir);
+
+    const { POST } = await import("@/app/api/projects/[id]/route");
+    const response = await POST(makeRequest("POST", undefined, effectiveId), {
+      params: Promise.resolve({ id: effectiveId }),
+    });
+
+    expect(response.status).toBe(200);
+    const localYaml = readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8");
+    expect(localYaml).toContain("agent: codex");
+    expect(localYaml).toContain("runtime: tmux");
+    expect(localYaml).toContain("workspace: worktree");
+  });
+
   it("POST repairs wrapped local .yml configs in place", async () => {
     const repoDir = path.join(tempRoot, "broken-yml");
     mkdirSync(repoDir, { recursive: true });
