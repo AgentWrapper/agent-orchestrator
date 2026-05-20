@@ -29,7 +29,7 @@ observability:
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | cursor | kimicode | opencode
+  agent: claude-code          # claude-code | aider | codex | cursor | droid | kimicode | opencode
   workspace: worktree         # worktree | clone
   notifiers:
     - desktop                 # desktop | discord | slack | webhook | composio | openclaw
@@ -182,7 +182,7 @@ notificationRouting:
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, cursor, kimicode, opencode
+# Agent:     claude-code, aider, codex, cursor, droid, kimicode, opencode
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab
