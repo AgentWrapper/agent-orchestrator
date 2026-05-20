@@ -1121,8 +1121,20 @@ describe("spawn", () => {
       }) as typeof setTimeout,
     );
     try {
-      mockAgent.promptDelivery = "post-launch";
-      const sm = createSessionManager({ config, registry: mockRegistry });
+      const postLaunchAgent: typeof mockAgent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunch: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostLaunch });
 
       const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
@@ -1150,11 +1162,23 @@ describe("spawn", () => {
       }) as typeof setTimeout,
     );
     try {
-      mockAgent.promptDelivery = "post-launch";
+      const postLaunchAgent: typeof mockAgent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunch: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
       vi.mocked(mockRuntime.sendMessage)
         .mockRejectedValueOnce(new Error("not ready"))
         .mockResolvedValueOnce(undefined);
-      const sm = createSessionManager({ config, registry: mockRegistry });
+      const sm = createSessionManager({ config, registry: registryWithPostLaunch });
 
       const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
