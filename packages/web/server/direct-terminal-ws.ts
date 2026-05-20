@@ -105,19 +105,13 @@ if (isMainModule) {
   // On Windows, findTmux() returns null — mux-websocket.ts handles this by
   // using named pipe relay to PTY hosts instead of tmux attach.
   const TMUX = findTmux();
-  if (TMUX) {
-    console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
-  } else if (process.platform === "win32") {
-    console.log(`[DirectTerminal] Windows mode — using named pipe relay to PTY hosts`);
-  } else {
-    console.log(`[DirectTerminal] No tmux available — terminal relay may be limited`);
+  if (!TMUX && process.platform !== "win32") {
+    console.warn(`[DirectTerminal] No tmux available — terminal relay may be limited`);
   }
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
 
-  server.listen(PORT, () => {
-    console.log(`[DirectTerminal] WebSocket server listening on port ${PORT}`);
-  });
+  server.listen(PORT);
 
   function handleShutdown(signal: string) {
     console.log(`[DirectTerminal] Received ${signal}, shutting down...`);

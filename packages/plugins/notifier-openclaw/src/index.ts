@@ -455,14 +455,6 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   validateUrl(url, "notifier-openclaw");
 
-  if (!token) {
-    console.warn(
-      "[notifier-openclaw] No token configured.\n" +
-        "  Add hooks.token to your OpenClaw config, or set notifiers.openclaw.openclawConfigPath.\n" +
-        "  Run: ao setup openclaw",
-    );
-  }
-
   async function sendPayload(payload: OpenClawWebhookPayload): Promise<void> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

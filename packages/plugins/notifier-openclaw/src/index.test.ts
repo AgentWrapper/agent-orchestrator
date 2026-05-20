@@ -105,7 +105,7 @@ describe("notifier-openclaw", () => {
     expect(headers["Authorization"]).toBe("Bearer config-token");
   });
 
-  it("warns and sends without Authorization when token missing", async () => {
+  it("sends without Authorization (silently) when token missing", async () => {
     const missingOpenClawConfigPath = join(tempConfigDir, "missing-openclaw.json");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
@@ -116,7 +116,7 @@ describe("notifier-openclaw", () => {
 
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers["Authorization"]).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No token configured"));
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("builds per-session OpenClaw session key", async () => {

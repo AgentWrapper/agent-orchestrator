@@ -107,9 +107,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   }
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
-  if (!url) {
-    console.warn("[notifier-webhook] No url configured — notifications will be no-ops");
-  } else {
+  if (url) {
     validateUrl(url, "notifier-webhook");
   }
 

@@ -841,7 +841,6 @@ async function startDashboard(
     // Production: use pre-built start-all script.
     if (isMonorepo) {
       console.log(chalk.dim("  Mode: optimized (production bundles)"));
-      console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
     }
     const startScript = resolve(webDir, "dist-server", "start-all.js");
     child = spawnManagedDaemonChild("dashboard", "node", [startScript], {
@@ -937,8 +936,6 @@ async function runStartup(
       config.directTerminalPort,
       opts?.dev,
     );
-    spinner.succeed(`Dashboard starting on ${dashboardUrl(port)}`);
-    console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
   }
 
   let selectedOrchestratorId: string | null = null;

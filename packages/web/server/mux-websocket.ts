@@ -1351,6 +1351,5 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
     });
   });
 
-  console.log("[MuxServer] Mux WebSocket server created (noServer mode)");
   return wss;
 }

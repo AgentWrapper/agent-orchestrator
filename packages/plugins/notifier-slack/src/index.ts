@@ -357,9 +357,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const defaultChannel = config?.channel as string | undefined;
   const username = (config?.username as string) ?? "Agent Orchestrator";
 
-  if (!webhookUrl) {
-    console.warn("[notifier-slack] No webhookUrl configured — notifications will be no-ops");
-  } else {
+  if (webhookUrl) {
     validateUrl(webhookUrl, "notifier-slack");
   }
 

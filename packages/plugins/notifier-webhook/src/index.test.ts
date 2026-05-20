@@ -39,10 +39,10 @@ describe("notifier-webhook", () => {
       expect(notifier.name).toBe("webhook");
     });
 
-    it("warns when no url configured", () => {
+    it("is silent when no url configured (no-op notifier)", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       create();
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No url configured"));
+      expect(warnSpy).not.toHaveBeenCalled();
     });
 
     it("throws on invalid URL scheme", () => {
