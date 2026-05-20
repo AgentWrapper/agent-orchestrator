@@ -22,6 +22,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import which from "which";
@@ -105,20 +106,19 @@ async function fetchCrushSessionInfo(sessionId: string): Promise<CrushSessionSho
   }
 }
 
-function buildCrushPromptInputCommand(config: AgentLaunchConfig): string | null {
+function buildCrushPrompt(config: AgentLaunchConfig): string | null {
   const taskPrompt = typeof config.prompt === "string" ? config.prompt : "";
   if (taskPrompt.length === 0) return null;
 
-  const escapedTaskPrompt = shellEscape(taskPrompt);
   if (config.systemPromptFile) {
-    return `{ cat ${shellEscape(config.systemPromptFile)}; printf '\n\n'; printf '%s\n' ${escapedTaskPrompt}; }`;
+    return `${readFileSync(config.systemPromptFile, "utf-8")}\n\n${taskPrompt}`;
   }
 
   if (config.systemPrompt) {
-    return `{ printf '%s\n' ${shellEscape(config.systemPrompt)}; printf '\n'; printf '%s\n' ${escapedTaskPrompt}; }`;
+    return `${config.systemPrompt}\n\n${taskPrompt}`;
   }
 
-  return `printf '%s\n' ${escapedTaskPrompt}`;
+  return taskPrompt;
 }
 
 function classifyCrushTerminalOutput(terminalOutput: string): ActivityState {
@@ -154,13 +154,13 @@ function createCrushAgent(): Agent {
       const sessionId = asCrushSessionId(
         (config.projectConfig.agentConfig as CrushAgentConfig | undefined)?.crushSessionId,
       );
-      const promptInputCommand = buildCrushPromptInputCommand(config);
-      if (promptInputCommand) {
+      const prompt = buildCrushPrompt(config);
+      if (prompt) {
         const sessionFlag = sessionId ? ` --session ${shellEscape(sessionId)}` : "";
         const continueCommand = sessionId
           ? `crush --session ${shellEscape(sessionId)}`
           : "crush --continue";
-        return `${promptInputCommand} | crush run --quiet${sessionFlag} && ${continueCommand}`;
+        return `crush run --quiet${sessionFlag} ${shellEscape(prompt)}; ${continueCommand}`;
       }
       if (!sessionId) {
         return "crush";

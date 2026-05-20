@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@aoagents/ao-core";
 import { createRequire } from "node:module";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as {
@@ -196,15 +199,26 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe(`crush --session '${CRUSH_SESSION_ID}'`);
   });
 
-  it("delivers prompt via crush run stdin before continuing the session", () => {
+  it("passes the combined prompt to crush run before continuing the session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-crush-test-"));
+    const promptFile = join(dir, "worker-prompt.md");
+    writeFileSync(promptFile, "System prompt", "utf-8");
+
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         prompt: "Do work",
-        systemPromptFile: "/tmp/worker-prompt.md",
+        systemPromptFile: promptFile,
       }),
     );
+
+    rmSync(dir, { recursive: true, force: true });
+
+    expect(cmd).not.toContain("|");
+    expect(cmd).not.toContain("&&");
+    expect(cmd).not.toContain("cat ");
+    expect(cmd).not.toContain("printf");
     expect(cmd).toBe(
-      "{ cat '/tmp/worker-prompt.md'; printf '\n\n'; printf '%s\n' 'Do work'; } | crush run --quiet && crush --continue",
+      "crush run --quiet 'System prompt\n\nDo work'; crush --continue",
     );
   });
 
@@ -219,7 +233,7 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toBe(
-      `printf '%s\n' 'Don'\\''t split this' | crush run --quiet --session '${CRUSH_SESSION_ID}' && crush --session '${CRUSH_SESSION_ID}'`,
+      `crush run --quiet --session '${CRUSH_SESSION_ID}' 'Don'\\''t split this'; crush --session '${CRUSH_SESSION_ID}'`,
     );
   });
 });
