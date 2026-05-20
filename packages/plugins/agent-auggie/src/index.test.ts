@@ -354,6 +354,19 @@ describe("recordActivity", () => {
     expect(classify?.("? Do you want to continue? y/N:")).toBe("waiting_input");
   });
 
+  it("classifies authentication prompts as waiting_input", async () => {
+    await agent.recordActivity?.(
+      makeSession(),
+      "→ Login to continue\n\nPress return to open your browser",
+    );
+    const classify = mockRecordTerminalActivity.mock.calls[0]?.[2] as
+      | ((output: string) => string)
+      | undefined;
+    expect(classify?.("→ Login to continue\n\nPress return to open your browser")).toBe(
+      "waiting_input",
+    );
+  });
+
   it("classifies blocked terminal output when recording activity", async () => {
     await agent.recordActivity?.(makeSession(), "Authentication failed");
     const classify = mockRecordTerminalActivity.mock.calls[0]?.[2] as

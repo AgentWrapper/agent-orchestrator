@@ -45,6 +45,8 @@ const ANSI_ESCAPE_RE = new RegExp(
 const AUGGIE_CONFIRM_PROMPT_RE =
   /(?:\?|>)?\s*(?:do you want to|would you like to|allow|approve|confirm|continue|proceed).*(?:\?|\b[yY]\/\b[nN]|\b[nN]\/\b[yY]|\[\s*[yYnN][^\]]*\])\s*:?$/i;
 const AUGGIE_INPUT_PROMPT_RE = /^(?:>|@[^\s]+:\S+\$)\s*$/;
+const AUGGIE_AUTH_PROMPT_RE =
+  /(?:login to continue|press return to open your browser|authenticate with augment)/i;
 
 interface AuggieAgentConfig extends AgentSpecificConfig {
   auggieSessionId?: string;
@@ -91,6 +93,7 @@ function classifyAuggieTerminalOutput(terminalOutput: string): ActivityState {
   const lastNonEmptyLine = [...lines].reverse().find(Boolean) ?? "";
 
   if (AUGGIE_INPUT_PROMPT_RE.test(lastLine)) return "idle";
+  if (AUGGIE_AUTH_PROMPT_RE.test(normalizedOutput)) return "waiting_input";
   if (AUGGIE_CONFIRM_PROMPT_RE.test(lastNonEmptyLine)) return "waiting_input";
   if (/error|failed|exception/i.test(lastLine)) return "blocked";
 
