@@ -148,12 +148,12 @@ describe("manifest", () => {
 });
 
 describe("create", () => {
-  it("uses crush as process name and post-launch prompt mode", () => {
+  it("uses crush as process name and inline prompt mode", () => {
     const agent = create();
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe(pluginName);
-    expect(agent.promptDelivery).toBe("post-launch");
-    expect(agent.promptDeliveryDelayMs).toBe(0);
+    expect(agent.promptDelivery).toBe("inline");
+    expect(agent.promptDeliveryDelayMs).toBeUndefined();
   });
 
   it("exports plugin module shape", () => {
@@ -196,17 +196,31 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe(`crush --session '${CRUSH_SESSION_ID}'`);
   });
 
-  it("does not include prompt flags in launch command", () => {
+  it("delivers prompt via crush run stdin before continuing the session", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         prompt: "Do work",
-        systemPrompt: "You are helpful",
-        systemPromptFile: "/tmp/prompt.md",
+        systemPromptFile: "/tmp/worker-prompt.md",
       }),
     );
-    expect(cmd).toBe("crush");
-    expect(cmd).not.toContain("-p");
-    expect(cmd).not.toContain("--prompt");
+    expect(cmd).toBe(
+      "{ cat '/tmp/worker-prompt.md'; printf '\n\n'; printf '%s\n' 'Do work'; } | crush run --quiet && crush --continue",
+    );
+  });
+
+  it("delivers prompt to a configured crush session before restoring it", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({
+        prompt: "Don'" + "t split this",
+        projectConfig: {
+          ...makeLaunchConfig().projectConfig,
+          agentConfig: { crushSessionId: CRUSH_SESSION_ID },
+        },
+      }),
+    );
+    expect(cmd).toBe(
+      `printf '%s\n' 'Don'\\''t split this' | crush run --quiet --session '${CRUSH_SESSION_ID}' && crush --session '${CRUSH_SESSION_ID}'`,
+    );
   });
 });
 

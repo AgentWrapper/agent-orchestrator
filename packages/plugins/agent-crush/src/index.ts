@@ -105,6 +105,22 @@ async function fetchCrushSessionInfo(sessionId: string): Promise<CrushSessionSho
   }
 }
 
+function buildCrushPromptInputCommand(config: AgentLaunchConfig): string | null {
+  const taskPrompt = typeof config.prompt === "string" ? config.prompt : "";
+  if (taskPrompt.length === 0) return null;
+
+  const escapedTaskPrompt = shellEscape(taskPrompt);
+  if (config.systemPromptFile) {
+    return `{ cat ${shellEscape(config.systemPromptFile)}; printf '\n\n'; printf '%s\n' ${escapedTaskPrompt}; }`;
+  }
+
+  if (config.systemPrompt) {
+    return `{ printf '%s\n' ${shellEscape(config.systemPrompt)}; printf '\n'; printf '%s\n' ${escapedTaskPrompt}; }`;
+  }
+
+  return `printf '%s\n' ${escapedTaskPrompt}`;
+}
+
 function classifyCrushTerminalOutput(terminalOutput: string): ActivityState {
   const normalizedOutput = terminalOutput.replaceAll(ANSI_ESCAPE_RE, "").trim();
   if (!normalizedOutput) return "idle";
@@ -132,13 +148,20 @@ function createCrushAgent(): Agent {
   return {
     name: pluginName,
     processName: pluginName,
-    promptDelivery: "post-launch",
-    promptDeliveryDelayMs: 0,
+    promptDelivery: "inline",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const sessionId = asCrushSessionId(
         (config.projectConfig.agentConfig as CrushAgentConfig | undefined)?.crushSessionId,
       );
+      const promptInputCommand = buildCrushPromptInputCommand(config);
+      if (promptInputCommand) {
+        const sessionFlag = sessionId ? ` --session ${shellEscape(sessionId)}` : "";
+        const continueCommand = sessionId
+          ? `crush --session ${shellEscape(sessionId)}`
+          : "crush --continue";
+        return `${promptInputCommand} | crush run --quiet${sessionFlag} && ${continueCommand}`;
+      }
       if (!sessionId) {
         return "crush";
       }
