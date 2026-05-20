@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-tracker-github",
-  "version": "0.8.0",
+  "version": "0.9.0-nightly-ecdf0c73eca18d9e9f837854dc209cb221d22bfb",
   "description": "Tracker plugin: GitHub Issues",
   "license": "MIT",
   "type": "module",
