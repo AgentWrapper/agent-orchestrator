@@ -40,7 +40,7 @@ export function findWebhookProjects(
     const webhookPath = getProjectWebhookPath(project);
     if (!webhookPath || webhookPath !== pathname) return [];
     const scm = registry.get<SCM>("scm", project.scm.plugin);
-    if (!scm?.parseWebhook || !scm.verifyWebhook) return [];
+    if (!scm?.parseWebhook) return [];
     return [{ projectId, project, scm }];
   });
 }

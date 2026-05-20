@@ -250,6 +250,12 @@ export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;
   projectName: string;
+  status?: string | null;
+  activity?: string | null;
+  runtimeState?: string | null;
+  hasRuntime?: boolean;
+  isTerminal?: boolean;
+  isRestorable?: boolean;
 }
 
 /**
@@ -376,11 +382,18 @@ export function getActivitySignalReasonLabel(session: DashboardSession): string 
   return parts.length > 0 ? parts.join(" • ") : null;
 }
 
+export function isDashboardSessionTerminated(session: DashboardSession): boolean {
+  if (session.lifecycle) {
+    return session.lifecycle.sessionState === "terminated";
+  }
+  return session.status === "terminated" || session.status === "killed";
+}
+
 export function isDashboardSessionDone(session: DashboardSession): boolean {
   if (session.lifecycle) {
     return (
       session.lifecycle.sessionState === "done" ||
-      session.lifecycle.sessionState === "terminated" ||
+      isDashboardSessionTerminated(session) ||
       session.lifecycle.prState === "merged"
     );
   }
@@ -396,45 +409,48 @@ export function isDashboardSessionDone(session: DashboardSession): boolean {
   return session.pr?.state === "merged";
 }
 
+function hasTerminalActivity(session: DashboardSession): boolean {
+  return session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity);
+}
+
 export function isDashboardSessionTerminal(session: DashboardSession): boolean {
   if (session.lifecycle) {
     return (
       isDashboardSessionDone(session) ||
       session.lifecycle.runtimeState === "missing" ||
-      session.lifecycle.runtimeState === "exited"
+      session.lifecycle.runtimeState === "exited" ||
+      hasTerminalActivity(session)
     );
   }
-  return (
-    TERMINAL_STATUSES.has(session.status) ||
-    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
-  );
+  return TERMINAL_STATUSES.has(session.status) || hasTerminalActivity(session);
 }
 
 export function isDashboardRuntimeEnded(session: DashboardSession): boolean {
   if (session.lifecycle) {
     return (
-      session.lifecycle.runtimeState === "missing" || session.lifecycle.runtimeState === "exited"
+      session.lifecycle.runtimeState === "missing" ||
+      session.lifecycle.runtimeState === "exited" ||
+      hasTerminalActivity(session)
     );
   }
-  return (
-    TERMINAL_STATUSES.has(session.status) ||
-    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
-  );
+  return TERMINAL_STATUSES.has(session.status) || hasTerminalActivity(session);
 }
 
 export function isDashboardSessionRestorable(session: DashboardSession): boolean {
   if (session.lifecycle) {
     const terminalByCoreTruth =
       session.lifecycle.sessionState === "done" ||
-      session.lifecycle.sessionState === "terminated" ||
+      isDashboardSessionTerminated(session) ||
       session.lifecycle.runtimeState === "missing" ||
-      session.lifecycle.runtimeState === "exited";
+      session.lifecycle.runtimeState === "exited" ||
+      hasTerminalActivity(session);
     return (
-      terminalByCoreTruth && session.lifecycle.prState !== "merged" && session.status !== "merged"
+      terminalByCoreTruth &&
+      !NON_RESTORABLE_STATUSES.has(session.status) &&
+      session.status !== "merged"
     );
   }
-  if (!isDashboardSessionTerminal(session)) return false;
-  return session.pr?.state !== "merged" && session.status !== "merged";
+  return isDashboardSessionTerminal(session) && !NON_RESTORABLE_STATUSES.has(session.status);
 }
 
 /**

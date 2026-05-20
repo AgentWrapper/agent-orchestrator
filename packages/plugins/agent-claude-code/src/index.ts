@@ -1,10 +1,8 @@
 import {
   shellEscape,
-  readLastJsonlEntry,
   normalizeAgentPermissionMode,
   isWindows,
-  DEFAULT_READY_THRESHOLD_MS,
-  DEFAULT_ACTIVE_WINDOW_MS,
+  recordTerminalActivity,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -13,18 +11,26 @@ import {
   type CostEstimate,
   type PluginModule,
   type ProjectConfig,
+  type ProcessProbeResult,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
-import { execFile, execFileSync } from "node:child_process";
-import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
+import {
+  classifyTerminalOutput,
+  findLatestSessionFile,
+  getClaudeActivityState,
+  isClaudeProcessAlive,
+  resolveWorkspaceForClaude,
+  toClaudeProjectPath,
+} from "./activity-detection.js";
 
-const execFileAsync = promisify(execFile);
+export { resetPsCache, resolveWorkspaceForClaude, toClaudeProjectPath } from "./activity-detection.js";
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -395,56 +401,6 @@ export const manifest = {
 // JSONL Helpers
 // =============================================================================
 
-/**
- * Convert a workspace path to Claude's project directory path.
- * Claude stores sessions at ~/.claude/projects/{encoded-path}/
- *
- * Verified against Claude Code's actual on-disk slugs: every non-alphanumeric
- * character (other than `-`) is replaced with `-`. That includes `/`, `.`,
- * `:`, and crucially `_` — AO's per-project data dirs are named like
- * `<sanitized>_<hash>`, and without underscore folding the slug AO computes
- * misses the directory Claude actually wrote (issue #1611).
- *
- * Windows: `C:\Users\dev\project` → `C--Users-dev-project` — Claude leaves the
- * colon-position as a dash rather than stripping it. Verified via on-disk QA
- * during the Windows port (commit 582c5373). Stripping the colon (as #1611
- * inadvertently did) breaks JSONL lookup on Windows.
- *
- * Exported for testing purposes.
- */
-export function toClaudeProjectPath(workspacePath: string): string {
-  const normalized = workspacePath.replace(/\\/g, "/");
-  return normalized.replace(/[^a-zA-Z0-9-]/g, "-");
-}
-
-/** Find the most recently modified .jsonl session file in a directory */
-async function findLatestSessionFile(projectDir: string): Promise<string | null> {
-  let entries: string[];
-  try {
-    entries = await readdir(projectDir);
-  } catch {
-    return null;
-  }
-
-  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
-  if (jsonlFiles.length === 0) return null;
-
-  // Sort by mtime descending
-  const withStats = await Promise.all(
-    jsonlFiles.map(async (f) => {
-      const fullPath = join(projectDir, f);
-      try {
-        const s = await stat(fullPath);
-        return { path: fullPath, mtime: s.mtimeMs };
-      } catch {
-        return { path: fullPath, mtime: 0 };
-      }
-    }),
-  );
-  withStats.sort((a, b) => b.mtime - a.mtime);
-  return withStats[0]?.path ?? null;
-}
-
 interface JsonlLine {
   type?: string;
   summary?: string;
@@ -604,157 +560,6 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     outputTokens,
     estimatedCostUsd: totalCost,
   };
-}
-
-// =============================================================================
-// Process Detection
-// =============================================================================
-
-/**
- * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
- * would spawn N concurrent `ps` processes, each taking 30+ seconds on machines
- * with many processes. The cache ensures `ps` is called at most once per TTL
- * window regardless of how many sessions are being enriched.
- */
-let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
-const PS_CACHE_TTL_MS = 5_000;
-
-/** Reset the ps cache. Exported for testing only. */
-export function resetPsCache(): void {
-  psCache = null;
-}
-
-async function getCachedProcessList(): Promise<string> {
-  // ps -eo is a Unix-only command; on Windows the tmux branch is never taken
-  // in normal operation, but guard here to avoid a spurious spawn error if
-  // a stale tmux handle is encountered.
-  if (isWindows()) return "";
-  const now = Date.now();
-  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
-    // Cache hit — return resolved output or wait for in-flight request
-    if (psCache.promise) return psCache.promise;
-    return psCache.output;
-  }
-
-  // Cache miss or expired — start a single `ps` call and share the promise.
-  // Guard both callbacks so they only update psCache if it still belongs to
-  // this request — a newer request may have replaced it while we were waiting.
-  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
-    timeout: 5_000,
-  }).then(({ stdout }) => {
-    if (psCache?.promise === promise) {
-      psCache = { output: stdout, timestamp: Date.now() };
-    }
-    return stdout;
-  });
-
-  // Store the in-flight promise so concurrent callers share it
-  psCache = { output: "", timestamp: now, promise };
-
-  try {
-    return await promise;
-  } catch {
-    // On failure, clear cache so the next caller retries — but only if
-    // psCache still points to this request (avoid clobbering a newer entry)
-    if (psCache?.promise === promise) {
-      psCache = null;
-    }
-    return "";
-  }
-}
-
-/**
- * Check if a process named "claude" is running in the given runtime handle's context.
- * Uses ps to find processes by TTY (for tmux) or by PID.
- */
-async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> {
-  try {
-    // For tmux runtime, get the pane TTY and find claude on it
-    if (handle.runtimeName === "tmux" && handle.id) {
-      const { stdout: ttyOut } = await execFileAsync(
-        "tmux",
-        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 5_000 },
-      );
-      // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
-      const ttys = ttyOut
-        .trim()
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      if (ttys.length === 0) return null;
-
-      const psOut = await getCachedProcessList();
-      if (!psOut) return null;
-
-      const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-      // Match "claude" as a word boundary — prevents false positives on
-      // names like "claude-code" or paths that merely contain the substring.
-      const processRe = /(?:^|\/)claude(?:\s|$)/;
-      for (const line of psOut.split("\n")) {
-        const cols = line.trimStart().split(/\s+/);
-        if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-        const args = cols.slice(2).join(" ");
-        if (processRe.test(args)) {
-          return parseInt(cols[0] ?? "0", 10);
-        }
-      }
-      return null;
-    }
-
-    // For process runtime, check if the PID stored in handle data is alive
-    const rawPid = handle.data["pid"];
-    const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // Signal 0 = check existence
-        return pid;
-      } catch (err: unknown) {
-        // EPERM means the process exists but we lack permission to signal it
-        if (err instanceof Error && "code" in err && err.code === "EPERM") {
-          return pid;
-        }
-        return null;
-      }
-    }
-
-    // No reliable way to identify the correct process for this session
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-// =============================================================================
-// Terminal Output Patterns for detectActivity
-// =============================================================================
-
-/** Classify Claude Code's activity state from terminal output (pure, sync). */
-function classifyTerminalOutput(terminalOutput: string): ActivityState {
-  // Empty output — can't determine state
-  if (!terminalOutput.trim()) return "idle";
-
-  const lines = terminalOutput.trim().split("\n");
-  const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-  // Check the last line FIRST — if the prompt is visible, the agent is idle
-  // regardless of historical output (e.g. "Reading file..." from earlier).
-  // The ❯ is Claude Code's prompt character.
-  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
-
-  // Check the bottom of the buffer for permission prompts BEFORE checking
-  // full-buffer active indicators. Historical "Thinking"/"Reading" text in
-  // the buffer must not override a current permission prompt at the bottom.
-  const tail = lines.slice(-5).join("\n");
-  if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
-  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-  if (/bypass.*permissions/i.test(tail)) return "waiting_input";
-
-  // Everything else is "active" — the agent is processing, waiting for
-  // output, or showing content. Specific patterns (e.g. "esc to interrupt",
-  // "Thinking", "Reading") all map to "active" so no need to check them
-  // individually.
-  return "active";
 }
 
 // =============================================================================
@@ -939,85 +744,31 @@ function createClaudeCodeAgent(): Agent {
       return classifyTerminalOutput(terminalOutput);
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      const pid = await findClaudeProcess(handle);
-      return pid !== null;
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
+    },
+
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
+      return isClaudeProcessAlive(handle);
     },
 
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
     ): Promise<ActivityDetection | null> {
-      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
-
-      // Check if process is running first
-      const exitedAt = new Date();
-      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
-
-      // Process is running - check JSONL session file for activity
-      if (!session.workspacePath) {
-        // No workspace path — cannot determine activity without it
-        return null;
-      }
-
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
-
-      const sessionFile = await findLatestSessionFile(projectDir);
-      if (!sessionFile) {
-        // No session file yet — process is running but no conversation started.
-        // Treat as idle (waiting for first task).
-        return { state: "idle", timestamp: session.createdAt };
-      }
-
-      const entry = await readLastJsonlEntry(sessionFile);
-      if (!entry) {
-        // Empty file or read error — cannot determine activity
-        return null;
-      }
-
-      // If the JSONL entry predates this session, it's from a previous session
-      // in the same worktree. Treat as no data (agent hasn't written yet).
-      if (session.createdAt && entry.modifiedAt < session.createdAt) {
-        return { state: "idle", timestamp: session.createdAt };
-      }
-
-      const ageMs = Date.now() - entry.modifiedAt.getTime();
-      const timestamp = entry.modifiedAt;
-
-      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
-      switch (entry.lastType) {
-        case "user":
-        case "tool_use":
-        case "progress":
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
-        case "assistant":
-        case "system":
-        case "summary":
-        case "result":
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
-        case "permission_request":
-          return { state: "waiting_input", timestamp };
-
-        case "error":
-          return { state: "blocked", timestamp };
-
-        default:
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-      }
+      return getClaudeActivityState(session, readyThresholdMs, (handle) =>
+        this.isProcessRunning(handle),
+      );
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       // Find the latest session JSONL file
@@ -1047,7 +798,7 @@ function createClaudeCodeAgent(): Agent {
         if (!session.workspacePath) return null;
 
         // Find Claude's project directory for this workspace
-        const projectPath = toClaudeProjectPath(session.workspacePath);
+        const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
         const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
         // Find the latest session JSONL file

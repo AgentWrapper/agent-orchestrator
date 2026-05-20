@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentLaunchConfig, RuntimeHandle, Session } from "@aoagents/ao-core";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as {
@@ -108,6 +111,13 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
   };
 }
 
+function makeSystemPromptFile(content: string): { dir: string; file: string } {
+  const dir = mkdtempSync(join(tmpdir(), "ao-codebuff-test-"));
+  const file = join(dir, "orchestrator prompt.md");
+  writeFileSync(file, content, "utf8");
+  return { dir, file };
+}
+
 function makeActivityResult(
   state: "active" | "ready" | "idle" | "waiting_input" | "blocked",
   ts: Date,
@@ -199,19 +209,27 @@ describe("getLaunchCommand", () => {
   });
 
   it("combines the system prompt file and task prompt into Codebuff's positional prompt", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ prompt: "Fix the bug", systemPromptFile: "/tmp/orchestrator prompt.md" }),
-    );
-    expect(cmd).toBe(
-      `codebuff "$(cat '/tmp/orchestrator prompt.md'; printf '\n\n'; printf %s 'Fix the bug')"`,
-    );
+    const { dir, file } = makeSystemPromptFile("Follow file instructions");
+    try {
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({ prompt: "Fix the bug", systemPromptFile: file }),
+      );
+      expect(cmd).toBe("codebuff 'Follow file instructions\n\nFix the bug'");
+      expect(cmd).not.toContain("$(");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("passes the system prompt file as the positional prompt when no task prompt is present", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ systemPromptFile: "/tmp/orchestrator prompt.md" }),
-    );
-    expect(cmd).toBe(`codebuff "$(cat '/tmp/orchestrator prompt.md')"`);
+    const { dir, file } = makeSystemPromptFile("File only instructions");
+    try {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: file }));
+      expect(cmd).toBe("codebuff 'File only instructions'");
+      expect(cmd).not.toContain("$(");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("uses --continue when configured with a conversation id", () => {
@@ -242,16 +260,22 @@ describe("getLaunchCommand", () => {
   });
 
   it("does not include unsupported prompt flags in launch command", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({
-        prompt: "Do work",
-        systemPrompt: "You are helpful",
-        systemPromptFile: "/tmp/prompt.md",
-      }),
-    );
-    expect(cmd).toBe(`codebuff "$(cat '/tmp/prompt.md'; printf '\n\n'; printf %s 'Do work')"`);
-    expect(cmd).not.toContain("-p");
-    expect(cmd).not.toContain("--prompt");
+    const { dir, file } = makeSystemPromptFile("File instructions");
+    try {
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({
+          prompt: "Do work",
+          systemPrompt: "You are helpful",
+          systemPromptFile: file,
+        }),
+      );
+      expect(cmd).toBe("codebuff 'File instructions\n\nDo work'");
+      expect(cmd).not.toContain("-p");
+      expect(cmd).not.toContain("--prompt");
+      expect(cmd).not.toContain("$(");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

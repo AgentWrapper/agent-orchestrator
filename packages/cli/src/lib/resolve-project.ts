@@ -27,6 +27,7 @@ import {
   isRepoUrl,
   loadConfig,
   parseRepoUrl,
+  recordActivityEvent,
   registerProjectInGlobalConfig,
   resolveCloneTarget,
   isRepoAlreadyCloned,
@@ -196,6 +197,18 @@ async function fromUrlIntoGlobal(arg: string, deps: ResolveDeps): Promise<Resolv
       await deps.cloneRepo(parsed, targetDir, cwdDir);
       console.log(chalk.green(`  Cloned to ${targetDir}`));
     } catch (err) {
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.project_resolve_failed",
+        level: "error",
+        summary: `failed to clone ${parsed.ownerRepo}`,
+        data: {
+          ownerRepo: parsed.ownerRepo,
+          targetDir,
+          source: "url-global",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       throw new Error(
         `Failed to clone ${parsed.ownerRepo}: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -286,6 +299,18 @@ async function fromUrl(arg: string, deps: ResolveDeps, opts: ResolveOptions): Pr
       spinner.succeed(`Cloned to ${targetDir}`);
     } catch (err) {
       spinner.fail("Clone failed");
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.project_resolve_failed",
+        level: "error",
+        summary: `failed to clone ${parsed.ownerRepo}`,
+        data: {
+          ownerRepo: parsed.ownerRepo,
+          targetDir,
+          source: "url-local",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      });
       throw new Error(
         `Failed to clone ${parsed.ownerRepo}: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -462,6 +487,13 @@ async function fromCwdOrId(
       // First run — auto-create config in cwd.
       config = await deps.autoCreateConfig(cwd());
       recovered = true;
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.config_recovered",
+        level: "info",
+        summary: `auto-created config in cwd (first-run)`,
+        data: { recovery: "auto_create", cwd: cwd() },
+      });
     } else {
       // A config file exists but failed to load — likely a flat local
       // config whose project isn't in the global registry yet. Recover
@@ -469,9 +501,29 @@ async function fromCwdOrId(
       const foundConfig = findConfigFile() ?? undefined;
       if (!foundConfig) throw err;
       const addedId = await deps.registerFlatConfig(foundConfig);
-      if (!addedId) throw err;
+      if (!addedId) {
+        recordActivityEvent({
+          source: "cli",
+          kind: "cli.config_recovery_failed",
+          level: "error",
+          summary: `registerFlatConfig returned null — recovery failed`,
+          data: {
+            configPath: foundConfig,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw err;
+      }
       config = loadConfig(foundConfig);
       recovered = true;
+      recordActivityEvent({
+        projectId: addedId,
+        source: "cli",
+        kind: "cli.config_recovered",
+        level: "info",
+        summary: `registered flat config into global config and retried load`,
+        data: { recovery: "register_flat", configPath: foundConfig },
+      });
     }
   }
 

@@ -39,8 +39,12 @@ import {
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
   type CICheck,
+  type CIFailureSummary,
+  type PRInfo,
   type ReviewComment,
   type ReviewSummary,
+  type ProcessProbeResult,
+  isProcessProbeIndeterminate,
 } from "./types.js";
 import {
   buildLifecycleMetadataPatch,
@@ -65,6 +69,7 @@ import {
 } from "./report-watcher.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
+import { recordNotificationDelivery } from "./notification-observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 import {
   DETECTING_MAX_ATTEMPTS,
@@ -76,6 +81,14 @@ import {
   resolveProbeDecision,
   type LifecycleDecision,
 } from "./lifecycle-status-decisions.js";
+import {
+  buildCIFailureNotificationData,
+  buildPRStateNotificationData,
+  buildReactionEscalationNotificationData,
+  buildReactionNotificationData,
+  buildSessionTransitionNotificationData,
+  type NotificationEventContext,
+} from "./notification-data.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -106,6 +119,12 @@ const PERSISTENT_REACTION_KEYS = new Set(["ci-failed"]);
  *  (including its escalated flag) is cleared, allowing a fresh budget for the
  *  next real CI failure incident. */
 const CI_PASSING_STABLE_THRESHOLD = 2;
+
+type TransitionReaction = {
+  key: string;
+  result: ReactionResult | null;
+  messageEnriched?: boolean;
+};
 
 type WorkspaceBranchProbe =
   | { kind: "branch"; branch: string }
@@ -276,23 +295,7 @@ function prStateToEventType(
 }
 
 /** PR context for event enrichment. */
-interface EventPRContext {
-  url: string;
-  /** Actual PR title from enrichment cache. null until cache is populated. */
-  title: string | null;
-  number: number;
-  branch: string;
-}
-
-/** Event context with PR and issue information for webhook payloads. */
-interface EventContext {
-  pr: EventPRContext | null;
-  issueId: string | null;
-  issueTitle: string | null;
-  /** Agent task summary (NOT the PR title). May describe the work before a PR exists. */
-  summary: string | null;
-  branch: string | null;
-}
+type EventContext = NotificationEventContext;
 
 /**
  * Minimal session context required for reaction execution and event enrichment.
@@ -317,7 +320,7 @@ function buildEventContext(
   session: Session | ReactionSessionContext,
   prEnrichmentCache: Map<string, PREnrichmentData>,
 ): EventContext {
-  let pr: EventPRContext | null = null;
+  let pr: EventContext["pr"] = null;
 
   if (session.pr) {
     const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
@@ -328,6 +331,10 @@ function buildEventContext(
       title: cached?.title ?? null,
       number: session.pr.number,
       branch: session.pr.branch,
+      baseBranch: session.pr.baseBranch,
+      owner: session.pr.owner,
+      repo: session.pr.repo,
+      isDraft: session.pr.isDraft,
     };
   }
 
@@ -387,6 +394,8 @@ interface DeterminedStatus {
   status: SessionStatus;
   evidence: string;
   detectingAttempts: number;
+  /** True when probes produced no reliable verdict and lifecycle metadata must remain untouched. */
+  skipMetadataWrite?: boolean;
   /** ISO timestamp when detecting first started. */
   detectingStartedAt?: string;
   /** Hash of evidence for unchanged-evidence detection. */
@@ -396,6 +405,14 @@ interface DeterminedStatus {
 interface ProbeResult {
   state: "alive" | "dead" | "unknown";
   failed: boolean;
+  indeterminate?: boolean;
+}
+
+function processProbeResultToProbeResult(result: ProcessProbeResult): ProbeResult {
+  if (isProcessProbeIndeterminate(result)) {
+    return { state: "unknown", failed: false, indeterminate: true };
+  }
+  return { state: result ? "alive" : "dead", failed: false };
 }
 
 function splitEvidenceSignals(evidence: string): string[] {
@@ -489,6 +506,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
    * Key format: "${owner}/${repo}#${number}"
    */
   const prEnrichmentCache = new Map<string, PREnrichmentData>();
+
+  function getPREnrichmentForSession(
+    session: Session | ReactionSessionContext,
+  ): PREnrichmentData | undefined {
+    if (!session.pr) return undefined;
+    return prEnrichmentCache.get(`${session.pr.owner}/${session.pr.repo}#${session.pr.number}`);
+  }
 
   /** Repos where Guard 1 returned 304 in the current poll — safe to skip detectPR. */
   let prListUnchangedRepos = new Set<string>();
@@ -651,7 +675,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // When Guard 1 returned 304, the repo is in prListUnchangedRepos — no new PRs exist.
     for (const session of sessions) {
       if (!session.branch) continue;
-      if (session.metadata["prAutoDetect"] === "off" || session.metadata["prAutoDetect"] === "false") continue;
+      if (
+        session.metadata["prAutoDetect"] === "off" ||
+        session.metadata["prAutoDetect"] === "false"
+      )
+        continue;
       if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator"))
         continue;
       if (
@@ -1062,8 +1090,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
             try {
               const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-              processProbe = { state: processAlive ? "alive" : "dead", failed: false };
-              if (!processAlive) {
+              processProbe = processProbeResultToProbeResult(processAlive);
+              if (processAlive === false) {
                 lifecycle.runtime.state = "exited";
                 lifecycle.runtime.reason = "process_missing";
                 lifecycle.runtime.lastObservedAt = nowIso;
@@ -1129,14 +1157,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (
       processProbe.state === "unknown" &&
+      !processProbe.indeterminate &&
       session.runtimeHandle &&
       canProbeRuntimeIdentity &&
       agent
     ) {
       try {
         const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-        processProbe = { state: processAlive ? "alive" : "dead", failed: false };
-        if (!processAlive) {
+        processProbe = processProbeResultToProbeResult(processAlive);
+        if (processAlive === false) {
           lifecycle.runtime.state = "exited";
           lifecycle.runtime.reason = "process_missing";
           lifecycle.runtime.lastObservedAt = nowIso;
@@ -1157,6 +1186,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           },
         });
       }
+    }
+
+    if (processProbe.indeterminate) {
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "agent",
+        kind: "agent.process_probe_failed",
+        level: "warn",
+        summary: `agent.isProcessRunning indeterminate for ${session.id}`,
+        data: {
+          agentName,
+          reason: "probe_indeterminate",
+        },
+      });
+      return {
+        status: session.status,
+        evidence: session.metadata["lifecycleEvidence"] ?? "process_probe_indeterminate",
+        detectingAttempts: currentDetectingAttempts,
+        detectingStartedAt: currentDetectingStartedAt,
+        detectingEvidenceHash: currentDetectingEvidenceHash,
+        skipMetadataWrite: true,
+      };
     }
 
     const probeDecision = resolveProbeDecision({
@@ -1272,16 +1324,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     ) {
       const mapped = mapAgentReportToLifecycle(agentReport.state);
       return commit({
-        status: deriveLegacyStatus(
-          {
-            ...lifecycle,
-            session: {
-              ...lifecycle.session,
-              state: mapped.sessionState,
-              reason: mapped.sessionReason,
-            },
+        status: deriveLegacyStatus({
+          ...lifecycle,
+          session: {
+            ...lifecycle.session,
+            state: mapped.sessionState,
+            reason: mapped.sessionReason,
           },
-        ),
+        }),
         evidence: `agent_report:${agentReport.state}`,
         detecting: { attempts: 0 },
         sessionState: mapped.sessionState,
@@ -1411,6 +1461,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           : typeof escalateAfter === "number" && tracker.attempts > escalateAfter
             ? "max_attempts"
             : "max_duration";
+      const durationMs = Date.now() - tracker.firstTriggered.getTime();
       recordActivityEvent({
         projectId,
         sessionId,
@@ -1421,7 +1472,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         data: {
           reactionKey,
           attempts: tracker.attempts,
-          durationSinceFirstMs: Date.now() - tracker.firstTriggered.getTime(),
+          durationSinceFirstMs: durationMs,
           escalationCause,
         },
       });
@@ -1431,7 +1482,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         sessionId,
         projectId,
         message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
-        data: { reactionKey, attempts: tracker.attempts, context, schemaVersion: 2 },
+        data: buildReactionEscalationNotificationData({
+          eventType: "reaction.escalated",
+          sessionId,
+          projectId,
+          context,
+          reactionKey,
+          action: "escalated",
+          attempts: tracker.attempts,
+          cause: escalationCause,
+          durationMs,
+          enrichment: getPREnrichmentForSession(session),
+        }),
       });
       await notifyHuman(event, reactionConfig.priority ?? "urgent");
 
@@ -1501,8 +1563,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const event = createEvent("reaction.triggered", {
           sessionId,
           projectId,
-          message: `Reaction '${reactionKey}' triggered notification`,
-          data: { reactionKey, context, schemaVersion: 2 },
+          message: reactionConfig.message ?? `Reaction '${reactionKey}' triggered notification`,
+          data: buildReactionNotificationData({
+            eventType: "reaction.triggered",
+            sessionId,
+            projectId,
+            context,
+            reactionKey,
+            action: "notify",
+            enrichment: getPREnrichmentForSession(session),
+          }),
         });
         await notifyHuman(event, reactionConfig.priority ?? "info");
         recordActivityEvent({
@@ -1528,8 +1598,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const event = createEvent("reaction.triggered", {
           sessionId,
           projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey, context, schemaVersion: 2 },
+          message: reactionConfig.message ?? `Reaction '${reactionKey}' triggered auto-merge`,
+          data: buildReactionNotificationData({
+            eventType: "reaction.triggered",
+            sessionId,
+            projectId,
+            context,
+            reactionKey,
+            action: "auto-merge",
+            enrichment: getPREnrichmentForSession(session),
+          }),
         });
         await notifyHuman(event, "action");
         recordActivityEvent({
@@ -1579,9 +1657,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return;
 
     const sessionsDir = getProjectSessionsDir(session.projectId);
-    const lifecycleUpdates = buildLifecycleMetadataPatch(
-      cloneLifecycle(session.lifecycle),
-    );
+    const lifecycleUpdates = buildLifecycleMetadataPatch(cloneLifecycle(session.lifecycle));
     const mergedUpdates = { ...updates, ...lifecycleUpdates };
     updateMetadata(sessionsDir, session.id, mergedUpdates);
     sessionManager.invalidateCache();
@@ -1608,7 +1684,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     session: Session,
     _oldStatus: SessionStatus,
     newStatus: SessionStatus,
-    transitionReaction?: { key: string; result: ReactionResult | null },
+    transitionReaction?: TransitionReaction,
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
@@ -1883,11 +1959,40 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return lines.join("\n");
   }
 
-  /**
-   * Format CI check failures into a human-readable message for the agent.
-   * Includes check names, statuses, and links for debugging.
-   */
-  function formatCIFailureMessage(failedChecks: CICheck[]): string {
+  function isFailedCICheck(check: CICheck): boolean {
+    return check.status === "failed" || check.conclusion?.toUpperCase() === "FAILURE";
+  }
+
+  function formatCIFailureSummaryMessage(summary: CIFailureSummary): string {
+    const lines = ["CI is failing on your PR.", ""];
+
+    for (const job of summary.failedJobs) {
+      const failed = job.failedStep ? `${job.name} → ${job.failedStep}` : job.name;
+      lines.push(`Failed: ${failed}`);
+      lines.push(`Failure URL: ${job.runUrl}`);
+
+      if (job.logTail) {
+        const lineCount = job.logTail.split(/\r?\n/).length;
+        const lineLabel = lineCount === 1 ? "line" : "lines";
+        const escapedTail = escapeMarkdownCodeFenceClosers(job.logTail);
+        lines.push("", `Log tail (last ${lineCount} ${lineLabel}):`, "```", escapedTail, "```");
+      }
+
+      lines.push("");
+    }
+
+    lines.push("Fix the issues and push again.");
+    return lines.join("\n");
+  }
+
+  function escapeMarkdownCodeFenceClosers(logTail: string): string {
+    return logTail
+      .split(/\r?\n/)
+      .map((line) => (line.startsWith("```") ? `\u200B${line}` : line))
+      .join("\n");
+  }
+
+  function formatCIFailureChecksFallback(failedChecks: CICheck[]): string {
     const lines = ["CI checks are failing on your PR. Here are the failed checks:", ""];
     for (const check of failedChecks) {
       const status = check.conclusion ?? check.status;
@@ -1898,11 +2003,60 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return lines.join("\n");
   }
 
+  /**
+   * Format CI failures into a human-readable message for the agent.
+   * Uses SCM-provided failed job/step/log details when available and falls
+   * back to check names/statuses/links for SCM plugins that do not implement it.
+   */
+  async function formatCIFailureMessage(
+    scm: SCM,
+    pr: PRInfo,
+    failedChecks: CICheck[],
+  ): Promise<string> {
+    if (scm.getCIFailureSummary) {
+      try {
+        const summary = await scm.getCIFailureSummary(pr, failedChecks);
+        if (summary?.failedJobs.length) {
+          return formatCIFailureSummaryMessage(summary);
+        }
+      } catch {
+        // Fall back to check names when summary enrichment fails.
+      }
+    }
+
+    return formatCIFailureChecksFallback(failedChecks);
+  }
+
+  async function getFailedCIChecks(
+    scm: SCM,
+    pr: PRInfo,
+    options: { allowFetch: boolean },
+  ): Promise<CICheck[] | null> {
+    const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+    const cachedEnrichment = prEnrichmentCache.get(prKey);
+
+    let checks: CICheck[] | undefined = cachedEnrichment?.ciChecks;
+    if (checks === undefined && options.allowFetch) {
+      try {
+        checks = await scm.getCIChecks(pr);
+      } catch {
+        return null;
+      }
+    }
+
+    const failedChecks = checks?.filter(isFailedCICheck) ?? [];
+    return failedChecks.length > 0 ? failedChecks : null;
+  }
+
+  function makeCIFailureFingerprint(failedChecks: CICheck[]): string {
+    return makeFingerprint(failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`));
+  }
+
   async function maybeDispatchCIFailureDetails(
     session: Session,
     _oldStatus: SessionStatus,
     newStatus: SessionStatus,
-    transitionReaction?: { key: string; result: ReactionResult | null },
+    transitionReaction?: TransitionReaction,
   ): Promise<void> {
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
@@ -1938,32 +2092,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       return;
     }
 
-    // Fetch individual CI checks for failure details.
-    // Use batch enrichment data when available to avoid an extra REST call;
-    // fall back to getCIChecks() when the batch didn't run this cycle.
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-    const cachedEnrichment = prEnrichmentCache.get(prKey);
+    const failedChecks = await getFailedCIChecks(scm, session.pr, { allowFetch: true });
+    if (!failedChecks) return;
 
-    let checks: CICheck[];
-    if (cachedEnrichment?.ciChecks !== undefined) {
-      checks = cachedEnrichment.ciChecks;
-    } else {
-      try {
-        checks = await scm.getCIChecks(session.pr);
-      } catch {
-        // Failed to fetch checks — skip this cycle
-        return;
-      }
-    }
-
-    const failedChecks = checks.filter(
-      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
-    );
-    if (failedChecks.length === 0) return;
-
-    const ciFingerprint = makeFingerprint(
-      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
-    );
+    const ciFingerprint = makeCIFailureFingerprint(failedChecks);
     const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
     const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
 
@@ -1977,12 +2109,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
     }
 
-    // If the transition reaction already sent a ci-failed reaction (now enriched
-    // with detailed check info from the batch cache), record the dispatch hash so
-    // subsequent polls don't re-send the same failure details.
+    // If the transition reaction already delivered an enriched agent message,
+    // or handled a non-agent action, record the dispatch hash so subsequent
+    // polls don't re-send the same failure details.
     if (
       transitionReaction?.key === ciReactionKey &&
-      transitionReaction.result?.success
+      transitionReaction.result?.success &&
+      (transitionReaction.messageEnriched === true ||
+        transitionReaction.result.action !== "send-to-agent")
     ) {
       updateSessionMetadata(session, {
         lastCIFailureDispatchHash: ciFingerprint,
@@ -2003,7 +2137,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       reactionConfig.action &&
       (reactionConfig.auto !== false || reactionConfig.action === "notify")
     ) {
-      const detailedMessage = formatCIFailureMessage(failedChecks);
+      const detailedMessage = await formatCIFailureMessage(scm, session.pr, failedChecks);
 
       try {
         if (reactionConfig.action === "send-to-agent") {
@@ -2015,7 +2149,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             sessionId: session.id,
             projectId: session.projectId,
             message: detailedMessage,
-            data: { failedChecks: failedChecks.map((c) => c.name), context, schemaVersion: 2 },
+            data: buildCIFailureNotificationData({
+              sessionId: session.id,
+              projectId: session.projectId,
+              context,
+              failedChecks,
+            }),
           });
           await notifyHuman(event, reactionConfig.priority ?? "warning");
         }
@@ -2141,12 +2280,40 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const notifier =
         registry.get<Notifier>("notifier", target.reference) ??
         registry.get<Notifier>("notifier", target.pluginName);
-      if (notifier) {
-        try {
-          await notifier.notify(eventWithPriority);
-        } catch {
-          // Notifier failed — not much we can do
-        }
+      if (!notifier) {
+        recordNotificationDelivery({
+          observer,
+          event: eventWithPriority,
+          target,
+          outcome: "failure",
+          method: "notify",
+          reason: "notifier target not found",
+          failureKind: "target_missing",
+          recordActivityEvent: true,
+        });
+        continue;
+      }
+
+      try {
+        await notifier.notify(eventWithPriority);
+        recordNotificationDelivery({
+          observer,
+          event: eventWithPriority,
+          target,
+          outcome: "success",
+          method: "notify",
+        });
+      } catch (err) {
+        recordNotificationDelivery({
+          observer,
+          event: eventWithPriority,
+          target,
+          outcome: "failure",
+          method: "notify",
+          reason: err instanceof Error ? err.message : String(err),
+          failureKind: "delivery_failed",
+          recordActivityEvent: true,
+        });
       }
     }
   }
@@ -2208,9 +2375,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           activity,
           // Elapsed wall-time since cleanup was first deferred. NOT a Unix
           // timestamp — naming it `pendingSinceMs` was misleading (Greptile).
-          pendingElapsedMs: Number.isFinite(pendingSinceMs)
-            ? Date.now() - pendingSinceMs
-            : null,
+          pendingElapsedMs: Number.isFinite(pendingSinceMs) ? Date.now() - pendingSinceMs : null,
           graceMs,
         },
       });
@@ -2293,9 +2458,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const previousLifecycle = cloneLifecycle(session.lifecycle);
     const previousPRState = session.lifecycle.pr.state;
     const assessment = await determineStatus(session);
+    if (assessment.skipMetadataWrite) {
+      states.set(session.id, oldStatus);
+      return;
+    }
     const newStatus = assessment.status;
     const lifecycleChanged = session.metadata["lifecycle"] !== JSON.stringify(session.lifecycle);
-    let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
+    let transitionReaction: TransitionReaction | undefined;
 
     const nextLifecycleEvidence = assessment.evidence;
     const nextDetectingAttempts =
@@ -2433,18 +2602,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         if (reactionKey) {
           let reactionConfig = getReactionConfigForSession(session, reactionKey);
+          let messageEnriched = false;
 
-          // Enrich CI failure message with actual check details from batch cache
-          if (reactionKey === "ci-failed" && session.pr && reactionConfig) {
-            const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-            const cachedData = prEnrichmentCache.get(prKey);
-            if (cachedData?.ciChecks) {
-              const failedChecks = cachedData.ciChecks.filter((c) => c.status === "failed");
-              if (failedChecks.length > 0) {
+          // Enrich CI failure message with failed job/step/log details when
+          // batch check data is already available. If it is not, the
+          // post-transition CI dispatcher below fetches checks and sends the
+          // composed message without altering lifecycle state transitions.
+          if (
+            reactionKey === "ci-failed" &&
+            session.pr &&
+            reactionConfig?.action === "send-to-agent"
+          ) {
+            const project = config.projects[session.projectId];
+            const scm = project?.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
+            if (scm) {
+              const failedChecks = await getFailedCIChecks(scm, session.pr, { allowFetch: false });
+              if (failedChecks) {
                 reactionConfig = {
                   ...reactionConfig,
-                  message: formatCIFailureMessage(failedChecks),
+                  message: await formatCIFailureMessage(scm, session.pr, failedChecks),
                 };
+                messageEnriched = true;
               }
             }
           }
@@ -2453,7 +2631,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
               const reactionResult = await executeReaction(session, reactionKey, reactionConfig);
-              transitionReaction = { key: reactionKey, result: reactionResult };
+              transitionReaction = { key: reactionKey, result: reactionResult, messageEnriched };
               observer.recordOperation({
                 metric: "lifecycle_poll",
                 operation: "lifecycle.transition.reaction",
@@ -2493,7 +2671,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             sessionId: session.id,
             projectId: session.projectId,
             message: `${session.id}: ${oldStatus} → ${newStatus}`,
-            data: { oldStatus, newStatus, context, schemaVersion: 2 },
+            data: buildSessionTransitionNotificationData({
+              eventType,
+              sessionId: session.id,
+              projectId: session.projectId,
+              context,
+              oldStatus,
+              newStatus,
+              enrichment: getPREnrichmentForSession(session),
+            }),
           });
           await notifyHuman(event, priority);
         }
@@ -2546,15 +2732,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           sessionId: session.id,
           projectId: session.projectId,
           message: `${session.id}: PR ${previousPRState} → ${session.lifecycle.pr.state}`,
-          data: {
+          data: buildPRStateNotificationData({
+            eventType: prEventType,
+            sessionId: session.id,
+            projectId: session.projectId,
+            context,
             oldPRState: previousPRState,
             newPRState: session.lifecycle.pr.state,
-            // prNumber/prUrl kept for backward compat — drop in schemaVersion 3
-            prNumber: session.lifecycle.pr.number,
-            prUrl: session.lifecycle.pr.url,
-            context,
-            schemaVersion: 2,
-          },
+            enrichment: getPREnrichmentForSession(session),
+          }),
         });
         await notifyHuman(prEvent, inferPriority(prEventType));
       }

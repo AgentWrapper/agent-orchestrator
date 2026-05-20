@@ -111,7 +111,14 @@ jobs:
           # create a minimal one. `changeset version --snapshot` consumes and
           # deletes it, so no cleanup is needed.
           if [ -z "$(ls .changeset/*.md 2>/dev/null | grep -vi 'README')" ]; then
-            printf -- '---\n"@aoagents/ao": patch\n---\n\nchore: canary build\n' > .changeset/canary-temp.md
+            node << 'SCRIPT'
+              const cfg = require('./.changeset/config.json');
+              const pkgs = cfg.linked.flat();
+              let body = '---\n';
+              pkgs.forEach(p => body += '"' + p + '": patch\n');
+              body += '---\n\nchore: canary build\n';
+              require('fs').writeFileSync('.changeset/canary-temp.md', body);
+          SCRIPT
           fi
           pnpm changeset version --snapshot nightly
         env:

@@ -20,8 +20,30 @@ function mockVersionResponse(body: {
 
 describe("UpdateBanner", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  let localStorageStore: Map<string, string>;
 
   beforeEach(() => {
+    localStorageStore = new Map();
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      writable: true,
+      value: {
+        getItem: (key: string) => localStorageStore.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          localStorageStore.set(key, value);
+        },
+        removeItem: (key: string) => {
+          localStorageStore.delete(key);
+        },
+        clear: () => {
+          localStorageStore.clear();
+        },
+        get length() {
+          return localStorageStore.size;
+        },
+        key: (index: number) => [...localStorageStore.keys()][index] ?? null,
+      },
+    });
     window.localStorage.clear();
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

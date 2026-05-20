@@ -20,6 +20,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import which from "which";
@@ -63,6 +64,16 @@ function getSessionConversationId(session: Session): string | null {
   return getCodebuffConversationId(session.metadata?.[CODEBUFF_SESSION_METADATA_KEY]);
 }
 
+function readSystemPromptFile(systemPromptFile: string | null): string | null {
+  if (!systemPromptFile) return null;
+  try {
+    const content = readFileSync(systemPromptFile, "utf8");
+    return content.trim().length > 0 ? content : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildInitialPromptArgument(config: AgentLaunchConfig): string | null {
   const prompt =
     typeof config.prompt === "string" && config.prompt.trim().length > 0 ? config.prompt : null;
@@ -75,14 +86,10 @@ function buildInitialPromptArgument(config: AgentLaunchConfig): string | null {
       ? config.systemPromptFile
       : null;
 
-  if (systemPromptFile && prompt) {
-    return `"$(cat ${shellEscape(systemPromptFile)}; printf '\n\n'; printf %s ${shellEscape(prompt)})"`;
-  }
-  if (systemPromptFile) {
-    return `"$(cat ${shellEscape(systemPromptFile)})"`;
-  }
-
-  const promptParts = [systemPrompt, prompt].filter((part): part is string => Boolean(part));
+  const fileSystemPrompt = readSystemPromptFile(systemPromptFile);
+  const promptParts = [fileSystemPrompt ?? systemPrompt, prompt].filter(
+    (part): part is string => Boolean(part),
+  );
   if (promptParts.length > 0) {
     return shellEscape(promptParts.join("\n\n"));
   }

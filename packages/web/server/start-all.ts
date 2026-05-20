@@ -4,12 +4,17 @@
  * Replaces the dev-only `concurrently` setup.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { killProcessTree } from "@aoagents/ao-core";
+import {
+  isWindows,
+  killProcessTree,
+  markDaemonShutdownHandlerInstalled,
+  spawnManagedDaemonChild,
+} from "@aoagents/ao-core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -18,6 +23,7 @@ const __dirname = dirname(__filename);
 const pkgRoot = resolve(__dirname, "..");
 
 const children: ChildProcess[] = [];
+markDaemonShutdownHandlerInstalled();
 
 function log(label: string, msg: string): void {
   process.stdout.write(`[${label}] ${msg}\n`);
@@ -34,11 +40,11 @@ function spawnProcess(
   let slotIndex = -1;
 
   function launch(): ChildProcess {
-    const child = spawn(command, args, {
+    const child = spawnManagedDaemonChild(`dashboard:${label}`, command, args, {
       cwd: pkgRoot,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
-      detached: process.platform !== "win32",
+      detached: !isWindows(),
     });
 
     child.stdout?.on("data", (data: Buffer) => {
@@ -83,7 +89,7 @@ function spawnProcess(
 function resolveNextBin(): string {
   // On Windows, .bin/next is a POSIX shell shim that spawn() cannot execute.
   // Skip it and go straight to the JS entry point.
-  if (process.platform !== "win32") {
+  if (!isWindows()) {
     const localBin = resolve(pkgRoot, "node_modules", ".bin", "next");
     if (existsSync(localBin)) return localBin;
   }
@@ -103,7 +109,7 @@ function resolveNextBin(): string {
 const port = process.env["PORT"] || "3000";
 const nextBin = resolveNextBin();
 
-if (process.platform === "win32" && nextBin !== "next") {
+if (isWindows() && nextBin !== "next") {
   // On Windows, run the JS entry point via the current node binary.
   // spawn() can't execute .js files directly on Windows.
   spawnProcess("next", process.execPath, [nextBin, "start", "-p", port]);
@@ -112,7 +118,9 @@ if (process.platform === "win32" && nextBin !== "next") {
 }
 
 // Start direct terminal WebSocket server (auto-restart on crash)
-spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], { restart: true });
+spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], {
+  restart: true,
+});
 
 // Graceful shutdown — send SIGTERM to children and wait for them to exit
 let shuttingDown = false;

@@ -16,8 +16,10 @@ import {
   type ActivityState,
   createInitialCanonicalLifecycle,
   createActivitySignal,
+  createCodeReviewStore,
   sessionFromMetadata,
 } from "@aoagents/ao-core";
+import type * as AoCore from "@aoagents/ao-core";
 
 const {
   mockTmux,
@@ -32,6 +34,7 @@ const {
   mockSessionManager,
   mockGetPluginRegistry,
   sessionsDirRef,
+  reviewStoreRootRef,
 } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockGit: vi.fn(),
@@ -54,6 +57,7 @@ const {
   },
   mockGetPluginRegistry: vi.fn(),
   sessionsDirRef: { current: "" },
+  reviewStoreRootRef: { current: "" },
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -76,10 +80,17 @@ vi.mock("../../src/lib/shell.js", () => ({
 }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import("@aoagents/ao-core")>();
+  const actual = await importOriginal<typeof AoCore>();
   return {
     ...actual,
+    createCodeReviewStore: (
+      projectId: string,
+      options: AoCore.CodeReviewStoreOptions = {},
+    ) =>
+      actual.createCodeReviewStore(projectId, {
+        ...options,
+        storeDir: options.storeDir ?? `${reviewStoreRootRef.current}/${projectId}`,
+      }),
     loadConfig: () => mockConfigRef.current,
   };
 });
@@ -211,6 +222,7 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 let tmpDir: string;
 let sessionsDir: string;
+let originalHome: string | undefined;
 
 import { Command } from "commander";
 import { registerStatus } from "../../src/commands/status.js";
@@ -223,6 +235,8 @@ let processOnceSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-status-test-"));
+  originalHome = process.env["HOME"];
+  process.env["HOME"] = tmpDir;
 
   const configPath = join(tmpDir, "agent-orchestrator.yaml");
   writeFileSync(configPath, "projects: {}");
@@ -256,6 +270,7 @@ beforeEach(() => {
   sessionsDir = join(tmpDir, "sessions");
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
+  reviewStoreRootRef.current = join(tmpDir, "code-reviews");
 
   program = new Command();
   program.exitOverride();
@@ -296,6 +311,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalHome === undefined) {
+    delete process.env["HOME"];
+  } else {
+    process.env["HOME"] = originalHome;
+  }
   setIntervalSpy?.mockRestore();
   setIntervalSpy = undefined;
   clearIntervalSpy?.mockRestore();
@@ -324,6 +344,67 @@ describe("status command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("no active sessions");
+  });
+
+  it("shows AO-local reviewer runs separately from coding sessions", async () => {
+    const store = createCodeReviewStore("my-app");
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+      summary: "Review run",
+    });
+    store.createFinding({
+      runId: run.id,
+      linkedSessionId: "app-1",
+      severity: "warning",
+      title: "Review finding",
+      body: "Finding body",
+    });
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Reviews:");
+    expect(output).toContain("app-rev-1");
+    expect(output).toContain("needs_triage");
+    expect(output).toContain("app-1");
+    expect(output).toContain("1 open finding");
+  });
+
+  it("includes reviewer runs in JSON status output", async () => {
+    const store = createCodeReviewStore("my-app");
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+    });
+    store.createFinding({
+      runId: run.id,
+      linkedSessionId: "app-1",
+      severity: "warning",
+      title: "Review finding",
+      body: "Finding body",
+    });
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls) as {
+      reviews: Array<{ reviewerSessionId: string; linkedSessionId: string; openFindingCount: number }>;
+      meta: { reviewRunCount: number; activeReviewRunCount: number; openReviewFindingCount: number };
+    };
+    expect(parsed.reviews).toHaveLength(1);
+    expect(parsed.reviews[0]).toMatchObject({
+      reviewerSessionId: "app-rev-1",
+      linkedSessionId: "app-1",
+      openFindingCount: 1,
+    });
+    expect(parsed.meta).toMatchObject({
+      reviewRunCount: 1,
+      activeReviewRunCount: 1,
+      openReviewFindingCount: 1,
+    });
   });
 
   it("displays sessions from tmux with metadata", async () => {

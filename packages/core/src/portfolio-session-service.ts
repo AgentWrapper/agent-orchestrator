@@ -141,6 +141,7 @@ function metadataToSession(sessionId: string, project: PortfolioProject, metadat
 
   return sessionFromMetadata(sessionId, metadataToRecord(metadata), {
     projectId: project.id,
+    workspacePathFallback: project.repoPath,
     status: (metadata.status as Session["status"]) || "spawning",
     activity: null,
     runtimeHandle: metadata.runtimeHandle ?? null,
