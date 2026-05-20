@@ -1,0 +1,27 @@
+packages/web/server/direct-terminal-ws.ts
+  s_3c12ffb1648181::t_608b44d0dd2ec7 20,95-100,109-114,141,148-150,157-161
+  s_3c12ffb1648181::t_ed2d1a4af509c1 27-30
+packages/web/src/middleware.test.ts
+  s_3c12ffb1648181::t_f2ffad8cf3ef52 87-116
+packages/cli/src/lib/web-dir.ts
+  s_3c12ffb1648181::t_ed2d1a4af509c1 36-47,70-72,80-84,156-160,216-217
+  s_3c12ffb1648181::t_83af0a1aed3ee3 13
+packages/web/src/middleware.ts
+  s_3c12ffb1648181::t_bf01fbdff5cd3e 63-70,78-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "331a08b6d7a9a16e95c0fffc32abfa784c19afe6",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
