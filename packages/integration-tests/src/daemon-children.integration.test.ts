@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   clearDaemonChildrenRegistry,
   getDaemonChildren,
+  isWindows,
   killProcessTree,
   registerDaemonChild,
 } from "@aoagents/ao-core";
@@ -19,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..", "..");
 const cliEntry = join(repoRoot, "packages", "cli", "dist", "index.js");
 
-const canRun = existsSync(cliEntry);
+const canRun = !isWindows() && existsSync(cliEntry);
 
 function isAlive(pid: number): boolean {
   if (pid <= 0) return false;
@@ -145,8 +146,12 @@ describe.skipIf(!canRun)("daemon child reaping (integration)", () => {
     });
 
     expect(stdout).toContain("Swept 1 registered daemon child");
-    expect(await waitForChildExit(registeredChild, childPid)).toBe(true);
-    expect(await waitForChildExit(daemonParent, daemonPid)).toBe(true);
+    const [registeredChildExited, daemonParentExited] = await Promise.all([
+      waitForChildExit(registeredChild, childPid),
+      waitForChildExit(daemonParent, daemonPid),
+    ]);
+    expect(registeredChildExited).toBe(true);
+    expect(daemonParentExited).toBe(true);
     expect(getDaemonChildren()).toEqual([]);
   }, 30_000);
 });
