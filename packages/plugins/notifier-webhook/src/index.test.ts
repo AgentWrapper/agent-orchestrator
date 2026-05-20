@@ -39,10 +39,18 @@ describe("notifier-webhook", () => {
       expect(notifier.name).toBe("webhook");
     });
 
-    it("is silent when no url configured (no-op notifier)", () => {
+    it("warns when no url configured", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      create();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No url configured"));
+    });
+
+    it("is silent when no url configured and AO_QUIET_STARTUP is set", () => {
+      process.env.AO_QUIET_STARTUP = "1";
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       create();
       expect(warnSpy).not.toHaveBeenCalled();
+      delete process.env.AO_QUIET_STARTUP;
     });
 
     it("throws on invalid URL scheme", () => {

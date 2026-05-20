@@ -107,7 +107,11 @@ export function create(config?: Record<string, unknown>): Notifier {
   }
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
-  if (url) {
+  if (!url) {
+    if (!process.env.AO_QUIET_STARTUP) {
+      console.warn("[notifier-webhook] No url configured — notifications will be no-ops");
+    }
+  } else {
     validateUrl(url, "notifier-webhook");
   }
 

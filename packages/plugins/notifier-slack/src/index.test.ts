@@ -59,10 +59,18 @@ describe("notifier-slack", () => {
       expect(notifier.name).toBe("slack");
     });
 
-    it("is silent when no webhookUrl configured (no-op notifier)", () => {
+    it("warns when no webhookUrl configured", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      create();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No webhookUrl configured"));
+    });
+
+    it("is silent when no webhookUrl configured and AO_QUIET_STARTUP is set", () => {
+      process.env.AO_QUIET_STARTUP = "1";
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       create();
       expect(warnSpy).not.toHaveBeenCalled();
+      delete process.env.AO_QUIET_STARTUP;
     });
 
     it("throws on invalid URL scheme", () => {
