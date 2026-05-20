@@ -3,6 +3,7 @@ import {
   DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
   buildAgentPath,
+  isWindows,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
@@ -20,10 +21,10 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
-import which from "which";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as {
@@ -46,13 +47,20 @@ interface GooseSessionExport {
   user_set_name?: unknown;
 }
 
+function readSystemPromptFile(systemPromptFile: string | undefined): string | null {
+  if (!systemPromptFile) return null;
+  try {
+    const content = readFileSync(systemPromptFile, "utf8");
+    return content.trim().length > 0 ? content : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildSystemPromptArg(config: AgentLaunchConfig): string {
-  if (config.systemPromptFile) {
-    return ` --system "$(cat ${shellEscape(config.systemPromptFile)})"`;
-  }
-  if (config.systemPrompt) {
-    return ` --system ${shellEscape(config.systemPrompt)}`;
-  }
+  const fileSystemPrompt = readSystemPromptFile(config.systemPromptFile);
+  const systemPrompt = fileSystemPrompt ?? config.systemPrompt;
+  if (systemPrompt) return ` --system ${shellEscape(systemPrompt)}`;
   return "";
 }
 
@@ -64,6 +72,8 @@ async function runGooseCommand(
     const child = spawn("goose", args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      shell: isWindows(),
+      windowsHide: true,
     });
 
     let stdout = "";
@@ -251,6 +261,7 @@ function createGooseAgent(): Agent {
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -339,7 +350,12 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    return Boolean(which.sync("goose"));
+    execFileSync("goose", ["--version"], {
+      stdio: "ignore",
+      shell: isWindows(),
+      windowsHide: true,
+    });
+    return true;
   } catch {
     return false;
   }

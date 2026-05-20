@@ -13,7 +13,7 @@ import {
   readMetadata,
   readMetadataRaw,
 } from "../../metadata.js";
-import { getProjectWorktreesDir } from "../../paths.js";
+import { getProjectDir, getProjectWorktreesDir } from "../../paths.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -2488,5 +2488,184 @@ describe("spawn", () => {
       expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
     });
 
+  });
+
+  describe("relaunchOrchestrator", () => {
+    it("spawns a fresh orchestrator when none exists", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.relaunchOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(session.status).toBe("working");
+      expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("kills and replaces an existing orchestrator regardless of strategy", async () => {
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const session = await sm.relaunchOrchestrator({ projectId: "my-app" });
+
+      expect(session.id).toBe("app-orchestrator");
+      expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("old-rt"));
+      expect(mockWorkspace.create).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "app-orchestrator" }),
+      );
+      const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
+      expect(meta?.["status"]).toBe("working");
+      expect(meta?.["runtimeHandle"]).not.toContain("old-rt");
+    });
+
+    it("ignores project orchestratorSessionStrategy: ignore and still replaces", async () => {
+      const configWithIgnore: OrchestratorConfig = {
+        ...config,
+        projects: {
+          ...config.projects,
+          "my-app": {
+            ...config.projects["my-app"]!,
+            orchestratorSessionStrategy: "ignore",
+          },
+        },
+      };
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      const sm = createSessionManager({ config: configWithIgnore, registry: mockRegistry });
+
+      await sm.relaunchOrchestrator({ projectId: "my-app" });
+
+      expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("old-rt"));
+      expect(mockWorkspace.create).toHaveBeenCalled();
+    });
+
+    it("coalesces concurrent relaunch calls into a single replacement", async () => {
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const [s1, s2] = await Promise.all([
+        sm.relaunchOrchestrator({ projectId: "my-app" }),
+        sm.relaunchOrchestrator({ projectId: "my-app" }),
+      ]);
+
+      expect(s1.id).toBe("app-orchestrator");
+      expect(s2.id).toBe("app-orchestrator");
+      expect(mockRuntime.destroy).toHaveBeenCalledTimes(1);
+      expect(mockWorkspace.create).toHaveBeenCalledTimes(1);
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("ensureOrchestrator waits for an in-flight relaunch before returning", async () => {
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      let releaseWorkspace: () => void = () => {};
+      const blockingWorkspace = new Promise<void>((resolve) => {
+        releaseWorkspace = resolve;
+      });
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockImplementationOnce(async (cfg) => {
+        await blockingWorkspace;
+        return {
+          path: join(tmpDir, "ws-relaunch"),
+          branch: cfg.branch,
+          sessionId: cfg.sessionId,
+          projectId: cfg.projectId,
+        };
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const relaunchPromise = sm.relaunchOrchestrator({ projectId: "my-app" });
+      await Promise.resolve();
+      const ensurePromise = sm.ensureOrchestrator({ projectId: "my-app" });
+
+      releaseWorkspace();
+
+      const [relaunched, ensured] = await Promise.all([relaunchPromise, ensurePromise]);
+      expect(relaunched.id).toBe("app-orchestrator");
+      expect(ensured.id).toBe("app-orchestrator");
+      // Both should resolve to the *post-relaunch* session, not the killed one.
+      expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("old-rt"));
+    });
+
+    it("waits for an in-flight ensureOrchestrator before replacing", async () => {
+      let releaseWorkspace: () => void = () => {};
+      const blockingWorkspace = new Promise<void>((resolve) => {
+        releaseWorkspace = resolve;
+      });
+      const ensureWorkspacePath = join(tmpDir, "ws-ensure");
+      (mockWorkspace.create as ReturnType<typeof vi.fn>).mockImplementationOnce(async (cfg) => {
+        await blockingWorkspace;
+        return {
+          path: ensureWorkspacePath,
+          branch: cfg.branch,
+          sessionId: cfg.sessionId,
+          projectId: cfg.projectId,
+        };
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      const ensurePromise = sm.ensureOrchestrator({ projectId: "my-app" });
+      // Yield so ensure can register itself in the in-flight map.
+      await Promise.resolve();
+      const relaunchPromise = sm.relaunchOrchestrator({ projectId: "my-app" });
+
+      releaseWorkspace();
+
+      const [ensured, relaunched] = await Promise.all([ensurePromise, relaunchPromise]);
+
+      expect(ensured.id).toBe("app-orchestrator");
+      expect(relaunched.id).toBe("app-orchestrator");
+      // Relaunch's kill must run, destroying the runtime ensure just spawned.
+      expect(mockRuntime.destroy).toHaveBeenCalled();
+    });
+
+    it("rewrites the orchestrator-prompt file with the new system prompt", async () => {
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        role: "orchestrator",
+        project: "my-app",
+        status: "working",
+        branch: "orchestrator/app-orchestrator",
+        worktree: join(tmpDir, "old-orchestrator-ws"),
+        runtimeHandle: makeHandle("old-rt"),
+      });
+      const sm = createSessionManager({ config, registry: mockRegistry });
+
+      await sm.relaunchOrchestrator({
+        projectId: "my-app",
+        systemPrompt: "FRESH ORCHESTRATOR PROMPT",
+      });
+
+      const promptPath = join(
+        getProjectDir("my-app"),
+        "orchestrator-prompt-app-orchestrator.md",
+      );
+      expect(existsSync(promptPath)).toBe(true);
+      expect(readFileSync(promptPath, "utf-8")).toBe("FRESH ORCHESTRATOR PROMPT");
+    });
   });
 });

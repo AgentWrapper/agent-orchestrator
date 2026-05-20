@@ -29,6 +29,26 @@ Monorepo (pnpm) with packages: `core`, `cli`, `web`, and `plugins/*`. The web da
 
 Full guidelines with AO-specific context: see "Working Principles" in CLAUDE.md.
 
+## Skills
+
+Agents working on this repo should use these checked-in skills:
+
+### Bug Triage (`skills/bug-triage/`)
+
+**When to use:** Any time a bug is reported — in chat, issues, or live observation.
+
+**What it covers:**
+- Full triage workflow: gather context → search duplicates → file/update GitHub issues → push fix PRs
+- Root cause analysis with `git log -S` archaeology and upstream dependency research
+- GitHub API-based file editing (no local checkout needed) via `scripts/push_fix_to_github.py`
+- NPM package regression diffing
+- Remote code inspection when the repo isn't cloned locally
+
+**How to load:** Read `skills/bug-triage/SKILL.md` and follow its step-by-step workflow. The `scripts/` directory contains executable tools:
+- `push_fix_to_github.py` — Push a single-file fix and create a PR entirely via GitHub API
+
+**Always pull latest main before triaging.** Stale code = bad triage. No exceptions.
+
 ## Key Files
 
 - `packages/core/src/types.ts` — All plugin interfaces (Agent, Runtime, Workspace, etc.)

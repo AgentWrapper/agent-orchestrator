@@ -3,12 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
-import {
-  type DashboardSession,
-  type DashboardPR,
-  isPRMergeReady,
-} from "@/lib/types";
+import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
+import { DashboardNotificationButton } from "./DashboardNotificationButton";
 import { SessionDetailPRCard } from "./SessionDetailPRCard";
 import { askAgentToFix } from "./session-detail-agent-actions";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
@@ -36,6 +33,7 @@ interface SessionDetailHeaderProps {
   onToggleSidebar: () => void;
   onRestore: () => void;
   onKill: () => void;
+  onRelaunchClean?: () => void;
 }
 
 function normalizeActivityLabelForClass(activityLabel: string): string {
@@ -80,6 +78,7 @@ export function SessionDetailHeader({
   onToggleSidebar,
   onRestore,
   onKill,
+  onRelaunchClean,
 }: SessionDetailHeaderProps) {
   const pr = session.pr;
   const allGreen = pr ? isPRMergeReady(pr) : false;
@@ -106,8 +105,7 @@ export function SessionDetailHeader({
 
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
-  const showHeaderProjectLabel =
-    headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
+  const showHeaderProjectLabel = headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
 
   return (
     <header className="dashboard-app-header">
@@ -157,12 +155,8 @@ export function SessionDetailHeader({
           {showHeaderProjectLabel && (
             <span className="dashboard-app-header__project">{headerProjectLabel}</span>
           )}
-          <span className="dashboard-app-header__session-id topbar-mobile-only">
-            {session.id}
-          </span>
-          {isOrchestrator && (
-            <span className="session-detail-mode-badge">orchestrator</span>
-          )}
+          <span className="dashboard-app-header__session-id topbar-mobile-only">{session.id}</span>
+          {isOrchestrator && <span className="session-detail-mode-badge">orchestrator</span>}
         </div>
         <div className="topbar-session-pills">
           <div
@@ -171,10 +165,7 @@ export function SessionDetailHeader({
               `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`,
             )}
           >
-            <span
-              className="topbar-status-pill__dot"
-              style={{ background: activity.color }}
-            />
+            <span className="topbar-status-pill__dot" style={{ background: activity.color }} />
             <span className="topbar-status-pill__label">{activity.label}</span>
           </div>
           {session.branch ? (
@@ -197,14 +188,11 @@ export function SessionDetailHeader({
         </div>
       </div>
       <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
-      <span className="dashboard-app-header__session-title topbar-desktop-only">
-        {headline}
-      </span>
-      <span className="dashboard-app-header__session-id topbar-desktop-only">
-        {session.id}
-      </span>
+      <span className="dashboard-app-header__session-title topbar-desktop-only">{headline}</span>
+      <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
       <div className="dashboard-app-header__spacer" />
       <div className="dashboard-app-header__actions">
+        <DashboardNotificationButton />
         {pr ? (
           <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
             <a
@@ -228,8 +216,7 @@ export function SessionDetailHeader({
                   "topbar-pr-dot",
                   allGreen
                     ? "topbar-pr-dot--green"
-                    : pr.ciStatus === CI_STATUS.FAILING ||
-                        pr.reviewDecision === "changes_requested"
+                    : pr.ciStatus === CI_STATUS.FAILING || pr.reviewDecision === "changes_requested"
                       ? "topbar-pr-dot--red"
                       : "topbar-pr-dot--amber",
                 )}
@@ -299,6 +286,30 @@ export function SessionDetailHeader({
               <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
             <span className="topbar-btn-label">Kill</span>
+          </button>
+        ) : null}
+
+        {isOrchestrator && onRelaunchClean ? (
+          <button
+            type="button"
+            className="dashboard-app-btn dashboard-app-btn--amber"
+            onClick={onRelaunchClean}
+            aria-label="Launch Orchestrator (clean context)"
+          >
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M20 11a8 8 0 0 0-14.9-3.98" />
+              <path d="M4 5v4h4" />
+              <path d="M4 13a8 8 0 0 0 14.9 3.98" />
+              <path d="M20 19v-4h-4" />
+            </svg>
+            <span className="topbar-btn-label">Relaunch (clean)</span>
           </button>
         ) : null}
 

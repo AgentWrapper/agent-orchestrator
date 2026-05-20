@@ -6,16 +6,22 @@ const {
   mockFindConfigFile,
   mockLoadConfig,
   mockCreatePluginRegistry,
+  mockCreateProjectObserver,
+  mockRecordNotificationDelivery,
   mockDetectOpenClawInstallation,
   mockValidateToken,
   mockRegistry,
   mockGetCurrentVersion,
   mockReadCachedUpdateInfo,
+  mockDetectInstallMethod,
+  mockGetUpdateCommand,
 } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
   mockFindConfigFile: vi.fn(),
   mockLoadConfig: vi.fn(),
   mockCreatePluginRegistry: vi.fn(),
+  mockCreateProjectObserver: vi.fn(),
+  mockRecordNotificationDelivery: vi.fn(),
   mockDetectOpenClawInstallation: vi.fn(),
   mockValidateToken: vi.fn(),
   mockRegistry: {
@@ -25,6 +31,8 @@ const {
   },
   mockGetCurrentVersion: vi.fn(() => "0.2.2"),
   mockReadCachedUpdateInfo: vi.fn(() => null),
+  mockDetectInstallMethod: vi.fn(() => "unknown"),
+  mockGetUpdateCommand: vi.fn(() => "npm install -g @aoagents/ao@latest"),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
@@ -32,11 +40,20 @@ vi.mock("../../src/lib/script-runner.js", () => ({
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  buildCIFailureNotificationData: () => ({ schemaVersion: 3 }),
+  buildPRStateNotificationData: () => ({ schemaVersion: 3 }),
+  buildReactionNotificationData: () => ({ schemaVersion: 3 }),
+  buildSessionTransitionNotificationData: () => ({ schemaVersion: 3 }),
   createPluginRegistry: (...args: unknown[]) => mockCreatePluginRegistry(...args),
+  createProjectObserver: (...args: unknown[]) => mockCreateProjectObserver(...args),
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
-  resolveNotifierTarget: (config: { notifiers?: Record<string, { plugin?: string }> }, reference: string) => {
+  recordNotificationDelivery: (...args: unknown[]) => mockRecordNotificationDelivery(...args),
+  resolveNotifierTarget: (
+    config: { notifiers?: Record<string, { plugin?: string }> },
+    reference: string,
+  ) => {
     const configured = config.notifiers?.[reference];
     return {
       reference,
@@ -51,8 +68,10 @@ vi.mock("../../src/lib/openclaw-probe.js", () => ({
 }));
 
 vi.mock("../../src/lib/update-check.js", () => ({
+  detectInstallMethod: () => mockDetectInstallMethod(),
   getCurrentVersion: () => mockGetCurrentVersion(),
-  readCachedUpdateInfo: () => mockReadCachedUpdateInfo(),
+  getUpdateCommand: (...args: unknown[]) => mockGetUpdateCommand(...args),
+  readCachedUpdateInfo: (...args: unknown[]) => mockReadCachedUpdateInfo(...args),
   isVersionOutdated: (current: string, latest: string) => {
     const parseVersion = (version: string) => {
       const [base, prerelease] = version.split("-", 2);
@@ -148,6 +167,12 @@ describe("doctor command", () => {
 
     mockCreatePluginRegistry.mockReset();
     mockCreatePluginRegistry.mockReturnValue(mockRegistry);
+    mockCreateProjectObserver.mockReset();
+    mockCreateProjectObserver.mockReturnValue({
+      recordOperation: vi.fn(),
+      setHealth: vi.fn(),
+    });
+    mockRecordNotificationDelivery.mockReset();
 
     mockRegistry.loadFromConfig.mockReset();
     mockRegistry.loadFromConfig.mockResolvedValue(undefined);
@@ -219,7 +244,9 @@ describe("doctor command", () => {
     const output = consoleLogSpy.mock.calls.map((call) => call[0]).join("\n");
     expect(output).toContain('defaults.runtime -> runtime plugin "tmux"');
     expect(output).toContain('projects.my-app.scm.plugin -> scm plugin "github"');
-    expect(output).toContain('defaults.notifiers: alerts (plugin: slack) -> notifier plugin "slack"');
+    expect(output).toContain(
+      'defaults.notifiers: alerts (plugin: slack) -> notifier plugin "slack"',
+    );
   });
 
   it("fails when a referenced plugin cannot be loaded", async () => {

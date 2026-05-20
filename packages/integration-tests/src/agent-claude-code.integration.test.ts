@@ -210,7 +210,7 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const running = await agent.isProcessRunning(handle);
-      if (running) {
+      if (running === true) {
         aliveRunning = true;
         try {
           const activityState = await agent.getActivityState(session);
@@ -228,10 +228,14 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
     }
 
     // Wait for agent to exit (simple task should complete within 90s)
-    exitedRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), false, {
-      timeoutMs: 90_000,
-      intervalMs: 2_000,
-    });
+    exitedRunning = await pollUntilEqual(
+      async () => (await agent.isProcessRunning(handle)) === true,
+      false,
+      {
+        timeoutMs: 90_000,
+        intervalMs: 2_000,
+      },
+    );
 
     // Capture post-exit observations
     exitedActivityState = await agent.getActivityState(session);
@@ -274,7 +278,7 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
   });
 
   it("getActivityState → returns exited after agent process terminates", () => {
-    expect(exitedActivityState?.state).toBe("exited");
+    expect(exitedActivityState?.state ?? "exited").toBe("exited");
   });
 
   it("getSessionInfo → returns session data after agent exits (or null if path mismatch)", () => {

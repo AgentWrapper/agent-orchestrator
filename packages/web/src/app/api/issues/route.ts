@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
 import { validateString, validateConfiguredProject } from "@/lib/validation";
-import type { Tracker } from "@aoagents/ao-core";
+import { recordActivityEvent, type Tracker } from "@aoagents/ao-core";
 
 export const dynamic = "force-dynamic";
 
@@ -95,11 +95,25 @@ export async function POST(request: NextRequest) {
       project,
     );
 
+    recordActivityEvent({
+      projectId,
+      source: "api",
+      kind: "api.issue_created",
+      summary: `issue created: ${issue.id}`,
+      data: { issueId: issue.id, addToBacklog: Boolean(body.addToBacklog) },
+    });
+
     return NextResponse.json({ issue: { projectId, ...issue } }, { status: 201 });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to create issue" },
-      { status: 500 },
-    );
+    const reason = err instanceof Error ? err.message : "Failed to create issue";
+    recordActivityEvent({
+      projectId,
+      source: "api",
+      kind: "api.issue_create_failed",
+      level: "error",
+      summary: `issue create failed: ${reason}`,
+      data: { reason },
+    });
+    return NextResponse.json({ error: reason }, { status: 500 });
   }
 }

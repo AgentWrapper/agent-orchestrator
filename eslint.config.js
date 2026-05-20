@@ -99,6 +99,31 @@ export default tseslint.config(
     },
   },
 
+  // Long-running daemon entrypoints must use the managed-child API so any
+  // subprocess they own is registered and reaped on stop/SIGINT.
+  {
+    files: ["packages/cli/src/commands/start.ts", "packages/web/server/start-all.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "node:child_process",
+              importNames: ["spawn"],
+              message: "Use spawnManagedDaemonChild() for daemon-owned subprocesses.",
+            },
+            {
+              name: "child_process",
+              importNames: ["spawn"],
+              message: "Use spawnManagedDaemonChild() for daemon-owned subprocesses.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // Scripts directory - Node.js environment
   {
     files: ["scripts/**/*.js", "scripts/**/*.mjs", "packages/*/scripts/**/*.js"],

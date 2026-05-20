@@ -10,9 +10,17 @@ import { makeEvent } from "./helpers/event-factory.js";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
+  execFileSync: vi.fn(() => {
+    throw new Error("not found");
+  }),
+}));
+
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(() => false),
 }));
 
 vi.mock("node:os", () => ({
+  homedir: vi.fn(() => "/Users/test"),
   platform: vi.fn(() => "darwin"),
 }));
 
@@ -121,8 +129,8 @@ describe("notifier-desktop integration", () => {
 
       expect(mockExecFile.mock.calls[0][0]).toBe("notify-send");
       const args = mockExecFile.mock.calls[0][1] as string[];
-      expect(args).toContain("Agent Orchestrator [backend-1]");
-      expect(args).toContain("Test msg");
+      expect(args).toContain("Session Spawned");
+      expect(args.some((arg) => arg.includes("Test msg"))).toBe(true);
     });
 
     it("linux + urgent -> --urgency=critical before title", async () => {

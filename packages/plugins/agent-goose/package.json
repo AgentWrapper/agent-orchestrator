@@ -34,11 +34,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aoagents/ao-core": "workspace:*",
-    "which": "^6.0.1"
+    "@aoagents/ao-core": "workspace:*"
   },
   "devDependencies": {
-    "@types/which": "^3.0.4",
     "@types/node": "^25.2.3",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

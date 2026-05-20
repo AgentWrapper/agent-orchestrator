@@ -33,6 +33,7 @@ interface SessionCardProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onReview?: (sessionId: string) => Promise<void> | void;
 }
 
 /**
@@ -126,12 +127,20 @@ function getDoneStatusInfo(session: DashboardSession): {
   };
 }
 
-function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
+function SessionCardView({
+  session,
+  onSend,
+  onKill,
+  onMerge,
+  onRestore,
+  onReview,
+}: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
   const [failedAction, setFailedAction] = useState<string | null>(null);
   const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
   const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
+  const [requestingReview, setRequestingReview] = useState(false);
   const [killConfirming, setKillConfirming] = useState(false);
   const [replyText, setReplyText] = useState("");
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,6 +266,18 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
     setKillConfirming(false);
     onKill?.(session.id);
+  };
+
+  const handleReviewClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (requestingReview || !onReview) return;
+
+    setRequestingReview(true);
+    try {
+      await Promise.resolve(onReview(session.id));
+    } finally {
+      setRequestingReview(false);
+    }
   };
 
   /* ── Done card variant ──────────────────────────────────────────── */
@@ -827,44 +848,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           </span>
 
           {isReadyToMerge && pr ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onMerge?.(pr.number);
-              }}
-              className="session-card__control session-card__merge-control"
-            >
-              <svg
-                className="session-card__control-icon"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <circle cx="6" cy="6" r="2" />
-                <circle cx="18" cy="18" r="2" />
-                <circle cx="18" cy="6" r="2" />
-                <path d="M8 6h5a3 3 0 0 1 3 3v7" />
-              </svg>
-              Merge PR #{pr.number}
-            </button>
-          ) : (
-            !isTerminal && (
-              <button
-                onClick={handleKillClick}
-                onMouseLeave={() => setKillConfirming(false)}
-                onBlur={() => setKillConfirming(false)}
-                aria-label={killConfirming ? "Confirm terminate session" : "Terminate session"}
-                className={cn(
-                  "session-card__control session-card__terminate btn--danger",
-                  killConfirming && "is-confirming",
-                )}
-              >
-                {killConfirming ? (
-                  <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
-                    kill?
-                  </span>
-                ) : (
+            <div className="session-card__footer-actions">
+              {onReview ? (
+                <button
+                  type="button"
+                  onClick={(e) => void handleReviewClick(e)}
+                  disabled={requestingReview}
+                  className="session-card__control session-card__review-control"
+                  aria-label="Request review"
+                >
                   <svg
                     className="session-card__control-icon"
                     fill="none"
@@ -872,12 +864,87 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                     strokeWidth="2"
                     viewBox="0 0 24 24"
                   >
-                    <path d="M3 6h18" />
-                    <path d="M8 6V4h8v2" />
-                    <path d="M19 6l-1 14H6L5 6" />
+                    <path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z" />
+                    <path d="M8 7h6M8 11h6M8 15h4" />
                   </svg>
-                )}
+                  {requestingReview ? "Queued" : "Review"}
+                </button>
+              ) : null}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMerge?.(pr.number);
+                }}
+                className="session-card__control session-card__merge-control"
+              >
+                <svg
+                  className="session-card__control-icon"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="6" cy="6" r="2" />
+                  <circle cx="18" cy="18" r="2" />
+                  <circle cx="18" cy="6" r="2" />
+                  <path d="M8 6h5a3 3 0 0 1 3 3v7" />
+                </svg>
+                Merge PR #{pr.number}
               </button>
+            </div>
+          ) : (
+            !isTerminal && (
+              <div className="session-card__footer-actions">
+                {onReview ? (
+                  <button
+                    type="button"
+                    onClick={(e) => void handleReviewClick(e)}
+                    disabled={requestingReview}
+                    className="session-card__control session-card__review-control"
+                    aria-label="Request review"
+                  >
+                    <svg
+                      className="session-card__control-icon"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z" />
+                      <path d="M8 7h6M8 11h6M8 15h4" />
+                    </svg>
+                    {requestingReview ? "Queued" : "Review"}
+                  </button>
+                ) : null}
+                <button
+                  onClick={handleKillClick}
+                  onMouseLeave={() => setKillConfirming(false)}
+                  onBlur={() => setKillConfirming(false)}
+                  aria-label={killConfirming ? "Confirm terminate session" : "Terminate session"}
+                  className={cn(
+                    "session-card__control session-card__terminate btn--danger",
+                    killConfirming && "is-confirming",
+                  )}
+                >
+                  {killConfirming ? (
+                    <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                      kill?
+                    </span>
+                  ) : (
+                    <svg
+                      className="session-card__control-icon"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4h8v2" />
+                      <path d="M19 6l-1 14H6L5 6" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             )
           )}
         </div>
@@ -892,7 +959,8 @@ function areSessionCardPropsEqual(prev: SessionCardProps, next: SessionCardProps
     prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
-    prev.onRestore === next.onRestore
+    prev.onRestore === next.onRestore &&
+    prev.onReview === next.onReview
   );
 }
 
@@ -918,8 +986,8 @@ interface Alert {
   type: "ci" | "changes" | "review" | "conflict" | "comment";
   icon: React.ReactNode;
   label: string;
-  url: string;
   count?: number;
+  url: string;
   notified?: boolean;
   actionLabel?: string;
   actionMessage?: string;

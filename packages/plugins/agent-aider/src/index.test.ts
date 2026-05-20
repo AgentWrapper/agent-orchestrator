@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 // Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -213,7 +218,9 @@ describe("getLaunchCommand", () => {
   it("inlines systemPromptFile content on Windows instead of $(cat ...)", () => {
     mockIsWindows.mockReturnValueOnce(true);
     mockReadFileSync.mockReturnValueOnce("You are a senior engineer.");
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md" }));
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "C:\\prompts\\sys.md" }),
+    );
     expect(cmd).toContain("--system-prompt");
     expect(cmd).toContain("You are a senior engineer.");
     expect(cmd).not.toContain("$(cat");
@@ -279,9 +286,18 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(handle)).toBe(false);
   });
 
-  it("returns false on tmux command failure", async () => {
+  it("returns indeterminate on tmux command failure", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux gone"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys005\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -367,7 +383,9 @@ describe("detectActivity", () => {
   });
 
   it("returns waiting_input for Y/N confirmation", () => {
-    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe("waiting_input");
+    expect(agent.detectActivity("Allow creation of new file foo.ts\n(Y)es/(N)o")).toBe(
+      "waiting_input",
+    );
   });
 
   it("returns waiting_input for add-to-chat prompt", () => {
@@ -429,10 +447,13 @@ describe("getRestoreCommand", () => {
   const agent = create();
 
   it("returns null (aider does not support session resume)", async () => {
-    const result = await agent.getRestoreCommand!(
-      makeSession(),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const result = await agent.getRestoreCommand!(makeSession(), {
+      name: "proj",
+      repo: "o/r",
+      path: "/p",
+      defaultBranch: "main",
+      sessionPrefix: "p",
+    });
     expect(result).toBeNull();
   });
 });
@@ -521,9 +542,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("waiting_input");
   });
 
@@ -534,9 +553,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("blocked");
   });
 
@@ -551,9 +568,7 @@ describe("getActivityState with activity JSONL", () => {
     // falls through to git/chat fallbacks. With no git commits or chat history,
     // falls through to JSONL mtime fallback (step 4) which returns "active"
     // since modifiedAt is recent.
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("active");
   });
 });

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 const {
   mockAppendActivityEntry,
@@ -49,7 +54,12 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { create, manifest, default as defaultExport, resetOpenCodeSessionListCache } from "./index.js";
+import {
+  create,
+  manifest,
+  default as defaultExport,
+  resetOpenCodeSessionListCache,
+} from "./index.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -192,9 +202,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ subagent: "sisyphus", prompt: "fix bug" }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       "exec opencode --session \"$SES_ID\" --prompt 'fix bug' --agent 'sisyphus'",
     );
@@ -339,9 +347,7 @@ describe("getLaunchCommand", () => {
         prompt: "fix the bug",
       }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       `exec opencode --session "$SES_ID" --prompt 'fix the bug' --agent 'sisyphus'`,
     );
@@ -368,9 +374,7 @@ describe("getLaunchCommand", () => {
         prompt: "fix the bug",
       }),
     );
-    expect(cmd).toContain(
-      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'",
-    );
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --agent 'sisyphus'");
     expect(cmd).toContain(
       `exec opencode --session "$SES_ID" --prompt 'fix the bug' --agent 'sisyphus'`,
     );
@@ -501,9 +505,18 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(handle)).toBe(false);
   });
 
-  it("returns false on tmux command failure", async () => {
+  it("returns indeterminate on tmux command failure", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate when ps command fails", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") return Promise.reject(new Error("ps timed out"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
   });
 
   it("returns true when PID exists but throws EPERM", async () => {
@@ -778,10 +791,13 @@ describe("getRestoreCommand", () => {
 
   it("returns null when no session ID found", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("opencode not found"));
-    const cmd = await agent.getRestoreCommand!(
-      makeSession({ metadata: {} }),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const cmd = await agent.getRestoreCommand!(makeSession({ metadata: {} }), {
+      name: "proj",
+      repo: "o/r",
+      path: "/p",
+      defaultBranch: "main",
+      sessionPrefix: "p",
+    });
     expect(cmd).toBeNull();
   });
 
@@ -796,10 +812,13 @@ describe("getRestoreCommand", () => {
       return Promise.reject(new Error("unexpected"));
     });
 
-    const cmd = await agent.getRestoreCommand!(
-      makeSession({ metadata: {} }),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const cmd = await agent.getRestoreCommand!(makeSession({ metadata: {} }), {
+      name: "proj",
+      repo: "o/r",
+      path: "/p",
+      defaultBranch: "main",
+      sessionPrefix: "p",
+    });
     expect(cmd).toBe("opencode --session 'ses_found'");
   });
 });
@@ -991,9 +1010,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("waiting_input");
   });
 
@@ -1004,9 +1021,7 @@ describe("getActivityState with activity JSONL", () => {
       modifiedAt: new Date(),
     });
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-    );
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result?.state).toBe("blocked");
   });
 
@@ -1024,7 +1039,11 @@ describe("getActivityState with activity JSONL", () => {
       if (cmd === "opencode") {
         return Promise.resolve({
           stdout: JSON.stringify([
-            { id: "ses_abc123", title: "AO:test-1", updated: new Date(Date.now() - 5_000).toISOString() },
+            {
+              id: "ses_abc123",
+              title: "AO:test-1",
+              updated: new Date(Date.now() - 5_000).toISOString(),
+            },
           ]),
           stderr: "",
         });
@@ -1033,7 +1052,10 @@ describe("getActivityState with activity JSONL", () => {
     });
 
     const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle(), metadata: { opencodeSessionId: "ses_abc123" } }),
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        metadata: { opencodeSessionId: "ses_abc123" },
+      }),
       60_000,
     );
     expect(result?.state).toBe("active");
@@ -1067,7 +1089,11 @@ describe("getActivityState with activity JSONL", () => {
   it("falls back to JSONL entry with age decay — old entry becomes idle", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date(Date.now() - 120_000).toISOString(), state: "active", source: "terminal" },
+      entry: {
+        ts: new Date(Date.now() - 120_000).toISOString(),
+        state: "active",
+        source: "terminal",
+      },
       modifiedAt: new Date(Date.now() - 120_000),
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {

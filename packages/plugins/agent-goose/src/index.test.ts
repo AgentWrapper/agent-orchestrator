@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig, ProjectConfig } from "@aoagents/ao-core";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 const require = createRequire(import.meta.url);
@@ -20,33 +23,29 @@ const {
   mockRecordTerminalActivity,
   mockSetupPathWrapperWorkspace,
   mockExecFileAsync,
+  mockExecFileSync,
   mockSpawnAsync,
-  mockWhichSync,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
   mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
   mockExecFileAsync: vi.fn(),
+  mockExecFileSync: vi.fn(),
   mockSpawnAsync: vi.fn(),
-  mockWhichSync: vi.fn(),
+  mockIsWindows: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
+    isWindows: mockIsWindows,
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
   };
 });
-
-vi.mock("which", () => ({
-  default: {
-    sync: mockWhichSync,
-  },
-  sync: mockWhichSync,
-}));
 
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => {
@@ -59,6 +58,7 @@ vi.mock("node:child_process", () => ({
       );
     }
   },
+  execFileSync: mockExecFileSync,
   spawn: (...args: unknown[]) => {
     const child = new EventEmitter() as EventEmitter & {
       stdout: PassThrough;
@@ -97,7 +97,6 @@ vi.mock("node:child_process", () => ({
 
     return child;
   },
-  execFileSync: vi.fn(),
 }));
 
 import { create, detect, manifest, default as defaultExport } from "./index.js";
@@ -151,6 +150,13 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
   };
 }
 
+function makeSystemPromptFile(content: string): { dir: string; file: string } {
+  const dir = mkdtempSync(join(tmpdir(), "ao-goose-test-"));
+  const file = join(dir, "system prompt.md");
+  writeFileSync(file, content, "utf8");
+  return { dir, file };
+}
+
 function makeActivityResult(
   state: "active" | "ready" | "idle" | "waiting_input" | "blocked",
   ts: Date,
@@ -194,8 +200,10 @@ function makeGooseSessionExport({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockWhichSync.mockReset();
+  mockExecFileSync.mockReset();
   mockSpawnAsync.mockReset();
+  mockIsWindows.mockReset();
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("manifest", () => {
@@ -225,13 +233,27 @@ describe("create", () => {
 });
 
 describe("detect", () => {
-  it("returns true when which resolves", async () => {
-    mockWhichSync.mockReturnValue("/usr/local/bin/goose");
+  it("returns true when goose version command succeeds", async () => {
     expect(detect()).toBe(true);
+    expect(mockExecFileSync).toHaveBeenCalledWith("goose", ["--version"], {
+      stdio: "ignore",
+      shell: false,
+      windowsHide: true,
+    });
   });
 
-  it("returns false when which fails", async () => {
-    mockWhichSync.mockImplementation(() => {
+  it("uses a shell on Windows so .cmd shims resolve", async () => {
+    mockIsWindows.mockReturnValue(true);
+    expect(detect()).toBe(true);
+    expect(mockExecFileSync).toHaveBeenCalledWith("goose", ["--version"], {
+      stdio: "ignore",
+      shell: true,
+      windowsHide: true,
+    });
+  });
+
+  it("returns false when goose version command fails", async () => {
+    mockExecFileSync.mockImplementation(() => {
       throw new Error("not found");
     });
     expect(detect()).toBe(false);
@@ -267,17 +289,23 @@ describe("getLaunchCommand", () => {
     );
   });
 
-  it("passes long system prompt files through a shell-escaped cat substitution", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({
-        prompt: "Do work",
-        systemPrompt: "You are helpful",
-        systemPromptFile: "/tmp/prompt with spaces.md",
-      }),
-    );
-    expect(cmd).toBe(
-      `goose run --name 'sess-1' --system "$(cat '/tmp/prompt with spaces.md')" --text 'Do work' --interactive`,
-    );
+  it("reads system prompt files in Node and passes the content via --system", () => {
+    const { dir, file } = makeSystemPromptFile("Follow file instructions");
+    try {
+      const cmd = agent.getLaunchCommand(
+        makeLaunchConfig({
+          prompt: "Do work",
+          systemPrompt: "You are helpful",
+          systemPromptFile: file,
+        }),
+      );
+      expect(cmd).toBe(
+        "goose run --name 'sess-1' --system 'Follow file instructions' --text 'Do work' --interactive",
+      );
+      expect(cmd).not.toContain("$(");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("does not include unsupported session-id or prompt-only flags in launch command", () => {
@@ -307,6 +335,13 @@ describe("getEnvironment", () => {
 
 describe("isProcessRunning", () => {
   const agent = create();
+
+  it("returns false without POSIX tmux checks on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+    expect(mockExecFileAsync).not.toHaveBeenCalled();
+  });
 
   it("returns true when goose is on tmux pane", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, _args: string[]) => {
@@ -430,7 +465,31 @@ describe("getSessionInfo", () => {
     expect(mockSpawnAsync).toHaveBeenCalledWith(
       "goose",
       ["session", "export", "--name", "test-1", "--format", "json"],
-      expect.any(Object),
+      expect.objectContaining({
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }),
+    );
+  });
+
+  it("uses shell spawning for Goose metadata commands on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockSpawnAsync.mockResolvedValue({
+      stdout: makeGooseSessionExport({ id: "20260510_36", name: "test-1" }),
+      stderr: "",
+    });
+
+    await expect(agent.getSessionInfo(makeSession({ id: "test-1" }))).resolves.toMatchObject({
+      agentSessionId: "20260510_36",
+    });
+    expect(mockSpawnAsync).toHaveBeenCalledWith(
+      "goose",
+      ["session", "export", "--name", "test-1", "--format", "json"],
+      expect.objectContaining({
+        shell: true,
+        windowsHide: true,
+      }),
     );
   });
 

@@ -25,7 +25,7 @@ vi.mock("node:child_process", () => {
   const execFile = Object.assign(vi.fn(), {
     [Symbol.for("nodejs.util.promisify.custom")]: ghMock,
   });
-  return { execFile };
+  return { execFile, exec: vi.fn() };
 });
 
 // ---------------------------------------------------------------------------
