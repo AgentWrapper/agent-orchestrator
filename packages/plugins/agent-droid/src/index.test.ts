@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  PROCESS_PROBE_INDETERMINATE,
   isWindows,
   type Session,
   type RuntimeHandle,
@@ -210,7 +211,7 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe(`droid --resume '${VALID_DROID_SESSION_ID}'`);
   });
 
-  it("passes supported model, permission, and system-prompt flags", () => {
+  it("passes top-level interactive system-prompt flags", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         workspacePath: "/workspace/test",
@@ -220,17 +221,18 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toBe(
-      "droid --model 'gpt-5.5' --auto 'low' --append-system-prompt-file '/tmp/system prompt.md'",
+      "droid --append-system-prompt-file '/tmp/system prompt.md'",
     );
   });
 
-  it("maps permissionless mode to Droid's unsafe skip flag", () => {
+  it("does not pass exec-only model or permission flags to interactive Droid", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
+        model: "gpt-5.5",
         permissions: "permissionless",
       }),
     );
-    expect(cmd).toBe("droid --skip-permissions-unsafe");
+    expect(cmd).toBe("droid");
   });
 
   it("passes the user task as Droid's inline initial prompt", () => {
@@ -247,12 +249,12 @@ describe("getLaunchCommand", () => {
 describe("getEnvironment", () => {
   const agent = create();
 
-  it("writes AO session keys and agent path", () => {
+  it("writes AO session keys without overriding centralized PATH settings", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_SESSION_ID"]).toBe("sess-1");
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
-    expect(env["PATH"]).toContain(".ao/bin");
-    expect(env["GH_PATH"]).toBeTruthy();
+    expect(env["PATH"]).toBeUndefined();
+    expect(env["GH_PATH"]).toBeUndefined();
   });
 
   it("includes AO_ISSUE_ID when provided", () => {
@@ -292,6 +294,11 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
+  it.skipIf(isWindows())("returns indeterminate when tmux probing fails", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("tmux unavailable"));
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(PROCESS_PROBE_INDETERMINATE);
+  });
+
   it("returns true when process handle pid is alive", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     expect(await agent.isProcessRunning(makeProcessHandle(123))).toBe(true);
@@ -314,6 +321,15 @@ describe("isProcessRunning", () => {
       throw err;
     });
     expect(await agent.isProcessRunning(makeProcessHandle(123))).toBe(false);
+    killSpy.mockRestore();
+  });
+
+  it("returns indeterminate when process probing fails unexpectedly", async () => {
+    const err = Object.assign(new Error("unknown"), { code: "EACCES" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw err;
+    });
+    expect(await agent.isProcessRunning(makeProcessHandle(123))).toBe(PROCESS_PROBE_INDETERMINATE);
     killSpy.mockRestore();
   });
 });
@@ -416,6 +432,20 @@ describe("getActivityState", () => {
       }),
     );
     expect(state?.state).toBe("waiting_input");
+    killSpy.mockRestore();
+  });
+
+  it("returns null when process probing is indeterminate", async () => {
+    const err = Object.assign(new Error("unknown"), { code: "EACCES" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw err;
+    });
+    const state = await agent.getActivityState(
+      makeSession({
+        runtimeHandle: makeProcessHandle(101),
+      }),
+    );
+    expect(state).toBeNull();
     killSpy.mockRestore();
   });
 

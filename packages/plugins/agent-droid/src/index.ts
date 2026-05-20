@@ -2,21 +2,20 @@ import {
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
   shellEscape,
-  buildAgentPath,
   readLastActivityEntry,
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
   setupPathWrapperWorkspace,
-  PREFERRED_GH_PATH,
-  normalizeAgentPermissionMode,
   isWindows,
+  PROCESS_PROBE_INDETERMINATE,
   type Agent,
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
   type ProjectConfig,
+  type ProcessProbeResult,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -87,13 +86,6 @@ function buildDroidCommand(args: DroidCommandArg[]): string {
   return ["droid", ...args.map((arg) => (arg.raw ? arg.value : shellEscape(arg.value)))].join(" ");
 }
 
-function getDroidPermissionArgs(config: AgentLaunchConfig): DroidCommandArg[] {
-  const mode = normalizeAgentPermissionMode(config.permissions);
-  if (mode === "permissionless") return [flag("--skip-permissions-unsafe")];
-  if (mode === "auto-edit") return [flag("--auto"), value("low")];
-  return [];
-}
-
 function getDroidLaunchArgs(config: AgentLaunchConfig): DroidCommandArg[] {
   const args: DroidCommandArg[] = [];
   const configuredSessionId = asValidDroidSessionId(
@@ -102,12 +94,6 @@ function getDroidLaunchArgs(config: AgentLaunchConfig): DroidCommandArg[] {
   if (configuredSessionId) {
     args.push(flag("--resume"), value(configuredSessionId));
   }
-
-  if (config.model) {
-    args.push(flag("--model"), value(config.model));
-  }
-
-  args.push(...getDroidPermissionArgs(config));
 
   if (config.systemPromptFile) {
     args.push(flag("--append-system-prompt-file"), value(config.systemPromptFile));
@@ -259,9 +245,6 @@ function createDroidAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
-
       return env;
     },
 
@@ -279,6 +262,7 @@ function createDroidAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
@@ -301,13 +285,14 @@ function createDroidAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
-        if (handle.runtimeName === "tmux" && handle.id && !isWindows()) {
+        if (handle.runtimeName === "tmux" && handle.id) {
+          if (isWindows()) return false;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-            { timeout: 30_000 },
+            { timeout: 30_000, windowsHide: true },
           );
           const ttys = ttyOut
             .trim()
@@ -318,6 +303,7 @@ function createDroidAgent(): Agent {
 
           const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
             timeout: 30_000,
+            windowsHide: true,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)droid(?:\s|$)/;
@@ -342,12 +328,15 @@ function createDroidAgent(): Agent {
             if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EPERM") {
               return true;
             }
-            return false;
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
+              return false;
+            }
+            return PROCESS_PROBE_INDETERMINATE;
           }
         }
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 
