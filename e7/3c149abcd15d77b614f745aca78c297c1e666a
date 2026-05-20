@@ -1,0 +1,30 @@
+packages/web/server/dev-next-server.ts
+  s_3c12ffb1648181::t_eda91c15f73b7c 5,28
+  s_3c12ffb1648181::t_6b7de55600c861 54-56
+packages/web/server/start-all.ts
+  s_3c12ffb1648181::t_eda91c15f73b7c 18,45
+packages/web/server/__tests__/direct-terminal-ws.integration.test.ts
+  s_3c12ffb1648181::t_d554c75cf74e34 10,31-32,98-101,120-137,141-142
+packages/web/server/__tests__/remote-auth.test.ts
+  s_3c12ffb1648181::t_4140679d765d9e 1-6,10-17,22-60
+  s_3c12ffb1648181::t_cb9a6406243375 7-9,18-21
+packages/web/server/remote-auth.ts
+  s_3c12ffb1648181::t_eda91c15f73b7c 6,41-47,49-70
+  s_3c12ffb1648181::t_6b7de55600c861 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "e73c149abcd15d77b614f745aca78c297c1e666a",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
