@@ -113,6 +113,7 @@ function buildPiCommand(
   sessionDir: string,
   sessionId?: string | null,
   systemPromptFile?: string,
+  prompt?: string,
 ): string {
   const parts = [PI_EXECUTABLE, "--session-dir", shellEscape(sessionDir)];
   if (systemPromptFile) {
@@ -120,6 +121,9 @@ function buildPiCommand(
   }
   if (sessionId) {
     parts.push("--session", shellEscape(sessionId));
+  }
+  if (prompt) {
+    parts.push(shellEscape(prompt));
   }
   return parts.join(" ");
 }
@@ -328,13 +332,14 @@ function createPiAgent(): Agent {
   return {
     name: pluginName,
     processName: pluginName,
-    promptDelivery: "post-launch",
+    promptDelivery: "inline",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       return buildPiCommand(
         getPiSessionDir(config),
         getConfiguredPiSessionId(config),
         config.systemPromptFile,
+        config.prompt,
       );
     },
 

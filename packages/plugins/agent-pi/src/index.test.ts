@@ -244,11 +244,11 @@ describe("manifest", () => {
 });
 
 describe("create", () => {
-  it("uses pi as process name and post-launch prompt mode", () => {
+  it("uses pi as process name and inline prompt mode", () => {
     const agent = create();
     expect(agent.name).toBe(pluginName);
     expect(agent.processName).toBe(pluginName);
-    expect(agent.promptDelivery).toBe("post-launch");
+    expect(agent.promptDelivery).toBe("inline");
   });
 
   it("exports plugin module shape", () => {
@@ -280,7 +280,7 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("pi --session-dir '/workspace/repo/.ao/pi-sessions/sess-1'");
   });
 
-  it("passes the AO system prompt file without inlining the task prompt", () => {
+  it("passes the AO system prompt file", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/system prompt.md" }),
     );
@@ -303,7 +303,7 @@ describe("getLaunchCommand", () => {
     );
   });
 
-  it("does not include prompt flags in launch command", () => {
+  it("passes the task prompt as Pi's positional initial message", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({
         prompt: "Do work",
@@ -312,7 +312,7 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toBe(
-      "pi --session-dir '/workspace/repo/.ao/pi-sessions/sess-1' --append-system-prompt '/tmp/prompt.md'",
+      "pi --session-dir '/workspace/repo/.ao/pi-sessions/sess-1' --append-system-prompt '/tmp/prompt.md' 'Do work'",
     );
     expect(cmd).not.toContain("-p ");
     expect(cmd).not.toContain("--print");
