@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isWindows } from "@aoagents/ao-core";
 import { ACTIVITY_UPDATER_SCRIPT, ACTIVITY_UPDATER_SCRIPT_NODE } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -84,11 +85,16 @@ function runHook(variant: Variant, payload: HookInput): HookResult {
 }
 
 // Each scenario is executed against both the bash and the Node variant so
-// drift between the two implementations is caught immediately.
+// drift between the two implementations is caught immediately. The bash
+// suite is skipped on Windows — bash isn't a native shell there, so
+// `execSync('bash "..."')` would throw ENOENT for every case. The Node
+// variant is the Windows-supported path (and is exercised on Unix too,
+// guarding against drift). Matches the `describe.skipIf` pattern used by
+// `packages/core/src/__tests__/migration-storage-v2.test.ts`.
 const variants: Variant[] = ["bash", "node"];
 
 for (const variant of variants) {
-  describe(`activity-updater (${variant})`, () => {
+  describe.skipIf(variant === "bash" && isWindows())(`activity-updater (${variant})`, () => {
     // -----------------------------------------------------------------------
     // active states — turn-in-progress markers
     // -----------------------------------------------------------------------
