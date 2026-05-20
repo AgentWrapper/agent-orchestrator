@@ -42,7 +42,7 @@ const ANSI_ESCAPE_RE = new RegExp(
   "g",
 );
 const GEMINI_WAITING_PROMPT_RE =
-  /(?:\b(?:allow|approve|confirm|continue|proceed)\b.*\?|\[[YyNn]\/ ?[YyNn]\]|\([YyNn]\/ ?[YyNn]\)|[Yy]es\/?[Nn]o|[Yy]\/[Nn])/;
+  /(?:\b(?:allow|approve|confirm|continue|proceed)\b.*\?|\[[YyNn]\/ ?[YyNn]\]|\([YyNn]\/ ?[YyNn]\)|[Yy]es\/?[Nn]o|[Yy]\/[Nn])/i;
 
 function getConfiguredModel(config: AgentLaunchConfig): string | null {
   const launchModel = typeof config.model === "string" ? config.model.trim() : "";

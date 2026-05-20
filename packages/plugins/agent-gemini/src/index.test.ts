@@ -339,6 +339,14 @@ describe("recordActivity", () => {
     expect(classify?.("Allow shell command? [y/N]")).toBe("waiting_input");
   });
 
+  it("classifies capitalized prompts without y/n markers as waiting_input", async () => {
+    await agent.recordActivity?.(makeSession(), "Proceed with shell command?");
+    const classify = mockRecordTerminalActivity.mock.calls[0]?.[2] as
+      | ((output: string) => string)
+      | undefined;
+    expect(classify?.("Proceed with shell command?")).toBe("waiting_input");
+  });
+
   it("classifies ansi-colored prompts as waiting_input", async () => {
     await agent.recordActivity?.(makeSession(), "\u001b[33mProceed?\u001b[39m y/N");
     const classify = mockRecordTerminalActivity.mock.calls[0]?.[2] as
