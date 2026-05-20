@@ -35,15 +35,23 @@
  * `service:` URL with no path-based ingress). With this enabled, a single
  * proxy rule pointing at PORT is sufficient — the WS path is multiplexed
  * onto the same TCP port and demuxed here.
+ *
+ * `createSinglePortServer()` is exported so the proxy behaviour can be
+ * exercised in tests; the bottom-of-file entrypoint wires it to env vars and
+ * process signals when this file is run directly (as start-all.ts spawns it).
  */
 
 import {
   createServer,
   request as httpRequest,
+  type IncomingHttpHeaders,
   type IncomingMessage,
   type OutgoingHttpHeaders,
+  type Server,
 } from "node:http";
 import type { Socket } from "node:net";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const MUX_PATH = "/ao-terminal-mux";
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -66,28 +74,26 @@ const HOP_BY_HOP = new Set([
   "upgrade",
 ]);
 
-const port = parseInt(process.env.PORT ?? "3000", 10);
-const directTerminalPort = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
-const nextInternalPort = parseInt(process.env.NEXT_INTERNAL_PORT ?? "0", 10);
+export interface SinglePortConfig {
+  /** Public-facing port this proxy listens on. */
+  port: number;
+  /** Internal port Next.js has been shifted to. */
+  nextInternalPort: number;
+  /** Port direct-terminal-ws listens on. */
+  directTerminalPort: number;
+}
 
-if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-  console.error(`[single-port] Invalid PORT: ${process.env.PORT}`);
-  process.exit(1);
-}
-if (!Number.isInteger(directTerminalPort) || directTerminalPort < 1 || directTerminalPort > 65_535) {
-  console.error(`[single-port] Invalid DIRECT_TERMINAL_PORT: ${process.env.DIRECT_TERMINAL_PORT}`);
-  process.exit(1);
-}
-if (
-  !Number.isInteger(nextInternalPort) ||
-  nextInternalPort < 1 ||
-  nextInternalPort > 65_535 ||
-  nextInternalPort === port
-) {
-  console.error(
-    `[single-port] Invalid NEXT_INTERNAL_PORT (must differ from PORT): ${process.env.NEXT_INTERNAL_PORT}`,
-  );
-  process.exit(1);
+export interface SinglePortServer {
+  /** The underlying HTTP server — exposed for `.address()` in tests. */
+  server: Server;
+  /** Begin listening on the configured port; resolves once bound. */
+  listen(): Promise<void>;
+  /**
+   * Stop listening and force-close every live connection, resolving once the
+   * server is fully closed. `server.close()` alone waits for keep-alive HTTP
+   * sockets and piped WS tunnels to drain on their own, which they never do.
+   */
+  shutdown(): Promise<void>;
 }
 
 /**
@@ -143,40 +149,23 @@ function buildUpstreamHeaders(
   return headers;
 }
 
-const server = createServer((req, res) => {
-  const proxyReq = httpRequest(
-    {
-      host: "127.0.0.1",
-      port: nextInternalPort,
-      method: req.method,
-      path: req.url,
-      headers: buildUpstreamHeaders(req, { keepUpgrade: false }),
-    },
-    (proxyRes) => {
-      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
-      proxyRes.pipe(res);
-    },
-  );
-
-  proxyReq.on("error", (err) => {
-    if (!res.headersSent) {
-      res.writeHead(502, { "content-type": "text/plain" });
-    }
-    res.end(`Bad gateway: ${err.message}`);
-  });
-
-  req.pipe(proxyReq);
-});
-
-server.on("upgrade", (req, socket, head) => {
-  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-  const target =
-    pathname === MUX_PATH
-      ? { host: "127.0.0.1", port: directTerminalPort, path: "/mux" }
-      : { host: "127.0.0.1", port: nextInternalPort, path: req.url ?? "/" };
-
-  tunnelUpgrade(req, socket as Socket, head, target);
-});
+/**
+ * Drop hop-by-hop headers from an upstream *response* before relaying it to
+ * the client. Without this the upstream's `Connection`/`Keep-Alive` would
+ * override the proxy↔client connection's own semantics — e.g. forwarding the
+ * upstream's `Connection: keep-alive` ignores a client that asked for `close`.
+ * Framing headers (`transfer-encoding`) are dropped here too so the client's
+ * `ServerResponse` re-derives framing for its own hop.
+ */
+function filterResponseHeaders(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
+  const out: OutgoingHttpHeaders = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
+    out[key] = value;
+  }
+  return out;
+}
 
 function tunnelUpgrade(
   req: IncomingMessage,
@@ -253,20 +242,137 @@ function tunnelUpgrade(
   proxyReq.end();
 }
 
-server.listen(port, () => {
-  console.log(
-    `[single-port] listening on ${port}; HTTP → 127.0.0.1:${nextInternalPort}; ${MUX_PATH} → 127.0.0.1:${directTerminalPort}/mux`,
-  );
-});
+/**
+ * Create the single-port proxy. The returned server is not yet listening —
+ * call `listen()`.
+ */
+export function createSinglePortServer(config: SinglePortConfig): SinglePortServer {
+  const { port, nextInternalPort, directTerminalPort } = config;
 
-function shutdown(): void {
-  // server.close() stops accepting new connections but waits for existing
-  // ones to drain. Keep-alive HTTP sockets and piped WS tunnels never drain
-  // on their own, so close them explicitly — otherwise shutdown always hits
-  // the force-exit timer below.
-  server.close(() => process.exit(0));
-  server.closeAllConnections();
-  setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
+  // Sockets handed off via the 'upgrade' event are no longer tracked by the
+  // HTTP server, so `server.closeAllConnections()` does not destroy them and
+  // `server.close()`'s callback would wait on them forever. Track them here.
+  const upgradedSockets = new Set<Socket>();
+
+  const server = createServer((req, res) => {
+    const proxyReq = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: nextInternalPort,
+        method: req.method,
+        path: req.url,
+        headers: buildUpstreamHeaders(req, { keepUpgrade: false }),
+      },
+      (proxyRes) => {
+        res.writeHead(proxyRes.statusCode ?? 502, filterResponseHeaders(proxyRes.headers));
+        proxyRes.pipe(res);
+      },
+    );
+
+    proxyReq.on("error", (err) => {
+      if (!res.headersSent) {
+        res.writeHead(502, { "content-type": "text/plain" });
+      }
+      res.end(`Bad gateway: ${err.message}`);
+    });
+
+    req.pipe(proxyReq);
+  });
+
+  server.on("upgrade", (req, socket, head) => {
+    const clientSocket = socket as Socket;
+    upgradedSockets.add(clientSocket);
+    clientSocket.once("close", () => upgradedSockets.delete(clientSocket));
+
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    const target =
+      pathname === MUX_PATH
+        ? { host: "127.0.0.1", port: directTerminalPort, path: "/mux" }
+        : { host: "127.0.0.1", port: nextInternalPort, path: req.url ?? "/" };
+
+    tunnelUpgrade(req, clientSocket, head, target);
+  });
+
+  return {
+    server,
+    listen() {
+      return new Promise<void>((resolve) => server.listen(port, () => resolve()));
+    },
+    shutdown() {
+      return new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        // closeAllConnections() handles keep-alive HTTP sockets; the upgraded
+        // WS tunnels are tracked separately and destroyed here. Destroying the
+        // client socket triggers tunnelUpgrade's teardown for the upstream side.
+        server.closeAllConnections();
+        for (const socket of upgradedSockets) socket.destroy();
+      });
+    },
+  };
 }
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+
+/** Parse and validate the proxy config from env vars, exiting on bad input. */
+function configFromEnv(): SinglePortConfig {
+  const port = parseInt(process.env.PORT ?? "3000", 10);
+  const directTerminalPort = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
+  const nextInternalPort = parseInt(process.env.NEXT_INTERNAL_PORT ?? "0", 10);
+
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    console.error(`[single-port] Invalid PORT: ${process.env.PORT}`);
+    process.exit(1);
+  }
+  if (
+    !Number.isInteger(directTerminalPort) ||
+    directTerminalPort < 1 ||
+    directTerminalPort > 65_535
+  ) {
+    console.error(
+      `[single-port] Invalid DIRECT_TERMINAL_PORT: ${process.env.DIRECT_TERMINAL_PORT}`,
+    );
+    process.exit(1);
+  }
+  if (
+    !Number.isInteger(nextInternalPort) ||
+    nextInternalPort < 1 ||
+    nextInternalPort > 65_535 ||
+    nextInternalPort === port
+  ) {
+    console.error(
+      `[single-port] Invalid NEXT_INTERNAL_PORT (must differ from PORT): ${process.env.NEXT_INTERNAL_PORT}`,
+    );
+    process.exit(1);
+  }
+  return { port, nextInternalPort, directTerminalPort };
+}
+
+function main(): void {
+  const config = configFromEnv();
+  const proxy = createSinglePortServer(config);
+
+  void proxy.listen().then(() => {
+    console.log(
+      `[single-port] listening on ${config.port}; HTTP → 127.0.0.1:${config.nextInternalPort}; ${MUX_PATH} → 127.0.0.1:${config.directTerminalPort}/mux`,
+    );
+  });
+
+  const onSignal = (): void => {
+    void proxy.shutdown().then(() => process.exit(0));
+    setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+}
+
+/** True when this file was run directly (`node single-port-server.js`). */
+function isMainModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  main();
+}
