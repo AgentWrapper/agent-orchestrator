@@ -375,6 +375,45 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
+  // Coverage for the broadened process regex — these are real install shapes
+  // the previous narrow regex `/(?:^|\/)claude(?:\s|$)/` would have missed,
+  // causing AO to declare sessions `exited` while Claude was still running.
+  it.each([
+    ["bare binary", "claude"],
+    ["absolute path", "/opt/homebrew/bin/claude"],
+    ["dot-prefix shim", "/usr/local/lib/.claude"],
+    ["windows exe", "claude.exe"],
+    ["js shim", "claude.js"],
+    ["hyphenated name", "claude-code"],
+    ["node-shim npm install", "node /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+  ])("returns true for %s (%s)", async (_label, args) => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
+      if (cmd === "ps")
+        return Promise.resolve({
+          stdout: `  PID TT       ARGS\n  123 ttys001  ${args}\n`,
+          stderr: "",
+        });
+      return Promise.reject(new Error("unexpected"));
+    });
+    resetPsCache();
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
+  });
+
+  it("still rejects look-alike names (claudia, claudine)", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
+      if (cmd === "ps")
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  123 ttys001  claudia\n  124 ttys001  /bin/claudine\n",
+          stderr: "",
+        });
+      return Promise.reject(new Error("unexpected"));
+    });
+    resetPsCache();
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
   it("returns false when tmux list-panes returns empty", async () => {
     mockExecFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
@@ -441,22 +480,6 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("does not match similar process names like claude-code", async () => {
-    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
-      if (cmd === "tmux" && args[0] === "list-panes") {
-        return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
-      }
-      if (cmd === "ps") {
-        return Promise.resolve({
-          stdout: "  PID TT ARGS\n  100 ttys001  /usr/bin/claude-code\n",
-          stderr: "",
-        });
-      }
-      return Promise.reject(new Error("unexpected"));
-    });
-    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
-  });
-
   it("returns false for tmux handle on Windows without spawning ps", async () => {
     mockIsWindows.mockReturnValue(true);
     // ps should never be called — getCachedProcessList guards against Windows
@@ -515,6 +538,23 @@ describe("detectActivity", () => {
     );
   });
 
+  it("does NOT match Claude's persistent UI footer 'bypass permissions on (shift+tab to cycle)'", () => {
+    // Regression test: the old `/bypass.*permissions/i` regex matched this
+    // footer toggle (visible on EVERY Claude session) and falsely fired
+    // waiting_input for every session that fell through to the AO JSONL
+    // pipeline. ao-143/144/151 all flipped to waiting_input on dormant
+    // sessions until this was tightened to require "all future".
+    const footerOnly = [
+      "✻ Crunched for 11s",
+      "",
+      "──────────────────────────────────────────────────────────",
+      "❯ ",
+      "──────────────────────────────────────────────────────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    ].join("\n");
+    expect(agent.detectActivity(footerOnly)).not.toBe("waiting_input");
+  });
+
   it("returns active when queued message indicator is visible", () => {
     expect(agent.detectActivity("Press up to edit queued messages\n")).toBe("active");
   });
@@ -543,8 +583,131 @@ describe("detectActivity", () => {
     ).toBe("waiting_input");
   });
 
-  it("returns active for non-empty output with no special patterns", () => {
-    expect(agent.detectActivity("some random terminal output\n")).toBe("active");
+  it("returns idle for non-empty output with no active-work indicators", () => {
+    // Default-to-idle (changed from default-to-active in this PR). Claude's
+    // tmux pane has a persistent input area + footer that looks identical
+    // between "just finished" and "currently working". Treating
+    // unrecognized output as active caused dormant sessions to get an
+    // "active" written to AO activity-JSONL every poll cycle, which the
+    // age-decayed fallback then surfaced as ready forever (ao-160 repro).
+    expect(agent.detectActivity("some random terminal output\n")).toBe("idle");
+  });
+
+  it("returns idle for dormant session showing only Claude's input area + footer", () => {
+    // Real captured output from a dormant session (ao-143 style): assistant
+    // output above, separator, empty prompt line, separator, footer toggle.
+    // The empty prompt ❯ is NOT the LAST line (footer is) so the existing
+    // lastLine check misses it, and previously the default-to-active sent
+    // every dormant session into the AO-JSONL active-loop.
+    const dormant = [
+      "※ recap: working on issue #143; next: wait for review",
+      "",
+      "──────────────────────────────────────────────────────────",
+      "❯ ",
+      "──────────────────────────────────────────────────────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt",
+    ].join("\n");
+    expect(agent.detectActivity(dormant)).toBe("idle");
+  });
+
+  it("returns active when spinner+ellipsis is in the tail (✻ Fluttering…)", () => {
+    // Real captured output from ao-161 mid-active-turn. The ✻ spinner
+    // followed by a verb and trailing ellipsis is the canonical Claude
+    // active indicator across all turn-status words (Germinating,
+    // Fluttering, Thinking, Pondering, etc).
+    const active = [
+      "✻ Fluttering… (6m 49s · ↓ 26.9k tokens)",
+      "  ⎿  Tip: Use /feedback to help us improve!",
+      "",
+      "──────",
+      "❯ ",
+      "──────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt",
+    ].join("\n");
+    expect(agent.detectActivity(active)).toBe("active");
+  });
+
+  it("returns idle for past-tense spinner status like '✻ Worked for 11s' (no ellipsis)", () => {
+    // Real captured output from ao-143 dormant. The ✻ glyph appears in
+    // past-tense turn summaries too — without the trailing ellipsis,
+    // Claude is done, not active.
+    const dormant = [
+      "⏺ Posted: https://github.com/owner/repo/pull/1#comment-1",
+      "",
+      "✻ Worked for 11s",
+      "",
+      "※ recap: working on issue #143; next: wait for review",
+      "──────",
+      "❯ ",
+      "──────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    ].join("\n");
+    expect(agent.detectActivity(dormant)).toBe("idle");
+  });
+
+  // Blocked detection from terminal regex — empirically captured from real
+  // Claude output during api.anthropic.com block (see PR #1932).
+  it("returns blocked for 'Unable to connect to API' error line", () => {
+    const real = [
+      "❯ what is 2+2? answer in one word.",
+      "  ⎿  Unable to connect to API (ConnectionRefused)",
+      "     Retrying in 19s · attempt 7/10",
+      "",
+      "✽ Germinating… (56s)",
+      "",
+    ].join("\n");
+    expect(agent.detectActivity(real)).toBe("blocked");
+  });
+
+  it("returns blocked for FailedToOpenSocket error variant", () => {
+    expect(
+      agent.detectActivity("  ⎿  Unable to connect to API (FailedToOpenSocket)\n"),
+    ).toBe("blocked");
+  });
+
+  it("returns blocked for retry counter alone (Retrying in Ns · attempt N/M)", () => {
+    // If only the retry line is in the visible window (error scrolled off),
+    // the retry counter is still a sufficient signal.
+    expect(agent.detectActivity("     Retrying in 30s · attempt 9/10\n")).toBe("blocked");
+  });
+
+  it("does NOT return blocked when API error has scrolled out of the visible window after a successful retry", () => {
+    // Regression test: blocked detection must be bounded to the last 12
+    // lines (wideTail), NOT the full terminalOutput buffer. Otherwise an
+    // api_error that scrolled off the visible area after a successful
+    // retry but stayed in scrollback would falsely return "blocked"
+    // forever (Greptile review on PR #1932).
+    const recoveredAndContinued = [
+      "  ⎿  Unable to connect to API (ConnectionRefused)",
+      "     Retrying in 1s · attempt 1/10",
+      "  ⎿  ✓ Connected, retry succeeded",
+      "",
+      "(many lines of work output below pushing the error off the visible area)",
+      ...Array.from({ length: 15 }, (_, i) => `  line ${i + 1} of subsequent work`),
+      "",
+      "✻ Fluttering… (2m 14s)",
+      "  ⎿  Tip: Use /feedback to help us improve!",
+      "",
+      "──────",
+      "❯ ",
+      "──────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt",
+    ].join("\n");
+    expect(agent.detectActivity(recoveredAndContinued)).toBe("active");
+  });
+
+  it("blocked takes precedence over waiting_input when both 'bypass permissions' footer and api-error are present", () => {
+    // Claude's static UI footer always contains "bypass permissions on …",
+    // which the existing waiting_input regex matches. A real blocked state
+    // must win over that incidental match.
+    const real = [
+      "  ⎿  Unable to connect to API (ConnectionRefused)",
+      "     Retrying in 1s · attempt 5/10",
+      "",
+      "────────────────────────────────────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt",
+    ].join("\n");
+    expect(agent.detectActivity(real)).toBe("blocked");
   });
 });
 

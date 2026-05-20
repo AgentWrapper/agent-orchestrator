@@ -1334,6 +1334,13 @@ export interface LifecycleConfig {
   mergeCleanupIdleGraceMs: number;
 }
 
+export interface ObservabilityConfig {
+  /** Minimum structured log level to persist/mirror. Defaults to "warn". */
+  logLevel: ObservabilityLevel;
+  /** Mirror structured observability logs to stderr. Defaults to false. */
+  stderr: boolean;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /** Optional JSON Schema hint for editor autocomplete/validation. */
@@ -1368,6 +1375,12 @@ export interface OrchestratorConfig {
    * than dereferencing directly. Mirrors the `power?` pattern above.
    */
   lifecycle?: LifecycleConfig;
+
+  /**
+   * Process observability settings. Populated with defaults by Zod when loaded
+   * from YAML, but optional for hand-constructed tests.
+   */
+  observability?: ObservabilityConfig;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;

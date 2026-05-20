@@ -29,7 +29,7 @@ export default async function ProjectPage(props: {
   const pageData = await getDashboardPageData(projectId);
 
   return (
-    <div className="flex-1 min-h-screen bg-[var(--color-bg-canvas)]">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-bg-canvas)]">
       <Dashboard
         initialSessions={pageData.sessions}
         projectId={pageData.selectedProjectId}

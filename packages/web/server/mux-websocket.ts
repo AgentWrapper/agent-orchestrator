@@ -10,13 +10,23 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "node:child_process";
 import { type Socket, connect as netConnect } from "node:net";
 import {
+  DEFAULT_DASHBOARD_NOTIFICATION_LIMIT,
+  getEnvDefaults,
+  getDashboardNotificationStorePath,
+  isWindows,
+  loadConfig,
+  normalizeDashboardNotificationLimit,
+  recordActivityEvent,
+  readDashboardNotificationsFromFile,
+  type DashboardNotificationRecord,
+} from "@aoagents/ao-core";
+import {
   findTmux,
   resolveTmuxSession,
   resolvePipePath,
   tmuxHasSession,
   validateSessionId,
 } from "./tmux-utils.js";
-import { getEnvDefaults, isWindows, recordActivityEvent } from "@aoagents/ao-core";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -29,7 +39,7 @@ type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: "sessions"[] };
+  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
 
 // ── Server → Client ──
 type ServerMessage =
@@ -39,6 +49,13 @@ type ServerMessage =
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
   | { ch: "sessions"; type: "error"; error: string }
+  | {
+      ch: "notifications";
+      type: "snapshot" | "append";
+      notifications: DashboardNotificationRecord[];
+      limit: number;
+    }
+  | { ch: "notifications"; type: "error"; error: string }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
@@ -195,6 +212,161 @@ export class SessionBroadcaster {
         ...extra,
       },
     });
+  }
+
+  private disconnect(): void {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
+
+function notificationKey(record: DashboardNotificationRecord): string {
+  return `${record.id}:${record.receivedAt}`;
+}
+
+function readDashboardLimit(configPath: string | undefined): number {
+  if (!configPath) return DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
+  try {
+    const config = loadConfig(configPath);
+    const dashboardConfig = config.notifiers?.["dashboard"];
+    return normalizeDashboardNotificationLimit(dashboardConfig?.["limit"]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[NotificationBroadcaster] Could not read dashboard notifier limit:", message);
+    return DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
+  }
+}
+
+/**
+ * Polls the dashboard notification JSONL store and broadcasts changes to mux
+ * subscribers. The store is config-scoped and survives dashboard reloads.
+ */
+export class NotificationBroadcaster {
+  private subscribers = new Set<
+    (
+      notifications: DashboardNotificationRecord[],
+      type: "snapshot" | "append",
+      limit: number,
+    ) => void
+  >();
+  private errorSubscribers = new Set<(error: string) => void>();
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private lastRecords: DashboardNotificationRecord[] = [];
+  private readonly configPath: string | undefined;
+  private readonly storePath: string | null;
+
+  constructor(configPath = process.env["AO_CONFIG_PATH"]) {
+    this.configPath = configPath;
+    this.storePath = configPath ? getDashboardNotificationStorePath(configPath) : null;
+  }
+
+  subscribe(
+    callback: (
+      notifications: DashboardNotificationRecord[],
+      type: "snapshot" | "append",
+      limit: number,
+    ) => void,
+    onError?: (error: string) => void,
+  ): () => void {
+    const wasEmpty = this.subscribers.size === 0;
+    this.subscribers.add(callback);
+    if (onError) this.errorSubscribers.add(onError);
+
+    const snapshot = this.fetchSnapshot();
+    if (wasEmpty) {
+      this.lastRecords = snapshot.notifications;
+    }
+    try {
+      callback(snapshot.notifications, "snapshot", snapshot.limit);
+    } catch {
+      // Isolate subscriber errors so one bad socket does not break others.
+    }
+
+    if (snapshot.error && onError) {
+      try {
+        onError(snapshot.error);
+      } catch {
+        // Isolate subscriber errors.
+      }
+    }
+
+    if (wasEmpty) {
+      this.intervalId = setInterval(() => {
+        const result = this.fetchSnapshot();
+        if (result.error) {
+          this.broadcastError(result.error);
+          return;
+        }
+
+        const previousKeys = new Set(this.lastRecords.map(notificationKey));
+        const appended = result.notifications.filter(
+          (record) => !previousKeys.has(notificationKey(record)),
+        );
+        const trimmed = result.notifications.length < this.lastRecords.length;
+        this.lastRecords = result.notifications;
+
+        if (appended.length > 0 && !trimmed) {
+          this.broadcast(appended, "append", result.limit);
+        } else if (appended.length > 0 || trimmed) {
+          this.broadcast(result.notifications, "snapshot", result.limit);
+        }
+      }, 1000);
+    }
+
+    return () => {
+      this.subscribers.delete(callback);
+      if (onError) this.errorSubscribers.delete(onError);
+      if (this.subscribers.size === 0) {
+        this.disconnect();
+      }
+    };
+  }
+
+  private fetchSnapshot(): {
+    notifications: DashboardNotificationRecord[];
+    error: string | null;
+    limit: number;
+  } {
+    const limit = readDashboardLimit(this.configPath);
+    if (!this.storePath) return { notifications: [], error: null, limit };
+
+    try {
+      return {
+        notifications: readDashboardNotificationsFromFile(this.storePath, limit),
+        error: null,
+        limit,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[NotificationBroadcaster] fetchSnapshot error:", message);
+      return { notifications: [], error: message, limit };
+    }
+  }
+
+  private broadcast(
+    notifications: DashboardNotificationRecord[],
+    type: "snapshot" | "append",
+    limit: number,
+  ): void {
+    for (const callback of this.subscribers) {
+      try {
+        callback(notifications, type, limit);
+      } catch (err) {
+        console.error("[MuxServer] Notification broadcast subscriber threw:", err);
+      }
+    }
+  }
+
+  private broadcastError(error: string): void {
+    for (const callback of this.errorSubscribers) {
+      try {
+        callback(error);
+      } catch (err) {
+        console.error("[MuxServer] Notification error subscriber threw:", err);
+      }
+    }
   }
 
   private disconnect(): void {
@@ -835,6 +1007,7 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
 
   const nextPort = process.env.PORT || "3000";
   const broadcaster = new SessionBroadcaster(nextPort);
+  const notificationBroadcaster = new NotificationBroadcaster();
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -864,6 +1037,7 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
     // Windows: framing buffers keyed by session ID
     const winPipeBuffers = new Map<string, Buffer>();
     let sessionUnsubscribe: (() => void) | null = null;
+    let notificationUnsubscribe: (() => void) | null = null;
     let missedPongs = 0;
     let heartbeatLostEmitted = false;
     const MAX_MISSED_PONGS = 3;
@@ -1086,6 +1260,29 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
               },
             );
           }
+          if (msg.topics.includes("notifications") && !notificationUnsubscribe) {
+            notificationUnsubscribe = notificationBroadcaster.subscribe(
+              (notifications, type, limit) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
+                  console.warn("[MuxServer] Skipping notification update — socket backpressured");
+                  return;
+                }
+                const msg: ServerMessage = {
+                  ch: "notifications",
+                  type,
+                  notifications,
+                  limit,
+                };
+                ws.send(JSON.stringify(msg));
+              },
+              (error) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                const errMsg: ServerMessage = { ch: "notifications", type: "error", error };
+                ws.send(JSON.stringify(errMsg));
+              },
+            );
+          }
         }
       } catch (err) {
         console.error("[MuxServer] Failed to parse message:", err);
@@ -1133,6 +1330,8 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
       clearInterval(heartbeatInterval);
       sessionUnsubscribe?.();
       sessionUnsubscribe = null;
+      notificationUnsubscribe?.();
+      notificationUnsubscribe = null;
       for (const unsub of subscriptions.values()) {
         unsub();
       }

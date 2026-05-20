@@ -34,15 +34,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aoagents/ao-core": "workspace:*"
-  },
-  "peerDependencies": {
-    "composio-core": ">=0.5.0"
-  },
-  "peerDependenciesMeta": {
-    "composio-core": {
-      "optional": true
-    }
+    "@aoagents/ao-core": "workspace:*",
+    "@composio/core": "^0.9.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

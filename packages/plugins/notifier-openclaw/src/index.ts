@@ -2,7 +2,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  getNotificationDataV3,
   type EventPriority,
+  type NotificationCICheck,
+  type NotificationDataV3,
   type Notifier,
   type NotifyAction,
   type NotifyContext,
@@ -14,16 +17,22 @@ import {
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@aoagents/ao-core/utils";
 
 /**
- * Read the hooks token from ~/.openclaw/openclaw.json as a fallback for
- * daemon contexts where the shell profile (and OPENCLAW_HOOKS_TOKEN) isn't
- * sourced. This file is written by `ao setup openclaw` and lives outside
- * the project directory so it's never committed to version control.
+ * Read the hooks token from OpenClaw's config. AO treats OpenClaw as the
+ * owner of hooks.token; setup only points the notifier at this file.
  */
-function readTokenFromOpenClawConfig(): string | undefined {
+function expandHomePath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function readTokenFromOpenClawConfig(configPath?: string): string | undefined {
   try {
-    const configPath = join(homedir(), ".openclaw", "openclaw.json");
-    if (!existsSync(configPath)) return undefined;
-    const raw = readFileSync(configPath, "utf-8");
+    const resolvedPath = expandHomePath(
+      configPath ?? join(homedir(), ".openclaw", "openclaw.json"),
+    );
+    if (!existsSync(resolvedPath)) return undefined;
+    const raw = readFileSync(resolvedPath, "utf-8");
     const config = JSON.parse(raw) as Record<string, unknown>;
     const token = (config.hooks as Record<string, unknown> | undefined)?.token;
     return typeof token === "string" && token ? token : undefined;
@@ -247,24 +256,170 @@ function eventHeadline(event: OrchestratorEvent): string {
     warning: "WARNING",
     info: "INFO",
   };
-  return `[AO ${priorityTag[event.priority]}] ${event.sessionId} ${event.type}`;
+  return `**AO ${priorityTag[event.priority]}** \`${event.type}\``;
 }
 
-function stringifyData(data: Record<string, unknown>): string {
-  const entries = Object.entries(data);
-  if (entries.length === 0) return "";
-  return `Context: ${JSON.stringify(data)}`;
+function isPrimitive(value: unknown): value is string | number | boolean {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function compactValue(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (isPrimitive(value)) return String(value);
+  if (value instanceof Date) return value.toISOString();
+  return undefined;
+}
+
+function truncate(value: string, maxLength = 140): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+function escapeMarkdownLinkLabel(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/~/g, "\\~")
+    .replace(/`/g, "\\`");
+}
+
+function escapeMarkdownLinkUrl(value: string): string {
+  return value.replace(/[()\\\s<>]/g, (char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return `%${code.toString(16).toUpperCase().padStart(2, "0")}`;
+  });
+}
+
+function formatLink(label: string, url: string): string {
+  return `[${escapeMarkdownLinkLabel(label)}](${escapeMarkdownLinkUrl(url)})`;
+}
+
+function pushSection(lines: string[], title: string, items: string[]): void {
+  const filtered = items.filter(Boolean);
+  if (filtered.length === 0) return;
+  lines.push("", `**${title}**`, ...filtered);
+}
+
+function formatSubjectLines(data: NotificationDataV3): string[] {
+  const subject = data.subject;
+  const lines = [
+    `- Project: \`${subject.session.projectId}\``,
+    `- Session: \`${subject.session.id}\``,
+  ];
+
+  if (subject.issue) {
+    const label = subject.issue.title
+      ? `${subject.issue.id} - ${subject.issue.title}`
+      : subject.issue.id;
+    lines.push(`- Issue: ${label}`);
+  }
+
+  return lines;
+}
+
+function formatPrLines(data: NotificationDataV3): string[] {
+  const pr = data.subject.pr;
+  if (!pr) return [];
+
+  const title = pr.title ? ` - ${pr.title}` : "";
+  const lines = [`- PR: ${formatLink(`#${pr.number}${title}`, pr.url)}`];
+  if (pr.branch) lines.push(`- Branch: \`${pr.branch}\``);
+  if (pr.baseBranch) lines.push(`- Base: \`${pr.baseBranch}\``);
+  if (typeof pr.isDraft === "boolean") lines.push(`- Draft: ${pr.isDraft ? "yes" : "no"}`);
+  return lines;
+}
+
+function formatStatusLines(data: NotificationDataV3): string[] {
+  const lines: string[] = [];
+  if (data.transition) {
+    lines.push(`- Transition: \`${data.transition.from}\` -> \`${data.transition.to}\``);
+  }
+  if (data.ci?.status) lines.push(`- CI: \`${data.ci.status}\``);
+  if (data.review?.decision) lines.push(`- Review: \`${data.review.decision}\``);
+  if (typeof data.review?.unresolvedThreads === "number") {
+    lines.push(`- Unresolved threads: ${data.review.unresolvedThreads}`);
+  }
+  if (typeof data.merge?.ready === "boolean") {
+    lines.push(`- Merge ready: ${data.merge.ready ? "yes" : "no"}`);
+  }
+  if (typeof data.merge?.conflicts === "boolean") {
+    lines.push(`- Conflicts: ${data.merge.conflicts ? "yes" : "no"}`);
+  }
+  if (typeof data.merge?.isBehind === "boolean") {
+    lines.push(`- Behind base: ${data.merge.isBehind ? "yes" : "no"}`);
+  }
+  if (data.reaction) {
+    lines.push(`- Reaction: \`${data.reaction.key}\` -> \`${data.reaction.action}\``);
+  }
+  if (data.escalation) {
+    lines.push(`- Escalation: ${data.escalation.attempts} attempts (${data.escalation.cause})`);
+  }
+  return lines;
+}
+
+function formatCheckLine(check: NotificationCICheck): string {
+  const status = check.conclusion ? `${check.status}/${check.conclusion}` : check.status;
+  const name = check.url ? formatLink(check.name, check.url) : check.name;
+  return `- ${name}: \`${status}\``;
+}
+
+function formatCheckLines(data: NotificationDataV3): string[] {
+  const checks = data.ci?.failedChecks ?? [];
+  return checks.slice(0, 8).map(formatCheckLine);
+}
+
+function formatBlockerLines(data: NotificationDataV3): string[] {
+  const blockers = data.merge?.blockers ?? [];
+  return blockers.slice(0, 8).map((blocker) => `- ${blocker}`);
+}
+
+function formatLinkLines(data: NotificationDataV3): string[] {
+  const links: string[] = [];
+  if (data.subject.pr?.url) links.push(`- ${formatLink("Pull request", data.subject.pr.url)}`);
+  if (data.review?.url) links.push(`- ${formatLink("Review", data.review.url)}`);
+  return links;
+}
+
+function formatLegacyContext(data: Record<string, unknown>): string[] {
+  return Object.entries(data)
+    .filter(([, value]) => compactValue(value) !== undefined)
+    .slice(0, 8)
+    .map(([key, value]) => `- ${key}: ${truncate(compactValue(value) ?? "")}`);
 }
 
 function formatEscalationMessage(event: OrchestratorEvent): string {
-  const parts = [eventHeadline(event), event.message, stringifyData(event.data)].filter(Boolean);
-  return parts.join("\n");
+  const lines = [eventHeadline(event), "", event.message];
+  const data = getNotificationDataV3(event.data);
+
+  if (!data) {
+    pushSection(lines, "Session", [
+      `- Project: \`${event.projectId}\``,
+      `- Session: \`${event.sessionId}\``,
+    ]);
+    pushSection(lines, "Context", formatLegacyContext(event.data));
+    return lines.join("\n");
+  }
+
+  pushSection(lines, "Session", formatSubjectLines(data));
+  pushSection(lines, "Pull Request", formatPrLines(data));
+  pushSection(lines, "Status", formatStatusLines(data));
+  pushSection(lines, "Checks", formatCheckLines(data));
+  pushSection(lines, "Blockers", formatBlockerLines(data));
+  pushSection(lines, "Links", formatLinkLines(data));
+  return lines.join("\n");
 }
 
 function formatActionsLine(actions: NotifyAction[]): string {
   if (actions.length === 0) return "";
-  const labels = actions.map((a) => a.label).join(", ");
-  return `Actions available: ${labels}`;
+  const lines = actions.map((action) => {
+    const target = action.url ?? action.callbackEndpoint;
+    return target ? `- ${formatLink(action.label, target)}` : `- ${action.label}`;
+  });
+  return ["", "**Actions**", ...lines].join("\n");
 }
 
 /**
@@ -283,10 +438,12 @@ export function create(config?: Record<string, unknown>): Notifier {
   const url =
     (typeof config?.url === "string" ? config.url : undefined) ??
     "http://127.0.0.1:18789/hooks/agent";
+  const openclawConfigPath =
+    typeof config?.openclawConfigPath === "string" ? config.openclawConfigPath : undefined;
   const token =
     resolveEnvVarToken(config?.token) ??
-    process.env.OPENCLAW_HOOKS_TOKEN ??
-    readTokenFromOpenClawConfig();
+    readTokenFromOpenClawConfig(openclawConfigPath) ??
+    process.env.OPENCLAW_HOOKS_TOKEN;
   const senderName = typeof config?.name === "string" ? config.name : "AO";
   const sessionKeyPrefix =
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
@@ -301,7 +458,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   if (!token) {
     console.warn(
       "[notifier-openclaw] No token configured.\n" +
-        "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
+        "  Add hooks.token to your OpenClaw config, or set notifiers.openclaw.openclawConfigPath.\n" +
         "  Run: ao setup openclaw",
     );
   }

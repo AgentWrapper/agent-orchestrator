@@ -60,6 +60,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "scm", name: "gitlab", pkg: "@aoagents/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@aoagents/ao-plugin-notifier-composio" },
+  { slot: "notifier", name: "dashboard", pkg: "@aoagents/ao-plugin-notifier-dashboard" },
   { slot: "notifier", name: "desktop", pkg: "@aoagents/ao-plugin-notifier-desktop" },
   { slot: "notifier", name: "discord", pkg: "@aoagents/ao-plugin-notifier-discord" },
   { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
@@ -80,6 +81,19 @@ function matchesNotifierPlugin(
   return hasExplicitPlugin ? configuredPlugin === pluginName : notifierId === pluginName;
 }
 
+function hasExplicitConflictingNotifierEntry(
+  pluginName: string,
+  config: OrchestratorConfig,
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(config.notifiers ?? {}, pluginName)) return false;
+  const exactMatch = config.notifiers?.[pluginName];
+  return (
+    !exactMatch ||
+    typeof exactMatch !== "object" ||
+    !matchesNotifierPlugin(pluginName, pluginName, exactMatch)
+  );
+}
+
 function collectNotifierRegistrations(
   pluginName: string,
   config: OrchestratorConfig,
@@ -87,6 +101,14 @@ function collectNotifierRegistrations(
 ): NotifierRegistration[] {
   const orderedMatches = new Map<string, Record<string, unknown>>();
   const notifierEntries = Object.entries(config.notifiers ?? {});
+  const defaultNotifiers = Array.isArray(config.defaults?.notifiers)
+    ? config.defaults.notifiers
+    : [];
+  const routingNotifiers = Object.values(config.notificationRouting ?? {}).flatMap((value) =>
+    Array.isArray(value) ? value : [],
+  );
+  const isReferencedByName =
+    defaultNotifiers.includes(pluginName) || routingNotifiers.includes(pluginName);
 
   const exactMatch = config.notifiers?.[pluginName];
   if (
@@ -102,6 +124,14 @@ function collectNotifierRegistrations(
     if (matchesNotifierPlugin(pluginName, notifierId, notifierConfig)) {
       orderedMatches.set(notifierId, notifierConfig);
     }
+  }
+
+  if (
+    orderedMatches.size === 0 &&
+    isReferencedByName &&
+    !hasExplicitConflictingNotifierEntry(pluginName, config)
+  ) {
+    orderedMatches.set(pluginName, {});
   }
 
   return [...orderedMatches.entries()].map(([registrationName, rawConfig]) => ({
@@ -144,9 +174,12 @@ function prepareConfig(
   // Skip the built-in guard for external loads: when loading via `path`, the manifest.name
   // may legitimately collide with a built-in (e.g. a forked "slack"), and the path field
   // here IS the loading path, not a stray user config value.
-  const isBuiltin = !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
+  const isBuiltin =
+    !isExternalLoad && BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
   if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
-    const loadingMethod = rawConfig.package ? `npm package "${rawConfig.package}"` : `built-in plugin "${name}"`;
+    const loadingMethod = rawConfig.package
+      ? `npm package "${rawConfig.package}"`
+      : `built-in plugin "${name}"`;
     throw new Error(
       `In ${slot} "${sourceId}": "path" field conflicts with reserved plugin loading field. ` +
         `You're loading via ${loadingMethod}, but also have a "path" field which would be stripped. ` +
@@ -405,6 +438,7 @@ export function createPluginRegistry(): PluginRegistry {
     const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
     if (registrations.length === 0) {
+      if (hasExplicitConflictingNotifierEntry(manifest.name, config)) return;
       registerInstance(manifest.slot, manifest.name, manifest, plugin.create(undefined));
       return;
     }
@@ -501,7 +535,9 @@ export function createPluginRegistry(): PluginRegistry {
 
         const specifier = resolvePluginSpecifier(plugin, config);
         if (!specifier) {
-          process.stderr.write(`[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`);
+          process.stderr.write(
+            `[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`,
+          );
           recordActivityEvent({
             source: "plugin-registry",
             kind: "plugin-registry.specifier_failed",
@@ -565,7 +601,9 @@ export function createPluginRegistry(): PluginRegistry {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
+          process.stderr.write(
+            `[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`,
+          );
           recordActivityEvent({
             source: "plugin-registry",
             kind: "plugin-registry.load_failed",

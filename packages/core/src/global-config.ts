@@ -206,6 +206,13 @@ export const GlobalConfigSchema = z
     updateChannel: UpdateChannelSchema.optional().catch(undefined),
     /** Override path-based install detection. Optional. */
     installMethod: InstallMethodOverrideSchema.optional().catch(undefined),
+    /** Structured observability defaults. Env vars still override at runtime. */
+    observability: z
+      .object({
+        logLevel: z.enum(["debug", "info", "warn", "error"]).default("warn"),
+        stderr: z.boolean().default(false),
+      })
+      .optional(),
     /** Cross-project defaults — projects inherit when fields are omitted. */
     defaults: z
       .object({
@@ -1078,6 +1085,8 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     newGlobal.directTerminalPort = parsed["directTerminalPort"] as number;
   if (parsed["readyThresholdMs"] !== null && parsed["readyThresholdMs"] !== undefined)
     newGlobal.readyThresholdMs = parsed["readyThresholdMs"] as number;
+  if (parsed["observability"] !== null && parsed["observability"] !== undefined)
+    newGlobal.observability = parsed["observability"] as GlobalConfig["observability"];
   if (parsed["defaults"] !== null && parsed["defaults"] !== undefined)
     newGlobal.defaults = parsed["defaults"] as GlobalConfig["defaults"];
   if (parsed["notifiers"] !== null && parsed["notifiers"] !== undefined)
@@ -1168,6 +1177,10 @@ export function createDefaultGlobalConfig(): GlobalConfig {
   return {
     port: 3000,
     readyThresholdMs: 300_000,
+    observability: {
+      logLevel: "warn",
+      stderr: false,
+    },
     defaults: {
       runtime: getDefaultRuntime(),
       agent: "claude-code",

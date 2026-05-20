@@ -14,6 +14,7 @@ import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
 import { registerSetup } from "./commands/setup.js";
 import { registerPlugin } from "./commands/plugin.js";
+import { registerNotify } from "./commands/notify.js";
 import { registerProjectCommand } from "./commands/project.js";
 import { registerMigrateStorage } from "./commands/migrate-storage.js";
 import { registerCompletion } from "./commands/completion.js";
@@ -48,6 +49,7 @@ export function createProgram(): Command {
   registerUpdate(program);
   registerSetup(program);
   registerPlugin(program);
+  registerNotify(program);
   registerProjectCommand(program);
   registerMigrateStorage(program);
   registerCompletion(program);

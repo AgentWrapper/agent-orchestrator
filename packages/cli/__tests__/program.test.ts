@@ -11,6 +11,11 @@ describe("createProgram", () => {
     expect(createProgram().commands.some((command) => command.name() === "project")).toBe(true);
   });
 
+  it("registers the notify command", () => {
+    const notify = createProgram().commands.find((command) => command.name() === "notify");
+    expect(notify?.commands.some((command) => command.name() === "test")).toBe(true);
+  });
+
   it("registers the review command", () => {
     expect(createProgram().commands.some((command) => command.name() === "review")).toBe(true);
   });
