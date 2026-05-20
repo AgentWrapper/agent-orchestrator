@@ -9,6 +9,7 @@ import {
   type ActivityEvent,
   type ActivityEventLevel,
   type ActivityEventKind,
+  type ActivityEventSource,
 } from "@aoagents/ao-core";
 
 interface JsonEnvelope {
@@ -80,7 +81,12 @@ export function registerEvents(program: Command): void {
     .description("List recent activity events")
     .option("-p, --project <id>", "Filter by project ID")
     .option("-s, --session <id>", "Filter by session ID")
-    .option("-t, --type <kind>", "Filter by event kind (e.g. session.spawned, lifecycle.transition)")
+    .option(
+      "-t, --type <kind>",
+      "Filter by event kind (e.g. session.spawned, lifecycle.transition)",
+    )
+    .option("--kind <kind>", "Alias for --type")
+    .option("--source <source>", "Filter by event source (e.g. lifecycle, recovery, api)")
     .option("--log-level <level>", "Filter by log level (debug, info, warn, error)")
     .option("--since <duration>", "Show events from last N minutes/hours/days (e.g. 30m, 2h, 1d)")
     .option("-n, --limit <n>", "Max results", "50")
@@ -91,15 +97,21 @@ export function registerEvents(program: Command): void {
       if (sinceRaw) {
         since = parseSinceDuration(sinceRaw);
         if (!since) {
-          console.error(chalk.yellow(`Warning: unrecognised --since format "${sinceRaw}" (use e.g. 30m, 2h, 1d). No time filter applied.`));
+          console.error(
+            chalk.yellow(
+              `Warning: unrecognised --since format "${sinceRaw}" (use e.g. 30m, 2h, 1d). No time filter applied.`,
+            ),
+          );
         }
       }
       const limit = parseInt(opts["limit"] ?? "50", 10);
+      const kind = opts["type"] ?? opts["kind"];
 
       const results = queryActivityEvents({
         projectId: opts["project"],
         sessionId: opts["session"],
-        kind: opts["type"] as ActivityEventKind,
+        kind: kind as ActivityEventKind,
+        source: opts["source"] as ActivityEventSource,
         level: opts["logLevel"] as ActivityEventLevel,
         since,
         limit,
@@ -111,7 +123,8 @@ export function registerEvents(program: Command): void {
           query: {
             projectId: opts["project"] ?? null,
             sessionId: opts["session"] ?? null,
-            kind: opts["type"] ?? null,
+            kind: kind ?? null,
+            source: opts["source"] ?? null,
             level: opts["logLevel"] ?? null,
             since: sinceRaw ?? null,
             limit,

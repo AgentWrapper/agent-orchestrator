@@ -72,6 +72,36 @@ describe("buildPrompt split output", () => {
 
     expect(taskPrompt).toBeUndefined();
   });
+
+  it("renders the orchestrator back-channel with the literal orchestrator session ID", () => {
+    const { systemPrompt } = buildPrompt({
+      project,
+      projectId: "test-app",
+      orchestratorSessionId: "test-orchestrator",
+    });
+    expect(systemPrompt).toContain("## Talking to the Orchestrator");
+    expect(systemPrompt).toContain('ao send test-orchestrator "<your message>"');
+    // No env vars or shell-syntax variants — literal ID only.
+    expect(systemPrompt).not.toContain("AO_ORCHESTRATOR_SESSION_ID");
+    expect(systemPrompt).not.toContain("$env:");
+    expect(systemPrompt).not.toContain("%AO");
+  });
+
+  it("renders the same back-channel in the no-repo prompt when orchestrator exists", () => {
+    const { systemPrompt } = buildPrompt({
+      project: { ...project, repo: undefined },
+      projectId: "test-app",
+      orchestratorSessionId: "test-orchestrator",
+    });
+    expect(systemPrompt).toContain(BASE_AGENT_PROMPT_NO_REPO);
+    expect(systemPrompt).toContain('ao send test-orchestrator "<your message>"');
+  });
+
+  it("omits the orchestrator section when no orchestratorSessionId is provided", () => {
+    const { systemPrompt } = buildPrompt({ project, projectId: "test-app" });
+    expect(systemPrompt).not.toContain("## Talking to the Orchestrator");
+    expect(systemPrompt).not.toContain("ao send");
+  });
 });
 
 describe("buildPrompt", () => {

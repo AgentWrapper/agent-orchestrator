@@ -64,6 +64,6 @@ describe("Dashboard done bar", () => {
     render(<Dashboard initialSessions={[DONE_SESSION]} />);
     const toggle = screen.getByText("Done / Terminated").closest("button")!;
     fireEvent.click(toggle);
-    expect(screen.queryByRole("button", { name: /restore/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /restore/i })).toBeInTheDocument();
   });
 });

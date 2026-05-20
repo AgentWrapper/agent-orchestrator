@@ -6,6 +6,17 @@ import { defineConfig } from "vitest/config";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      { find: /^@aoagents\/ao-core$/, replacement: resolve(__dirname, "src/index.ts") },
+      {
+        find: /^@aoagents\/ao-core\/scm-webhook-utils$/,
+        replacement: resolve(__dirname, "src/scm-webhook-utils.ts"),
+      },
+      { find: /^@aoagents\/ao-core\/types$/, replacement: resolve(__dirname, "src/types.ts") },
+      { find: /^@aoagents\/ao-core\/utils$/, replacement: resolve(__dirname, "src/utils.ts") },
+    ],
+  },
   plugins: [
     {
       name: "raw-markdown",

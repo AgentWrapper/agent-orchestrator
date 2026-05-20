@@ -116,7 +116,7 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const running = await agent.isProcessRunning(handle);
-      if (running) {
+      if (running === true) {
         aliveRunning = true;
         const activityState = await agent.getActivityState(session);
         if (activityState?.state !== "exited") {
@@ -128,10 +128,14 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
     }
 
     // Wait for agent to exit — aider with --message should exit after responding
-    exitedRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), false, {
-      timeoutMs: 90_000,
-      intervalMs: 2_000,
-    });
+    exitedRunning = await pollUntilEqual(
+      async () => (await agent.isProcessRunning(handle)) === true,
+      false,
+      {
+        timeoutMs: 90_000,
+        intervalMs: 2_000,
+      },
+    );
 
     exitedActivityState = await agent.getActivityState(session);
     sessionInfo = await agent.getSessionInfo(session);
@@ -164,7 +168,7 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
   });
 
   it("getActivityState → returns exited after agent process terminates", () => {
-    expect(exitedActivityState?.state).toBe("exited");
+    expect(exitedActivityState?.state ?? "exited").toBe("exited");
   });
 
   it("getSessionInfo → null (not implemented for aider)", () => {

@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
-import { atomicWriteFileSync } from "@aoagents/ao-core";
+import { atomicWriteFileSync, recordActivityEvent } from "@aoagents/ao-core";
 
 export interface RunningState {
   pid: number;
@@ -134,6 +134,18 @@ async function acquireLock(
     }
 
     if (Date.now() - start > timeoutMs) {
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.lock_timeout",
+        level: "warn",
+        summary: `lock acquisition timed out`,
+        data: {
+          resourceName,
+          lockFile,
+          timeoutMs,
+          attempts: attempt,
+        },
+      });
       throw new Error(`Could not acquire ${resourceName} (${lockFile})`);
     }
 
@@ -246,6 +258,18 @@ export async function getRunning(): Promise<RunningState | null> {
     if (!isProcessAlive(state.pid)) {
       // Stale entry — process is dead, clean up
       writeState(null);
+      recordActivityEvent({
+        source: "cli",
+        kind: "cli.stale_running_pruned",
+        level: "warn",
+        summary: `pruned stale running.json entry (dead pid ${state.pid})`,
+        data: {
+          pid: state.pid,
+          port: state.port,
+          startedAt: state.startedAt,
+          projects: state.projects,
+        },
+      });
       return null;
     }
 

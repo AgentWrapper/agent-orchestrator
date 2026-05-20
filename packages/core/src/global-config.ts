@@ -7,10 +7,11 @@ import { z } from "zod";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { detectScmPlatform } from "./config-generator.js";
 import { withFileLockSync } from "./file-lock.js";
-import { ProjectResolveError } from "./types.js";
+import { ProjectResolveError, type ProjectResolveErrorKind } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
 import { getDefaultRuntime } from "./platform.js";
+import { recordActivityEvent } from "./activity-events.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -153,6 +154,34 @@ export type GlobalProjectEntry = z.infer<typeof GlobalProjectEntrySchema>;
  * Global config schema.
  * Operational settings + project registry with identity fields only.
  */
+/**
+ * Update channel — controls which npm dist-tag the auto-updater tracks.
+ *
+ *   stable  — @latest (weekly Thursday releases). Auto-installs when run.
+ *   nightly — @nightly (daily Fri–Tue cron). Auto-installs when run.
+ *   manual  — no checks, no notice, no install. User runs `ao update` manually.
+ */
+export const UpdateChannelSchema = z.enum(["stable", "nightly", "manual"]);
+export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
+
+/**
+ * Install-method override. When set, the auto-updater bypasses path-based
+ * detection and uses this value to pick the upgrade command. Useful for
+ * non-standard install layouts (custom prefixes, asdf, etc.).
+ *
+ * Mirrors `InstallMethod` from the CLI (kept as `string` here so the core
+ * package doesn't depend on the CLI).
+ */
+export const InstallMethodOverrideSchema = z.enum([
+  "git",
+  "npm-global",
+  "pnpm-global",
+  "bun-global",
+  "homebrew",
+  "unknown",
+]);
+export type InstallMethodOverride = z.infer<typeof InstallMethodOverrideSchema>;
+
 export const GlobalConfigSchema = z
   .object({
     /** Web dashboard port. Default: 3000 */
@@ -161,6 +190,29 @@ export const GlobalConfigSchema = z
     directTerminalPort: z.number().optional(),
     /** Time before a "ready" session becomes "idle". Default: 300 000 ms (5 min). */
     readyThresholdMs: z.number().nonnegative().default(300_000),
+    /**
+     * Auto-update channel preference.
+     *
+     * Default `manual` (resolved at read time) so users who upgrade across
+     * this change keep their existing behavior — no surprise auto-installs.
+     * The onboarding flow prompts new users on first `ao start` and persists
+     * the answer here.
+     *
+     * `.catch(undefined)` makes the schema tolerant of legacy / typo'd values
+     * in the on-disk config: a stray `updateChannel: foo` parses as
+     * "unset" rather than failing the whole config load. The user can fix it
+     * later via `ao config set updateChannel <stable|nightly|manual>`.
+     */
+    updateChannel: UpdateChannelSchema.optional().catch(undefined),
+    /** Override path-based install detection. Optional. */
+    installMethod: InstallMethodOverrideSchema.optional().catch(undefined),
+    /** Structured observability defaults. Env vars still override at runtime. */
+    observability: z
+      .object({
+        logLevel: z.enum(["debug", "info", "warn", "error"]).default("warn"),
+        stderr: z.boolean().default(false),
+      })
+      .optional(),
     /** Cross-project defaults — projects inherit when fields are omitted. */
     defaults: z
       .object({
@@ -303,6 +355,12 @@ export function loadGlobalConfig(
   if (migrationSummary) {
     // eslint-disable-next-line no-console -- required migration visibility for stale shadow stripping
     console.info(migrationSummary);
+    recordActivityEvent({
+      source: "config",
+      kind: "config.migrated",
+      summary: "global config migrated",
+      data: { migrationSummary },
+    });
   }
 
   const config = GlobalConfigSchema.parse(parsed);
@@ -421,6 +479,69 @@ export function writeLocalProjectConfig(
   return configPath;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeRoleBehavior(
+  defaults: Record<string, unknown>,
+  project: Record<string, unknown>,
+  key: "orchestrator" | "worker",
+): Record<string, unknown> | undefined {
+  const defaultRole = isRecord(defaults[key]) ? defaults[key] : undefined;
+  const projectRole = isRecord(project[key]) ? project[key] : undefined;
+  const merged = {
+    ...(defaultRole ?? {}),
+    ...(projectRole ?? {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function buildRepairedLocalProjectConfig(
+  parsed: Record<string, unknown>,
+  project: Record<string, unknown>,
+): Record<string, unknown> {
+  const defaults = isRecord(parsed["defaults"]) ? parsed["defaults"] : {};
+  const defaultBehavior: Record<string, unknown> = {};
+  for (const key of ["runtime", "agent", "workspace"] as const) {
+    if (defaults[key] !== null && defaults[key] !== undefined) {
+      defaultBehavior[key] = defaults[key];
+    }
+  }
+
+  const {
+    name: _name,
+    path: _path,
+    sessionPrefix: _sessionPrefix,
+    projectId: _projectId,
+    source: _source,
+    registeredAt: _registeredAt,
+    displayName: _displayName,
+    orchestrator: _orchestrator,
+    worker: _worker,
+    ...projectBehavior
+  } = project;
+  void _name;
+  void _path;
+  void _sessionPrefix;
+  void _projectId;
+  void _source;
+  void _registeredAt;
+  void _displayName;
+  void _orchestrator;
+  void _worker;
+
+  const behavior = {
+    ...defaultBehavior,
+    ...projectBehavior,
+  };
+  const orchestrator = mergeRoleBehavior(defaults, project, "orchestrator");
+  const worker = mergeRoleBehavior(defaults, project, "worker");
+  if (orchestrator) behavior["orchestrator"] = orchestrator;
+  if (worker) behavior["worker"] = worker;
+  return behavior;
+}
+
 export function repairWrappedLocalProjectConfig(projectId: string, projectPath: string): void {
   const localConfigResult = loadLocalProjectConfigDetailed(projectPath);
   if (localConfigResult.kind !== "old-format" || !localConfigResult.path) {
@@ -450,24 +571,7 @@ export function repairWrappedLocalProjectConfig(projectId: string, projectPath: 
     );
   }
 
-  const {
-    name: _name,
-    path: _path,
-    sessionPrefix: _sessionPrefix,
-    projectId: _projectId,
-    source: _source,
-    registeredAt: _registeredAt,
-    displayName: _displayName,
-    ...behaviorFields
-  } = project;
-  void _name;
-  void _path;
-  void _sessionPrefix;
-  void _projectId;
-  void _source;
-  void _registeredAt;
-  void _displayName;
-
+  const behaviorFields = buildRepairedLocalProjectConfig(parsed, project);
   writeLocalProjectConfig(projectPath, behaviorFields, configPath);
 }
 
@@ -792,6 +896,7 @@ export function resolveProjectIdentity(
       defaultBranch: string;
       sessionPrefix: string;
       resolveError?: string;
+      resolveErrorKind?: ProjectResolveErrorKind;
     })
   | null {
   const entry = globalConfig.projects[projectId] as
@@ -870,15 +975,48 @@ export function resolveProjectIdentity(
     };
   }
 
+  if (localConfigResult.kind === "malformed") {
+    recordActivityEvent({
+      projectId,
+      source: "config",
+      kind: "config.project_malformed",
+      level: "error",
+      summary: `local config for ${projectId} could not be parsed`,
+      data: {
+        path: localConfigResult.path,
+        error: localConfigResult.error,
+      },
+    });
+  } else if (localConfigResult.kind === "invalid") {
+    recordActivityEvent({
+      projectId,
+      source: "config",
+      kind: "config.project_invalid",
+      level: "error",
+      summary: `local config for ${projectId} failed validation`,
+      data: {
+        path: localConfigResult.path,
+        error: localConfigResult.error,
+      },
+    });
+  }
+
   const resolveError =
     localConfigResult.kind !== "missing"
       ? (localConfigResult.error ?? "Failed to load local config")
+      : undefined;
+  const resolveErrorKind: ProjectResolveErrorKind | undefined =
+    localConfigResult.kind === "malformed" ||
+    localConfigResult.kind === "invalid" ||
+    localConfigResult.kind === "old-format"
+      ? localConfigResult.kind
       : undefined;
 
   return {
     ...(resolveError ? {} : applyBehaviorDefaults({})),
     ...identityFields,
     ...(resolveError ? { resolveError } : {}),
+    ...(resolveErrorKind ? { resolveErrorKind } : {}),
   };
 }
 
@@ -947,6 +1085,8 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     newGlobal.directTerminalPort = parsed["directTerminalPort"] as number;
   if (parsed["readyThresholdMs"] !== null && parsed["readyThresholdMs"] !== undefined)
     newGlobal.readyThresholdMs = parsed["readyThresholdMs"] as number;
+  if (parsed["observability"] !== null && parsed["observability"] !== undefined)
+    newGlobal.observability = parsed["observability"] as GlobalConfig["observability"];
   if (parsed["defaults"] !== null && parsed["defaults"] !== undefined)
     newGlobal.defaults = parsed["defaults"] as GlobalConfig["defaults"];
   if (parsed["notifiers"] !== null && parsed["notifiers"] !== undefined)
@@ -1019,10 +1159,28 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
 // HELPERS
 // =============================================================================
 
-function makeEmptyGlobalConfig(): GlobalConfig {
+/**
+ * Build a fresh GlobalConfig with all platform-aware defaults filled in.
+ *
+ * Single source of truth for "what does a brand-new global config look like?"
+ * — used by:
+ *   - The internal initial-load path here in core (`makeEmptyGlobalConfig`).
+ *   - `ao config set` (CLI) when no config file exists yet.
+ *   - `maybePromptForUpdateChannel` (CLI) when persisting the user's channel
+ *     pick on first run.
+ *
+ * Critically, `defaults.runtime` is platform-aware via `getDefaultRuntime()`
+ * (returns "process" on Windows, "tmux" elsewhere) — hardcoding "tmux" would
+ * lock Windows users into a non-functional config.
+ */
+export function createDefaultGlobalConfig(): GlobalConfig {
   return {
     port: 3000,
     readyThresholdMs: 300_000,
+    observability: {
+      logLevel: "warn",
+      stderr: false,
+    },
     defaults: {
       runtime: getDefaultRuntime(),
       agent: "claude-code",
@@ -1039,6 +1197,11 @@ function makeEmptyGlobalConfig(): GlobalConfig {
     },
     reactions: {},
   };
+}
+
+/** Internal alias for back-compat with existing callers in this file. */
+function makeEmptyGlobalConfig(): GlobalConfig {
+  return createDefaultGlobalConfig();
 }
 
 function sanitizeRawGlobalConfig(raw: Record<string, unknown>): RawGlobalConfigSanitization {

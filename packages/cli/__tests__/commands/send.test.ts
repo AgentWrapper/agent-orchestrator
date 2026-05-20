@@ -68,6 +68,7 @@ let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let exitSpy: ReturnType<typeof vi.spyOn>;
+let savedSessionEnv: string | undefined;
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -86,6 +87,12 @@ beforeEach(() => {
   mockSessionManager.send.mockReset();
   mockConfigRef.current = null;
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
+  // Tests assume the caller is a human (no AO session). Tests that need to
+  // simulate session-to-session sends override AO_SESSION_ID explicitly. This
+  // matters because the test process itself often runs inside an AO worker,
+  // which would leak its own AO_SESSION_ID into the auto-prefix logic.
+  savedSessionEnv = process.env["AO_SESSION_ID"];
+  delete process.env["AO_SESSION_ID"];
 });
 
 afterEach(() => {
@@ -93,6 +100,8 @@ afterEach(() => {
   consoleSpy.mockRestore();
   consoleErrorSpy.mockRestore();
   exitSpy.mockRestore();
+  if (savedSessionEnv === undefined) delete process.env["AO_SESSION_ID"];
+  else process.env["AO_SESSION_ID"] = savedSessionEnv;
 });
 
 describe("send command", () => {
@@ -272,6 +281,103 @@ describe("send command", () => {
 
       // C-u should be called to clear input
       expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "my-session", "C-u"]);
+    });
+  });
+
+  describe("auto-prefix from AO_SESSION_ID", () => {
+    it("prefixes the message with [from <session>] when AO_SESSION_ID is set", async () => {
+      process.env["AO_SESSION_ID"] = "app-7";
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+      mockDetectActivity.mockReturnValueOnce("idle").mockReturnValueOnce("active");
+
+      await program.parseAsync(["node", "test", "send", "app-orchestrator", "hi", "boss"]);
+
+      expect(mockExec).toHaveBeenCalledWith("tmux", [
+        "send-keys",
+        "-t",
+        "app-orchestrator",
+        "-l",
+        "[from app-7] hi boss",
+      ]);
+    });
+
+    it("does not prefix when AO_SESSION_ID is unset (human caller)", async () => {
+      // beforeEach already deletes AO_SESSION_ID — exercise that path.
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+      mockDetectActivity.mockReturnValueOnce("idle").mockReturnValueOnce("active");
+
+      await program.parseAsync(["node", "test", "send", "app-1", "hi", "there"]);
+
+      expect(mockExec).toHaveBeenCalledWith("tmux", [
+        "send-keys",
+        "-t",
+        "app-1",
+        "-l",
+        "hi there",
+      ]);
+    });
+
+    it("auto-prefixes when delivering through SessionManager.send too", async () => {
+      process.env["AO_SESSION_ID"] = "app-orchestrator";
+      mockConfigRef.current = {
+        configPath: "/tmp/agent-orchestrator.yaml",
+        defaults: {
+          runtime: "tmux",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: [],
+        },
+        projects: {
+          "my-app": {
+            name: "My App",
+            sessionPrefix: "app",
+            path: "/tmp/my-app",
+            defaultBranch: "main",
+            repo: "org/my-app",
+            agent: "claude-code",
+            runtime: "tmux",
+          },
+        },
+        notifiers: {},
+        notificationRouting: {},
+        reactions: {},
+      };
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockResolvedValue(undefined);
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+      mockDetectActivity.mockReturnValue("idle");
+
+      await program.parseAsync(["node", "test", "send", "app-1", "fix", "the", "build"]);
+
+      expect(mockSessionManager.send).toHaveBeenCalledWith(
+        "app-1",
+        "[from app-orchestrator] fix the build",
+      );
     });
   });
 

@@ -7,6 +7,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   CI_STATUS,
+  recordActivityEvent,
   type PluginModule,
   type SCM,
   type SCMWebhookEvent,
@@ -45,6 +46,14 @@ const BOT_AUTHORS = new Set([
   "sonarcloud[bot]",
   "snyk-bot",
 ]);
+const ciSummaryFailClosedEmitted = new Set<string>();
+const reviewFetchFailedEmitted = new Set<string>();
+
+/** Test-only: reset once-per-PR activity event guards. */
+export function _resetGitLabActivityEventDedupeForTesting(): void {
+  ciSummaryFailClosedEmitted.clear();
+  reviewFetchFailedEmitted.clear();
+}
 
 function isBot(username: string): boolean {
   return (
@@ -58,6 +67,10 @@ function isBot(username: string): boolean {
 
 function repoFlag(pr: PRInfo): string {
   return `${pr.owner}/${pr.repo}`;
+}
+
+function prEventKey(pr: PRInfo): string {
+  return `${repoFlag(pr)}#${pr.number}`;
 }
 
 function parseDate(val: string | undefined | null): Date {
@@ -105,7 +118,6 @@ function mapPRState(state: string): PRState {
   if (s === "closed") return "closed";
   return "open";
 }
-
 
 function getGitLabWebhookConfig(project: ProjectConfig) {
   const webhook = project.scm?.webhook;
@@ -585,6 +597,24 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
             `getCISummary: PR state fallback also failed for MR !${pr.number}: ${(innerErr as Error).message}`,
           );
         }
+        const eventKey = prEventKey(pr);
+        if (!ciSummaryFailClosedEmitted.has(eventKey)) {
+          ciSummaryFailClosedEmitted.add(eventKey);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          recordActivityEvent({
+            source: "scm",
+            kind: "scm.ci_summary_failclosed",
+            level: "warn",
+            summary: `getCISummary failed-closed for MR !${pr.number}`,
+            data: {
+              plugin: "scm-gitlab",
+              prNumber: pr.number,
+              prOwner: pr.owner,
+              prRepo: pr.repo,
+              errorMessage,
+            },
+          });
+        }
         return "failing";
       }
       if (checks.length === 0) return "none";
@@ -642,6 +672,24 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
         console.warn(
           `getReviews: discussions fetch failed for MR !${pr.number}: ${(err as Error).message}`,
         );
+        const eventKey = prEventKey(pr);
+        if (!reviewFetchFailedEmitted.has(eventKey)) {
+          reviewFetchFailedEmitted.add(eventKey);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          recordActivityEvent({
+            source: "scm",
+            kind: "scm.review_fetch_failed",
+            level: "warn",
+            summary: `getReviews discussions fetch failed for MR !${pr.number}`,
+            data: {
+              plugin: "scm-gitlab",
+              prNumber: pr.number,
+              prOwner: pr.owner,
+              prRepo: pr.repo,
+              errorMessage,
+            },
+          });
+        }
       }
 
       return reviews;
