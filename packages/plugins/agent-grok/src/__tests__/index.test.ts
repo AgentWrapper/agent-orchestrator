@@ -19,12 +19,14 @@ const {
   mockSetupPathWrapperWorkspace,
   mockExecFileAsync,
   mockWhichSync,
+  mockIsWindows,
 } = vi.hoisted(() => ({
   mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
   mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
   mockExecFileAsync: vi.fn(),
   mockWhichSync: vi.fn(),
+  mockIsWindows: vi.fn(() => false),
 }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
@@ -34,6 +36,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     readLastActivityEntry: mockReadLastActivityEntry,
     recordTerminalActivity: mockRecordTerminalActivity,
     setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
+    isWindows: mockIsWindows,
   };
 });
 
@@ -135,6 +138,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockWhichSync.mockReset();
   mockExecFileAsync.mockReset();
+  mockIsWindows.mockReset();
+  mockIsWindows.mockReturnValue(false);
 });
 
 describe("manifest", () => {
@@ -278,6 +283,19 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
+  it("returns indeterminate when tmux probing fails", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("tmux unavailable"));
+
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+  });
+
+  it("returns indeterminate for tmux handles on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe("indeterminate");
+    expect(mockExecFileAsync).not.toHaveBeenCalled();
+  });
+
   it("returns true when process handle pid is alive", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     expect(await agent.isProcessRunning(makeProcessHandle(123))).toBe(true);
@@ -295,8 +313,9 @@ describe("isProcessRunning", () => {
   });
 
   it("returns false when process handle pid is dead", async () => {
+    const err = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw new Error("ESRCH");
+      throw err;
     });
     expect(await agent.isProcessRunning(makeProcessHandle(123))).toBe(false);
     killSpy.mockRestore();
@@ -418,6 +437,15 @@ describe("getActivityState", () => {
     );
     expect(state).toBeNull();
     killSpy.mockRestore();
+  });
+
+  it("treats indeterminate process probes as no process verdict", async () => {
+    mockReadLastActivityEntry.mockResolvedValue(null);
+    mockExecFileAsync.mockRejectedValue(new Error("tmux unavailable"));
+
+    const state = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
+
+    expect(state).toBeNull();
   });
 });
 

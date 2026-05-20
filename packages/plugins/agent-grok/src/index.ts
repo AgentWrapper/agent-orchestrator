@@ -1,6 +1,7 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
   DEFAULT_ACTIVE_WINDOW_MS,
+  PROCESS_PROBE_INDETERMINATE,
   shellEscape,
   readLastActivityEntry,
   checkActivityLogState,
@@ -14,6 +15,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProcessProbeResult,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
@@ -158,7 +160,7 @@ function createGrokAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (running === false) return { state: "exited", timestamp: exitedAt };
 
       let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
       if (session.workspacePath) {
@@ -180,10 +182,10 @@ function createGrokAgent(): Agent {
       );
     },
 
-    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
       try {
         if (handle.runtimeName === "tmux" && handle.id) {
-          if (isWindows()) return false;
+          if (isWindows()) return PROCESS_PROBE_INDETERMINATE;
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
@@ -222,12 +224,15 @@ function createGrokAgent(): Agent {
             if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EPERM") {
               return true;
             }
-            return false;
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
+              return false;
+            }
+            return PROCESS_PROBE_INDETERMINATE;
           }
         }
         return false;
       } catch {
-        return false;
+        return PROCESS_PROBE_INDETERMINATE;
       }
     },
 
