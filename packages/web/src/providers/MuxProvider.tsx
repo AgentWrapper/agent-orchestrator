@@ -106,6 +106,18 @@ function buildMuxWsUrl(runtimeConfig: {
   return `${protocol}//${loc.hostname}:${port}/mux`;
 }
 
+function redactUrlForLog(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has("auth_token")) {
+      parsed.searchParams.set("auth_token", "[redacted]");
+    }
+    return parsed.toString();
+  } catch {
+    return url.replace(/([?&]auth_token=)[^&]+/i, "$1[redacted]");
+  }
+}
+
 function terminalKey(id: string, projectId?: string): string {
   return projectId ? `${projectId}:${id}` : id;
 }
@@ -138,7 +150,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
     try {
       const url = buildMuxWsUrl(runtimeConfigRef.current);
-      console.log("[MuxProvider] Connecting to", url);
+      console.log("[MuxProvider] Connecting to", redactUrlForLog(url));
       const ws = new WebSocket(url);
       // Assign immediately so cleanup can close it even during CONNECTING state
       wsRef.current = ws;

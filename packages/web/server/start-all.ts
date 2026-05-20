@@ -5,8 +5,10 @@
  */
 
 import { type ChildProcess } from "node:child_process";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createConnection } from "node:net";
 import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
+import { type Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
@@ -18,12 +20,32 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
+
+type NextApp = {
+  prepare: () => Promise<void>;
+  getRequestHandler: () => (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
+  getUpgradeHandler?: () => (
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ) => Promise<void> | void;
+};
+
+const next = require("next") as (options: {
+  dev: boolean;
+  dir: string;
+  hostname: string;
+  port: number;
+}) => NextApp;
 
 // Resolve paths relative to the package root (one level up from dist-server/)
 const pkgRoot = resolve(__dirname, "..");
 
 const children: ChildProcess[] = [];
 markDaemonShutdownHandlerInstalled();
+let nextServer: Server | null = null;
+let shuttingDown = false;
 
 function log(label: string, msg: string): void {
   process.stdout.write(`[${label}] ${msg}\n`);
@@ -82,39 +104,49 @@ function spawnProcess(
   return launch();
 }
 
-/**
- * Resolve the `next` CLI binary path.
- * Tries the local .bin shim first (fast), then falls back to require.resolve (hoisted deps).
- */
-function resolveNextBin(): string {
-  // On Windows, .bin/next is a POSIX shell shim that spawn() cannot execute.
-  // Skip it and go straight to the JS entry point.
-  if (!isWindows()) {
-    const localBin = resolve(pkgRoot, "node_modules", ".bin", "next");
-    if (existsSync(localBin)) return localBin;
+function getTerminalProxyTarget(requestUrl: string | undefined): string | null {
+  const url = new URL(requestUrl ?? "/", "ws://localhost");
+  if (url.pathname === "/ao-terminal-mux") {
+    url.pathname = "/mux";
+    return `${url.pathname}${url.search}`;
   }
-
-  // Resolve the actual Next.js CLI JS entry point
-  const require = createRequire(resolve(pkgRoot, "package.json"));
-  try {
-    const nextPkg = require.resolve("next/package.json");
-    return resolve(dirname(nextPkg), "dist", "bin", "next");
-  } catch {
-    // Last resort — rely on PATH
-    return "next";
+  if (url.pathname.startsWith("/ao-terminal/")) {
+    url.pathname = url.pathname.slice("/ao-terminal".length);
+    return `${url.pathname}${url.search}`;
   }
+  return null;
 }
 
-// Start Next.js production server
 const port = process.env["PORT"] || "3000";
-const nextBin = resolveNextBin();
+const hostname = process.env["HOST"] || "0.0.0.0";
 
-if (isWindows() && nextBin !== "next") {
-  // On Windows, run the JS entry point via the current node binary.
-  // spawn() can't execute .js files directly on Windows.
-  spawnProcess("next", process.execPath, [nextBin, "start", "-p", port]);
-} else {
-  spawnProcess("next", nextBin, ["start", "-p", port]);
+function proxyTerminalUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): boolean {
+  const targetPath = getTerminalProxyTarget(request.url);
+  if (!targetPath) return false;
+
+  const directTerminalPort = Number.parseInt(process.env["DIRECT_TERMINAL_PORT"] ?? "14801", 10);
+  const upstream = createConnection({ host: "127.0.0.1", port: directTerminalPort });
+
+  upstream.on("connect", () => {
+    const headers = Object.entries(request.headers)
+      .flatMap(([name, value]) => {
+        if (Array.isArray(value)) return value.map((item) => `${name}: ${item}`);
+        return value === undefined ? [] : [`${name}: ${value}`];
+      })
+      .join("\r\n");
+    upstream.write(`GET ${targetPath} HTTP/${request.httpVersion}\r\n${headers}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+
+  upstream.on("error", () => {
+    socket.destroy();
+  });
+  socket.on("error", () => {
+    upstream.destroy();
+  });
+
+  return true;
 }
 
 // Start direct terminal WebSocket server (auto-restart on crash)
@@ -122,8 +154,36 @@ spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.
   restart: true,
 });
 
-// Graceful shutdown — send SIGTERM to children and wait for them to exit
-let shuttingDown = false;
+async function startNextServer(): Promise<void> {
+  const app = next({ dev: false, dir: pkgRoot, hostname, port: Number.parseInt(port, 10) });
+  const handle = app.getRequestHandler();
+  await app.prepare();
+  const handleUpgrade = app.getUpgradeHandler?.();
+
+  nextServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    void handle(req, res);
+  });
+
+  nextServer.on("upgrade", (request, socket, head) => {
+    if (proxyTerminalUpgrade(request, socket, head)) {
+      return;
+    }
+    if (handleUpgrade) {
+      void handleUpgrade(request, socket, head);
+    } else {
+      socket.destroy();
+    }
+  });
+
+  nextServer.listen(Number.parseInt(port, 10), hostname, () => {
+    log("next", `ready on http://${hostname}:${port}`);
+  });
+}
+
+startNextServer().catch((err: unknown) => {
+  log("next", `failed to start: ${err instanceof Error ? err.message : String(err)}`);
+  cleanup();
+});
 
 function cleanup(): void {
   if (shuttingDown) return;
@@ -131,9 +191,12 @@ function cleanup(): void {
 
   let alive = children.length;
   if (alive === 0) {
+    nextServer?.close();
     process.exit(0);
     return;
   }
+
+  nextServer?.close();
 
   // Force exit after 5s if children don't exit cleanly
   const forceTimer = setTimeout(() => {
