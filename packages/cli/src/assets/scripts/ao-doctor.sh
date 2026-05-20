@@ -318,6 +318,69 @@ check_install_layout() {
   fi
 }
 
+find_package_up() {
+  local dir="$1"
+  shift
+  local rel
+  rel="$(IFS=/; printf '%s' "$*")"
+  while true; do
+    if [ -e "$dir/node_modules/$rel" ]; then
+      printf '%s' "$dir/node_modules/$rel"
+      return 0
+    fi
+    local parent
+    parent="$(dirname "$dir")"
+    if [ "$parent" = "$dir" ]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+}
+
+check_node_pty_spawn_helper() {
+  case "$(uname -s 2>/dev/null)" in
+    Linux|Darwin) ;;
+    *) return ;;
+  esac
+
+  local node_pty_dir
+  node_pty_dir="$(find_package_up "$REPO_ROOT" "node-pty" 2>/dev/null || true)"
+  if [ -z "$node_pty_dir" ] || [ ! -d "$node_pty_dir" ]; then
+    return
+  fi
+
+  local platform arch uname_machine
+  platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  uname_machine="$(uname -m)"
+  case "$uname_machine" in
+    x86_64|amd64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    i386|i486|i586|i686) arch="ia32" ;;
+    *) arch="$uname_machine" ;;
+  esac
+
+  local helper="$node_pty_dir/prebuilds/${platform}-${arch}/spawn-helper"
+  if [ ! -f "$helper" ]; then
+    return
+  fi
+
+  if [ -x "$helper" ]; then
+    pass "node-pty spawn-helper is executable ($helper)"
+    return
+  fi
+
+  if [ "$FIX_MODE" = true ]; then
+    if chmod 0755 "$helper" 2>/dev/null; then
+      fixed "node-pty spawn-helper made executable: $helper"
+      return
+    fi
+    fail "Could not chmod node-pty spawn-helper at $helper. Fix: chmod 0755 $helper"
+    return
+  fi
+
+  warn "node-pty spawn-helper is not executable ($helper). Web dashboard terminals will fail with 'posix_spawnp failed' errors. Fix: rerun ao doctor --fix or chmod 0755 $helper. Upstream: microsoft/node-pty#919"
+}
+
 check_runtime_sanity() {
   if [ "$SCRIPT_LAYOUT" = "package-install" ]; then
     if [ ! -f "$REPO_ROOT/dist/index.js" ]; then
@@ -410,6 +473,7 @@ check_config_dirs
 check_stale_temp_files
 check_install_layout
 check_runtime_sanity
+check_node_pty_spawn_helper
 
 printf '\nResults: %s PASS, %s WARN, %s FAIL, %s FIXED\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$FIX_COUNT"
 
