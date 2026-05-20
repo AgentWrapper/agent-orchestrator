@@ -1,0 +1,28 @@
+packages/web/server/terminal-proxy.ts
+  s_3c12ffb1648181::t_eeec6af7269768 39-66,84
+packages/core/src/platform.ts
+  s_3c12ffb1648181::t_eeec6af7269768 3
+packages/web/src/middleware.test.ts
+  s_3c12ffb1648181::t_1a5e96cad8249d 57-65
+packages/web/src/middleware.ts
+  s_3c12ffb1648181::t_eeec6af7269768 40-50,105-108
+packages/web/server/__tests__/terminal-proxy.test.ts
+  s_3c12ffb1648181::t_f3240e1cf6bece 29
+  s_3c12ffb1648181::t_1a5e96cad8249d 1-28,30-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "9b41172503f4b1c0cf21d4d9485a8a9dbb21603a",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
