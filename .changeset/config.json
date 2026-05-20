@@ -37,7 +37,7 @@
     ]
   ],
   "snapshot": {
-    "useCalculatedVersionForSnapshots": true,
+    "useCalculatedVersion": true,
     "prereleaseTemplate": "{tag}-{commit}"
   },
   "access": "public",

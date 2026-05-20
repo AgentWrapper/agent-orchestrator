@@ -84,6 +84,7 @@ import {
   maybeShowUpdateNotice,
   scheduleBackgroundRefresh,
   isVersionOutdated,
+  isOutdatedForChannel,
   resolveUpdateChannel,
   resolveInstallMethodOverride,
   isManualOnlyInstall,
@@ -113,6 +114,42 @@ describe("update-check", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     mockGlobalConfig.value = null;
+  });
+
+  // -----------------------------------------------------------------------
+  // isOutdatedForChannel
+  // -----------------------------------------------------------------------
+
+  describe("isOutdatedForChannel", () => {
+    it("treats any nightly dist-tag identity change as an update in both lexical directions", () => {
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-def", "nightly")).toBe(true);
+      expect(isOutdatedForChannel("0.0.0-nightly-def", "0.0.0-nightly-abc", "nightly")).toBe(true);
+      expect(
+        isOutdatedForChannel("0.0.0-nightly-f00d123", "0.0.0-nightly-0dead01", "nightly"),
+      ).toBe(true);
+    });
+
+    it("does not update nightly when the exact dist-tag version is already installed", () => {
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-abc", "nightly")).toBe(false);
+    });
+
+    it("uses semver for stable-to-nightly channel switches", () => {
+      expect(isOutdatedForChannel("0.7.0", "0.0.0-nightly-abc", "nightly")).toBe(false);
+      expect(isOutdatedForChannel("0.7.0", "0.8.0-nightly-abc", "nightly")).toBe(true);
+      expect(isOutdatedForChannel("0.8.0", "0.8.0-nightly-abc", "nightly")).toBe(false);
+    });
+
+    it("treats nightly-to-stable fallback on the nightly channel as an update when the dist-tag differs", () => {
+      // `fetchLatestVersion("nightly")` can fall back to `latest` if the
+      // nightly dist-tag is absent; prerelease-to-stable is a normal
+      // semver upgrade.
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.8.0", "nightly")).toBe(true);
+    });
+
+    it("keeps stable comparisons numeric instead of lexical", () => {
+      expect(isOutdatedForChannel("0.9.0", "0.10.0", "stable")).toBe(true);
+      expect(isOutdatedForChannel("0.7.0", "0.8.0", "stable")).toBe(true);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1186,24 +1223,14 @@ describe("update-check", () => {
 
   describe("getUpdateCommand — channel-aware (Section B)", () => {
     it("uses @nightly tag for nightly channel", () => {
-      expect(getUpdateCommand("npm-global", "nightly")).toBe(
-        "npm install -g @aoagents/ao@nightly",
-      );
-      expect(getUpdateCommand("pnpm-global", "nightly")).toBe(
-        "pnpm add -g @aoagents/ao@nightly",
-      );
-      expect(getUpdateCommand("bun-global", "nightly")).toBe(
-        "bun add -g @aoagents/ao@nightly",
-      );
+      expect(getUpdateCommand("npm-global", "nightly")).toBe("npm install -g @aoagents/ao@nightly");
+      expect(getUpdateCommand("pnpm-global", "nightly")).toBe("pnpm add -g @aoagents/ao@nightly");
+      expect(getUpdateCommand("bun-global", "nightly")).toBe("bun add -g @aoagents/ao@nightly");
     });
 
     it("uses @latest tag for stable + manual channels", () => {
-      expect(getUpdateCommand("npm-global", "stable")).toBe(
-        "npm install -g @aoagents/ao@latest",
-      );
-      expect(getUpdateCommand("npm-global", "manual")).toBe(
-        "npm install -g @aoagents/ao@latest",
-      );
+      expect(getUpdateCommand("npm-global", "stable")).toBe("npm install -g @aoagents/ao@latest");
+      expect(getUpdateCommand("npm-global", "manual")).toBe("npm install -g @aoagents/ao@latest");
     });
 
     it("returns the brew upgrade notice for homebrew installs", () => {

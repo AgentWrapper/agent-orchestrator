@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import {
   getInstalledAoVersion,
   getUpdateCheckCachePath,
+  isVersionOutdatedForChannel as coreIsVersionOutdatedForChannel,
   isVersionOutdated as coreIsVersionOutdated,
   loadGlobalConfig,
   type UpdateChannel,
@@ -181,8 +182,7 @@ export function classifyInstallPath(resolvedPath: string): InstallMethod {
     if (isPnpmGlobal) return "pnpm-global";
 
     const isNpmGlobal =
-      resolvedPath.includes("/lib/node_modules/") ||
-      resolvedPath.includes("\\lib\\node_modules\\");
+      resolvedPath.includes("/lib/node_modules/") || resolvedPath.includes("\\lib\\node_modules\\");
     if (isNpmGlobal) return "npm-global";
 
     return "unknown";
@@ -256,10 +256,7 @@ export function getGitUpdateRef(): string {
  * a notice so the user runs it themselves — auto-running `npm install -g`
  * inside a brew prefix overwrites brew's symlinks.
  */
-export function getUpdateCommand(
-  method: InstallMethod,
-  channel: UpdateChannel = "stable",
-): string {
+export function getUpdateCommand(method: InstallMethod, channel: UpdateChannel = "stable"): string {
   // "manual" channel maps to "stable" for the install command — the channel
   // affects when we check, not which tag manual installers should pick.
   const tag = channel === "nightly" ? "nightly" : "latest";
@@ -282,6 +279,14 @@ export function getUpdateCommand(
 /** True when the install method requires a manual user action (no auto-install). */
 export function isManualOnlyInstall(method: InstallMethod): boolean {
   return method === "homebrew";
+}
+
+export function isOutdatedForChannel(
+  currentVersion: string,
+  latestVersion: string,
+  channel: UpdateChannel,
+): boolean {
+  return coreIsVersionOutdatedForChannel(currentVersion, latestVersion, channel);
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +498,7 @@ export async function checkForUpdate(opts?: {
         isOutdated:
           cached.installMethod === "git"
             ? cached.isOutdated === true
-            : isVersionOutdated(currentVersion, cached.latestVersion),
+            : isOutdatedForChannel(currentVersion, cached.latestVersion, channel),
         installMethod,
         recommendedCommand,
         checkedAt: cached.checkedAt,
@@ -540,14 +545,16 @@ export async function checkForUpdate(opts?: {
       currentVersionAtCheck: currentVersion,
       installMethod,
       channel,
-      isOutdated: isVersionOutdated(currentVersion, latestVersion),
+      isOutdated: isOutdatedForChannel(currentVersion, latestVersion, channel),
     });
   }
 
   return {
     currentVersion,
     latestVersion,
-    isOutdated: latestVersion ? isVersionOutdated(currentVersion, latestVersion) : false,
+    isOutdated: latestVersion
+      ? isOutdatedForChannel(currentVersion, latestVersion, channel)
+      : false,
     installMethod,
     recommendedCommand,
     checkedAt: latestVersion ? now : null,
@@ -585,7 +592,7 @@ export function maybeShowUpdateNotice(): void {
   const isOutdated =
     installMethod === "git"
       ? cached.isOutdated === true
-      : isVersionOutdated(currentVersion, cached.latestVersion);
+      : isOutdatedForChannel(currentVersion, cached.latestVersion, channel);
   if (!isOutdated) return;
 
   const channelSuffix = channel === "nightly" ? " (nightly)" : "";
