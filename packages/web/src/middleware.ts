@@ -37,6 +37,17 @@ function decodeBasicAuth(header: string | null): { username: string; password: s
   }
 }
 
+function constantTimeEqual(actual: string, expected: string): boolean {
+  const maxLength = Math.max(actual.length, expected.length);
+  let diff = actual.length ^ expected.length;
+
+  for (let i = 0; i < maxLength; i += 1) {
+    diff |= (actual.charCodeAt(i) || 0) ^ (expected.charCodeAt(i) || 0);
+  }
+
+  return diff === 0;
+}
+
 function isPublicAsset(pathname: string): boolean {
   return (
     pathname.startsWith("/_next/") ||
@@ -91,7 +102,10 @@ export function middleware(request: NextRequest) {
   const credentials = decodeBasicAuth(request.headers.get("authorization"));
   if (!credentials) return unauthorized();
 
-  if (credentials.username !== remoteAuthUser() || credentials.password !== password) {
+  if (
+    !constantTimeEqual(credentials.username, remoteAuthUser()) ||
+    !constantTimeEqual(credentials.password, password)
+  ) {
     return unauthorized();
   }
 

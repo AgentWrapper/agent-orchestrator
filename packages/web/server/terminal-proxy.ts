@@ -36,6 +36,34 @@ export function isRemoteUpgradeAllowed(
   return isBasicAuthHeaderAllowed(request.headers.authorization, expected);
 }
 
+function headerValues(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) return value;
+  return value === undefined ? [] : [value];
+}
+
+export function buildWebSocketUpgradeHeaders(request: IncomingMessage): string {
+  const lines: string[] = [];
+  const append = (name: string, values: string[]) => {
+    for (const value of values) {
+      lines.push(`${name}: ${value}`);
+    }
+  };
+
+  append("host", headerValues(request.headers.host));
+  append("upgrade", headerValues(request.headers.upgrade));
+  append("connection", headerValues(request.headers.connection));
+
+  for (const [name, value] of Object.entries(request.headers)) {
+    const lowerName = name.toLowerCase();
+    if (lowerName.startsWith("sec-websocket-")) {
+      append(name, headerValues(value));
+    }
+  }
+
+  append("x-ao-remote-address", headerValues(request.headers["x-ao-remote-address"]));
+  return lines.join("\r\n");
+}
+
 export function proxyTerminalUpgrade(
   request: IncomingMessage,
   socket: Duplex,
@@ -53,12 +81,7 @@ export function proxyTerminalUpgrade(
   const upstream = createConnection({ host: "127.0.0.1", port: directTerminalPort });
 
   upstream.on("connect", () => {
-    const headers = Object.entries(request.headers)
-      .flatMap(([name, value]) => {
-        if (Array.isArray(value)) return value.map((item) => `${name}: ${item}`);
-        return value === undefined ? [] : [`${name}: ${value}`];
-      })
-      .join("\r\n");
+    const headers = buildWebSocketUpgradeHeaders(request);
     upstream.write(`GET ${targetPath} HTTP/${request.httpVersion}\r\n${headers}\r\n\r\n`);
     if (head.length > 0) upstream.write(head);
     socket.pipe(upstream).pipe(socket);

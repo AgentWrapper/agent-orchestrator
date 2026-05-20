@@ -370,7 +370,6 @@ export {
   killProcessTree,
   findPidByPort,
   getEnvDefaults,
-  getLocalNetworkIPs,
 } from "./platform.js";
 
 export { normalizeOriginUrl, relativeSubdir, deriveStorageKey } from "./storage-key.js";

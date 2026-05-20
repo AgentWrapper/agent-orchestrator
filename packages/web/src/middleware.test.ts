@@ -54,6 +54,15 @@ describe("remote auth middleware", () => {
     expect(response.status).toBe(200);
   });
 
+  it("rejects same-length incorrect basic auth credentials", () => {
+    vi.stubEnv("AO_REMOTE_AUTH_USER", "ao");
+    vi.stubEnv("AO_REMOTE_AUTH_PASSWORD", "secret");
+
+    const response = middleware(request("/api/projects", basic("ao", "secrex")));
+
+    expect(response.status).toBe(401);
+  });
+
   it("does not trust a spoofed localhost Host header", () => {
     vi.stubEnv("AO_REMOTE_AUTH_USER", "ao");
     vi.stubEnv("AO_REMOTE_AUTH_PASSWORD", "secret");

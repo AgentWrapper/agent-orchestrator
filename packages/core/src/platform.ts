@@ -1,6 +1,6 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { homedir, userInfo, networkInterfaces } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { existsSync } from "node:fs";
 
 const execFileAsync = promisify(execFileCb);
@@ -238,35 +238,4 @@ export function getEnvDefaults(): EnvDefaults {
     PATH: process.env["PATH"] || "/usr/local/bin:/usr/bin:/bin",
     USER: process.env["USER"] || userInfo().username,
   };
-}
-
-// -- Network --
-
-/**
- * Return non-internal IPv4 addresses of this machine on the local network.
- * Sorted by priority: en0/en1/Wi-Fi/Ethernet first, then everything else.
- * Filters out loopback (127.x.x.x) and link-local (169.254.x.x) addresses.
- */
-export function getLocalNetworkIPs(): string[] {
-  const ifaces = networkInterfaces();
-  const ips: { addr: string; prio: number }[] = [];
-
-  for (const [name, addrs] of Object.entries(ifaces)) {
-    if (!addrs) continue;
-    const lower = name.toLowerCase();
-    // Prioritize common physical interfaces
-    const prio =
-      lower.includes("en0") || lower.includes("eth0") ? 0
-      : lower.includes("en") || lower.includes("eth") || lower.includes("wi-fi") || lower.includes("wlan") ? 1
-      : 2;
-
-    for (const info of addrs) {
-      if (info.family !== "IPv4" || info.internal) continue;
-      if (info.address.startsWith("169.254.")) continue; // link-local
-      ips.push({ addr: info.address, prio });
-    }
-  }
-
-  ips.sort((a, b) => a.prio - b.prio);
-  return ips.map((x) => x.addr);
 }
