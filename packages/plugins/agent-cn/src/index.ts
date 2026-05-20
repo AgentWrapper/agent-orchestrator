@@ -47,26 +47,31 @@ function classifyCnTerminalOutput(terminalOutput: string): ActivityState {
   const lines = normalizedOutput.split("\n").map((line) => line.trim());
   const lastLine = lines[lines.length - 1] ?? "";
   const nonEmptyLines = lines.filter(Boolean);
-  const lastNonEmptyLine = [...lines].reverse().find(Boolean) ?? "";
-  const recentOutput = nonEmptyLines.slice(-3).join("\n");
+  const lastNonEmptyLine = nonEmptyLines[nonEmptyLines.length - 1] ?? "";
+  const previousNonEmptyLine = nonEmptyLines[nonEmptyLines.length - 2] ?? "";
+  const lastLineIsBarePrompt = /^[>$#]\s*$/.test(lastLine);
+  const latestRelevantLine = lastLineIsBarePrompt ? previousNonEmptyLine : lastNonEmptyLine;
+  const latestRelevantText =
+    /^>\s*\S/.test(latestRelevantLine) && /Would you like to continue\?/i.test(previousNonEmptyLine)
+      ? `${previousNonEmptyLine}\n${latestRelevantLine}`
+      : latestRelevantLine;
 
-  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-  if (/Enter text\.\.\./i.test(lastNonEmptyLine)) return "idle";
+  if (!latestRelevantLine) return "idle";
+  if (/Enter text\.\.\./i.test(latestRelevantLine)) return "idle";
   if (
-    /Would you like to continue\?/i.test(lastNonEmptyLine) ||
-    (/Would you like to continue\?/i.test(recentOutput) && /^>\s*\S/.test(lastNonEmptyLine))
+    /Would you like to continue\?/i.test(latestRelevantText) ||
+    /Press enter to continue/i.test(latestRelevantText) ||
+    /Press Enter for default/i.test(latestRelevantText) ||
+    /Enter your .*API key/i.test(latestRelevantText)
   ) {
     return "waiting_input";
   }
-  if (/Press enter to continue/i.test(lastNonEmptyLine)) return "waiting_input";
-  if (/Press Enter for default/i.test(lastNonEmptyLine)) return "waiting_input";
-  if (/Enter your .*API key/i.test(lastNonEmptyLine)) return "waiting_input";
   if (
-    /Not authenticated|Please run ['"]?cn login|Authentication required/i.test(lastNonEmptyLine)
+    /Not authenticated|Please run ['"]?cn login|Authentication required/i.test(latestRelevantText)
   ) {
     return "blocked";
   }
-  if (/^\s*(error|failed|exception)\b/i.test(lastLine)) return "blocked";
+  if (/^\s*(error|failed|exception)\b/i.test(latestRelevantLine)) return "blocked";
 
   return "active";
 }

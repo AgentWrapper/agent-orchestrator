@@ -294,6 +294,30 @@ describe("isProcessRunning", () => {
   });
 });
 
+describe("detectActivity", () => {
+  const agent = create();
+
+  it("classifies the current Continue permission prompt as waiting_input", () => {
+    expect(agent.detectActivity("Would you like to continue?\n> Continue (tab)")).toBe(
+      "waiting_input",
+    );
+  });
+
+  it("ignores stale permission prompts when latest output is active", () => {
+    expect(agent.detectActivity("Would you like to continue?\nBuilding package")).toBe("active");
+  });
+
+  it("ignores stale auth prompts when latest output is active", () => {
+    expect(
+      agent.detectActivity("Not authenticated. Please run 'cn login' first.\nBuilding package"),
+    ).toBe("active");
+  });
+
+  it("ignores stale error lines when latest output is active", () => {
+    expect(agent.detectActivity("Error: request failed\nBuilding package")).toBe("active");
+  });
+});
+
 describe("recordActivity", () => {
   const agent = create();
 
