@@ -374,6 +374,39 @@ describe("getSessionInfo", () => {
       summaryIsFallback: false,
       metadata: { crushSessionId: CRUSH_SESSION_ID },
     });
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "crush",
+      ["session", "show", "abc1234", "--json"],
+      expect.objectContaining({
+        shell: false,
+        windowsHide: true,
+      }),
+    );
+  });
+
+  it("uses a shell for crush session metadata on Windows", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockExecFileAsync.mockResolvedValue({
+      stdout: JSON.stringify({
+        meta: { uuid: CRUSH_SESSION_ID, title: "Windows metadata" },
+        messages: [],
+      }),
+      stderr: "",
+    });
+
+    const info = await agent.getSessionInfo(
+      makeSession({ metadata: { crushSessionId: CRUSH_SESSION_ID } }),
+    );
+
+    expect(info?.summary).toBe("Windows metadata");
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "crush",
+      ["session", "show", CRUSH_SESSION_ID, "--json"],
+      expect.objectContaining({
+        shell: true,
+        windowsHide: true,
+      }),
+    );
   });
 
   it("keeps compatibility with legacy top-level session fields", async () => {

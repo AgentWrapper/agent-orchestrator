@@ -96,6 +96,8 @@ async function fetchCrushSessionInfo(sessionId: string): Promise<CrushSessionSho
     const { stdout } = await execFileAsync("crush", ["session", "show", sessionId, "--json"], {
       timeout: CRUSH_COMMAND_TIMEOUT_MS,
       maxBuffer: 10 * 1024 * 1024,
+      shell: isWindows(),
+      windowsHide: true,
     });
     return parseCrushSessionShowJson(stdout);
   } catch {
