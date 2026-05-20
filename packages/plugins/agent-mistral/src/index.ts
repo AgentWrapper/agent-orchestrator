@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -17,10 +17,12 @@ import {
   buildAgentPath,
   checkActivityLogState,
   getActivityFallbackState,
+  getEnvDefaults,
   readLastActivityEntry,
   recordTerminalActivity,
   setupPathWrapperWorkspace,
   shellEscape,
+  isWindows,
 } from "@aoagents/ao-core";
 import which from "which";
 
@@ -33,7 +35,7 @@ const COMMAND_TIMEOUT_MS = 2_000;
 const ACTIVE_WINDOW_MS = 30_000;
 const MAX_METADATA_BYTES = 64 * 1024;
 
-type MistralAgent = Agent & { promptDelivery: "post-launch" };
+type MistralAgent = Agent & { promptDelivery: "inline" };
 
 function pluginNameFromPackageName(packageName: string): string {
   return packageName.startsWith(PACKAGE_PREFIX)
@@ -69,11 +71,36 @@ function permissionAgentFlag(permissions: AgentLaunchConfig["permissions"]): str
   return null;
 }
 
-function buildLaunchCommand(config: AgentLaunchConfig): string {
-  const args = [VIBE_EXECUTABLE, "--workdir", shellEscape(workspacePathFor(config)), "--trust"];
-  const agent = permissionAgentFlag(config.permissions);
+function buildBaseVibeCommandArgs(
+  workspacePath: string,
+  permissions: AgentLaunchConfig["permissions"],
+): string[] {
+  const args = [VIBE_EXECUTABLE, "--workdir", shellEscape(workspacePath), "--trust"];
+  const agent = permissionAgentFlag(permissions);
   if (agent) args.push("--agent", shellEscape(agent));
+  return args;
+}
+
+function buildLaunchCommand(config: AgentLaunchConfig): string {
+  const args = buildBaseVibeCommandArgs(workspacePathFor(config), config.permissions);
+  const prompt = buildInitialPrompt(config);
+  if (prompt) args.push(shellEscape(prompt));
   return args.join(" ");
+}
+
+function buildInitialPrompt(config: AgentLaunchConfig): string | null {
+  const taskPrompt = typeof config.prompt === "string" ? config.prompt : "";
+  if (taskPrompt.length === 0) return null;
+
+  if (config.systemPromptFile) {
+    return `${readFileSync(config.systemPromptFile, "utf-8")}\n\n${taskPrompt}`;
+  }
+
+  if (config.systemPrompt) {
+    return `${config.systemPrompt}\n\n${taskPrompt}`;
+  }
+
+  return taskPrompt;
 }
 
 function getConfiguredVibeHome(): string {
@@ -86,7 +113,14 @@ function getVibeSessionLogDir(): string {
 }
 
 function normalizePathForCompare(path: string): string {
-  return resolve(path);
+  const expanded = path.replace(/^~/, getEnvDefaults().HOME ?? "");
+  let canonical = resolve(expanded);
+  try {
+    canonical = realpathSync(canonical);
+  } catch {
+    // Compare the resolved literal path when the filesystem entry is gone.
+  }
+  return isWindows() ? canonical.toLowerCase() : canonical;
 }
 
 interface VibeMetadata {
@@ -238,7 +272,7 @@ export function create(): MistralAgent {
   const agent: MistralAgent = {
     name: pluginName,
     processName: VIBE_EXECUTABLE,
-    promptDelivery: "post-launch",
+    promptDelivery: "inline",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       return buildLaunchCommand(config);
@@ -308,10 +342,7 @@ export function create(): MistralAgent {
       if (!mistralSessionId) return null;
       const workspacePath = session.workspacePath ?? project.path;
       return [
-        VIBE_EXECUTABLE,
-        "--workdir",
-        shellEscape(workspacePath),
-        "--trust",
+        ...buildBaseVibeCommandArgs(workspacePath, project.agentConfig?.permissions),
         "--resume",
         shellEscape(mistralSessionId),
       ].join(" ");

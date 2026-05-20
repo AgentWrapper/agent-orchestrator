@@ -65,6 +65,7 @@ describe("agent-mistral plugin", () => {
   let tmp: string;
   const previousPath = process.env["PATH"];
   const previousGhPath = process.env["GH_PATH"];
+  const previousHome = process.env["HOME"];
   const previousVibeHome = process.env["VIBE_HOME"];
 
   beforeEach(() => {
@@ -81,6 +82,8 @@ describe("agent-mistral plugin", () => {
     else process.env["PATH"] = previousPath;
     if (previousGhPath === undefined) delete process.env["GH_PATH"];
     else process.env["GH_PATH"] = previousGhPath;
+    if (previousHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = previousHome;
     if (previousVibeHome === undefined) delete process.env["VIBE_HOME"];
     else process.env["VIBE_HOME"] = previousVibeHome;
     vi.restoreAllMocks();
@@ -102,7 +105,7 @@ describe("agent-mistral plugin", () => {
     const agent = create();
     expect(agent.name).toBe("mistral");
     expect(agent.processName).toBe("vibe");
-    expect(agent.promptDelivery).toBe("post-launch");
+    expect(agent.promptDelivery).toBe("inline");
   });
 
   it("detects the vibe executable with which.sync", () => {
@@ -124,10 +127,26 @@ describe("agent-mistral plugin", () => {
       sessionId: "app-1",
       projectConfig: projectConfig("/repo/root"),
       workspacePath: "/tmp/work tree",
-      prompt: "do not inline me",
+      prompt: "summarize the branch",
     });
-    expect(command).toBe("vibe --workdir '/tmp/work tree' --trust");
-    expect(command).not.toContain("do not inline me");
+    expect(command).toBe("vibe --workdir '/tmp/work tree' --trust 'summarize the branch'");
+    expect(command).not.toContain("--prompt");
+  });
+
+  it("combines system prompt files with the task prompt for Vibe's positional prompt", () => {
+    const agent = create();
+    const systemPromptFile = join(tmp, "system.md");
+    writeFileSync(systemPromptFile, "System rules", "utf-8");
+
+    const command = agent.getLaunchCommand({
+      sessionId: "app-1",
+      projectConfig: projectConfig("/repo/root"),
+      workspacePath: "/tmp/work tree",
+      systemPromptFile,
+      prompt: "print READY",
+    });
+
+    expect(command).toBe("vibe --workdir '/tmp/work tree' --trust 'System rules\n\nprint READY'");
     expect(command).not.toContain("--prompt");
   });
 
@@ -325,6 +344,27 @@ describe("agent-mistral plugin", () => {
       agentSessionId: "deadbeef-0000-0000-0000-123456789abc",
       metadata: { mistralSessionId: "deadbeef-0000-0000-0000-123456789abc" },
     });
+  });
+
+  it("matches Vibe metadata workspace paths that start with a home-directory tilde", async () => {
+    const agent = create();
+    process.env["HOME"] = tmp;
+    process.env["VIBE_HOME"] = join(tmp, "vibe-home");
+    const workspacePath = join(tmp, "project");
+    mkdirSync(workspacePath, { recursive: true });
+    const logDir = join(process.env["VIBE_HOME"], "logs", "session", "session_20260513_homepath");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "meta.json"),
+      JSON.stringify({
+        session_id: "homepath-0000-0000-0000-123456789abc",
+        title: "Home path session",
+        environment: { working_directory: "~/project" },
+      }),
+    );
+
+    const info = await agent.getSessionInfo(session({ workspacePath }));
+    expect(info?.agentSessionId).toBe("homepath-0000-0000-0000-123456789abc");
   });
 
   it("returns null when Vibe metadata is unavailable", async () => {

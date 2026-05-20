@@ -48,6 +48,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "agent", name: "kimicode", pkg: "@aoagents/ao-plugin-agent-kimicode" },
   { slot: "agent", name: "grok", pkg: "@aoagents/ao-plugin-agent-grok" },
   { slot: "agent", name: "opencode", pkg: "@aoagents/ao-plugin-agent-opencode" },
+  { slot: "agent", name: "mistral", pkg: "@aoagents/ao-plugin-agent-mistral" },
   // Workspaces
   { slot: "workspace", name: "worktree", pkg: "@aoagents/ao-plugin-workspace-worktree" },
   { slot: "workspace", name: "clone", pkg: "@aoagents/ao-plugin-workspace-clone" },
