@@ -78,6 +78,8 @@ import {
   toClaudeProjectPath,
   METADATA_UPDATER_SCRIPT,
   METADATA_UPDATER_SCRIPT_NODE,
+  ACTIVITY_UPDATER_SCRIPT,
+  ACTIVITY_UPDATER_SCRIPT_NODE,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -1179,6 +1181,201 @@ describe("hook setup — relative path (symlink-safe)", () => {
   it("skips postLaunchSetup when workspacePath is null", async () => {
     await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
     expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks — activity-updater registration (#1941)
+// =========================================================================
+describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
+  const agent = create();
+
+  function getParsedSettings(): Record<string, unknown> {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    return JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
+  }
+
+  /** Activity-updater command paths (unix vs win32) */
+  const ACTIVITY_CMD_UNIX = ".claude/activity-updater.sh";
+  const ACTIVITY_CMD_WIN = "node .claude/activity-updater.cjs";
+
+  /**
+   * Every Claude Code hook event the script knows how to translate into an
+   * activity state. The dashboard / lifecycle reducer relies on these firing
+   * so platform events replace terminal-output regex.
+   */
+  const ACTIVITY_EVENTS = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "Notification",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "PreCompact",
+    "PostCompact",
+  ] as const;
+
+  it("writes the activity-updater script to .claude/", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const scriptWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("activity-updater.sh"),
+    );
+    expect(scriptWrite).toBeDefined();
+    expect(scriptWrite![1]).toBe(ACTIVITY_UPDATER_SCRIPT);
+  });
+
+  it("makes the activity-updater script executable on unix (chmod 0o755)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const chmodCall = mockChmod.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("activity-updater.sh"),
+    );
+    expect(chmodCall).toBeDefined();
+    expect(chmodCall![1]).toBe(0o755);
+  });
+
+  it.each(ACTIVITY_EVENTS)(
+    "registers the activity-updater hook on %s",
+    async (event) => {
+      mockWriteFile.mockClear();
+      await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+      const settings = getParsedSettings();
+      const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
+        matcher: string;
+        hooks: Array<{ command: string; timeout?: number }>;
+      }>;
+      expect(hookGroup).toBeDefined();
+      const activity = hookGroup.flatMap((g) => g.hooks).find((h) => h.command === ACTIVITY_CMD_UNIX);
+      expect(activity).toBeDefined();
+      // The script does a single JSON parse + append — short timeout keeps a
+      // stuck hook from slowing the turn down.
+      expect(activity!.timeout).toBe(2000);
+    },
+  );
+
+  it("registers activity-updater PostToolUse alongside metadata-updater", async () => {
+    mockWriteFile.mockClear();
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const settings = getParsedSettings();
+    const postToolUse = (settings.hooks as Record<string, unknown>)["PostToolUse"] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string }>;
+    }>;
+    expect(postToolUse.length).toBeGreaterThanOrEqual(2);
+
+    const metadataEntry = postToolUse.find((g) =>
+      g.hooks.some((h) => h.command.includes("metadata-updater")),
+    );
+    const activityEntry = postToolUse.find((g) =>
+      g.hooks.some((h) => h.command.includes("activity-updater")),
+    );
+
+    expect(metadataEntry).toBeDefined();
+    expect(metadataEntry!.matcher).toBe("Bash"); // unchanged from before #1941
+    expect(activityEntry).toBeDefined();
+    expect(activityEntry!.matcher).toBe(""); // fires on every PostToolUse, not just Bash
+  });
+
+  it("is idempotent — calling twice keeps exactly one activity-updater entry per event", async () => {
+    mockWriteFile.mockClear();
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const firstSettings = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    mockExistsSync.mockReturnValueOnce(true);
+    mockReadFile.mockResolvedValueOnce(firstSettings![1] as string);
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const settings = getParsedSettings();
+    for (const event of ACTIVITY_EVENTS) {
+      const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
+        hooks: Array<{ command: string }>;
+      }>;
+      const activityHooks = hookGroup.flatMap((g) => g.hooks).filter(
+        (h) => h.command === ACTIVITY_CMD_UNIX,
+      );
+      expect(activityHooks).toHaveLength(1);
+    }
+  });
+
+  it("preserves a user-installed Stop hook when adding our activity-updater", async () => {
+    const existingSettings = {
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: "echo user-hook", timeout: 1000 }],
+          },
+        ],
+      },
+    };
+    mockExistsSync.mockReturnValueOnce(true);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify(existingSettings));
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const settings = getParsedSettings();
+    const stopGroup = (settings.hooks as Record<string, unknown>)["Stop"] as Array<{
+      hooks: Array<{ command: string }>;
+    }>;
+    const commands = stopGroup.flatMap((g) => g.hooks).map((h) => h.command);
+    expect(commands).toContain("echo user-hook"); // user hook preserved
+    expect(commands).toContain(ACTIVITY_CMD_UNIX); // our hook added
+  });
+
+  it("on Windows writes activity-updater.cjs (not .sh) and uses node invocation", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
+
+    const cjsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("activity-updater.cjs"),
+    );
+    expect(cjsWrite).toBeDefined();
+    expect(cjsWrite![1]).toBe(ACTIVITY_UPDATER_SCRIPT_NODE);
+
+    const shWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("activity-updater.sh"),
+    );
+    expect(shWrite).toBeUndefined();
+
+    const settings = getParsedSettings();
+    const stopGroup = (settings.hooks as Record<string, unknown>)["Stop"] as Array<{
+      hooks: Array<{ command: string }>;
+    }>;
+    expect(stopGroup.flatMap((g) => g.hooks).some((h) => h.command === ACTIVITY_CMD_WIN)).toBe(true);
+
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("does not chmod on Windows (Windows uses extension for executability)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockChmod.mockClear();
+
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
+
+    const chmodCalls = mockChmod.mock.calls.filter(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("activity-updater.cjs"),
+    );
+    expect(chmodCalls).toHaveLength(0);
+
+    mockIsWindows.mockReturnValue(false);
   });
 });
 

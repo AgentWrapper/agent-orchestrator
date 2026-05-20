@@ -790,41 +790,174 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 // =============================================================================
 
 /**
- * Shared helper to setup PostToolUse hooks in a workspace.
- * Writes metadata-updater.sh script and updates settings.json.
+ * Single hook registration: which event, which variant (matcher), which
+ * command to invoke, and a substring used to find-and-update an existing
+ * entry so repeated setup calls are idempotent.
+ */
+interface HookRegistration {
+  event: string;
+  matcher: string;
+  command: string;
+  timeout: number;
+  /** Substring(s) of `command` that identify a pre-existing entry to update. */
+  identifiers: ReadonlyArray<string>;
+}
+
+/**
+ * Set the registration's hook in the `event`'s hook array, updating any
+ * existing entry whose command contains one of `identifiers` (idempotent).
+ */
+function upsertHookEntry(
+  hooks: Record<string, unknown>,
+  reg: HookRegistration,
+): void {
+  const entries = (hooks[reg.event] as Array<unknown>) ?? [];
+
+  let foundEntryIdx = -1;
+  let foundDefIdx = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const hooksList = (entry as Record<string, unknown>)["hooks"];
+    if (!Array.isArray(hooksList)) continue;
+    for (let j = 0; j < hooksList.length; j++) {
+      const def = hooksList[j];
+      if (typeof def !== "object" || def === null || Array.isArray(def)) continue;
+      const cmd = (def as Record<string, unknown>)["command"];
+      if (typeof cmd === "string" && reg.identifiers.some((id) => cmd.includes(id))) {
+        foundEntryIdx = i;
+        foundDefIdx = j;
+        break;
+      }
+    }
+    if (foundEntryIdx >= 0) break;
+  }
+
+  if (foundEntryIdx === -1) {
+    entries.push({
+      matcher: reg.matcher,
+      hooks: [{ type: "command", command: reg.command, timeout: reg.timeout }],
+    });
+  } else {
+    const entry = entries[foundEntryIdx] as Record<string, unknown>;
+    const hooksList = entry["hooks"] as Array<Record<string, unknown>>;
+    hooksList[foundDefIdx]!["command"] = reg.command;
+    hooksList[foundDefIdx]!["timeout"] = reg.timeout;
+    // Refresh the matcher too — for example, an older PostToolUse entry
+    // registered with matcher "Bash" stays at "Bash"; a new activity-updater
+    // PostToolUse with matcher "" gets its own array entry.
+    entry["matcher"] = reg.matcher;
+  }
+
+  hooks[reg.event] = entries;
+}
+
+/**
+ * Build the list of hooks to register for this workspace. Two scripts are
+ * installed:
+ *   - metadata-updater: PostToolUse(Bash) only — extracts gh/git side-effects.
+ *   - activity-updater: every event that carries activity information, so
+ *     dashboard / lifecycle reducer state derives from platform events
+ *     instead of regex over rendered terminal output (#1941).
  *
- * @param workspacePath - Path to the workspace directory
- * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
+ * Activity events use matcher "" — match every variant. PermissionRequest's
+ * tool-name and Notification's notification_type are filtered inside the
+ * script itself so the registered set stays small.
+ */
+function buildHookRegistrations(
+  metadataCommand: string,
+  activityCommand: string,
+): HookRegistration[] {
+  const METADATA_IDS = [
+    "metadata-updater.sh",
+    "metadata-updater.cjs",
+    "metadata-updater.js",
+  ] as const;
+  const ACTIVITY_IDS = ["activity-updater.sh", "activity-updater.cjs"] as const;
+
+  const regs: HookRegistration[] = [
+    {
+      event: "PostToolUse",
+      matcher: "Bash",
+      command: metadataCommand,
+      timeout: 5000,
+      identifiers: METADATA_IDS,
+    },
+  ];
+
+  // Activity-updater events. Every event that the activity-updater script
+  // knows how to map (see ACTIVITY_UPDATER_SCRIPT) must be registered here;
+  // unregistered events fire no hook, so unrecognized hooks waste no time.
+  const activityEvents = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "Notification",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "PreCompact",
+    "PostCompact",
+  ];
+  for (const event of activityEvents) {
+    regs.push({
+      event,
+      matcher: "",
+      command: activityCommand,
+      // Hook execution is best-effort and the activity-updater is intentionally
+      // O(few ms): JSON parse, one append, exit. A short timeout keeps a stuck
+      // hook from slowing a turn down.
+      timeout: 2000,
+      identifiers: ACTIVITY_IDS,
+    });
+  }
+
+  return regs;
+}
+
+/**
+ * Install Claude Code workspace hooks. Writes both helper scripts
+ * (metadata-updater + activity-updater) and merges hook registrations into
+ * `.claude/settings.json` — preserving any user-installed hooks, updating our
+ * own in place on repeated calls.
  */
 async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
 
-  // Create .claude directory if it doesn't exist
   try {
     await mkdir(claudeDir, { recursive: true });
   } catch {
-    // Directory might already exist
+    // Directory may already exist; ignore
   }
 
-  // On Windows: write a Node.js hook script, skip chmod (not needed).
-  // On Unix: write the bash hook script and make it executable.
-  let hookCommand: string;
+  let metadataCommand: string;
+  let activityCommand: string;
   if (isWindows()) {
-    const hookScriptPath = join(claudeDir, "metadata-updater.cjs");
-    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
-    // No chmod — Windows uses file extension for executability
-    // Use `node` to invoke the script (Windows won't run .js via shebang)
-    // Use .cjs extension to force CJS mode regardless of workspace package.json "type" field
-    hookCommand = "node .claude/metadata-updater.cjs";
+    const metadataPath = join(claudeDir, "metadata-updater.cjs");
+    const activityPath = join(claudeDir, "activity-updater.cjs");
+    await writeFile(metadataPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
+    await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT_NODE, "utf-8");
+    // .cjs forces CJS regardless of workspace package.json "type"; node
+    // invocation is required on Windows because shebangs aren't honoured.
+    metadataCommand = "node .claude/metadata-updater.cjs";
+    activityCommand = "node .claude/activity-updater.cjs";
   } else {
-    const hookScriptPath = join(claudeDir, "metadata-updater.sh");
-    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-    await chmod(hookScriptPath, 0o755); // Make executable
-    hookCommand = ".claude/metadata-updater.sh";
+    const metadataPath = join(claudeDir, "metadata-updater.sh");
+    const activityPath = join(claudeDir, "activity-updater.sh");
+    await writeFile(metadataPath, METADATA_UPDATER_SCRIPT, "utf-8");
+    await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT, "utf-8");
+    await chmod(metadataPath, 0o755);
+    await chmod(activityPath, 0o755);
+    metadataCommand = ".claude/metadata-updater.sh";
+    activityCommand = ".claude/activity-updater.sh";
   }
 
-  // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
     try {
@@ -835,61 +968,12 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     }
   }
 
-  // Merge hooks configuration
   const hooks = (existingSettings["hooks"] as Record<string, unknown>) ?? {};
-  const postToolUse = (hooks["PostToolUse"] as Array<unknown>) ?? [];
-
-  // Check if our hook is already configured
-  let hookIndex = -1;
-  let hookDefIndex = -1;
-  for (let i = 0; i < postToolUse.length; i++) {
-    const hook = postToolUse[i];
-    if (typeof hook !== "object" || hook === null || Array.isArray(hook)) continue;
-    const h = hook as Record<string, unknown>;
-    const hooksList = h["hooks"];
-    if (!Array.isArray(hooksList)) continue;
-    for (let j = 0; j < hooksList.length; j++) {
-      const hDef = hooksList[j];
-      if (typeof hDef !== "object" || hDef === null || Array.isArray(hDef)) continue;
-      const def = hDef as Record<string, unknown>;
-      if (
-        typeof def["command"] === "string" &&
-        (def["command"].includes("metadata-updater.sh") ||
-          def["command"].includes("metadata-updater.js") ||
-          def["command"].includes("metadata-updater.cjs"))
-      ) {
-        hookIndex = i;
-        hookDefIndex = j;
-        break;
-      }
-    }
-    if (hookIndex >= 0) break;
+  for (const reg of buildHookRegistrations(metadataCommand, activityCommand)) {
+    upsertHookEntry(hooks, reg);
   }
-
-  // Add or update our hook
-  if (hookIndex === -1) {
-    // No metadata hook exists, add it
-    postToolUse.push({
-      matcher: "Bash",
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand,
-          timeout: 5000,
-        },
-      ],
-    });
-  } else {
-    // Hook exists, update the command
-    const hook = postToolUse[hookIndex] as Record<string, unknown>;
-    const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    hooksList[hookDefIndex]["command"] = hookCommand;
-  }
-
-  hooks["PostToolUse"] = postToolUse;
   existingSettings["hooks"] = hooks;
 
-  // Write updated settings
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
 }
 
