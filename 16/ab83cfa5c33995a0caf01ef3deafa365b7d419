@@ -1,0 +1,21 @@
+packages/web/src/middleware.test.ts
+  s_3c12ffb1648181::t_a4b2f413073396 102-116
+packages/web/src/middleware.ts
+  s_3c12ffb1648181::t_230acaa8372e36 63-76,86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "16ab83cfa5c33995a0caf01ef3deafa365b7d419",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
