@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { projectDashboardPath } from "@/lib/routes";
+
 import { RepairDegradedProjectButton } from "./RepairDegradedProjectButton";
 
 interface DegradedProjectStateProps {
@@ -61,16 +61,10 @@ export function DegradedProjectState({
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href={projectDashboardPath(projectId)}
+            href="/"
             className="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
           >
-            Back to project
-          </Link>
-          <Link
-            href={projectDashboardPath(projectId)}
-            className="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
-          >
-            Open dashboard view
+            Back to dashboard
           </Link>
         </div>
       </div>

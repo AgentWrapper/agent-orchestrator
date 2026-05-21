@@ -80,5 +80,7 @@ describe("ProjectPage", () => {
     expect(screen.getByText("This project's config failed to load")).toBeInTheDocument();
     expect(screen.getByText("Local config failed validation")).toBeInTheDocument();
     expect(screen.queryByTestId("dashboard")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to dashboard" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "Edit settings" })).not.toBeInTheDocument();
   });
 });
