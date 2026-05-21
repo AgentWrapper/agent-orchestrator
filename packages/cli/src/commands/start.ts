@@ -148,7 +148,10 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  const rawProjectId = basename(projectPath);
+  // Sanitize projectId to match Zod schema [a-zA-Z0-9_-]+
+  // so folder names like "llama.cpp" become "llama-cpp".
+  const projectId = rawProjectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || rawProjectId;
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");

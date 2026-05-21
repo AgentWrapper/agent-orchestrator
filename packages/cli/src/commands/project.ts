@@ -148,7 +148,10 @@ export function registerProjectCommand(program: Command): void {
 
       let projectId = opts.key;
       if (!projectId) {
-        projectId = basename(resolvedPath) || "project";
+        const rawId = basename(resolvedPath) || "project";
+        // Sanitize to match Zod schema [a-zA-Z0-9_-]+
+        // so paths like "/home/user/llama.cpp" produce "llama-cpp" as project ID.
+        projectId = rawId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") || rawId;
       }
 
       const effectiveId = registerProject(resolvedPath, projectId, basename(resolvedPath) || projectId);
