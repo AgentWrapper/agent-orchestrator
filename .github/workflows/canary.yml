@@ -112,19 +112,22 @@ jobs:
           # deletes it, so no cleanup is needed.
           if [ -z "$(ls .changeset/*.md 2>/dev/null | grep -vi 'README')" ]; then
             node << 'SCRIPT'
-              const cfg = require('./.changeset/config.json');
-              const glob = require('glob');
               const fs = require('fs');
-              const linked = new Set(cfg.linked.flat());
               const pkgs = [];
-              for (const m of glob.sync('packages/*/package.json')) {
+
+              const addPackage = (m) => {
+                if (!fs.existsSync(m)) return;
                 const d = JSON.parse(fs.readFileSync(m, 'utf8'));
                 if (d.publishConfig?.access === 'public') pkgs.push(d.name);
+              };
+
+              for (const entry of fs.readdirSync('packages', { withFileTypes: true })) {
+                if (entry.isDirectory()) addPackage(`packages/${entry.name}/package.json`);
               }
-              for (const m of glob.sync('packages/plugins/*/package.json')) {
-                const d = JSON.parse(fs.readFileSync(m, 'utf8'));
-                if (d.publishConfig?.access === 'public') pkgs.push(d.name);
+              for (const entry of fs.readdirSync('packages/plugins', { withFileTypes: true })) {
+                if (entry.isDirectory()) addPackage(`packages/plugins/${entry.name}/package.json`);
               }
+
               let body = '---\n';
               pkgs.forEach(p => body += '"' + p + '": patch\n');
               body += '---\n\nchore: canary build\n';
