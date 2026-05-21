@@ -10,6 +10,7 @@ const {
   tmuxPlugin,
   claudePlugin,
   codexPlugin,
+  goosePlugin,
   opencodePlugin,
   worktreePlugin,
   scmPlugin,
@@ -44,6 +45,7 @@ const {
     tmuxPlugin: { manifest: { name: "tmux" } },
     claudePlugin: { manifest: { name: "claude-code" } },
     codexPlugin: { manifest: { name: "codex" } },
+    goosePlugin: { manifest: { name: "goose" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
@@ -70,6 +72,7 @@ vi.mock("@aoagents/ao-core", () => ({
 vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
+vi.mock("@aoagents/ao-plugin-agent-goose", () => ({ default: goosePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
@@ -110,6 +113,7 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
+    expect(mockRegister).toHaveBeenCalledWith(goosePlugin);
   });
 
   it("registers the Codex agent plugin with web services", async () => {

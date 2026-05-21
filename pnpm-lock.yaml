@@ -70,6 +70,9 @@ importers:
       '@aoagents/ao-plugin-agent-cursor':
         specifier: workspace:*
         version: link:../plugins/agent-cursor
+      '@aoagents/ao-plugin-agent-goose':
+        specifier: workspace:*
+        version: link:../plugins/agent-goose
       '@aoagents/ao-plugin-agent-kimicode':
         specifier: workspace:*
         version: link:../plugins/agent-kimicode
@@ -324,6 +327,22 @@ importers:
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
   packages/plugins/agent-cursor:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/plugins/agent-goose:
     dependencies:
       '@aoagents/ao-core':
         specifier: workspace:*
@@ -688,6 +707,9 @@ importers:
       '@aoagents/ao-plugin-agent-cursor':
         specifier: workspace:*
         version: link:../plugins/agent-cursor
+      '@aoagents/ao-plugin-agent-goose':
+        specifier: workspace:*
+        version: link:../plugins/agent-goose
       '@aoagents/ao-plugin-agent-kimicode':
         specifier: workspace:*
         version: link:../plugins/agent-kimicode

@@ -32,6 +32,14 @@
     "latestVersion": "0.1.0"
   },
   {
+    "id": "agent-goose",
+    "package": "@aoagents/ao-plugin-agent-goose",
+    "slot": "agent",
+    "description": "Agent plugin: Goose",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
     "id": "notifier-openclaw",
     "package": "@aoagents/ao-plugin-notifier-openclaw",
     "slot": "notifier",
