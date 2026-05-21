@@ -51,16 +51,19 @@ export async function validateSession(
     defaults: config.defaults,
     allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
   }).agentName;
+  const normalizedMetadata = rawMetadata["agent"]
+    ? rawMetadata
+    : { ...rawMetadata, agent: agentName };
   const workspaceName = project.workspace ?? config.defaults.workspace;
 
   const runtime = registry.get<Runtime>("runtime", runtimeName);
   const agent = registry.get<Agent>("agent", agentName);
   const workspace = registry.get<Workspace>("workspace", workspaceName);
 
-  const workspacePath = rawMetadata["worktree"] || null;
-  const runtimeHandleStr = rawMetadata["runtimeHandle"];
+  const workspacePath = normalizedMetadata["worktree"] || null;
+  const runtimeHandleStr = normalizedMetadata["runtimeHandle"];
   const runtimeHandle = runtimeHandleStr ? safeJsonParse<RuntimeHandle>(runtimeHandleStr) : null;
-  const metadataStatus = validateStatus(rawMetadata["status"]);
+  const metadataStatus = validateStatus(normalizedMetadata["status"]);
   const recoveryConfig: RecoveryConfig = {
     ...DEFAULT_RECOVERY_CONFIG,
     ...(recoveryConfigInput ?? {}),
@@ -116,15 +119,15 @@ export async function validateSession(
         activity: null,
         activitySignal: createActivitySignal("unavailable"),
         lifecycle,
-        branch: rawMetadata["branch"] ?? null,
-        issueId: rawMetadata["issue"] ?? null,
+        branch: normalizedMetadata["branch"] ?? null,
+        issueId: normalizedMetadata["issue"] ?? null,
         pr: null,
         workspacePath,
         runtimeHandle,
         agentInfo: null,
-        createdAt: new Date(rawMetadata["createdAt"] ?? Date.now()),
-        lastActivityAt: new Date(rawMetadata["lastActivityAt"] ?? Date.now()),
-        metadata: rawMetadata,
+        createdAt: new Date(normalizedMetadata["createdAt"] ?? Date.now()),
+        lastActivityAt: new Date(normalizedMetadata["lastActivityAt"] ?? Date.now()),
+        metadata: normalizedMetadata,
       };
       const detection = await agent.getActivityState(probeSession, config.readyThresholdMs);
       agentActivity = detection?.state ?? null;
@@ -143,7 +146,7 @@ export async function validateSession(
     }
   }
 
-  const metadataValid = Object.keys(rawMetadata).length > 0;
+  const metadataValid = Object.keys(normalizedMetadata).length > 0;
   const classification = classifySession(
     runtimeAlive,
     workspaceExists,
@@ -191,7 +194,7 @@ export async function validateSession(
     agentActivity,
     metadataValid,
     metadataStatus,
-    rawMetadata,
+    rawMetadata: normalizedMetadata,
   };
 }
 

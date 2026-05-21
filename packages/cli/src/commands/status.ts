@@ -13,7 +13,6 @@ import {
   type ProjectConfig,
   type AgentReportAuditEntry,
   type PluginRegistry,
-  resolveAgentSelectionForSession,
   isOrchestratorSession,
   isTerminalSession,
   isWindows,
@@ -161,20 +160,12 @@ async function gatherSessionInfo(
     lastActivity = activityTs ? formatAge(activityTs) : "-";
   }
 
-  // Get agent's auto-generated summary via introspection. Resolve per session so
-  // historical mixed-agent rows are not probed with the current project default.
+  // Get agent's auto-generated summary via introspection. The SessionManager
+  // normalizes session.metadata.agent on read, so never infer the session agent
+  // from current project/default config here.
   let claudeSummary: string | null = null;
   try {
-    const project = projectConfig.projects[session.projectId];
-    const agentName = project
-      ? resolveAgentSelectionForSession({
-          sessionId: session.id,
-          metadata: session.metadata,
-          project,
-          defaults: projectConfig.defaults,
-          allSessionPrefixes,
-        }).agentName
-      : session.metadata["agent"];
+    const agentName = session.metadata["agent"];
     if (agentName) {
       const agent = getAgentByNameFromRegistry(registry, agentName);
       const introspection = await agent.getSessionInfo(session);

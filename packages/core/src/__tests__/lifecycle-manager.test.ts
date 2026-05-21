@@ -149,6 +149,7 @@ function setupCheck(
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    agent: opts.session.metadata["agent"] ?? "mock-agent",
     runtimeHandle: opts.session.runtimeHandle ?? undefined,
     ...opts.metaOverrides,
   };
@@ -225,6 +226,7 @@ function setupPollCheck(
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    agent: opts.session.metadata["agent"] ?? "mock-agent",
     runtimeHandle: opts.session.runtimeHandle ?? undefined,
     ...opts.metaOverrides,
   };
@@ -530,7 +532,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
-  it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
+  it("uses persisted session agent even when worker config differs", async () => {
     const codexAgent: Agent = {
       ...plugins.agent,
       name: "codex",
@@ -557,13 +559,13 @@ describe("check (single session)", () => {
         "my-app": {
           ...config.projects["my-app"],
           agent: "mock-agent",
-          worker: { agent: "codex" },
+          worker: { agent: "mock-agent" },
         },
       },
     };
 
     const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working", metadata: {} }),
+      session: makeSession({ status: "working", metadata: { agent: "codex" } }),
       registry: registryWithMultipleAgents,
       configOverride: configWithWorkerAgent,
     });

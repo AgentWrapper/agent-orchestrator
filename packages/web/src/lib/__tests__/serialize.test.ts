@@ -31,6 +31,7 @@ import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
 function createCoreSession(overrides?: Partial<Session>): Session {
+  const { metadata: overrideMetadata, ...sessionOverrides } = overrides ?? {};
   const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
   lifecycle.session.state = "working";
   lifecycle.session.reason = "task_in_progress";
@@ -57,8 +58,8 @@ function createCoreSession(overrides?: Partial<Session>): Session {
     agentInfo: null,
     createdAt: new Date("2025-01-01T00:00:00Z"),
     lastActivityAt: new Date("2025-01-01T01:00:00Z"),
-    metadata: {},
-    ...overrides,
+    metadata: { agent: "mock-agent", ...(overrideMetadata ?? {}) },
+    ...sessionOverrides,
   };
 }
 
@@ -1268,7 +1269,7 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.summary).toBe("Orphan Goose summary");
   });
 
-  it("should use default agent when project has no agent override", async () => {
+  it("uses normalized session agent metadata when project has no agent override", async () => {
     const tracker = mockTracker();
     const agent = mockAgent("From default agent");
     const registry = mockRegistry(tracker, agent);
@@ -1284,7 +1285,7 @@ describe("enrichSessionsMetadata", () => {
 
     await enrichSessionsMetadata([core], [dashboard], configNoProjectAgent, registry);
 
-    // Falls back to config.defaults.agent
+    // Uses the normalized Session metadata, not project/default inference.
     expect(registry.get).toHaveBeenCalledWith("agent", "mock-agent");
     expect(dashboard.summary).toBe("From default agent");
   });

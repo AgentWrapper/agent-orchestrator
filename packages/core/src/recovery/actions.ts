@@ -51,6 +51,12 @@ function buildLifecycleRecoveryPatch(
   return buildLifecycleMetadataPatch(updated);
 }
 
+function preserveSessionAgentPatch(
+  rawMetadata: Record<string, string>,
+): Partial<Record<string, string>> {
+  return rawMetadata["agent"] ? { agent: rawMetadata["agent"] } : {};
+}
+
 export async function recoverSession(
   assessment: RecoveryAssessment,
   config: OrchestratorConfig,
@@ -101,6 +107,7 @@ export async function recoverSession(
         escalatedAt: now,
         escalationReason: `Exceeded max recovery attempts (${context.recoveryConfig.maxRecoveryAttempts})`,
         recoveryCount: String(recoveryCount),
+        ...preserveSessionAgentPatch(rawMetadata),
         ...buildLifecycleRecoveryPatch(rawMetadata, {
           state: "stuck",
           reason: "probe_failure",
@@ -121,6 +128,7 @@ export async function recoverSession(
       status: preservedStatus,
       restoredAt: now,
       recoveryCount: String(recoveryCount),
+      ...preserveSessionAgentPatch(rawMetadata),
     });
     context.invalidateCache?.();
 
@@ -225,6 +233,7 @@ export async function cleanupSession(
       status: "terminated",
       terminatedAt: cleanupAt,
       terminationReason: "cleanup",
+      ...preserveSessionAgentPatch(rawMetadata),
       ...buildLifecycleRecoveryPatch(rawMetadata, {
         state: "terminated",
         reason: "auto_cleanup",
@@ -284,6 +293,7 @@ export async function escalateSession(
       status: "stuck",
       escalatedAt: new Date().toISOString(),
       escalationReason: reason,
+      ...preserveSessionAgentPatch(rawMetadata),
       ...buildLifecycleRecoveryPatch(rawMetadata, {
         state: "stuck",
         reason: "probe_failure",
