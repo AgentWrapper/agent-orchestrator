@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, readFileSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
@@ -40,6 +40,7 @@ import {
   type ProjectConfig,
   type Runtime,
   type Agent,
+  type AgentLaunchConfig,
   type Workspace,
   type WorkspaceCreateConfig,
   type Tracker,
@@ -291,6 +292,78 @@ const ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POST_LAUNCH_PROMPT_STARTUP_GRACE_MS = 2_000;
+const POST_LAUNCH_PROMPT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+
+function buildPostLaunchPrompt(config: AgentLaunchConfig): string | null {
+  const promptParts: string[] = [];
+
+  if (config.systemPromptFile) {
+    try {
+      const systemPrompt = readFileSync(config.systemPromptFile, "utf-8").trim();
+      if (systemPrompt) promptParts.push(systemPrompt);
+    } catch {
+      // If the file is unexpectedly unavailable, still deliver the task prompt below.
+    }
+  } else if (config.systemPrompt?.trim()) {
+    promptParts.push(config.systemPrompt.trim());
+  }
+
+  if (config.prompt?.trim()) {
+    promptParts.push(config.prompt.trim());
+  }
+
+  return promptParts.length > 0 ? promptParts.join("\n\n") : null;
+}
+
+async function deliverPostLaunchPrompt(input: {
+  agent: Agent;
+  runtime: Runtime;
+  handle: RuntimeHandle;
+  session: Session;
+  sessionsDir: string;
+  launchConfig: AgentLaunchConfig;
+}): Promise<void> {
+  if (input.agent.promptDelivery !== "post-launch") return;
+
+  const message = buildPostLaunchPrompt(input.launchConfig);
+  if (!message) return;
+
+  const maxAttempts = POST_LAUNCH_PROMPT_RETRY_DELAYS_MS.length + 1;
+  let promptDelivered = false;
+  let lastError: Error | undefined;
+
+  await sleep(POST_LAUNCH_PROMPT_STARTUP_GRACE_MS);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await input.runtime.sendMessage(input.handle, message);
+      promptDelivered = true;
+      break;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.error(
+        `[session-manager] Prompt delivery attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`,
+      );
+
+      const retryDelay = POST_LAUNCH_PROMPT_RETRY_DELAYS_MS[attempt - 1];
+      if (retryDelay !== undefined) {
+        await sleep(retryDelay);
+      }
+    }
+  }
+
+  if (!promptDelivered) {
+    console.error(
+      `[session-manager] Failed to deliver prompt to session ${input.session.id} after ${maxAttempts} attempts. ` +
+        `User can retry with 'ao send'. Last error: ${lastError?.message}`,
+    );
+  }
+
+  input.session.metadata["promptDelivered"] = String(promptDelivered);
+  updateMetadata(input.sessionsDir, input.session.id, input.session.metadata);
 }
 
 async function isAgentProcessNotDefinitelyMissing(
@@ -1527,8 +1600,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Prompt is delivered inline via the agent's launch command (positional argument).
-      // No post-launch polling needed — the prompt is part of process invocation.
+      await deliverPostLaunchPrompt({
+        agent: plugins.agent,
+        runtime: plugins.runtime,
+        handle,
+        session,
+        sessionsDir,
+        launchConfig: agentLaunchConfig,
+      });
+
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,
@@ -2020,6 +2100,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       await cleanupWorktreeAndMetadata(systemPromptFile);
       throw err;
     }
+
+    await deliverPostLaunchPrompt({
+      agent: plugins.agent,
+      runtime: plugins.runtime,
+      handle,
+      session,
+      sessionsDir,
+      launchConfig: agentLaunchConfig,
+    });
 
     recordActivityEvent({
       projectId: orchestratorConfig.projectId,

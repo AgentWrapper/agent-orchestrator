@@ -43,6 +43,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   // Agents
   { slot: "agent", name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@aoagents/ao-plugin-agent-codex" },
+  { slot: "agent", name: "cline", pkg: "@aoagents/ao-plugin-agent-cline" },
   { slot: "agent", name: "aider", pkg: "@aoagents/ao-plugin-agent-aider" },
   { slot: "agent", name: "cursor", pkg: "@aoagents/ao-plugin-agent-cursor" },
   { slot: "agent", name: "kimicode", pkg: "@aoagents/ao-plugin-agent-kimicode" },

@@ -1113,6 +1113,82 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("delivers system and task prompts after launch for post-launch agents", async () => {
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      ((handler: (...args: unknown[]) => void, _timeout?: number, ...args: unknown[]) => {
+        handler(...args);
+        return 0 as unknown as NodeJS.Timeout;
+      }) as typeof setTimeout,
+    );
+    try {
+      const postLaunchAgent: typeof mockAgent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunch: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+
+      const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+      const launchConfig = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0]?.[0];
+      expect(launchConfig?.systemPromptFile).toBeTruthy();
+      const systemPrompt = readFileSync(launchConfig!.systemPromptFile!, "utf-8").trim();
+      const deliveredPrompt = vi.mocked(mockRuntime.sendMessage).mock.calls[0]?.[1];
+
+      expect(mockRuntime.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), expect.any(String));
+      expect(deliveredPrompt).toContain("Session Lifecycle");
+      expect(deliveredPrompt).toContain("Fix the bug");
+      expect(deliveredPrompt).toContain(systemPrompt);
+      expect(readMetadataRaw(sessionsDir, session.id)?.promptDelivered).toBe("true");
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
+  it("retries post-launch prompt delivery before marking it delivered", async () => {
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      ((handler: (...args: unknown[]) => void, _timeout?: number, ...args: unknown[]) => {
+        handler(...args);
+        return 0 as unknown as NodeJS.Timeout;
+      }) as typeof setTimeout,
+    );
+    try {
+      const postLaunchAgent: typeof mockAgent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunch: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      vi.mocked(mockRuntime.sendMessage)
+        .mockRejectedValueOnce(new Error("not ready"))
+        .mockResolvedValueOnce(undefined);
+      const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+
+      const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+      expect(mockRuntime.sendMessage).toHaveBeenCalledTimes(2);
+      expect(readMetadataRaw(sessionsDir, session.id)?.promptDelivered).toBe("true");
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
