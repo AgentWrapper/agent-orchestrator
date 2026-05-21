@@ -1,5 +1,17 @@
 # @aoagents/ao
 
+## 0.9.0
+
+### Patch Changes
+
+- d5d0f07: Rebuild missing better-sqlite3 native bindings during ao postinstall and replace noisy activity-events native-binding failures with a one-line diagnostic.
+- Updated dependencies [6d48022]
+- Updated dependencies [ecdf0c7]
+- Updated dependencies [fcedb25]
+- Updated dependencies [2980570]
+- Updated dependencies [d5d0f07]
+  - @aoagents/ao-cli@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes

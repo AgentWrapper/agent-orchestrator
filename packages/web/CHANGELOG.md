@@ -1,5 +1,69 @@
 # @aoagents/ao-web
 
+## 0.9.0
+
+### Minor Changes
+
+- 73bed33: Wire activity events into webhook ingress and the mux WebSocket terminal server (sub-issue of #1511, follows #1620).
+  - `api.webhook_unverified` (warn) — signature verification failed; data includes `slug`, `remoteAddr`, `candidateCount` (never the failed signature)
+  - `api.webhook_rejected` (warn) — payload exceeded `maxBodyBytes`; data includes counts and `maxBodyBytes` (never the body)
+  - `api.webhook_received` (info|warn) — accepted webhook; data includes `projectIds`, `matchedSessions`, `parseErrorCount`, `lifecycleErrorCount` (never the body)
+  - `api.webhook_failed` (error) — outer pipeline crash with `errorMessage`
+  - `ui.terminal_connected` / `ui.terminal_disconnected` — one event per mux WS connection lifecycle
+  - `ui.terminal_heartbeat_lost` (warn) — fires once on 3 missed pongs (was console-only)
+  - `ui.terminal_pty_lost` (warn) — fires when PTY exits with subscribers attached (distinguishes "PTY died" from "user closed browser")
+  - `ui.terminal_protocol_error` (warn) — invalid mux client message
+  - `ui.session_broadcast_failed` (warn) — emitted on the healthy→failing transition only (re-arms after a successful poll), so a long outage produces one event, not 20/min
+
+  `api.webhook_unverified` is the security-audit event; treat 401s on webhooks as a signal worth retaining for the full 7-day window.
+
+- 94981dc: feat: "Launch Orchestrator (clean context)" action on the orchestrator session page
+
+  Adds a `Relaunch (clean)` action on the orchestrator session page that replaces the project's canonical orchestrator with a fresh one — killing the existing orchestrator, deleting its metadata, and spawning a new session with no carryover state. Backed by a new `SessionManager.relaunchOrchestrator(config)` method that ignores `orchestratorSessionStrategy`. Removes the now-redundant Orchestrator Selector page (`/orchestrators?project=X`) — there is only ever one orchestrator per project, so a selector page is no longer meaningful. Closes #1900 and #1080.
+
+### Patch Changes
+
+- ee3fb5d: Fix Done/Terminated section on the dashboard not scrolling. The dashboard body now scrolls as a single page — kanban above, Done/Terminated below — so older terminated sessions are reachable when many accumulate. Restores the pre-Warm-Terminal-refresh behavior by dropping the `flex: 1` that was making `.kanban-board-wrap` greedily consume all remaining body height and defeat the body's `overflow-y: auto`.
+- 2980570: Add the notifier test harness, dashboard notifications, and desktop notifier setup.
+- 07c9099: fix(web): show Restore button for every exited session, including pr_merged
+
+  The Restore button was hidden for sessions exited with `pr_merged` reason (legacy
+  status `cleanup`) on the dashboard kanban and absent altogether from the
+  session-detail "Terminal ended" panel. The core `isRestorable()` helper already
+  allowed restoring these sessions; the dashboard helpers were out of sync. Fixes
+  #1907.
+  - `isDashboardSessionRestorable` now gates on `NON_RESTORABLE_STATUSES` only,
+    matching core's `isRestorable`. Merged-but-running sessions remain
+    non-restorable (lifecycle isn't terminal).
+  - `DoneCard` no longer hides Restore for merged sessions.
+  - `SessionEndedSummary` exposes a prominent `Restore session` button next to
+    `Open PR` / `Back to dashboard`, so users don't have to find the small
+    header icon.
+
+- Updated dependencies [73bed33]
+- Updated dependencies [a610601]
+- Updated dependencies [8c71bde]
+- Updated dependencies [7d9b862]
+- Updated dependencies [6d48022]
+- Updated dependencies [fcedb25]
+- Updated dependencies [94981dc]
+- Updated dependencies [6d48022]
+- Updated dependencies [2980570]
+- Updated dependencies [d5d0f07]
+  - @aoagents/ao-core@0.9.0
+  - @aoagents/ao-plugin-agent-claude-code@0.9.0
+  - @aoagents/ao-plugin-tracker-linear@0.9.0
+  - @aoagents/ao-plugin-agent-codex@0.9.0
+  - @aoagents/ao-plugin-agent-cursor@0.9.0
+  - @aoagents/ao-plugin-agent-grok@0.1.1
+  - @aoagents/ao-plugin-agent-kimicode@0.9.0
+  - @aoagents/ao-plugin-agent-opencode@0.9.0
+  - @aoagents/ao-plugin-runtime-process@0.9.0
+  - @aoagents/ao-plugin-runtime-tmux@0.9.0
+  - @aoagents/ao-plugin-scm-github@0.9.0
+  - @aoagents/ao-plugin-tracker-github@0.9.0
+  - @aoagents/ao-plugin-workspace-worktree@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes
