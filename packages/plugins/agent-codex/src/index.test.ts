@@ -1107,6 +1107,44 @@ describe("getSessionInfo", () => {
     expect(mockOpen).not.toHaveBeenCalled();
   });
 
+  it("chooses the newest duplicate codexThreadId filename match by mtime", async () => {
+    const oldContent = jsonl({
+      type: "session_meta",
+      payload: { id: "thread-dupe", model: "old-model" },
+    });
+    const newContent = jsonl({
+      type: "session_meta",
+      payload: { id: "thread-dupe", model: "new-model" },
+    });
+
+    mockReaddir.mockResolvedValue([
+      "rollout-old-thread-dupe.jsonl",
+      "rollout-new-thread-dupe.jsonl",
+    ]);
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("rollout-old-thread-dupe")) return Promise.resolve({ mtimeMs: 1000 });
+      if (path.includes("rollout-new-thread-dupe")) return Promise.resolve({ mtimeMs: 2000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("rollout-old-thread-dupe")) return makeContentStream(oldContent);
+      if (path.includes("rollout-new-thread-dupe")) return makeContentStream(newContent);
+      return makeContentStream("");
+    });
+
+    const result = await agent.getSessionInfo(
+      makeSession({
+        workspacePath: "/workspace/test",
+        metadata: { codexThreadId: "thread-dupe" },
+      }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("rollout-new-thread-dupe");
+    expect(result!.summary).toBe("Codex session (new-model)");
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
   it("does not treat infix filename matches as thread-id hits", async () => {
     mockReaddir.mockResolvedValue(["rollout-thread-fast-extra.jsonl"]);
 
