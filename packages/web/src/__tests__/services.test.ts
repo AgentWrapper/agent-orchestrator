@@ -11,6 +11,7 @@ const {
   claudePlugin,
   codexPlugin,
   opencodePlugin,
+  kiroPlugin,
   worktreePlugin,
   scmPlugin,
   trackerGithubPlugin,
@@ -45,6 +46,7 @@ const {
     claudePlugin: { manifest: { name: "claude-code" } },
     codexPlugin: { manifest: { name: "codex" } },
     opencodePlugin: { manifest: { name: "opencode" } },
+    kiroPlugin: { manifest: { name: "kiro" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
     trackerGithubPlugin: { manifest: { name: "github" } },
@@ -71,6 +73,7 @@ vi.mock("@aoagents/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
+vi.mock("@aoagents/ao-plugin-agent-kiro", () => ({ default: kiroPlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@aoagents/ao-plugin-scm-github", () => ({ default: scmPlugin }));
 vi.mock("@aoagents/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
@@ -118,6 +121,14 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
+  });
+
+  it("registers the Kiro agent plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(kiroPlugin);
   });
 
   it("caches initialized services across repeated calls", async () => {

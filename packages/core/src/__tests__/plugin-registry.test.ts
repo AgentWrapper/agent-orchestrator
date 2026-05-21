@@ -152,11 +152,13 @@ describe("loadBuiltins", () => {
     const fakeClaudeCode = makePlugin("agent", "claude-code");
     const fakeCodex = makePlugin("agent", "codex");
     const fakeOpenCode = makePlugin("agent", "opencode");
+    const fakeKiro = makePlugin("agent", "kiro");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
       if (pkg === "@aoagents/ao-plugin-agent-claude-code") return fakeClaudeCode;
       if (pkg === "@aoagents/ao-plugin-agent-codex") return fakeCodex;
       if (pkg === "@aoagents/ao-plugin-agent-opencode") return fakeOpenCode;
+      if (pkg === "@aoagents/ao-plugin-agent-kiro") return fakeKiro;
       throw new Error(`Not found: ${pkg}`);
     });
 
@@ -164,10 +166,12 @@ describe("loadBuiltins", () => {
     expect(agents).toContainEqual(expect.objectContaining({ name: "claude-code", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "codex", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "opencode", slot: "agent" }));
+    expect(agents).toContainEqual(expect.objectContaining({ name: "kiro", slot: "agent" }));
 
     expect(registry.get("agent", "codex")).not.toBeNull();
     expect(registry.get("agent", "claude-code")).not.toBeNull();
     expect(registry.get("agent", "opencode")).not.toBeNull();
+    expect(registry.get("agent", "kiro")).not.toBeNull();
   });
 
   it("registers gitlab tracker and scm plugins from importFn", async () => {

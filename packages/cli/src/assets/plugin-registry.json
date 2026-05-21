@@ -24,6 +24,14 @@
     "latestVersion": "0.2.0"
   },
   {
+    "id": "agent-kiro",
+    "package": "@aoagents/ao-plugin-agent-kiro",
+    "slot": "agent",
+    "description": "Agent plugin: Kiro CLI",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
     "id": "agent-kimicode",
     "package": "@aoagents/ao-plugin-agent-kimicode",
     "slot": "agent",
