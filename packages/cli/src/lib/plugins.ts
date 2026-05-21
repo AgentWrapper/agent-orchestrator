@@ -1,6 +1,7 @@
 import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@aoagents/ao-core";
 import claudeCodePlugin from "@aoagents/ao-plugin-agent-claude-code";
 import codexPlugin from "@aoagents/ao-plugin-agent-codex";
+import codebuffPlugin from "@aoagents/ao-plugin-agent-codebuff";
 import aiderPlugin from "@aoagents/ao-plugin-agent-aider";
 import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
@@ -10,6 +11,7 @@ import githubSCMPlugin from "@aoagents/ao-plugin-scm-github";
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
   codex: codexPlugin,
+  codebuff: codebuffPlugin,
   aider: aiderPlugin,
   cursor: cursorPlugin,
   kimicode: kimicodePlugin,
