@@ -1527,8 +1527,44 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Prompt is delivered inline via the agent's launch command (positional argument).
-      // No post-launch polling needed — the prompt is part of process invocation.
+      if (taskPrompt) {
+        if (plugins.agent.promptDelivery === "post-launch") {
+          const postLaunchPrompt = `${systemPrompt}\n\n${taskPrompt}`;
+          const initialDelayMs = plugins.agent.promptDeliveryDelayMs ?? 3_000;
+          let promptDelivered = false;
+          let lastError: Error | undefined;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const delayMs = initialDelayMs * attempt;
+              if (delayMs > 0) await sleep(delayMs);
+              await plugins.runtime.sendMessage(handle, postLaunchPrompt);
+              promptDelivered = true;
+              break;
+            } catch (err) {
+              lastError = err instanceof Error ? err : new Error(String(err));
+              console.error(
+                `[session-manager] Prompt delivery attempt ${attempt}/3 failed: ${lastError.message}`,
+              );
+            }
+          }
+
+          if (!promptDelivered) {
+            console.error(
+              `[session-manager] Failed to deliver prompt to session ${sessionId}; ` +
+                `user can retry with ao send. Last error: ${lastError?.message}`,
+            );
+          }
+
+          session.metadata["promptDelivered"] = String(promptDelivered);
+          updateMetadata(sessionsDir, sessionId, { promptDelivered: String(promptDelivered) });
+          invalidateCache();
+        } else {
+          session.metadata["promptDelivered"] = "true";
+          updateMetadata(sessionsDir, sessionId, { promptDelivered: "true" });
+          invalidateCache();
+        }
+      }
+
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,

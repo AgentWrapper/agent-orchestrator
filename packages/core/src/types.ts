@@ -480,6 +480,16 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
+  /**
+   * How the initial prompt should be delivered to the agent.
+   * - "inline" (default): prompt is included in the launch command.
+   * - "post-launch": prompt is sent after the agent starts, keeping interactive agents alive.
+   */
+  readonly promptDelivery?: "inline" | "post-launch";
+
+  /** Initial delay before first post-launch prompt delivery attempt (default: 3000ms). */
+  readonly promptDeliveryDelayMs?: number;
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 
