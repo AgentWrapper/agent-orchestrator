@@ -551,14 +551,15 @@ function prepareSessionMetadataEnrichment(
   const summaryPromises = coreSessions.map((core, i) => {
     if (dashboardSessions[i].summary) return Promise.resolve();
     const project = projects[i];
-    if (!project) return Promise.resolve();
-    const agentName = resolveAgentSelectionForSession({
-      sessionId: core.id,
-      metadata: core.metadata,
-      project,
-      defaults: config.defaults,
-      allSessionPrefixes,
-    }).agentName;
+    const agentName = project
+      ? resolveAgentSelectionForSession({
+          sessionId: core.id,
+          metadata: core.metadata,
+          project,
+          defaults: config.defaults,
+          allSessionPrefixes,
+        }).agentName
+      : (core.metadata["agent"] ?? config.defaults.agent);
     if (!agentName) return Promise.resolve();
     const agent = registry.get<Agent>("agent", agentName);
     if (!agent) return Promise.resolve();

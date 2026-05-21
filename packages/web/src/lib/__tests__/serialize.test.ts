@@ -1233,6 +1233,59 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.summary).toBe("Goose summary");
   });
 
+  it("uses persisted session agent when no project can be resolved", async () => {
+    const codexAgent = mockAgent("Wrong Codex summary");
+    codexAgent.name = "codex";
+    const gooseAgent = mockAgent("Orphan Goose summary");
+    gooseAgent.name = "goose";
+    const registry = {
+      get: vi.fn((slot: string, name: string) => {
+        if (slot !== "agent") return null;
+        if (name === "codex") return codexAgent;
+        if (name === "goose") return gooseAgent;
+        return null;
+      }),
+      register: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    } as unknown as PluginRegistry;
+    const noProjectsConfig = {
+      ...testConfig,
+      defaults: { ...testConfig.defaults, agent: "codex" },
+      projects: {},
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({ projectId: "deleted", metadata: { agent: "goose" } });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], noProjectsConfig, registry);
+
+    expect(registry.get).toHaveBeenCalledWith("agent", "goose");
+    expect(registry.get).not.toHaveBeenCalledWith("agent", "codex");
+    expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+    expect(gooseAgent.getSessionInfo).toHaveBeenCalledWith(core);
+    expect(dashboard.summary).toBe("Orphan Goose summary");
+  });
+
+  it("falls back to the default agent for projectless legacy sessions without persisted agent", async () => {
+    const agent = mockAgent("Default summary");
+    const registry = mockRegistry(null, agent);
+    const noProjectsConfig = {
+      ...testConfig,
+      projects: {},
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({ projectId: "deleted", metadata: {} });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], noProjectsConfig, registry);
+
+    expect(registry.get).toHaveBeenCalledWith("agent", "mock-agent");
+    expect(agent.getSessionInfo).toHaveBeenCalledWith(core);
+    expect(dashboard.summary).toBe("Default summary");
+  });
+
   it("should use default agent when project has no agent override", async () => {
     const tracker = mockTracker();
     const agent = mockAgent("From default agent");
