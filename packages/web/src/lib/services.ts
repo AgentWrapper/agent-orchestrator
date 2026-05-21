@@ -40,6 +40,7 @@ import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
 import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
 import pluginAgentKimicode from "@aoagents/ao-plugin-agent-kimicode";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
+import pluginAgentDroid from "@aoagents/ao-plugin-agent-droid";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
@@ -112,6 +113,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginAgentCursor);
   registry.register(pluginAgentKimicode);
   registry.register(pluginAgentOpencode);
+  registry.register(pluginAgentDroid);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);

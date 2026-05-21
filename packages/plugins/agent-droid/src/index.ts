@@ -1,0 +1,395 @@
+import {
+  DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
+  shellEscape,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  recordTerminalActivity,
+  setupPathWrapperWorkspace,
+  isWindows,
+  PROCESS_PROBE_INDETERMINATE,
+  type Agent,
+  type AgentLaunchConfig,
+  type ActivityDetection,
+  type ActivityState,
+  type PluginModule,
+  type ProjectConfig,
+  type ProcessProbeResult,
+  type RuntimeHandle,
+  type Session,
+  type WorkspaceHooksConfig,
+} from "@aoagents/ao-core";
+import { execFile } from "node:child_process";
+import { access, chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import which from "which";
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as {
+  name: string;
+  version: string;
+  description: string;
+};
+const PACKAGE_NAME_PREFIX = "@aoagents/ao-plugin-agent-";
+const pluginName = packageJson.name.startsWith(PACKAGE_NAME_PREFIX)
+  ? packageJson.name.slice(PACKAGE_NAME_PREFIX.length)
+  : packageJson.name;
+
+const execFileAsync = promisify(execFile);
+const DROID_SETTINGS_DIR = ".factory";
+const DROID_SETTINGS_FILE = "settings.local.json";
+const DROID_SESSION_HOOK_DIR = ".ao/droid";
+const DROID_SESSION_HOOK_FILE = "session-hook.mjs";
+const DROID_SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+const ANSI_ESCAPE_RE = new RegExp(
+  `${String.fromCharCode(27)}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+  "g",
+);
+
+interface DroidAgentConfig {
+  droidSessionId?: unknown;
+}
+
+function asValidDroidSessionId(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!DROID_SESSION_ID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+function getDroidSettingsPath(workspacePath: string): string {
+  return join(workspacePath, DROID_SETTINGS_DIR, DROID_SETTINGS_FILE);
+}
+
+function getDroidSessionHookPath(workspacePath: string): string {
+  return join(workspacePath, DROID_SESSION_HOOK_DIR, DROID_SESSION_HOOK_FILE);
+}
+
+interface DroidCommandArg {
+  value: string;
+  raw?: boolean;
+}
+
+function flag(value: string): DroidCommandArg {
+  return { value, raw: true };
+}
+
+function value(value: string): DroidCommandArg {
+  return { value };
+}
+
+function buildDroidCommand(args: DroidCommandArg[]): string {
+  return ["droid", ...args.map((arg) => (arg.raw ? arg.value : shellEscape(arg.value)))].join(" ");
+}
+
+function getDroidLaunchArgs(config: AgentLaunchConfig): DroidCommandArg[] {
+  const args: DroidCommandArg[] = [];
+  const configuredSessionId = asValidDroidSessionId(
+    (config.projectConfig.agentConfig as DroidAgentConfig | undefined)?.droidSessionId,
+  );
+  if (configuredSessionId) {
+    args.push(flag("--resume"), value(configuredSessionId));
+  }
+
+  if (config.systemPromptFile) {
+    args.push(flag("--append-system-prompt-file"), value(config.systemPromptFile));
+  } else if (config.systemPrompt) {
+    args.push(flag("--append-system-prompt"), value(config.systemPrompt));
+  }
+
+  if (config.prompt) {
+    args.push(value(config.prompt));
+  }
+
+  return args;
+}
+
+function classifyDroidTerminalOutput(terminalOutput: string): ActivityState {
+  const normalizedOutput = terminalOutput.replaceAll(ANSI_ESCAPE_RE, "").trim();
+  if (!normalizedOutput) return "idle";
+
+  const lines = normalizedOutput.split("\n").map((line) => line.trim());
+  const lastLine = lines[lines.length - 1] ?? "";
+  const lastNonEmptyLine = [...lines].reverse().find(Boolean) ?? "";
+
+  if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+  if (/^[│|]?\s*>\s*(?:Try\s+"[^"]+")?\s*[│|]?\s*$/.test(lastNonEmptyLine)) return "idle";
+  if (/task completed successfully|finished responding/i.test(lastNonEmptyLine)) return "ready";
+  if (/droid needs your permission|droid is waiting for your input/i.test(normalizedOutput)) {
+    return "waiting_input";
+  }
+  if (
+    /\b(?:approve|allow|confirm|proceed|continue)\b.*\?\s*(?:\[[YyNn/]+\]|[Yy]\/[Nn]|[Nn]\/[Yy]|$)/i.test(
+      lastNonEmptyLine,
+    )
+  ) {
+    return "waiting_input";
+  }
+  if (
+    /\b(?:not authenticated|authentication failed|create an api key)\b/i.test(lastNonEmptyLine) ||
+    /^(?:error|failed|exception)\b[:\s-]*/i.test(lastNonEmptyLine)
+  ) {
+    return "blocked";
+  }
+
+  return "active";
+}
+
+async function getDroidSessionHookAssetPath(): Promise<string> {
+  const candidates = [
+    fileURLToPath(new URL("./session-hook.mjs", import.meta.url)),
+    fileURLToPath(new URL("../dist/session-hook.mjs", import.meta.url)),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next location. Source-based tests build the hook into dist first.
+    }
+  }
+  throw new Error(
+    "Droid session hook asset is missing; run the plugin build before launching Droid.",
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hookEntryUsesCommand(entry: unknown, command: string): boolean {
+  if (!isRecord(entry) || !Array.isArray(entry["hooks"])) return false;
+  return entry["hooks"].some(
+    (hook) => isRecord(hook) && typeof hook["command"] === "string" && hook["command"] === command,
+  );
+}
+
+function withDroidHook(existingEvent: unknown, command: string): unknown[] {
+  const existingEntries = Array.isArray(existingEvent) ? existingEvent : [];
+  return [
+    ...existingEntries.filter((entry) => !hookEntryUsesCommand(entry, command)),
+    { hooks: [{ type: "command", command, timeout: 10 }] },
+  ];
+}
+
+async function readDroidSettings(settingsPath: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(await readFile(settingsPath, "utf8"));
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildDroidSettings(
+  existingSettings: Record<string, unknown>,
+  hookScriptPath: string,
+): string {
+  const command = `${shellEscape(process.execPath)} ${shellEscape(hookScriptPath)}`;
+  const existingHooks = isRecord(existingSettings["hooks"]) ? existingSettings["hooks"] : {};
+  return (
+    JSON.stringify(
+      {
+        ...existingSettings,
+        hooks: {
+          ...existingHooks,
+          SessionStart: withDroidHook(existingHooks["SessionStart"], command),
+          UserPromptSubmit: withDroidHook(existingHooks["UserPromptSubmit"], command),
+        },
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+async function writeDroidWorkspaceFiles(workspacePath: string): Promise<void> {
+  const hookDir = join(workspacePath, DROID_SESSION_HOOK_DIR);
+  const settingsDir = join(workspacePath, DROID_SETTINGS_DIR);
+  const hookScriptPath = getDroidSessionHookPath(workspacePath);
+  const settingsPath = getDroidSettingsPath(workspacePath);
+  await mkdir(hookDir, { recursive: true });
+  await mkdir(settingsDir, { recursive: true });
+  await copyFile(await getDroidSessionHookAssetPath(), hookScriptPath);
+  await chmod(hookScriptPath, 0o755);
+  const existingSettings = await readDroidSettings(settingsPath);
+  await writeFile(settingsPath, buildDroidSettings(existingSettings, hookScriptPath), "utf8");
+}
+
+export const manifest = {
+  name: pluginName,
+  slot: "agent" as const,
+  description: packageJson.description,
+  version: packageJson.version,
+  displayName: "Droid",
+};
+
+function createDroidAgent(): Agent {
+  return {
+    name: pluginName,
+    processName: pluginName,
+
+    getLaunchCommand(config: AgentLaunchConfig): string {
+      return buildDroidCommand(getDroidLaunchArgs(config));
+    },
+
+    getEnvironment(config: AgentLaunchConfig): Record<string, string> {
+      const env: Record<string, string> = {};
+      env["AO_SESSION_ID"] = config.sessionId;
+      if (config.issueId) {
+        env["AO_ISSUE_ID"] = config.issueId;
+      }
+
+      return env;
+    },
+
+    detectActivity(terminalOutput: string): ActivityState {
+      return classifyDroidTerminalOutput(terminalOutput);
+    },
+
+    async getActivityState(
+      session: Session,
+      readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+
+      const exitedAt = new Date();
+      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      const running = await this.isProcessRunning(session.runtimeHandle);
+      if (running === PROCESS_PROBE_INDETERMINATE) return null;
+      if (!running) return { state: "exited", timestamp: exitedAt };
+
+      let activityResult: Awaited<ReturnType<typeof readLastActivityEntry>> = null;
+      if (session.workspacePath) {
+        activityResult = await readLastActivityEntry(session.workspacePath);
+        const activityState = checkActivityLogState(activityResult);
+        if (activityState) return activityState;
+      }
+
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
+
+      return null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output: string) =>
+        classifyDroidTerminalOutput(output),
+      );
+    },
+
+    async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
+      try {
+        if (handle.runtimeName === "tmux" && handle.id) {
+          if (isWindows()) return false;
+          const { stdout: ttyOut } = await execFileAsync(
+            "tmux",
+            ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
+            { timeout: 30_000, windowsHide: true },
+          );
+          const ttys = ttyOut
+            .trim()
+            .split("\n")
+            .map((t) => t.trim())
+            .filter(Boolean);
+          if (ttys.length === 0) return false;
+
+          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
+            timeout: 30_000,
+            windowsHide: true,
+          });
+          const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
+          const processRe = /(?:^|\/)droid(?:\s|$)/;
+          for (const line of psOut.split("\n")) {
+            const cols = line.trimStart().split(/\s+/);
+            if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
+            const args = cols.slice(2).join(" ");
+            if (processRe.test(args)) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        const rawPid = handle.data["pid"];
+        const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
+        if (Number.isFinite(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (err: unknown) {
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EPERM") {
+              return true;
+            }
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
+              return false;
+            }
+            return PROCESS_PROBE_INDETERMINATE;
+          }
+        }
+        return false;
+      } catch {
+        return PROCESS_PROBE_INDETERMINATE;
+      }
+    },
+
+    async getSessionInfo(session: Session) {
+      const droidSessionId = asValidDroidSessionId(session.metadata?.droidSessionId);
+      if (!droidSessionId) return null;
+      return {
+        agentSessionId: droidSessionId,
+        summary: null,
+        metadata: {
+          droidSessionId,
+          ...(typeof session.metadata?.droidTranscriptPath === "string"
+            ? { droidTranscriptPath: session.metadata.droidTranscriptPath }
+            : {}),
+        },
+      };
+    },
+
+    async getRestoreCommand(session: Session, _project: ProjectConfig): Promise<string | null> {
+      const droidSessionId = asValidDroidSessionId(session.metadata?.droidSessionId);
+      if (!droidSessionId) return null;
+      const args: DroidCommandArg[] = [];
+      // Droid's top-level interactive mode resumes with --resume; --session-id is exec-only.
+      args.push(flag("--resume"), value(droidSessionId));
+      return buildDroidCommand(args);
+    },
+
+    async preLaunchSetup(workspacePath: string): Promise<void> {
+      await writeDroidWorkspaceFiles(workspacePath);
+    },
+
+    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+      await setupPathWrapperWorkspace(workspacePath);
+      await writeDroidWorkspaceFiles(workspacePath);
+    },
+
+    async postLaunchSetup(session: Session): Promise<void> {
+      if (!session.workspacePath) return;
+      await setupPathWrapperWorkspace(session.workspacePath);
+    },
+  };
+}
+
+export function create(): Agent {
+  return createDroidAgent();
+}
+
+export function detect(): boolean {
+  try {
+    return Boolean(which.sync("droid"));
+  } catch {
+    return false;
+  }
+}
+
+export default { manifest, create, detect } satisfies PluginModule<Agent>;
