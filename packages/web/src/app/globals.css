@@ -2683,6 +2683,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   letter-spacing: 0.05em;
 }
 
+.session-detail-mode-badge--neutral {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
 .session-detail-link-pill {
   display: inline-flex;
   align-items: center;

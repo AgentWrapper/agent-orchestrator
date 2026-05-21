@@ -445,7 +445,7 @@ describe("SessionDetail desktop layout", () => {
     expect(banner.queryByRole("link", { name: "PR #777" })).not.toBeInTheDocument();
   });
 
-  it("does not repeat the product name for the Agent Orchestrator project header", () => {
+  it("shows the project name for the Agent Orchestrator project header", () => {
     render(
       <SessionDetail
         session={makeSession({
@@ -466,8 +466,8 @@ describe("SessionDetail desktop layout", () => {
 
     const banner = within(screen.getByRole("banner"));
 
-    expect(banner.getByText("Orchestrator")).toBeInTheDocument();
-    expect(banner.queryByText("Agent Orchestrator")).not.toBeInTheDocument();
+    expect(banner.getByText("Agent Orchestrator")).toBeInTheDocument();
+    expect(banner.getByText("Orchestrator")).toHaveClass("session-detail-mode-badge--neutral");
     expect(banner.getByRole("link", { name: "Open Kanban" })).toHaveAttribute(
       "href",
       "/projects/agent-orchestrator",

@@ -107,7 +107,7 @@ export function SessionDetailHeader({
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
   const showHeaderProjectLabel = headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
   const showProductBrand = !isOrchestrator;
-  const showProjectLabel = showHeaderProjectLabel;
+  const showProjectLabel = isOrchestrator || showHeaderProjectLabel;
   const showDesktopTitle = !isOrchestrator;
   const showDesktopHeaderSep = showProductBrand && showProjectLabel;
 
@@ -166,7 +166,11 @@ export function SessionDetailHeader({
               ·
             </span>
           ) : null}
-          {isOrchestrator ? <span className="session-detail-mode-badge">Orchestrator</span> : null}
+          {isOrchestrator ? (
+            <span className="session-detail-mode-badge session-detail-mode-badge--neutral">
+              Orchestrator
+            </span>
+          ) : null}
           <span className="dashboard-app-header__session-id topbar-mobile-only">{session.id}</span>
         </div>
         <div className="topbar-session-pills">
