@@ -36,6 +36,7 @@ import {
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
 import pluginRuntimeProcess from "@aoagents/ao-plugin-runtime-process";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
+import pluginAgentAuggie from "@aoagents/ao-plugin-agent-auggie";
 import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
 import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
 import pluginAgentKimicode from "@aoagents/ao-plugin-agent-kimicode";
@@ -108,6 +109,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginRuntimeTmux);
   registry.register(pluginRuntimeProcess);
   registry.register(pluginAgentClaudeCode);
+  registry.register(pluginAgentAuggie);
   registry.register(pluginAgentCodex);
   registry.register(pluginAgentCursor);
   registry.register(pluginAgentKimicode);

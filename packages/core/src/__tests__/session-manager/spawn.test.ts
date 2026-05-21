@@ -1113,6 +1113,58 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("sends prompt after launch for post-launch prompt agents", async () => {
+    const postLaunchAgent: Agent = {
+      ...mockAgent,
+      promptDelivery: "post-launch",
+    };
+    const registryWithPostLaunchAgent: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+    expect(postLaunchAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Fix the bug"),
+      }),
+    );
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the bug");
+  });
+
+  it("does not roll back live sessions when post-launch prompt delivery fails", async () => {
+    const postLaunchAgent: Agent = {
+      ...mockAgent,
+      promptDelivery: "post-launch",
+    };
+    const registryWithPostLaunchAgent: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    vi.mocked(mockRuntime.sendMessage).mockRejectedValueOnce(new Error("send failed"));
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+    await expect(sm.spawn({ projectId: "my-app", prompt: "Fix the bug" })).resolves.toMatchObject({
+      id: "app-1",
+    });
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the bug");
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+  });
+
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 

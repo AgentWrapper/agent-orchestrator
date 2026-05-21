@@ -480,6 +480,9 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
+  /** Whether AO should pass prompts in the launch command or send them after startup. */
+  readonly promptDelivery?: "inline" | "post-launch";
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 

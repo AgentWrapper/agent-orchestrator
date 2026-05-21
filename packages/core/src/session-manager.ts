@@ -1527,8 +1527,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Prompt is delivered inline via the agent's launch command (positional argument).
-      // No post-launch polling needed — the prompt is part of process invocation.
+      if (plugins.agent.promptDelivery === "post-launch" && spawnConfig.prompt) {
+        try {
+          await plugins.runtime.sendMessage(handle, spawnConfig.prompt);
+        } catch (err) {
+          recordActivityEvent({
+            projectId: spawnConfig.projectId,
+            sessionId,
+            source: "session-manager",
+            kind: "session.send_failed",
+            level: "warn",
+            summary: "post-launch prompt delivery failed",
+            data: {
+              agent: plugins.agent.name,
+              stage: "post_launch_prompt",
+              reason: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
+      }
+
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,
@@ -2019,6 +2037,27 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
       await cleanupWorktreeAndMetadata(systemPromptFile);
       throw err;
+    }
+
+    if (plugins.agent.promptDelivery === "post-launch" && orchestratorConfig.systemPrompt) {
+      try {
+        await plugins.runtime.sendMessage(handle, orchestratorConfig.systemPrompt);
+      } catch (err) {
+        recordActivityEvent({
+          projectId: orchestratorConfig.projectId,
+          sessionId,
+          source: "session-manager",
+          kind: "session.send_failed",
+          level: "warn",
+          summary: "orchestrator post-launch prompt delivery failed",
+          data: {
+            agent: plugins.agent.name,
+            role: "orchestrator",
+            stage: "post_launch_prompt",
+            reason: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
     }
 
     recordActivityEvent({
