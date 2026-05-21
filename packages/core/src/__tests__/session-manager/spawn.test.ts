@@ -2385,6 +2385,30 @@ describe("spawn", () => {
       expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
     });
 
+    it("does not send orchestrator system prompt again for post-launch prompt agents", async () => {
+      const postLaunchAgent: Agent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunchAgent: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+
+      await sm.spawnOrchestrator({
+        projectId: "my-app",
+        systemPrompt: "You are the orchestrator.",
+      });
+
+      expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    });
+
     it("persists displayName derived from the orchestrator system prompt", async () => {
       const sm = createSessionManager({ config, registry: mockRegistry });
 
