@@ -118,6 +118,32 @@ function makeSession(overrides: Partial<Session> = {}): Session {
       timestamp: new Date(),
       source: "native",
     }),
+    lifecycle: {
+      version: 2,
+      session: {
+        kind: "worker",
+        state: "working",
+        reason: "task_in_progress",
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        terminatedAt: null,
+        lastTransitionAt: new Date().toISOString(),
+      },
+      pr: {
+        state: "none",
+        reason: "not_created",
+        number: null,
+        url: null,
+        lastObservedAt: null,
+      },
+      runtime: {
+        state: "alive",
+        reason: "process_running",
+        lastObservedAt: new Date().toISOString(),
+        handle: null,
+        tmuxName: null,
+      },
+    },
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -151,6 +177,10 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
     },
     ...overrides,
   };
+}
+
+function jsonl(...lines: Record<string, unknown>[]): string {
+  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
 }
 
 function mockTmuxWithProcess(processName: string, found = true) {
@@ -1022,11 +1052,6 @@ describe("getActivityState", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  // Helper to build JSONL content from lines
-  function jsonl(...lines: Record<string, unknown>[]): string {
-    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-  }
-
   it("returns null when workspacePath is null", async () => {
     expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
   });
@@ -1075,6 +1100,132 @@ describe("getSessionInfo", () => {
     expect(result!.agentSessionId).toBe("rollout-2026-05-22T00-00-00-thread-fast-info");
     expect(result!.summary).toBe("Codex session (gpt-5.5)");
     expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("returns metadata-only info for terminal sessions without streaming JSONL", async () => {
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "terminated",
+        activity: "exited",
+        metadata: { codexThreadId: "thread-terminal", codexModel: "gpt-5.4" },
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "worker",
+            state: "terminated",
+            reason: "runtime_lost",
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            terminatedAt: new Date().toISOString(),
+            lastTransitionAt: new Date().toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: new Date().toISOString(),
+            handle: null,
+            tmuxName: "test-1",
+          },
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      summary: "Codex session (gpt-5.4)",
+      summaryIsFallback: true,
+      agentSessionId: "thread-terminal",
+      metadata: { codexThreadId: "thread-terminal", codexModel: "gpt-5.4" },
+    });
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockCreateReadStream).not.toHaveBeenCalled();
+  });
+
+  it("does not stream JSONL for terminal sessions that only have codexThreadId", async () => {
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "killed",
+        activity: "exited",
+        metadata: { codexThreadId: "thread-without-model" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      summary: null,
+      summaryIsFallback: true,
+      agentSessionId: "thread-without-model",
+      metadata: { codexThreadId: "thread-without-model" },
+    });
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockCreateReadStream).not.toHaveBeenCalled();
+  });
+
+  it("still streams JSONL for live codexThreadId sessions missing model metadata", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: { id: "thread-live-no-model" },
+      },
+      {
+        type: "turn_context",
+        payload: { model: "gpt-5.5" },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-2026-05-22T00-00-00-thread-live-no-model.jsonl"]);
+    setupMockStream(sessionContent);
+
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-live-no-model" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      summary: "Codex session (gpt-5.5)",
+      agentSessionId: "rollout-2026-05-22T00-00-00-thread-live-no-model",
+      metadata: { codexThreadId: "thread-live-no-model", codexModel: "gpt-5.5" },
+    });
+    expect(mockCreateReadStream).toHaveBeenCalledTimes(1);
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("caches streamed session data for repeated getSessionInfo calls", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: { id: "thread-parse-cache" },
+      },
+      {
+        type: "turn_context",
+        payload: { model: "gpt-5.3-codex" },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-thread-parse-cache.jsonl"]);
+    mockCreateReadStream.mockImplementation(() => makeContentStream(sessionContent));
+
+    const session = makeSession({
+      metadata: { codexThreadId: "thread-parse-cache" },
+    });
+
+    const first = await agent.getSessionInfo(session);
+    const second = await agent.getSessionInfo(session);
+
+    expect(first?.summary).toBe("Codex session (gpt-5.3-codex)");
+    expect(second?.summary).toBe("Codex session (gpt-5.3-codex)");
+    expect(mockReaddir).toHaveBeenCalledTimes(1);
+    expect(mockCreateReadStream).toHaveBeenCalledTimes(1);
   });
 
   it("caches codexThreadId filename lookups by thread id", async () => {
@@ -1516,10 +1667,6 @@ describe("getSessionInfo", () => {
 // =========================================================================
 describe("getRestoreCommand", () => {
   const agent = create();
-
-  function jsonl(...lines: Record<string, unknown>[]): string {
-    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-  }
 
   function makeProjectConfig(overrides: Record<string, unknown> = {}) {
     return {

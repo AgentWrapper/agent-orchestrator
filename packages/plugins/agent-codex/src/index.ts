@@ -533,10 +533,20 @@ function appendNoUpdateCheckFlag(parts: string[]): void {
 /** TTL for session file path cache (ms). Prevents redundant filesystem scans
  *  when getActivityState and getSessionInfo are called in the same refresh cycle. */
 const SESSION_FILE_CACHE_TTL_MS = 30_000;
+const SESSION_DATA_CACHE_TTL_MS = 30_000;
 
 /** Module-level session file cache shared across the agent instance lifetime.
  *  Keyed by Codex thread id when available, otherwise workspace path. */
 const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
+const sessionDataCache = new Map<string, { data: CodexSessionData | null; expiry: number }>();
+const sessionDataInFlight = new Map<string, Promise<CodexSessionData | null>>();
+const TERMINAL_OR_HISTORICAL_STATUSES = new Set([
+  "killed",
+  "done",
+  "merged",
+  "terminated",
+  "cleanup",
+]);
 
 function getSessionMetadataString(session: Session, key: string): string | null {
   const value = session.metadata?.[key];
@@ -579,6 +589,93 @@ async function findCodexSessionFileCached(session: Session): Promise<string | nu
   return getCachedSessionFile(`cwd:${toComparablePath(session.workspacePath)}`, async () =>
     findCodexSessionFile(session.workspacePath!, await getJsonlFiles()),
   );
+}
+
+function isTerminalOrRuntimeMissing(session: Session): boolean {
+  return (
+    TERMINAL_OR_HISTORICAL_STATUSES.has(session.status) ||
+    session.activity === "exited" ||
+    session.lifecycle?.session.state === "terminated" ||
+    session.lifecycle?.session.state === "done" ||
+    session.lifecycle?.runtime.state === "missing"
+  );
+}
+
+function calculateCost(data: CodexSessionData): CostEstimate | undefined {
+  const totalInputTokens = data.inputTokens + data.cachedTokens;
+  if (totalInputTokens === 0 && data.outputTokens === 0 && data.reasoningTokens === 0) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: totalInputTokens,
+    outputTokens: data.outputTokens,
+    estimatedCostUsd:
+      (data.inputTokens / 1_000_000) * 2.5 +
+      (data.cachedTokens / 1_000_000) * 0.625 +
+      ((data.outputTokens + data.reasoningTokens) / 1_000_000) * 10.0,
+  };
+}
+
+function buildCodexSessionInfo(params: {
+  agentSessionId: string | null;
+  threadId: string | null;
+  model: string | null;
+  cost?: CostEstimate;
+}): AgentSessionInfo {
+  const metadata: Record<string, string> = {};
+  if (params.threadId) metadata["codexThreadId"] = params.threadId;
+  if (params.model) metadata["codexModel"] = params.model;
+
+  const info: AgentSessionInfo = {
+    summary: params.model ? `Codex session (${params.model})` : null,
+    summaryIsFallback: true,
+    agentSessionId: params.agentSessionId,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+  if (params.cost) info.cost = params.cost;
+  return info;
+}
+
+function buildMetadataOnlySessionInfo(session: Session): AgentSessionInfo | null {
+  const threadId = getSessionMetadataString(session, "codexThreadId");
+  if (!threadId) return null;
+
+  const model = getSessionMetadataString(session, "codexModel");
+  if (!model && !isTerminalOrRuntimeMissing(session)) {
+    return null;
+  }
+
+  return buildCodexSessionInfo({
+    agentSessionId: threadId,
+    threadId,
+    model,
+  });
+}
+
+async function getCachedCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
+  const cached = sessionDataCache.get(filePath);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.data;
+  }
+
+  const inFlight = sessionDataInFlight.get(filePath);
+  if (inFlight) return inFlight;
+
+  const promise = streamCodexSessionData(filePath).then((data) => {
+    sessionDataCache.set(filePath, {
+      data,
+      expiry: Date.now() + SESSION_DATA_CACHE_TTL_MS,
+    });
+    return data;
+  });
+  sessionDataInFlight.set(filePath, promise);
+
+  try {
+    return await promise;
+  } finally {
+    sessionDataInFlight.delete(filePath);
+  }
 }
 
 /**
@@ -834,42 +931,21 @@ function createCodexAgent(): Agent {
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      const metadataInfo = buildMetadataOnlySessionInfo(session);
+      if (metadataInfo) return metadataInfo;
+
       const sessionFile = await findCodexSessionFileCached(session);
       if (!sessionFile) return null;
 
-      // Stream the file line-by-line to avoid loading potentially huge
-      // rollout files (100 MB+) entirely into memory.
-      const data = await streamCodexSessionData(sessionFile);
+      const data = await getCachedCodexSessionData(sessionFile);
       if (!data) return null;
 
-      const agentSessionId = basename(sessionFile, ".jsonl");
-
-      let cost: CostEstimate | undefined;
-      const totalInputTokens = data.inputTokens + data.cachedTokens;
-      if (totalInputTokens > 0 || data.outputTokens > 0 || data.reasoningTokens > 0) {
-        const estimatedCostUsd =
-          (data.inputTokens / 1_000_000) * 2.5 +
-          (data.cachedTokens / 1_000_000) * 0.625 +
-          ((data.outputTokens + data.reasoningTokens) / 1_000_000) * 10.0;
-        cost = {
-          inputTokens: totalInputTokens,
-          outputTokens: data.outputTokens,
-          estimatedCostUsd,
-        };
-      }
-
-      return {
-        summary: data.model ? `Codex session (${data.model})` : null,
-        summaryIsFallback: true,
-        agentSessionId,
-        metadata: data.threadId
-          ? {
-              codexThreadId: data.threadId,
-              ...(data.model ? { codexModel: data.model } : {}),
-            }
-          : undefined,
-        cost,
-      };
+      return buildCodexSessionInfo({
+        agentSessionId: basename(sessionFile, ".jsonl"),
+        threadId: data.threadId,
+        model: data.model,
+        cost: calculateCost(data),
+      });
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
@@ -882,9 +958,7 @@ function createCodexAgent(): Agent {
         const sessionFile = await findCodexSessionFileCached(session);
         if (!sessionFile) return null;
 
-        // Stream the file line-by-line to avoid loading potentially huge
-        // rollout files (100 MB+) entirely into memory.
-        const data = await streamCodexSessionData(sessionFile);
+        const data = await getCachedCodexSessionData(sessionFile);
         if (!data?.threadId) return null;
         threadId = data.threadId;
         model = data.model;
@@ -943,6 +1017,8 @@ export function create(): Agent {
 /** @internal Clear the session file cache. Exported for testing only. */
 export function _resetSessionFileCache(): void {
   sessionFileCache.clear();
+  sessionDataCache.clear();
+  sessionDataInFlight.clear();
 }
 
 export { CodexAppServerClient } from "./app-server-client.js";
