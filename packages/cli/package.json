@@ -37,6 +37,7 @@
     "@aoagents/ao-notifier-macos": "workspace:*",
     "@aoagents/ao-plugin-agent-aider": "workspace:*",
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
+    "@aoagents/ao-plugin-agent-cn": "workspace:*",
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
     "@aoagents/ao-plugin-agent-kimicode": "workspace:*",

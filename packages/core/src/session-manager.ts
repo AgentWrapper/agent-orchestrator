@@ -11,7 +11,15 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import {
+  statSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  unlinkSync,
+  readFileSync,
+} from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
@@ -288,9 +296,57 @@ const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
 const ENSURE_ORCHESTRATOR_CONFLICT_WAIT_MS = 20_000;
 const ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS = 250;
+const POST_LAUNCH_PROMPT_ATTEMPTS = 3;
+const POST_LAUNCH_PROMPT_BASE_DELAY_MS = 3_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function deliverPostLaunchPrompt(options: {
+  agent: Agent;
+  runtime: Runtime;
+  handle: RuntimeHandle;
+  prompt: string | undefined;
+  systemPromptFile?: string;
+  sessionId: SessionId;
+  baseDelayMs?: number;
+}): Promise<boolean | null> {
+  if (options.agent.promptDelivery !== "post-launch") {
+    return null;
+  }
+
+  const promptParts: string[] = [];
+  if (options.systemPromptFile) {
+    promptParts.push(readFileSync(options.systemPromptFile, "utf8").trim());
+  }
+  if (options.prompt?.trim()) {
+    promptParts.push(options.prompt.trim());
+  }
+
+  const prompt = promptParts.filter(Boolean).join("\n\n---\n\n");
+  if (!prompt) return null;
+
+  const baseDelayMs = options.baseDelayMs ?? POST_LAUNCH_PROMPT_BASE_DELAY_MS;
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= POST_LAUNCH_PROMPT_ATTEMPTS; attempt++) {
+    try {
+      await sleep(baseDelayMs * attempt);
+      await options.runtime.sendMessage(options.handle, prompt);
+      return true;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.error(
+        `[session-manager] Prompt delivery attempt ${attempt}/${POST_LAUNCH_PROMPT_ATTEMPTS} failed for ${options.sessionId}: ${lastError.message}`,
+      );
+    }
+  }
+
+  console.error(
+    `[session-manager] Failed to deliver prompt to session ${options.sessionId}. ` +
+      `User can retry with 'ao send'. Last error: ${lastError?.message}`,
+  );
+  return false;
 }
 
 async function isAgentProcessNotDefinitelyMissing(
@@ -371,6 +427,7 @@ function metadataToSession(
 export interface SessionManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
+  postLaunchPromptDelayMs?: number;
 }
 
 /** Create a SessionManager instance. */
@@ -1518,6 +1575,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
+      const promptDelivered = await deliverPostLaunchPrompt({
+        agent: plugins.agent,
+        runtime: plugins.runtime,
+        handle,
+        prompt: agentLaunchConfig.prompt,
+        systemPromptFile: agentLaunchConfig.systemPromptFile,
+        sessionId,
+        baseDelayMs: deps.postLaunchPromptDelayMs,
+      });
+      if (promptDelivered !== null) {
+        session.metadata["promptDelivered"] = String(promptDelivered);
+      }
+
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
@@ -1527,8 +1597,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // final form. Dismiss the stack so nothing below can trigger a rollback.
       cleanupStack.dismiss();
 
-      // Prompt is delivered inline via the agent's launch command (positional argument).
-      // No post-launch polling needed — the prompt is part of process invocation.
+      // Prompt delivery has completed (inline via launch command, or post-launch
+      // via runtime.sendMessage for agents that require interactive startup).
       recordActivityEvent({
         projectId: spawnConfig.projectId,
         sessionId,
@@ -1991,6 +2061,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         if (discovered) {
           session.metadata["opencodeSessionId"] = discovered;
         }
+      }
+
+      const promptDelivered = await deliverPostLaunchPrompt({
+        agent: plugins.agent,
+        runtime: plugins.runtime,
+        handle,
+        prompt: undefined,
+        systemPromptFile,
+        sessionId,
+        baseDelayMs: deps.postLaunchPromptDelayMs,
+      });
+      if (promptDelivered !== null) {
+        session.metadata["promptDelivered"] = String(promptDelivered);
       }
 
       if (Object.keys(session.metadata || {}).length > 0) {

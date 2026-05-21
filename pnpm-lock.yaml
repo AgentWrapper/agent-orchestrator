@@ -64,6 +64,9 @@ importers:
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@aoagents/ao-plugin-agent-cn':
+        specifier: workspace:*
+        version: link:../plugins/agent-cn
       '@aoagents/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
@@ -300,6 +303,28 @@ importers:
       '@types/node':
         specifier: ^25.2.3
         version: 25.6.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/plugins/agent-cn:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+      which:
+        specifier: ^6.0.1
+        version: 6.0.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      '@types/which':
+        specifier: ^3.0.4
+        version: 3.0.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -682,6 +707,9 @@ importers:
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@aoagents/ao-plugin-agent-cn':
+        specifier: workspace:*
+        version: link:../plugins/agent-cn
       '@aoagents/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
@@ -1974,6 +2002,12 @@ packages:
 
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
+
+  '@types/which@3.0.4':
+    resolution: {integrity: sha512-liyfuo/106JdlgSchJzXEQCVArk0CvevqPote8F8HgWgJ3dRCcTHgJIsLDuee0kxk/mhbInzIZk3QWSZJ8R+2w==}
+
+  '@types/wrap-ansi@3.0.0':
+    resolution: {integrity: sha512-ltIpx+kM7g/MLRZfkbL7EsCEjfzCcScLpkg37eXEtx5kmrAKBkTJwd1GIAjDSL8wTpM6Hzn5YO4pSb91BEwu1g==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -5076,6 +5110,10 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
+
+  '@types/which@3.0.4': {}
+
+  '@types/wrap-ansi@3.0.0': {}
 
   '@types/ws@8.18.1':
     dependencies:

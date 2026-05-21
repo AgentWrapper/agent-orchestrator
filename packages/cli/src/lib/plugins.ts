@@ -2,6 +2,7 @@ import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@aoagents/a
 import claudeCodePlugin from "@aoagents/ao-plugin-agent-claude-code";
 import codexPlugin from "@aoagents/ao-plugin-agent-codex";
 import aiderPlugin from "@aoagents/ao-plugin-agent-aider";
+import cnPlugin from "@aoagents/ao-plugin-agent-cn";
 import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
 import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
@@ -11,6 +12,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
   codex: codexPlugin,
   aider: aiderPlugin,
+  cn: cnPlugin,
   cursor: cursorPlugin,
   kimicode: kimicodePlugin,
   opencode: opencodePlugin,
