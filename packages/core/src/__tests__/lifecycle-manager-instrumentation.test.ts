@@ -76,6 +76,7 @@ function persistSession(
     branch: session.branch ?? "main",
     status: session.status,
     project: "my-app",
+    agent: session.metadata["agent"] ?? "mock-agent",
     runtimeHandle: session.runtimeHandle ?? undefined,
     ...metaOverrides,
   };
