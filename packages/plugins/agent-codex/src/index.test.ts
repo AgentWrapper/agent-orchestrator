@@ -738,6 +738,7 @@ describe("getActivityState", () => {
     const result = await agent.getActivityState(session);
 
     expect(result?.state).toBe("ready");
+    expect(mockReaddir).toHaveBeenCalledTimes(1);
     expect(mockOpen).toHaveBeenCalled();
   });
 
@@ -1104,6 +1105,21 @@ describe("getSessionInfo", () => {
     expect(second).not.toBeNull();
     expect(mockReaddir).toHaveBeenCalledTimes(1);
     expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("does not treat infix filename matches as thread-id hits", async () => {
+    mockReaddir.mockResolvedValue(["rollout-thread-fast-extra.jsonl"]);
+
+    const result = await agent.getSessionInfo(
+      makeSession({
+        workspacePath: null,
+        metadata: { codexThreadId: "fast" },
+      }),
+    );
+
+    expect(result).toBeNull();
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockCreateReadStream).not.toHaveBeenCalled();
   });
 
   it("returns null when no session files match the workspace cwd", async () => {

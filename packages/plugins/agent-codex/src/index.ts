@@ -229,8 +229,11 @@ async function sessionFileMatchesCwd(filePath: string, workspacePath: string): P
  * Recursively scans ~/.codex/sessions/ (date-sharded: YYYY/MM/DD/rollout-*.jsonl).
  * Returns the path to the most recently modified matching file, or null.
  */
-async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
-  const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
+async function findCodexSessionFile(
+  workspacePath: string,
+  jsonlFiles?: string[],
+): Promise<string | null> {
+  jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
   if (jsonlFiles.length === 0) return null;
 
   let bestMatch: { path: string; mtime: number } | null = null;
@@ -257,9 +260,14 @@ async function findCodexSessionFile(workspacePath: string): Promise<string | nul
  * filenames include the thread id, so this path only inspects filenames and
  * avoids opening historical JSONL files to match session_meta.cwd.
  */
-async function findCodexSessionFileByThreadId(threadId: string): Promise<string | null> {
-  const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
-  const matches = jsonlFiles.filter((filePath) => basename(filePath).includes(threadId));
+async function findCodexSessionFileByThreadId(
+  threadId: string,
+  jsonlFiles?: string[],
+): Promise<string | null> {
+  jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
+  const matches = jsonlFiles.filter((filePath) =>
+    basename(filePath).endsWith(`-${threadId}.jsonl`),
+  );
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0] ?? null;
 
@@ -553,17 +561,23 @@ async function getCachedSessionFile(
 
 /** Find session file with caching to avoid double scans per refresh cycle */
 async function findCodexSessionFileCached(session: Session): Promise<string | null> {
+  let jsonlFiles: string[] | null = null;
+  const getJsonlFiles = async (): Promise<string[]> => {
+    jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
+    return jsonlFiles;
+  };
+
   const threadId = getSessionMetadataString(session, "codexThreadId");
   if (threadId) {
-    const byThreadId = await getCachedSessionFile(`thread:${threadId}`, () =>
-      findCodexSessionFileByThreadId(threadId),
+    const byThreadId = await getCachedSessionFile(`thread:${threadId}`, async () =>
+      findCodexSessionFileByThreadId(threadId, await getJsonlFiles()),
     );
     if (byThreadId) return byThreadId;
   }
 
   if (!session.workspacePath) return null;
-  return getCachedSessionFile(`cwd:${toComparablePath(session.workspacePath)}`, () =>
-    findCodexSessionFile(session.workspacePath!),
+  return getCachedSessionFile(`cwd:${toComparablePath(session.workspacePath)}`, async () =>
+    findCodexSessionFile(session.workspacePath!, await getJsonlFiles()),
   );
 }
 
