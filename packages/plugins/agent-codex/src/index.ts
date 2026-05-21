@@ -10,6 +10,7 @@ import {
   recordTerminalActivity,
   isWindows,
   PROCESS_PROBE_INDETERMINATE,
+  isTerminalSession,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -538,15 +539,8 @@ const SESSION_DATA_CACHE_TTL_MS = 30_000;
 /** Module-level session file cache shared across the agent instance lifetime.
  *  Keyed by Codex thread id when available, otherwise workspace path. */
 const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
-const sessionDataCache = new Map<string, { data: CodexSessionData | null; expiry: number }>();
+const sessionDataCache = new Map<string, { data: CodexSessionData; expiry: number }>();
 const sessionDataInFlight = new Map<string, Promise<CodexSessionData | null>>();
-const TERMINAL_OR_HISTORICAL_STATUSES = new Set([
-  "killed",
-  "done",
-  "merged",
-  "terminated",
-  "cleanup",
-]);
 
 function getSessionMetadataString(session: Session, key: string): string | null {
   const value = session.metadata?.[key];
@@ -591,16 +585,6 @@ async function findCodexSessionFileCached(session: Session): Promise<string | nu
   );
 }
 
-function isTerminalOrRuntimeMissing(session: Session): boolean {
-  return (
-    TERMINAL_OR_HISTORICAL_STATUSES.has(session.status) ||
-    session.activity === "exited" ||
-    session.lifecycle?.session.state === "terminated" ||
-    session.lifecycle?.session.state === "done" ||
-    session.lifecycle?.runtime.state === "missing"
-  );
-}
-
 function calculateCost(data: CodexSessionData): CostEstimate | undefined {
   const totalInputTokens = data.inputTokens + data.cachedTokens;
   if (totalInputTokens === 0 && data.outputTokens === 0 && data.reasoningTokens === 0) {
@@ -639,7 +623,7 @@ function buildCodexSessionInfo(params: {
 
 function buildMetadataOnlySessionInfo(session: Session): AgentSessionInfo | null {
   const threadId = getSessionMetadataString(session, "codexThreadId");
-  if (!threadId || !isTerminalOrRuntimeMissing(session)) return null;
+  if (!threadId || !isTerminalSession(session)) return null;
 
   return buildCodexSessionInfo({
     agentSessionId: threadId,
@@ -658,10 +642,12 @@ async function getCachedCodexSessionData(filePath: string): Promise<CodexSession
   if (inFlight) return inFlight;
 
   const promise = streamCodexSessionData(filePath).then((data) => {
-    sessionDataCache.set(filePath, {
-      data,
-      expiry: Date.now() + SESSION_DATA_CACHE_TTL_MS,
-    });
+    if (data) {
+      sessionDataCache.set(filePath, {
+        data,
+        expiry: Date.now() + SESSION_DATA_CACHE_TTL_MS,
+      });
+    }
     return data;
   });
   sessionDataInFlight.set(filePath, promise);
@@ -936,7 +922,7 @@ function createCodexAgent(): Agent {
       if (!data) return null;
 
       return buildCodexSessionInfo({
-        agentSessionId: basename(sessionFile, ".jsonl"),
+        agentSessionId: data.threadId ?? basename(sessionFile, ".jsonl"),
         threadId: data.threadId,
         model: data.model,
         cost: calculateCost(data),

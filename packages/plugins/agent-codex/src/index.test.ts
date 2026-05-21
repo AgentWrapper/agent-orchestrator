@@ -1097,7 +1097,7 @@ describe("getSessionInfo", () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-2026-05-22T00-00-00-thread-fast-info");
+    expect(result!.agentSessionId).toBe("thread-fast-info");
     expect(result!.summary).toBe("Codex session (gpt-5.5)");
     expect(mockOpen).not.toHaveBeenCalled();
   });
@@ -1154,6 +1154,15 @@ describe("getSessionInfo", () => {
         status: "killed",
         activity: "exited",
         metadata: { codexThreadId: "thread-without-model" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          session: {
+            ...makeSession().lifecycle.session,
+            state: "terminated",
+            reason: "runtime_lost",
+            terminatedAt: new Date().toISOString(),
+          },
+        },
       }),
     );
 
@@ -1163,6 +1172,50 @@ describe("getSessionInfo", () => {
       agentSessionId: "thread-without-model",
       metadata: { codexThreadId: "thread-without-model" },
     });
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockCreateReadStream).not.toHaveBeenCalled();
+  });
+
+  it("uses core terminal lifecycle signals for the metadata-only fast path", async () => {
+    const mergedResult = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-pr-merged" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          pr: {
+            state: "merged",
+            reason: "merged",
+            number: 123,
+            url: "https://github.com/example/repo/pull/123",
+            lastObservedAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+
+    const runtimeExitedResult = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-runtime-exited" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          runtime: {
+            state: "exited",
+            reason: "process_missing",
+            lastObservedAt: new Date().toISOString(),
+            handle: null,
+            tmuxName: "test-1",
+          },
+        },
+      }),
+    );
+
+    expect(mergedResult?.agentSessionId).toBe("thread-pr-merged");
+    expect(runtimeExitedResult?.agentSessionId).toBe("thread-runtime-exited");
     expect(mockReaddir).not.toHaveBeenCalled();
     expect(mockOpen).not.toHaveBeenCalled();
     expect(mockCreateReadStream).not.toHaveBeenCalled();
@@ -1193,7 +1246,7 @@ describe("getSessionInfo", () => {
 
     expect(result).toMatchObject({
       summary: "Codex session (gpt-5.5)",
-      agentSessionId: "rollout-2026-05-22T00-00-00-thread-live-no-model",
+      agentSessionId: "thread-live-no-model",
       metadata: { codexThreadId: "thread-live-no-model", codexModel: "gpt-5.5" },
     });
     expect(mockCreateReadStream).toHaveBeenCalledTimes(1);
@@ -1233,7 +1286,7 @@ describe("getSessionInfo", () => {
 
     expect(result).toMatchObject({
       summary: "Codex session (gpt-5.5)",
-      agentSessionId: "rollout-2026-05-22T00-00-00-thread-live-with-model",
+      agentSessionId: "thread-live-with-model",
       metadata: { codexThreadId: "thread-live-with-model", codexModel: "gpt-5.5" },
       cost: { inputTokens: 100, outputTokens: 50 },
     });
@@ -1332,7 +1385,7 @@ describe("getSessionInfo", () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-new-thread-dupe");
+    expect(result!.agentSessionId).toBe("thread-dupe");
     expect(result!.summary).toBe("Codex session (new-model)");
     expect(mockOpen).not.toHaveBeenCalled();
   });
@@ -1468,7 +1521,7 @@ describe("getSessionInfo", () => {
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.agentSessionId).toBe("thread-payload-123");
     expect(result!.summary).toBe("Codex session (gpt-5.3-codex)");
     expect(result!.cost).toBeDefined();
     expect(result!.cost!.inputTokens).toBe(3000);
@@ -1626,6 +1679,53 @@ describe("getSessionInfo", () => {
     ).toBeNull();
     expect(closeSpy).toHaveBeenCalledTimes(1);
     expect(destroySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes concurrent failed streams without caching the failure", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: { id: "thread-failure-retry" },
+      },
+      {
+        type: "turn_context",
+        payload: { model: "gpt-5.5" },
+      },
+    );
+    mockReaddir.mockResolvedValue(["rollout-thread-failure-retry.jsonl"]);
+    mockCreateReadStream.mockImplementation(() => makeContentStream(sessionContent));
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const closeSpy = vi.fn();
+    mockCreateInterface.mockImplementationOnce(() => ({
+      close: closeSpy,
+      async *[Symbol.asyncIterator]() {
+        await gate;
+        throw new Error("aborted");
+      },
+    }));
+
+    const session = makeSession({
+      metadata: { codexThreadId: "thread-failure-retry" },
+    });
+
+    const first = agent.getSessionInfo(session);
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = agent.getSessionInfo(session);
+
+    release();
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toBeNull();
+    expect(mockCreateReadStream).toHaveBeenCalledTimes(1);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    const retry = await agent.getSessionInfo(session);
+    expect(retry?.summary).toBe("Codex session (gpt-5.5)");
+    expect(mockCreateReadStream).toHaveBeenCalledTimes(2);
   });
 
   it("skips session files when stat throws", async () => {
