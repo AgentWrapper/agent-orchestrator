@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { buildCIFailureNotificationData } from "../notification-data.js";
 import {
   appendDashboardNotificationRecord,
   createDashboardNotificationRecord,
+  getLiveDashboardNotificationStorePath,
   normalizeDashboardNotificationLimit,
   readDashboardNotificationsFromFile,
   writeDashboardNotificationsToFile,
@@ -142,5 +143,60 @@ describe("dashboard notifications", () => {
     expect(normalizeDashboardNotificationLimit(0)).toBe(1);
     expect(normalizeDashboardNotificationLimit("1000")).toBe(500);
     expect(normalizeDashboardNotificationLimit("75")).toBe(75);
+  });
+
+  it("caches the live daemon store path without trimming valid path whitespace", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "ao-dashboard-notifications-live-"));
+    const originalHome = process.env["HOME"];
+    const originalUserProfile = process.env["USERPROFILE"];
+
+    try {
+      process.env["HOME"] = tempDir;
+      process.env["USERPROFILE"] = tempDir;
+      const stateDir = join(tempDir, ".agent-orchestrator");
+      mkdirSync(stateDir, { recursive: true });
+      const runningPath = join(stateDir, "running.json");
+      const storePath = join(tempDir, " dashboard-notifications.jsonl ");
+      const updatedStorePath = join(tempDir, "updated-dashboard-notifications.jsonl");
+
+      writeFileSync(
+        runningPath,
+        JSON.stringify({
+          pid: process.pid,
+          configPath: join(tempDir, "project", "agent-orchestrator.yaml"),
+          port: 3000,
+          startedAt: "2026-05-21T00:00:00.000Z",
+          projects: ["demo"],
+          dashboardNotificationStore: storePath,
+        }),
+      );
+
+      expect(getLiveDashboardNotificationStorePath()).toBe(storePath);
+
+      writeFileSync(
+        runningPath,
+        JSON.stringify({
+          pid: process.pid,
+          configPath: join(tempDir, "project", "agent-orchestrator.yaml"),
+          port: 3000,
+          startedAt: "2026-05-21T00:00:01.000Z",
+          projects: ["demo"],
+          dashboardNotificationStore: updatedStorePath,
+        }),
+      );
+
+      expect(getLiveDashboardNotificationStorePath()).toBe(storePath);
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["HOME"];
+      } else {
+        process.env["HOME"] = originalHome;
+      }
+      if (originalUserProfile === undefined) {
+        delete process.env["USERPROFILE"];
+      } else {
+        process.env["USERPROFILE"] = originalUserProfile;
+      }
+    }
   });
 });

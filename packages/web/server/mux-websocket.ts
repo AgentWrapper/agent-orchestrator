@@ -269,15 +269,13 @@ export class NotificationBroadcaster {
   ) {
     this.configPath = configPath;
     this.envStorePath =
-      typeof envStorePath === "string" && envStorePath.trim().length > 0
-        ? envStorePath.trim()
-        : null;
+      typeof envStorePath === "string" && envStorePath.length > 0 ? envStorePath : null;
   }
 
   private getStorePath(): string | null {
     return (
-      getLiveDashboardNotificationStorePath() ??
       this.envStorePath ??
+      getLiveDashboardNotificationStorePath() ??
       (this.configPath ? getDashboardNotificationStorePath(this.configPath) : null)
     );
   }

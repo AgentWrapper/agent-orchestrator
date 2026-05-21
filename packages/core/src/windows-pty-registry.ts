@@ -22,6 +22,7 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { isProcessAlive } from "./process-utils.js";
 
 export interface WindowsPtyHostEntry {
   sessionId: string;
@@ -68,15 +69,6 @@ function writeRaw(entries: WindowsPtyHostEntry[]): void {
   atomicWriteFileSync(file, JSON.stringify(entries, null, 2));
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    return (err as { code?: string }).code === "EPERM";
-  }
-}
-
 /**
  * Add (or replace) an entry for a freshly-spawned pty-host.
  * If a stale entry for the same `sessionId` exists, it's overwritten.
@@ -103,7 +95,7 @@ export function unregisterWindowsPtyHost(sessionId: string): void {
  */
 export function getWindowsPtyHosts(): WindowsPtyHostEntry[] {
   const all = readRaw();
-  const live = all.filter((e) => isAlive(e.ptyHostPid));
+  const live = all.filter((e) => isProcessAlive(e.ptyHostPid));
   if (live.length !== all.length) writeRaw(live);
   return live;
 }

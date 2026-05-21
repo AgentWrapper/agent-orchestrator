@@ -19,6 +19,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { isWindows, killProcessTree } from "./platform.js";
+import { isProcessAlive } from "./process-utils.js";
 
 const execFileAsync = promisify(execFileCb);
 const DEFAULT_GRACE_MS = 5_000;
@@ -142,16 +143,6 @@ function writeRawDaemonChildren(entries: DaemonChildEntry[]): void {
   }
   ensureStateDir();
   atomicWriteFileSync(file, JSON.stringify(entries, null, 2));
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    return (err as { code?: string }).code === "EPERM";
-  }
 }
 
 async function waitForProcessesExit(pids: number[], timeoutMs: number): Promise<Set<number>> {

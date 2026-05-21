@@ -4,6 +4,7 @@ import type { NotifyAction, OrchestratorEvent } from "./types.js";
 import type { NotificationDataV3 } from "./notification-data.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { getAoBaseDir, getObservabilityBaseDir } from "./paths.js";
+import { isProcessAlive } from "./process-utils.js";
 
 export const DEFAULT_DASHBOARD_NOTIFICATION_LIMIT = 50;
 export const MAX_DASHBOARD_NOTIFICATION_LIMIT = 500;
@@ -67,31 +68,40 @@ function getRunningStatePath(): string {
   return join(getAoBaseDir(), "running.json");
 }
 
-function isProcessAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    return (err as { code?: string }).code === "EPERM";
-  }
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+interface LiveDashboardNotificationStoreCache {
+  runningStatePath: string;
+  pid: number;
+  storePath: string;
 }
+
+let liveDashboardNotificationStoreCache: LiveDashboardNotificationStoreCache | null = null;
 
 export function getLiveDashboardNotificationStorePath(): string | null {
+  const runningStatePath = getRunningStatePath();
+  if (
+    liveDashboardNotificationStoreCache &&
+    liveDashboardNotificationStoreCache.runningStatePath === runningStatePath &&
+    isProcessAlive(liveDashboardNotificationStoreCache.pid)
+  ) {
+    return liveDashboardNotificationStoreCache.storePath;
+  }
+  liveDashboardNotificationStoreCache = null;
+
   try {
-    const raw = readFileSync(getRunningStatePath(), "utf-8");
+    const raw = readFileSync(runningStatePath, "utf-8");
     const state = JSON.parse(raw) as Record<string, unknown>;
     const pid = state["pid"];
     if (typeof pid !== "number" || !isProcessAlive(pid)) return null;
 
-    return (
+    const storePath =
       nonEmptyString(state["dashboardNotificationStore"]) ??
-      getDaemonDashboardNotificationStorePath()
-    );
+      getDaemonDashboardNotificationStorePath();
+    liveDashboardNotificationStoreCache = { runningStatePath, pid, storePath };
+    return storePath;
   } catch {
     return null;
   }

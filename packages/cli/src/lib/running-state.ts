@@ -14,6 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   atomicWriteFileSync,
   getDaemonDashboardNotificationStorePath,
+  isProcessAlive,
   recordActivityEvent,
 } from "@aoagents/ao-core";
 
@@ -49,18 +50,6 @@ interface LockMetadata {
 
 function ensureDir(): void {
   mkdirSync(STATE_DIR, { recursive: true });
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if ((error as { code?: string }).code === "EPERM") {
-      return true;
-    }
-    return false;
-  }
 }
 
 function readLockMetadata(lockFile: string): LockMetadata | null {

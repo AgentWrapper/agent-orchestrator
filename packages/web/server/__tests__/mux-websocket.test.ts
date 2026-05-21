@@ -918,6 +918,27 @@ describe("NotificationBroadcaster", () => {
     unsubscribe();
   });
 
+  it("uses the daemon store passed through env without consulting later running state", () => {
+    if (!tempDir) throw new Error("tempDir not initialized");
+    const envStorePath = join(tempDir, "env-dashboard-notifications.jsonl");
+    const laterRunningStorePath = join(tempDir, "later-running-dashboard-notifications.jsonl");
+    writeRunningState(laterRunningStorePath);
+    appendDaemonEvent("evt-env", "2026-05-13T12:00:02.000Z", envStorePath);
+    appendDaemonEvent("evt-running", "2026-05-13T12:00:03.000Z", laterRunningStorePath);
+    const broadcaster = new NotificationBroadcaster(configPath, envStorePath);
+    const callback = vi.fn();
+
+    const unsubscribe = broadcaster.subscribe(callback);
+
+    expect(callback).toHaveBeenCalledWith(
+      [expect.objectContaining({ event: expect.objectContaining({ id: "evt-env" }) })],
+      "snapshot",
+      2,
+    );
+
+    unsubscribe();
+  });
+
   it("does not let a new subscriber suppress appends for existing subscribers", () => {
     appendEvent("evt-1", "2026-05-13T12:00:01.000Z");
     const broadcaster = new NotificationBroadcaster(configPath);
