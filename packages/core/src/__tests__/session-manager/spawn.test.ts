@@ -1113,6 +1113,38 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("sends initial prompt after launch for post-launch prompt agents", async () => {
+    const postLaunchAgent: Agent = {
+      ...mockAgent,
+      promptDelivery: "post-launch",
+    };
+    const registryWithPostLaunchAgent: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+    expect(postLaunchAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Fix the bug"),
+      }),
+    );
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      expect.stringContaining("Session Lifecycle"),
+    );
+    const message = vi.mocked(mockRuntime.sendMessage).mock.calls[0]?.[1];
+    expect(message).toContain("## User Request");
+    expect(message).toContain("Fix the bug");
+  });
+
   it("writes worker system prompt to file and passes only explicit task prompt to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
@@ -2091,6 +2123,33 @@ describe("spawn", () => {
           workspacePath: "/tmp/ws",
           launchCommand: "mock-agent --start",
         }),
+      );
+    });
+
+    it("sends orchestrator system prompt after launch for post-launch prompt agents", async () => {
+      const postLaunchAgent: Agent = {
+        ...mockAgent,
+        promptDelivery: "post-launch",
+      };
+      const registryWithPostLaunchAgent: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return postLaunchAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+      const sm = createSessionManager({ config, registry: registryWithPostLaunchAgent });
+
+      await sm.spawnOrchestrator({
+        projectId: "my-app",
+        systemPrompt: "Coordinate the worker sessions.",
+      });
+
+      expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+        makeHandle("rt-1"),
+        "Coordinate the worker sessions.",
       );
     });
 

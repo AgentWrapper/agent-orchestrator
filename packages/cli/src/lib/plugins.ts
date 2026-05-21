@@ -5,6 +5,7 @@ import aiderPlugin from "@aoagents/ao-plugin-agent-aider";
 import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
 import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
+import copilotPlugin from "@aoagents/ao-plugin-agent-copilot";
 import githubSCMPlugin from "@aoagents/ao-plugin-scm-github";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
@@ -14,6 +15,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   cursor: cursorPlugin,
   kimicode: kimicodePlugin,
   opencode: opencodePlugin,
+  copilot: copilotPlugin,
 };
 
 const scmPlugins: Record<string, { create(): SCM }> = {

@@ -46,6 +46,7 @@
     "@aoagents/ao-core": "workspace:*",
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
+    "@aoagents/ao-plugin-agent-copilot": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
     "@aoagents/ao-plugin-agent-kimicode": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
