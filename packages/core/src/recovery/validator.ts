@@ -21,7 +21,7 @@ import {
   type RecoveryAction,
   type RecoveryConfig,
 } from "./types.js";
-import { resolveAgentSelection, resolveSessionRole } from "../agent-selection.js";
+import { resolveAgentSelectionForSession } from "../agent-selection.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
 import { createActivitySignal } from "../activity-signal.js";
 
@@ -44,16 +44,12 @@ export async function validateSession(
   const { sessionId, projectId, project, rawMetadata } = scanned;
 
   const runtimeName = project.runtime ?? config.defaults.runtime;
-  const agentName = resolveAgentSelection({
-    role: resolveSessionRole(
-      sessionId,
-      rawMetadata,
-      project.sessionPrefix,
-      Object.values(config.projects).map((p) => p.sessionPrefix),
-    ),
+  const agentName = resolveAgentSelectionForSession({
+    sessionId,
+    metadata: rawMetadata,
     project,
     defaults: config.defaults,
-    persistedAgent: rawMetadata["agent"],
+    allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
   }).agentName;
   const workspaceName = project.workspace ?? config.defaults.workspace;
 

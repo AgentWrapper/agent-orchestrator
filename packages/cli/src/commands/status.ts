@@ -3,7 +3,6 @@ import type { Command } from "commander";
 import {
   createInitialCanonicalLifecycle,
   createActivitySignal,
-  type Agent,
   type SCM,
   type Session,
   type PRInfo,
@@ -13,6 +12,8 @@ import {
   type Tracker,
   type ProjectConfig,
   type AgentReportAuditEntry,
+  type PluginRegistry,
+  resolveAgentSelectionForSession,
   isOrchestratorSession,
   isTerminalSession,
   isWindows,
@@ -127,7 +128,7 @@ function gatherProjectReviewStatus(projectId: string): ProjectReviewStatus {
 
 async function gatherSessionInfo(
   session: Session,
-  agent: Agent,
+  registry: PluginRegistry,
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
   reportsLimit: number = 0,
@@ -160,9 +161,21 @@ async function gatherSessionInfo(
     lastActivity = activityTs ? formatAge(activityTs) : "-";
   }
 
-  // Get agent's auto-generated summary via introspection
+  // Get agent's auto-generated summary via introspection. Resolve per session so
+  // historical mixed-agent rows are not probed with the current project default.
   let claudeSummary: string | null = null;
   try {
+    const project = projectConfig.projects[session.projectId];
+    const agentName = project
+      ? resolveAgentSelectionForSession({
+          sessionId: session.id,
+          metadata: session.metadata,
+          project,
+          defaults: projectConfig.defaults,
+          allSessionPrefixes,
+        }).agentName
+      : projectConfig.defaults.agent;
+    const agent = getAgentByNameFromRegistry(registry, agentName);
     const introspection = await agent.getSessionInfo(session);
     claudeSummary = introspection?.summary ?? null;
   } catch {
@@ -500,9 +513,9 @@ export function registerStatus(program: Command): void {
           totalActiveReviewRuns += reviewStatus.activeRunCount;
           totalOpenReviewFindings += reviewStatus.openFindingCount;
 
-          // Resolve agent and SCM for this project via the shared registry
-          const agentName = projectConfig.agent ?? config.defaults.agent;
-          const agent = getAgentByNameFromRegistry(registry, agentName);
+          // Resolve SCM for this project via the shared registry. Agents are
+          // resolved per session because historical metadata may record a
+          // different agent than the current project default.
           const scm = getSCMFromRegistry(registry, config, projectId);
 
           if (!opts.json) {
@@ -519,7 +532,9 @@ export function registerStatus(program: Command): void {
           }
 
           // Gather all session info in parallel
-          const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config, reportsLimit));
+          const infoPromises = projectSessions.map((s) =>
+            gatherSessionInfo(s, registry, scm, config, reportsLimit),
+          );
           const sessionInfos = await Promise.all(infoPromises);
 
           const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");

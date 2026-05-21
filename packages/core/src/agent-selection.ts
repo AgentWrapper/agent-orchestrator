@@ -29,6 +29,26 @@ export function resolveSessionRole(
     : "worker";
 }
 
+export function resolveAgentSelectionForSession(params: {
+  sessionId: string;
+  metadata?: Record<string, string>;
+  project: ProjectConfig;
+  defaults: DefaultPlugins;
+  allSessionPrefixes?: string[];
+}): ResolvedAgentSelection {
+  return resolveAgentSelection({
+    role: resolveSessionRole(
+      params.sessionId,
+      params.metadata,
+      params.project.sessionPrefix,
+      params.allSessionPrefixes,
+    ),
+    project: params.project,
+    defaults: params.defaults,
+    persistedAgent: params.metadata?.["agent"],
+  });
+}
+
 export function resolveAgentSelection(params: {
   role: SessionRole;
   project: ProjectConfig;

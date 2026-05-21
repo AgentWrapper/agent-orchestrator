@@ -70,7 +70,7 @@ import {
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveNotifierTarget } from "./notifier-resolution.js";
 import { recordNotificationDelivery } from "./notification-observability.js";
-import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { resolveAgentSelectionForSession, resolveSessionRole } from "./agent-selection.js";
 import {
   DETECTING_MAX_ATTEMPTS,
   createDetectingDecision,
@@ -910,18 +910,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const lifecycle = cloneLifecycle(session.lifecycle);
     const nowIso = new Date().toISOString();
-    const allSessionPrefixes = Object.values(config.projects).map((p) => p.sessionPrefix);
-    const sessionRole = resolveSessionRole(
-      session.id,
-      session.metadata,
-      project.sessionPrefix,
-      allSessionPrefixes,
-    );
-    const agentName = resolveAgentSelection({
-      role: sessionRole,
+    const agentName = resolveAgentSelectionForSession({
+      sessionId: session.id,
+      metadata: session.metadata,
       project,
       defaults: config.defaults,
-      persistedAgent: session.metadata["agent"],
+      allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;

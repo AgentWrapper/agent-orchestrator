@@ -41,6 +41,13 @@ export {
   listMetadata,
 } from "./metadata.js";
 export { createInitialCanonicalLifecycle, deriveLegacyStatus } from "./lifecycle-state.js";
+export {
+  resolveAgentSelection,
+  resolveAgentSelectionForSession,
+  resolveSessionRole,
+  type ResolvedAgentSelection,
+  type SessionRole,
+} from "./agent-selection.js";
 export { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
 // AO-local code review store

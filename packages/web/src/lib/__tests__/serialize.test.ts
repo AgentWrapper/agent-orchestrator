@@ -1196,6 +1196,43 @@ describe("enrichSessionsMetadata", () => {
     expect(agent.getSessionInfo).toHaveBeenCalledTimes(2); // sessions 1 and 2 only
   });
 
+  it("uses persisted session agent instead of project default for summary enrichment", async () => {
+    const codexAgent = mockAgent("Wrong Codex summary");
+    codexAgent.name = "codex";
+    const gooseAgent = mockAgent("Goose summary");
+    gooseAgent.name = "goose";
+    const registry = {
+      get: vi.fn((slot: string, name: string) => {
+        if (slot !== "agent") return null;
+        if (name === "codex") return codexAgent;
+        if (name === "goose") return gooseAgent;
+        return null;
+      }),
+      register: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    } as unknown as PluginRegistry;
+    const mixedAgentConfig = {
+      ...testConfig,
+      defaults: { ...testConfig.defaults, agent: "codex" },
+      projects: {
+        test: { ...testProject, agent: "codex" } as ProjectConfig,
+      },
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({ metadata: { agent: "goose" } });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], mixedAgentConfig, registry);
+
+    expect(registry.get).toHaveBeenCalledWith("agent", "goose");
+    expect(registry.get).not.toHaveBeenCalledWith("agent", "codex");
+    expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+    expect(gooseAgent.getSessionInfo).toHaveBeenCalledWith(core);
+    expect(dashboard.summary).toBe("Goose summary");
+  });
+
   it("should use default agent when project has no agent override", async () => {
     const tracker = mockTracker();
     const agent = mockAgent("From default agent");

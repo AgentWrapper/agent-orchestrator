@@ -94,7 +94,7 @@ import {
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
-import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { resolveAgentSelection, resolveAgentSelectionForSession } from "./agent-selection.js";
 import {
   buildAgentPath,
   setupPathWrapperWorkspace,
@@ -900,16 +900,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: string,
     metadata: Record<string, string>,
   ) {
-    return resolveAgentSelection({
-      role: resolveSessionRole(
-        sessionId,
-        metadata,
-        project.sessionPrefix,
-        Object.values(config.projects).map((p) => p.sessionPrefix),
-      ),
+    return resolveAgentSelectionForSession({
+      sessionId,
+      metadata,
       project,
       defaults: config.defaults,
-      persistedAgent: metadata["agent"],
+      allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
     });
   }
 
