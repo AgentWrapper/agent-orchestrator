@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as Readline from "node:readline";
 import {
   createActivitySignal,
   type Session,
@@ -21,6 +22,7 @@ const {
   mockLstat,
   mockOpen,
   mockCreateReadStream,
+  mockCreateInterface,
   mockHomedir,
   mockReadLastJsonlEntry,
   mockIsWindows,
@@ -35,6 +37,7 @@ const {
   mockLstat: vi.fn(),
   mockOpen: vi.fn(),
   mockCreateReadStream: vi.fn(),
+  mockCreateInterface: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockReadLastJsonlEntry: vi.fn(),
   mockIsWindows: vi.fn(() => false),
@@ -66,6 +69,17 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   createReadStream: mockCreateReadStream,
 }));
+
+vi.mock("node:readline", async (importOriginal) => {
+  const actual = await importOriginal<typeof Readline>();
+  mockCreateInterface.mockImplementation((...args: Parameters<typeof actual.createInterface>) =>
+    actual.createInterface(...args),
+  );
+  return {
+    ...actual,
+    createInterface: mockCreateInterface,
+  };
+});
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
@@ -1210,6 +1224,31 @@ describe("getSessionInfo", () => {
     expect(
       await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
     ).toBeNull();
+  });
+
+  it("closes readline and destroys the stream when JSONL streaming is interrupted", async () => {
+    const content = jsonl({ type: "session_meta", cwd: "/workspace/test" });
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const stream = makeContentStream(content);
+    const destroySpy = vi.spyOn(stream, "destroy");
+    const closeSpy = vi.fn();
+    mockCreateReadStream.mockReturnValue(stream);
+    mockCreateInterface.mockImplementationOnce(() => ({
+      close: closeSpy,
+      async *[Symbol.asyncIterator]() {
+        yield JSON.stringify({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
+        throw new Error("aborted");
+      },
+    }));
+
+    expect(
+      await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
+    ).toBeNull();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
   });
 
   it("skips session files when stat throws", async () => {

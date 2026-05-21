@@ -268,6 +268,9 @@ interface CodexSessionData {
  * into memory. This is critical because Codex rollout files can be 100 MB+.
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
+  let stream: ReturnType<typeof createReadStream> | null = null;
+  let rl: ReturnType<typeof createInterface> | null = null;
+
   try {
     const data: CodexSessionData = {
       model: null,
@@ -277,8 +280,9 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
       cachedTokens: 0,
       reasoningTokens: 0,
     };
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf-8" }),
+    stream = createReadStream(filePath, { encoding: "utf-8" });
+    rl = createInterface({
+      input: stream,
       crlfDelay: Infinity,
     });
 
@@ -352,6 +356,9 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
     return data;
   } catch {
     return null;
+  } finally {
+    rl?.close();
+    stream?.destroy();
   }
 }
 
@@ -833,7 +840,10 @@ function createCodexAgent(): Agent {
       return formatLaunchCommand(parts);
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 
