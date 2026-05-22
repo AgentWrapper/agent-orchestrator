@@ -80,8 +80,8 @@
  */
 
 export * from "./types/session.js"; // SessionId/Kind, canonical lifecycle records, SessionStatus, activity types + ACTIVITY_STATE/SESSION_STATUS/terminal sets + session guards
-export * from "./types/runtime.js"; // Runtime slot (1): RuntimeHandle, AttachInfo, process-probe types + PROCESS_PROBE_INDETERMINATE
-export * from "./types/agent.js"; // Agent slot (2): Agent interface, launch/session-info/cost types + permission-mode normalization
+export * from "./types/runtime.js"; // Runtime slot (1): Runtime interface, RuntimeHandle, RuntimeMetrics, AttachInfo
+export * from "./types/agent.js"; // Agent slot (2): Agent interface, launch/session-info/cost types, process-probe types + PROCESS_PROBE_INDETERMINATE
 export * from "./types/workspace.js"; // Workspace slot (3): Workspace interface, create config, WorkspaceInfo
 export * from "./types/tracker.js"; // Tracker slot (4): Tracker interface, Issue, filters, create/update inputs
 export * from "./types/scm.js"; // SCM slot (5): SCM interface, PR/CI/review/webhook/merge types + PR_STATE/CI_STATUS
@@ -89,9 +89,9 @@ export * from "./types/notifier.js"; // Notifier slot (6): Notifier interface, N
 export * from "./types/terminal.js"; // Terminal slot (7): Terminal interface
 export * from "./types/events.js"; // Orchestrator events: EventType/Priority, OrchestratorEvent
 export * from "./types/reactions.js"; // Reaction engine: ReactionConfig, ReactionResult
-export * from "./types/config.js"; // Configuration: OrchestratorConfig/ProjectConfig + all sub-config + plugin install/role config
+export * from "./types/config.js"; // Configuration: OrchestratorConfig/ProjectConfig + all sub-config + plugin install/role config + agent permission-mode types & normalizeAgentPermissionMode
 export * from "./types/plugin.js"; // Plugin system: PluginSlot, PluginManifest, PluginModule, PreflightContext
-export * from "./types/metadata.js"; // SessionMetadata + kill/claim/cleanup option & result types
-export * from "./types/services.js"; // Core (non-pluggable) service interfaces: SessionManager, LifecycleManager, PluginRegistry
+export * from "./types/metadata.js"; // SessionMetadata
+export * from "./types/services.js"; // Core (non-pluggable) service interfaces: SessionManager, LifecycleManager, PluginRegistry + kill/claim/cleanup option & result types
 export * from "./types/errors.js"; // Error classes + error-detection helpers (isIssueNotFoundError, ...)
 export * from "./types/portfolio.js"; // Cross-project portfolio aggregation types
