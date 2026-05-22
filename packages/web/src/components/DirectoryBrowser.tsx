@@ -29,6 +29,8 @@ function isFolderRowTarget(target: EventTarget | null): boolean {
 export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const typeaheadBufferRef = useRef("");
+  const typeaheadLastTsRef = useRef(0);
   const selectedIndex = useMemo(
     () =>
       browser.directoryEntries.findIndex(
@@ -45,6 +47,22 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
         (toolbarRef.current?.contains(target) || contentRef.current?.contains(target));
       if (!isInsideBrowser) return;
       if (isTextEditingTarget(event.target)) return;
+
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const now = Date.now();
+        if (now - typeaheadLastTsRef.current > 600) typeaheadBufferRef.current = "";
+        typeaheadLastTsRef.current = now;
+        typeaheadBufferRef.current += event.key.toLowerCase();
+
+        const matchedEntry = browser.directoryEntries.find((entry) =>
+          entry.name.toLowerCase().startsWith(typeaheadBufferRef.current),
+        );
+        if (matchedEntry) {
+          event.preventDefault();
+          browser.setSelectedBrowsePath(joinBrowsePath(browser.browsePath, matchedEntry.name));
+        }
+        return;
+      }
 
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (browser.directoryEntries.length === 0) return;

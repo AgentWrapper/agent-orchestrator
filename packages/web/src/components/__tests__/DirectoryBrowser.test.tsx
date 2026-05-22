@@ -144,6 +144,32 @@ describe("DirectoryBrowser", () => {
     );
   });
 
+  it("jumps selection to a folder by typeahead", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          entries: [
+            { name: "apple", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+            { name: "banana", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+            { name: "cherry", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+          ],
+          roots: [],
+        }),
+      }),
+    );
+
+    render(<Harness />);
+
+    const row = (await screen.findByText("banana")).closest("button");
+    expect(row).not.toBeNull();
+    row!.focus();
+    fireEvent.keyDown(row!, { key: "b" });
+
+    await waitFor(() => expect(row?.className).toContain("is-selected"));
+  });
+
   it("does not descend on modified Enter when a folder is selected", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
