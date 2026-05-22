@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Feedback Pipeline Architecture Explainer</title>
+    <style>
+      :root {
+        --bg: #f2efe7;
+        --panel: #fffdf8;
+        --ink: #1f1a16;
+        --muted: #6f6357;
+        --brand: #165a72;
+        --line: #dfd3c2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        line-height: 1.5;
+        background:
+          radial-gradient(circle at 12% 10%, #ebdfcb 0%, transparent 35%),
+          radial-gradient(circle at 88% 85%, #e5d4ba 0%, transparent 30%), var(--bg);
+      }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 2rem auto;
+        padding: 0 1rem 3rem;
+      }
+
+      .hero,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .hero {
+        padding: 1.2rem;
+      }
+
+      .card {
+        padding: 1rem;
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: "IBM Plex Serif", Georgia, serif;
+        margin: 0.6rem 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .grid {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      @media (min-width: 900px) {
+        .grid.two {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .grid.three {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      ul,
+      ol {
+        margin: 0.4rem 0 0;
+        padding-left: 1rem;
+      }
+
+      code {
+        font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+        background: #f3ebe0;
+        border-radius: 4px;
+        padding: 0.1rem 0.28rem;
+      }
+
+      pre {
+        margin-top: 0.7rem;
+        padding: 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #faf4ec;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="hero">
+        <h1>Feedback Pipeline Explainer</h1>
+        <p class="muted">
+          Durable architecture reference for the report -> issue -> agent-session -> PR pipeline,
+          including fork-aware execution and governance controls.
+        </p>
+      </section>
+
+      <section class="grid two">
+        <article class="card">
+          <h2>Formal Pipeline</h2>
+          <ol>
+            <li>Capture and validate report payload.</li>
+            <li>Resolve issue via dedupe markers (create or update/comment).</li>
+            <li>Plan follow-up: issue-only, issue+PR, or issue+fork.</li>
+            <li>Execute direct SCM operations or spawn agent session for code changes.</li>
+            <li>Link issue/fork/PR and update operation journal.</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h2>Execution Boundaries</h2>
+          <ul>
+            <li>Orchestrator is the only component allowed to perform SCM side effects.</li>
+            <li>Optional subagent skill can provide recommendation signals only.</li>
+            <li>Policy fallback remains deterministic when subagent output is invalid.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="grid three">
+        <article class="card">
+          <h3>Trigger Conditions</h3>
+          <ul>
+            <li>Valid report in <code>mode=scm</code>.</li>
+            <li>Confidence thresholds met.</li>
+            <li>Governance allows attempted mutation path.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>Target Selection</h3>
+          <ul>
+            <li>Prefer upstream when writable and policy allows.</li>
+            <li>Use fork path when upstream writes are blocked.</li>
+            <li>Downgrade to issue-only when neither path is permitted.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>Idempotency</h3>
+          <ul>
+            <li><code>dedupeKey</code> for issue identity.</li>
+            <li><code>operationKey</code> per mutation stage.</li>
+            <li>Find-or-create semantics before every mutation.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="card">
+          <h2>Consent Gates (Default Policy)</h2>
+          <ul>
+            <li>Outside AO dogfooding, human consent is required for fork creation.</li>
+            <li>Outside AO dogfooding, human consent is required for PR creation.</li>
+            <li>Outside AO dogfooding, human consent is required before upstream/fork target switch.</li>
+            <li>Project-level bypass is allowed only when owner explicitly enables it.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Journal (Plain Language)</h2>
+          <ul>
+            <li>The journal is a progress log for every report.</li>
+            <li>Each mutation updates one tracked record, not separate duplicates.</li>
+            <li>Retries keep the same keys and increment attempt metadata.</li>
+            <li>Consent outcomes are stored for auditability.</li>
+          </ul>
+<pre><code>{
+  "dedupeKey": "f4d7dbe5b0f8...",
+  "stage": "create_pr",
+  "status": "failed",
+  "attempt": 2,
+  "issueUrl": ".../issues/399",
+  "prUrl": null
+}</code></pre>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="card">
+          <h2>PR Requirements</h2>
+          <ul>
+            <li>Issue reference must exist in PR metadata/body.</li>
+            <li>Stable lineage markers link issue, session, and PR.</li>
+            <li>Existing PR for same dedupe context must be linked, not duplicated.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Governance Hooks</h2>
+          <ul>
+            <li>canCreateIssue / canCreateFork / canCreatePR / canSpawnSession checks.</li>
+            <li>Per-fork-owner allow/deny and optional approval gates.</li>
+            <li>Denied operations are journaled with explicit reason codes.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

@@ -26,3 +26,4 @@ Agent Orchestrator is a TypeScript monorepo for managing parallel AI coding agen
 
 - `packages/web/src/lib/mock-data.ts` — temporary mock data, will be replaced
 - `scripts/` — legacy bash scripts, not part of the TypeScript codebase
+- `artifacts/` — design documents, not code

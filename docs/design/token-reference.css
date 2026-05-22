@@ -1,0 +1,270 @@
+/**
+ * ao Dashboard — Design Token Reference
+ * Drop-in replacement for packages/web/src/app/globals.css @theme block.
+ *
+ * Research basis:
+ *   - Linear.app CSS: Playwright-extracted ground-truth values (body bg, panel bg,
+ *     accent, status colors, type scale, radius, transitions)
+ *   - WandB, Supabase, LangSmith: text/HTML analysis
+ *   - Design direction: blue-cast dark, closer to LangSmith/Linear than GitHub
+ *
+ * Usage:
+ *   Replace the @theme block in packages/web/src/app/globals.css with this file's
+ *   @theme block, and update font-family in body{} to use Inter Variable.
+ *
+ * Font setup (in layout.tsx):
+ *   import { Inter } from "next/font/google";
+ *   import { JetBrains_Mono } from "next/font/google";
+ *   const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
+ *   const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+ *   // Apply: <body className={`${inter.variable} ${mono.variable}`}>
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* ── Base surfaces (background stepping, no shadows in dark mode) ── */
+  --color-bg-base:     #0C0C11;   /* Page / app background. L≈5%. near-pure black, blue cast */
+  --color-bg-surface:  #141419;   /* Card backgrounds, nav bar, status strip. L≈8% */
+  --color-bg-elevated: #1C1C25;   /* Hover states, terminal chrome, dropdowns. L≈12% */
+  --color-bg-subtle:   #23232F;   /* Input backgrounds, inline code, kbd. L≈15% */
+
+  /* Legacy aliases — keep for backward compat with existing components */
+  --color-bg-primary:   var(--color-bg-base);
+  --color-bg-secondary: var(--color-bg-surface);
+  --color-bg-tertiary:  var(--color-bg-elevated);
+
+  /* ── Borders ─────────────────────────────────────────────────────── */
+  --color-border-subtle:   #22222E;  /* Lowest-visibility borders */
+  --color-border-default:  #2E2E3E;  /* Standard card borders */
+  --color-border-strong:   #3E3E52;  /* Focus rings, active borders, emphasis */
+
+  /* Legacy alias */
+  --color-border-muted:    var(--color-border-subtle);
+  --color-border-emphasis: var(--color-border-strong);
+
+  /* ── Text hierarchy (4-tier, modeled on Linear's verified system) ─ */
+  --color-text-primary:   #EEEEF5;  /* Main content, titles, session names */
+  --color-text-secondary: #8888A6;  /* Metadata, timestamps, labels */
+  --color-text-tertiary:  #50506A;  /* Disabled, de-emphasized */
+  --color-text-muted:     #50506A;  /* Alias for tertiary */
+  --color-text-inverse:   #0C0C11;  /* Text on solid colored buttons */
+
+  /* ── Interactive accent ──────────────────────────────────────────── */
+  /* Derived from Linear #4EA7FC blue + #7070FF brand — split at blue-indigo */
+  --color-accent:          #5B7EF8;  /* Links, focus rings, active nav, working state */
+  --color-accent-hover:    #7B9CFB;  /* Hover state */
+  --color-accent-subtle:   rgba(91, 126, 248, 0.12);  /* Highlight backgrounds */
+
+  /* Aliases used in current components */
+  --color-accent-blue:   var(--color-accent);
+
+  /* ── Status colors — semantic only, never decorative ────────────── */
+  /* Verified against Linear's palette: green #27A644, red #EB5757, etc.  */
+  /* ao uses higher-saturation equivalents for better dark-bg contrast.   */
+  --color-status-working:   #5B7EF8;  /* Agent actively running — animated pulse */
+  --color-status-ready:     #22C55E;  /* Merge-ready / success — highest priority */
+  --color-status-attention: #F59E0B;  /* Blocked, CI failing, review needed */
+  --color-status-idle:      #6B6B8A;  /* Agent idle / paused — low visual weight */
+  --color-status-done:      #3E3E54;  /* Complete — visually recedes */
+  --color-status-error:     #EF4444;  /* Crash, hard failure — urgent */
+
+  /* Semantic aliases for components */
+  --color-accent-green:  var(--color-status-ready);
+  --color-accent-yellow: var(--color-status-attention);
+  --color-accent-orange: #d18616;     /* review zone (between yellow and red) */
+  --color-accent-red:    var(--color-status-error);
+  --color-accent-violet: #a371f7;     /* Orchestrator identity / merged PR state */
+  --color-accent-purple: #bc8cff;     /* Additional purple variant */
+
+  /* ── Typography ──────────────────────────────────────────────────── */
+  /* Set via next/font/google CSS variables in layout.tsx              */
+  --font-sans: "Inter Variable", "SF Pro Display", -apple-system, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+  /* Premium upgrade: replace JetBrains Mono with "Berkeley Mono" (paid license) */
+  /* Linear uses "Berkeley Mono" — verified via Playwright CSS extraction        */
+
+  /* ── Type scale (derived from Linear's verified CSS token system) ─ */
+  --text-tiny:    0.625rem;   /* 10px — zone headers (uppercase + 0.10em tracking) */
+  --text-micro:   0.75rem;    /* 12px — timestamps, secondary metadata (mono) */
+  --text-mini:    0.8125rem;  /* 13px — status badges, card metadata rows */
+  --text-small:   0.875rem;   /* 14px — card titles, primary labels */
+  --text-regular: 0.9375rem;  /* 15px — body copy within panels */
+  --text-large:   1.0625rem;  /* 17px — section headings, zone names */
+
+  /* ── Spacing / border-radius (Linear's verified --radius-* values) ─ */
+  --radius-4:  4px;   /* Inputs, small badges, meta chips */
+  --radius-6:  6px;   /* Buttons, session cards */
+  --radius-8:  8px;   /* Modals, PR card, larger panels */
+  --radius-12: 12px;  /* Larger surfaces */
+  --radius-16: 16px;  /* Overlays, fullscreen elements */
+
+  /* ── Transitions (Linear's verified --speed-* values) ───────────── */
+  --transition-quick:   0.1s;   /* Hover states */
+  --transition-regular: 0.25s;  /* State changes (bg, border, color) */
+
+  /* ── Scrollbar ───────────────────────────────────────────────────── */
+  /* Based on Linear's verified scrollbar token values */
+  --scrollbar-width: 6px;
+  --scrollbar-color-default: rgba(255, 255, 255, 0.10);
+  --scrollbar-color-hover:   rgba(255, 255, 255, 0.20);
+  --scrollbar-color-active:  rgba(255, 255, 255, 0.40);
+}
+
+/* ── Base styles ─────────────────────────────────────────────────────── */
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  /* Verified from Linear: negative letter-spacing at most sizes */
+  letter-spacing: -0.011em;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ── Scrollbar styling ───────────────────────────────────────────────── */
+/* Verified from Linear's CSS: thin, barely visible at rest */
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-color-default);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-color-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-color-active);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-color-default) transparent;
+}
+
+/* ── Animations ──────────────────────────────────────────────────────── */
+
+/* Working state: ring pulse on the activity dot — the ONLY continuous animation */
+@keyframes activity-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 126, 248, 0.4); }
+  50%       { box-shadow: 0 0 0 4px rgba(91, 126, 248, 0); }
+}
+
+/* CI pending spinner */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Generic opacity pulse (for loading/connecting states) */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* Card entrance — used when new session appears */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Utility classes ─────────────────────────────────────────────────── */
+
+/* Activity dot — 8×8px CSS circle, replaces Unicode emoji */
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.activity-dot--working   { background: var(--color-status-working); animation: activity-pulse 2s ease-in-out infinite; }
+.activity-dot--ready     { background: var(--color-status-ready); }
+.activity-dot--attention { background: var(--color-status-attention); }
+.activity-dot--idle      { background: var(--color-status-idle); }
+.activity-dot--error     { background: var(--color-status-error); }
+.activity-dot--done      { background: var(--color-status-done); }
+.activity-dot--exited    { background: var(--color-status-done); border: 1px solid var(--color-status-idle); }
+
+/*
+ * ── Reference: xterm.js terminal theme ───────────────────────────────
+ *
+ * Agent session terminal (blue cursor):
+ * {
+ *   background:       "#0A0A0F",
+ *   foreground:       "#D4D4D8",
+ *   cursor:           "#5B7EF8",   // brand blue
+ *   cursorAccent:     "#0A0A0F",
+ *   selectionBackground: "rgba(91, 126, 248, 0.3)",
+ *   fontSize:         13,
+ *   fontFamily:       '"JetBrains Mono", "SF Mono", Menlo, Monaco, monospace',
+ * }
+ *
+ * Orchestrator terminal (violet cursor — identity differentiation):
+ * {
+ *   background:       "#0A0A0F",
+ *   foreground:       "#D4D4D8",
+ *   cursor:           "#a371f7",   // violet: orchestrator identity
+ *   cursorAccent:     "#0A0A0F",
+ *   selectionBackground: "rgba(163, 113, 247, 0.25)",
+ *   fontSize:         13,
+ *   fontFamily:       '"JetBrains Mono", "SF Mono", Menlo, Monaco, monospace',
+ * }
+ */
+
+/*
+ * ── Competitor palette reference ─────────────────────────────────────
+ * (Kept for cross-referencing during implementation)
+ *
+ * Linear (Playwright-verified):
+ *   Body bg:        #08090A
+ *   Panel bg:       #0F1011   (--color-bg-panel)
+ *   Brand accent:   #7070FF   (--color-accent)
+ *   Blue status:    #4EA7FC
+ *   Red status:     #EB5757
+ *   Green status:   #27A644
+ *   Orange status:  #FC7840
+ *   Yellow status:  #F0BF00
+ *   UI font:        Inter Variable
+ *   Mono font:      Berkeley Mono (premium licensed)
+ *   Serif font:     Tiempos Headline (display only)
+ *
+ * Railway (visually estimated from screenshot):
+ *   Dark bg:        hsl(250, 24%, 9%) ≈ #13111C
+ *   CTA purple:     ~#7C3AED
+ *
+ * WandB:
+ *   Background:     #1A1C1F
+ *   Card:           #212429 / #282A2F
+ *   Cyan accent:    #00AFC2
+ *   Border:         1px solid #34373C
+ *
+ * LangSmith:
+ *   Background:     #030710  (blue-cast near-black)
+ *   Electric blue:  #4D65FF
+ *   Primary font:   JetBrains Mono (monospace as UI font — unique)
+ *
+ * Supabase:
+ *   Brand green:    #3ECF8E / #34B27B
+ *   Background:     #11181C
+ *   UI font:        Inter
+ *
+ * Vercel:
+ *   Pure black:     #000000
+ *   Pure white:     #FAFAFA
+ *   Font:           Geist (proprietary)
+ */
