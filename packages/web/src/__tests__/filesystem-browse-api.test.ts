@@ -185,6 +185,18 @@ describe("/api/filesystem/browse", () => {
     expect(body.entries.map((entry) => entry.name)).not.toContain(".env");
   });
 
+  it("detects git repo and local config for subdirectories", async () => {
+    const repo = path.join(homeDir, "repo");
+    mkdirSync(path.join(repo, ".git"), { recursive: true });
+    writeFileSync(path.join(repo, "agent-orchestrator.yaml"), "version: 1\n");
+
+    const response = await browseGET(makeRequest("http://localhost:3000/api/filesystem/browse?path=~"));
+    const body = await response.json();
+    const entry = body.entries.find((e: { name: string }) => e.name === "repo");
+
+    expect(entry).toMatchObject({ isDirectory: true, isGitRepo: true, hasLocalConfig: true });
+  });
+
   it("redirects the legacy browse endpoint to the new route", async () => {
     const response = await legacyBrowseGET(makeRequest("/api/browse-directory?path=~/repo"));
 
