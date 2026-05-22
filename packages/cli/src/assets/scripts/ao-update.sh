@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+trap 'printf '\''ERROR: Update incomplete. Run: pnpm -r build && ao update --skip-smoke\'' >&2; exit 1' ERR
+
 SKIP_SMOKE=false
 SMOKE_ONLY=false
 TARGET_BRANCH="${AO_UPDATE_BRANCH:-main}"
@@ -190,9 +192,7 @@ if [ "$SMOKE_ONLY" = false ]; then
     run_cmd pnpm --filter @aoagents/ao-cli clean
     run_cmd pnpm --filter @aoagents/ao-web clean
 
-    run_cmd pnpm --filter @aoagents/ao-core build
-    run_cmd pnpm --filter @aoagents/ao-cli build
-    run_cmd pnpm --filter @aoagents/ao-web build
+    run_cmd pnpm -r build
 
     printf '\nRefreshing ao launcher...\n'
     (
