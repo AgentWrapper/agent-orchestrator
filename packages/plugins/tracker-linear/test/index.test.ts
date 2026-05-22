@@ -177,20 +177,30 @@ function mockRequestTimeout() {
 describe("tracker-linear plugin", () => {
   let tracker: ReturnType<typeof create>;
   let savedApiKey: string | undefined;
+  let savedComposioKey: string | undefined;
+  let savedComposioEntity: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     savedApiKey = process.env["LINEAR_API_KEY"];
+    savedComposioKey = process.env["COMPOSIO_API_KEY"];
+    savedComposioEntity = process.env["COMPOSIO_ENTITY_ID"];
+    // This suite exercises the direct LINEAR_API_KEY transport. Clear any
+    // ambient COMPOSIO_API_KEY (commonly exported for unrelated Composio work)
+    // so transport selection is deterministic regardless of the shell.
     process.env["LINEAR_API_KEY"] = "lin_api_test_key";
+    delete process.env["COMPOSIO_API_KEY"];
+    delete process.env["COMPOSIO_ENTITY_ID"];
     tracker = create();
   });
 
   afterEach(() => {
-    if (savedApiKey === undefined) {
-      delete process.env["LINEAR_API_KEY"];
-    } else {
-      process.env["LINEAR_API_KEY"] = savedApiKey;
-    }
+    if (savedApiKey === undefined) delete process.env["LINEAR_API_KEY"];
+    else process.env["LINEAR_API_KEY"] = savedApiKey;
+    if (savedComposioKey === undefined) delete process.env["COMPOSIO_API_KEY"];
+    else process.env["COMPOSIO_API_KEY"] = savedComposioKey;
+    if (savedComposioEntity === undefined) delete process.env["COMPOSIO_ENTITY_ID"];
+    else process.env["COMPOSIO_ENTITY_ID"] = savedComposioEntity;
   });
 
   // ---- manifest ----------------------------------------------------------

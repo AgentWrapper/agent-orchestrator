@@ -38,6 +38,35 @@ function recordTransportActivityEvent(event: Parameters<typeof recordActivityEve
   }
 }
 
+/** Thrown by the Composio transport when @composio/core cannot be loaded. */
+class ComposioSdkMissingError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "Composio SDK (@composio/core) is not installed. " +
+        "Install it with: pnpm add @composio/core",
+      { cause },
+    );
+    this.name = "ComposioSdkMissingError";
+  }
+}
+
+/** Emit tracker.dep_missing at most once per process. */
+function emitDepMissingOnce(): void {
+  if (depMissingEmitted) return;
+  depMissingEmitted = true;
+  recordActivityEvent({
+    source: "tracker",
+    kind: "tracker.dep_missing",
+    level: "error",
+    summary: "Composio SDK (@composio/core) is not installed",
+    data: {
+      plugin: "tracker-linear",
+      package: "@composio/core",
+      installHint: "pnpm add @composio/core",
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Transport abstraction
 // ---------------------------------------------------------------------------
@@ -229,26 +258,7 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
             msg.includes("Cannot find package") ||
             msg.includes("ERR_MODULE_NOT_FOUND")
           ) {
-            // User-actionable, system-wide. Emit once per process.
-            if (!depMissingEmitted) {
-              depMissingEmitted = true;
-              recordActivityEvent({
-                source: "tracker",
-                kind: "tracker.dep_missing",
-                level: "error",
-                summary: "Composio SDK (@composio/core) is not installed",
-                data: {
-                  plugin: "tracker-linear",
-                  package: "@composio/core",
-                  installHint: "pnpm add @composio/core",
-                },
-              });
-            }
-            throw new Error(
-              "Composio SDK (@composio/core) is not installed. " +
-                "Install it with: pnpm add @composio/core",
-              { cause: err },
-            );
+            throw new ComposioSdkMissingError(err);
           }
           throw err;
         }
@@ -823,11 +833,38 @@ export const manifest = {
   version: "0.1.0",
 };
 
+/**
+ * Wrap the Composio transport so a missing @composio/core SDK falls back to the
+ * direct LINEAR_API_KEY transport instead of hard-failing. A bare COMPOSIO_API_KEY
+ * (often exported globally for unrelated Composio work) must not break an
+ * otherwise-valid Linear setup. If no LINEAR_API_KEY is available there is no
+ * fallback, so the dep_missing event is emitted and the error surfaces.
+ */
+function withComposioFallback(composio: GraphQLTransport): GraphQLTransport {
+  let active = composio;
+  return async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+    try {
+      return await active<T>(query, variables);
+    } catch (err) {
+      if (err instanceof ComposioSdkMissingError) {
+        if (process.env["LINEAR_API_KEY"]) {
+          active = createDirectTransport();
+          return await active<T>(query, variables);
+        }
+        emitDepMissingOnce();
+      }
+      throw err;
+    }
+  };
+}
+
 export function create(): Tracker {
   const composioKey = process.env["COMPOSIO_API_KEY"];
   if (composioKey) {
     const entityId = process.env["COMPOSIO_ENTITY_ID"] ?? "default";
-    return createLinearTracker(createComposioTransport(composioKey, entityId));
+    return createLinearTracker(
+      withComposioFallback(createComposioTransport(composioKey, entityId)),
+    );
   }
   return createLinearTracker(createDirectTransport());
 }
