@@ -1,5 +1,13 @@
 # @aoagents/ao-plugin-agent-grok
 
+## 0.1.2
+
+### Patch Changes
+
+- 2d4c457: Fix canary nightly to include all publishable packages and fix Next.js import.meta.url build path issue
+- Updated dependencies [2d4c457]
+  - @aoagents/ao-core@0.9.1
+
 ## 0.1.1
 
 ### Patch Changes
