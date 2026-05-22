@@ -22,21 +22,10 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
-import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import which from "which";
-
-const require = createRequire(import.meta.url);
-const packageJson = require("../package.json") as {
-  name: string;
-  version: string;
-  description: string;
-};
-const PACKAGE_NAME_PREFIX = "@aoagents/ao-plugin-agent-";
-const pluginName = packageJson.name.startsWith(PACKAGE_NAME_PREFIX)
-  ? packageJson.name.slice(PACKAGE_NAME_PREFIX.length)
-  : packageJson.name;
+import { pluginDescription, pluginName, pluginVersion } from "./generated-manifest.js";
 
 const execFileAsync = promisify(execFile);
 const GROK_EXECUTABLE = "grok";
@@ -145,8 +134,8 @@ function classifyGrokTerminalOutput(terminalOutput: string): ActivityState {
 export const manifest = {
   name: pluginName,
   slot: "agent" as const,
-  description: packageJson.description,
-  version: packageJson.version,
+  description: pluginDescription,
+  version: pluginVersion,
   displayName: "Grok",
 };
 

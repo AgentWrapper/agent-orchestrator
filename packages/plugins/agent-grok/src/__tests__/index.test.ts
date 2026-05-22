@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentLaunchConfig, RuntimeHandle, Session } from "@aoagents/ao-core";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -151,6 +152,34 @@ describe("manifest", () => {
       version: packageJson.version,
       displayName: "Grok",
     });
+  });
+
+  it("does not read package.json at runtime during module import", async () => {
+    const candidates = [
+      new URL("../index.ts", import.meta.url),
+      new URL("../index.js", import.meta.url),
+      new URL("../../dist/index.js", import.meta.url),
+    ];
+    const checkedSources: string[] = [];
+
+    for (const candidate of candidates) {
+      try {
+        checkedSources.push(await readFile(candidate, "utf-8"));
+      } catch (error) {
+        const code =
+          typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+        if (code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+
+    expect(checkedSources.length).toBeGreaterThan(0);
+    for (const source of checkedSources) {
+      expect(source).not.toContain("createRequire(import.meta.url)");
+      expect(source).not.toContain('require("../package.json")');
+      expect(source).not.toContain('from "../package.json"');
+    }
   });
 });
 

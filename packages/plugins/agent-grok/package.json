@@ -28,8 +28,12 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "gen:manifest": "node scripts/generate-manifest.mjs",
+    "prebuild": "pnpm gen:manifest",
     "build": "tsc",
+    "pretypecheck": "pnpm gen:manifest",
     "typecheck": "tsc --noEmit",
+    "pretest": "pnpm gen:manifest",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
