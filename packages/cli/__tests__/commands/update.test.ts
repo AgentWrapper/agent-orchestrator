@@ -1002,7 +1002,7 @@ describe("update command", () => {
       }
     });
 
-    it("actually invokes runNpmInstall when AO_NON_INTERACTIVE_INSTALL=1 even though isTTY is false", async () => {
+    it("invokes runNpmInstall exactly once when AO_NON_INTERACTIVE_INSTALL=1 even though isTTY is false", async () => {
       // The P1 bug: before this fix, the !isTTY() branch printed "Run: ..."
       // and returned. The dashboard's banner click would 202 but no install
       // would run. Asserting spawn was called proves the install actually
@@ -1013,6 +1013,10 @@ describe("update command", () => {
         expect.arrayContaining(["install"]),
         expect.anything(),
       );
+      const installCalls = mockSpawn.mock.calls.filter(([cmd, args]) => {
+        return cmd === "npm" && Array.isArray(args) && args.includes("install");
+      });
+      expect(installCalls).toHaveLength(1);
       // And without a TTY, we MUST NOT have prompted — that would hang the
       // detached child forever.
       expect(mockPromptConfirm).not.toHaveBeenCalled();

@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
 Usage: ao update [--skip-smoke] [--smoke-only]
 
 Fast-forwards the local Agent Orchestrator install repo to main, installs deps,
-clean-rebuilds critical packages, refreshes the ao launcher, and runs smoke tests.
+clean-rebuilds all workspace packages, refreshes the ao launcher, and runs smoke tests.
 
 Options:
   --skip-smoke  Skip smoke tests after rebuild
@@ -186,13 +186,8 @@ if [ "$SMOKE_ONLY" = false ]; then
     run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
     run_cmd pnpm install
 
-    run_cmd pnpm --filter @aoagents/ao-core clean
-    run_cmd pnpm --filter @aoagents/ao-cli clean
-    run_cmd pnpm --filter @aoagents/ao-web clean
-
-    run_cmd pnpm --filter @aoagents/ao-core build
-    run_cmd pnpm --filter @aoagents/ao-cli build
-    run_cmd pnpm --filter @aoagents/ao-web build
+    run_cmd pnpm -r --if-present clean
+    run_cmd pnpm build
 
     printf '\nRefreshing ao launcher...\n'
     (
