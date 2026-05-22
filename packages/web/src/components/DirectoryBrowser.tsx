@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
@@ -8,7 +8,9 @@ import {
   FolderIcon,
   getBreadcrumbs,
   joinBrowsePath,
+  loadRecentPaths,
   RefreshIcon,
+  SidebarSection,
 } from "@/components/AddProjectModal.parts";
 import type { UseDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
 
@@ -31,6 +33,8 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const typeaheadBufferRef = useRef("");
   const typeaheadLastTsRef = useRef(0);
+  const [recentOpen, setRecentOpen] = useState(true);
+  const [recentPaths] = useState(() => loadRecentPaths());
   const selectedIndex = useMemo(
     () =>
       browser.directoryEntries.findIndex(
@@ -164,72 +168,88 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
         />
       </div>
 
-      <div ref={contentRef} className="add-project-modal__content">
+      <div className="add-project-modal__content">
         <div className="add-project-browser">
-          <div className="add-project-browser__current">
-            <div className="add-project-browser__current-label">Current folder</div>
-            <div className="add-project-browser__breadcrumb">
-              {getBreadcrumbs(browser.browsePath).map((crumb) => (
+          <aside className="add-project-browser__sidebar">
+            <SidebarSection title="Recent" open={recentOpen} onToggle={() => setRecentOpen((open) => !open)}>
+              {recentPaths.map((path) => (
                 <button
-                  key={crumb.path}
+                  key={path}
                   type="button"
-                  className="add-project-browser__crumb"
-                  onClick={() => void browser.browse(crumb.path)}
+                  className="add-project-browser__sidebar-item"
+                  onClick={() => void browser.browse(path, { selectedPath: path })}
                 >
-                  {crumb.label}
+                  {path}
                 </button>
               ))}
-            </div>
-            <div className="add-project-browser__current-path">{browser.browsePath}</div>
-          </div>
-          {browser.error ? (
-            <div className="add-project-browser__state add-project-browser__state--error">
-              <p className="add-project-browser__state-title">Directory browser unavailable</p>
-              <p className="add-project-browser__state-copy">{browser.error}</p>
-            </div>
-          ) : browser.loading ? (
-            <div className="add-project-browser__state">
-              <p className="add-project-browser__state-title">Loading folders</p>
-              <p className="add-project-browser__state-copy">Fetching directories for this location.</p>
-            </div>
-          ) : browser.directoryEntries.length === 0 ? (
-            <div className="add-project-browser__state">
-              <p className="add-project-browser__state-title">No visible folders here</p>
-              <p className="add-project-browser__state-copy">Try navigating up or picking a different location.</p>
-            </div>
-          ) : (
-            <div className="add-project-browser__rows">
-              {browser.parentPath ? (
-                <button
-                  type="button"
-                  onClick={browser.goUp}
-                  className="add-project-browser__row add-project-browser__row--parent"
-                >
-                  ..
-                </button>
-              ) : null}
-              {browser.directoryEntries.map((entry) => {
-                const nextPath = joinBrowsePath(browser.browsePath, entry.name);
-                return (
+            </SidebarSection>
+          </aside>
+          <div ref={contentRef} className="add-project-browser__main">
+            <div className="add-project-browser__current">
+              <div className="add-project-browser__current-label">Current folder</div>
+              <div className="add-project-browser__breadcrumb">
+                {getBreadcrumbs(browser.browsePath).map((crumb) => (
                   <button
-                    key={nextPath}
+                    key={crumb.path}
                     type="button"
-                    onClick={() => browser.setSelectedBrowsePath(nextPath)}
-                    onDoubleClick={() => void browser.browse(nextPath)}
-                    className={`add-project-browser__row${browser.selectedBrowsePath === nextPath ? " is-selected" : ""}`}
+                    className="add-project-browser__crumb"
+                    onClick={() => void browser.browse(crumb.path)}
                   >
-                    <FolderIcon className="add-project-browser__row-icon" />
-                    <span className="add-project-browser__row-name">{entry.name}</span>
-                    {entry.isGitRepo ? (
-                      <span className="add-project-browser__badge" aria-hidden="true">
-                        git
-                      </span>
-                    ) : null}
+                    {crumb.label}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <div className="add-project-browser__current-path">{browser.browsePath}</div>
             </div>
-          )}
+            {browser.error ? (
+              <div className="add-project-browser__state add-project-browser__state--error">
+                <p className="add-project-browser__state-title">Directory browser unavailable</p>
+                <p className="add-project-browser__state-copy">{browser.error}</p>
+              </div>
+            ) : browser.loading ? (
+              <div className="add-project-browser__state">
+                <p className="add-project-browser__state-title">Loading folders</p>
+                <p className="add-project-browser__state-copy">Fetching directories for this location.</p>
+              </div>
+            ) : browser.directoryEntries.length === 0 ? (
+              <div className="add-project-browser__state">
+                <p className="add-project-browser__state-title">No visible folders here</p>
+                <p className="add-project-browser__state-copy">Try navigating up or picking a different location.</p>
+              </div>
+            ) : (
+              <div className="add-project-browser__rows">
+                {browser.parentPath ? (
+                  <button
+                    type="button"
+                    onClick={browser.goUp}
+                    className="add-project-browser__row add-project-browser__row--parent"
+                  >
+                    ..
+                  </button>
+                ) : null}
+                {browser.directoryEntries.map((entry) => {
+                  const nextPath = joinBrowsePath(browser.browsePath, entry.name);
+                  return (
+                    <button
+                      key={nextPath}
+                      type="button"
+                      onClick={() => browser.setSelectedBrowsePath(nextPath)}
+                      onDoubleClick={() => void browser.browse(nextPath)}
+                      className={`add-project-browser__row${browser.selectedBrowsePath === nextPath ? " is-selected" : ""}`}
+                    >
+                      <FolderIcon className="add-project-browser__row-icon" />
+                      <span className="add-project-browser__row-name">{entry.name}</span>
+                      {entry.isGitRepo ? (
+                        <span className="add-project-browser__badge" aria-hidden="true">
+                          git
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>

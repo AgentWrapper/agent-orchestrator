@@ -5,6 +5,8 @@ import { DirectoryBrowser } from "@/components/DirectoryBrowser";
 import { useDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
 import type { UseDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
 
+const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+
 function Harness() {
   const browser = useDirectoryBrowser();
   useEffect(() => {
@@ -16,6 +18,7 @@ function Harness() {
 describe("DirectoryBrowser", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (localStorageDescriptor) Object.defineProperty(window, "localStorage", localStorageDescriptor);
   });
 
   it("renders folders from the browse API and selects on click", async () => {
@@ -168,6 +171,80 @@ describe("DirectoryBrowser", () => {
     fireEvent.keyDown(row!, { key: "b" });
 
     await waitFor(() => expect(row?.className).toContain("is-selected"));
+  });
+
+  it("lists recent folders and navigates on click", async () => {
+    const store = new Map<string, string>([["ao:add-project:recent", JSON.stringify(["~/projects/old"])]]);
+    Object.defineProperty(window, "localStorage", {
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => store.set(k, v),
+        removeItem: (k: string) => store.delete(k),
+        clear: () => store.clear(),
+        get length() {
+          return store.size;
+        },
+        key: (i: number) => [...store.keys()][i] ?? null,
+      },
+      writable: true,
+      configurable: true,
+    });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ entries: [], roots: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Harness />);
+
+    fireEvent.click(await screen.findByText("~/projects/old"));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/filesystem/browse?path=~%2Fprojects%2Fold"),
+    );
+    await waitFor(() => expect(screen.getAllByText("~/projects/old")).toHaveLength(2));
+  });
+
+  it("selects the recent folder path when navigating from the sidebar", async () => {
+    const store = new Map<string, string>([["ao:add-project:recent", JSON.stringify(["~/projects/old"])]]);
+    Object.defineProperty(window, "localStorage", {
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => store.set(k, v),
+        removeItem: (k: string) => store.delete(k),
+        clear: () => store.clear(),
+        get length() {
+          return store.size;
+        },
+        key: (i: number) => [...store.keys()][i] ?? null,
+      },
+      writable: true,
+      configurable: true,
+    });
+    const browser = {
+      browsePath: "~",
+      selectedBrowsePath: "~",
+      setSelectedBrowsePath: vi.fn(),
+      directoryEntries: [],
+      currentDirectory: null,
+      roots: [],
+      selectedRootPath: "",
+      locationInput: "~",
+      setLocationInput: vi.fn(),
+      loading: false,
+      error: null,
+      parentPath: null,
+      canGoBack: false,
+      canGoForward: false,
+      browse: vi.fn(),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+      goUp: vi.fn(),
+      refresh: vi.fn(),
+      reset: vi.fn(),
+    } satisfies UseDirectoryBrowser;
+
+    render(<DirectoryBrowser browser={browser} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "~/projects/old" }));
+
+    expect(browser.browse).toHaveBeenCalledWith("~/projects/old", { selectedPath: "~/projects/old" });
   });
 
   it("does not descend on modified Enter when a folder is selected", async () => {
