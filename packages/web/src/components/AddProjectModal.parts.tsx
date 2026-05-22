@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-const RECENT_PATHS_KEY = "ao:add-project:recent";
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:[\\/]?$/;
 const WINDOWS_ABSOLUTE_PATTERN = /^[A-Za-z]:[\\/]/;
 const UNC_ROOT_PATTERN = /^\\\\[^\\]+\\[^\\]+\\?$/;
@@ -78,22 +77,6 @@ export function getBreadcrumbs(currentPath: string): Array<{ label: string; path
   return crumbs;
 }
 
-export function loadRecentPaths(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(RECENT_PATHS_KEY) ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveRecentPath(input: string) {
-  if (typeof window === "undefined") return;
-  const next = [input, ...loadRecentPaths().filter((value) => value !== input)].slice(0, 5);
-  window.localStorage.setItem(RECENT_PATHS_KEY, JSON.stringify(next));
-}
-
 function Glyph({
   children,
   className,
@@ -104,28 +87,6 @@ function Glyph({
   viewBox?: string;
 }) {
   return <svg aria-hidden="true" viewBox={viewBox} className={className}>{children}</svg>;
-}
-
-export function SidebarSection({
-  title,
-  open,
-  onToggle,
-  children,
-}: {
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="add-project-browser__sidebar-section">
-      <button type="button" className="add-project-browser__sidebar-toggle" onClick={onToggle}>
-        <span>{title}</span>
-        <span className={`add-project-browser__sidebar-chevron${open ? " is-open" : ""}`}>∨</span>
-      </button>
-      {open ? <div className="add-project-browser__sidebar-body">{children}</div> : null}
-    </section>
-  );
 }
 
 const iconPath = { fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinejoin: "miter" as const };
@@ -153,7 +114,7 @@ export function ArrowUpIcon() {
 }
 
 export function RefreshIcon() {
-  return <Glyph className="add-project-modal__toolicon"><path d="M12 5V2.75H9.75M4.5 11A4.75 4.75 0 0 0 12 5M3.75 11v2.25H6m5.5-8.25A4.75 4.75 0 0 1 4 11" {...compoundStroke} /></Glyph>;
+  return <Glyph className="add-project-modal__toolicon"><path d="M13 8A5 5 0 1 1 8 3M6.3 1.7 8 3 6.3 4.3" {...compoundStroke} /></Glyph>;
 }
 
 export function SortChevronIcon() {

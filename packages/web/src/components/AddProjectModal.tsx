@@ -6,7 +6,6 @@ import {
   deriveProjectIdFromPath,
   deriveProjectNameFromPath,
   joinBrowsePath,
-  saveRecentPath,
 } from "@/components/AddProjectModal.parts";
 import { DirectoryBrowser } from "@/components/DirectoryBrowser";
 import { useDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
@@ -125,7 +124,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           else setNetworkError(message);
           return;
         }
-        saveRecentPath(resolvedPath);
         const nextProjectId = body?.projectId ?? projectId.trim();
         onClose();
         router.push(`/projects/${encodeURIComponent(nextProjectId)}`);
@@ -224,27 +222,29 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           <span className="add-project-modal__selection-label">Selected</span>
           <span className="add-project-modal__selection-path">{selectedBrowsePath || "No directory selected"}</span>
         </div>
-        <div className="add-project-modal__pathbar add-project-modal__pathbar--selection">
-          <label className="add-project-modal__selection-label" htmlFor="project-id-input">
-            Project ID
-          </label>
-          <input
-            id="project-id-input"
-            value={projectIdInput}
-            onChange={(event) => setProjectIdInput(event.target.value)}
-            className="add-project-modal__selection-path"
-          />
-        </div>
-        <div className="add-project-modal__pathbar add-project-modal__pathbar--selection">
-          <label className="add-project-modal__selection-label" htmlFor="project-name-input">
-            Project name
-          </label>
-          <input
-            id="project-name-input"
-            value={projectNameInput}
-            onChange={(event) => setProjectNameInput(event.target.value)}
-            className="add-project-modal__selection-path"
-          />
+        <div className="add-project-modal__pathbar add-project-modal__formrow">
+          <div className="add-project-modal__field">
+            <label className="add-project-modal__selection-label" htmlFor="project-id-input">
+              Project ID
+            </label>
+            <input
+              id="project-id-input"
+              value={projectIdInput}
+              onChange={(event) => setProjectIdInput(event.target.value)}
+              className="add-project-modal__selection-path"
+            />
+          </div>
+          <div className="add-project-modal__field">
+            <label className="add-project-modal__selection-label" htmlFor="project-name-input">
+              Project name
+            </label>
+            <input
+              id="project-name-input"
+              value={projectNameInput}
+              onChange={(event) => setProjectNameInput(event.target.value)}
+              className="add-project-modal__selection-path"
+            />
+          </div>
         </div>
         {selectedNotice}
 

@@ -4,8 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DirectoryBrowser } from "@/components/DirectoryBrowser";
 import { useDirectoryBrowser, type UseDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
 
-const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
-
 function Harness() {
   const browser = useDirectoryBrowser();
   useEffect(() => {
@@ -17,7 +15,6 @@ function Harness() {
 describe("DirectoryBrowser", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-    if (localStorageDescriptor) Object.defineProperty(window, "localStorage", localStorageDescriptor);
   });
 
   it("renders folders from the browse API and selects on click", async () => {
@@ -57,7 +54,7 @@ describe("DirectoryBrowser", () => {
 
     render(<Harness />);
 
-    const repoRow = await screen.findByRole("button", { name: "repo" });
+    const repoRow = await screen.findByRole("button", { name: "repo, Git repository" });
     const plainRow = await screen.findByRole("button", { name: "plain" });
 
     expect(repoRow.querySelector(".add-project-browser__row-icon")).not.toBeNull();
@@ -172,63 +169,20 @@ describe("DirectoryBrowser", () => {
     await waitFor(() => expect(row?.className).toContain("is-selected"));
   });
 
-  it("lists recent folders and navigates on click", async () => {
-    const store = new Map<string, string>([["ao:add-project:recent", JSON.stringify(["~/projects/old"])]]);
-    Object.defineProperty(window, "localStorage", {
-      value: {
-        getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => store.set(k, v),
-        removeItem: (k: string) => store.delete(k),
-        clear: () => store.clear(),
-        get length() {
-          return store.size;
-        },
-        key: (i: number) => [...store.keys()][i] ?? null,
-      },
-      writable: true,
-      configurable: true,
-    });
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ entries: [], roots: [] }) });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<Harness />);
-
-    fireEvent.click(await screen.findByText("~/projects/old"));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/filesystem/browse?path=~%2Fprojects%2Fold"),
-    );
-    await waitFor(() => expect(screen.getAllByText("~/projects/old")).toHaveLength(2));
-  });
-
-  it("selects the recent folder path when navigating from the sidebar", async () => {
-    const store = new Map<string, string>([["ao:add-project:recent", JSON.stringify(["~/projects/old"])]]);
-    Object.defineProperty(window, "localStorage", {
-      value: {
-        getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => store.set(k, v),
-        removeItem: (k: string) => store.delete(k),
-        clear: () => store.clear(),
-        get length() {
-          return store.size;
-        },
-        key: (i: number) => [...store.keys()][i] ?? null,
-      },
-      writable: true,
-      configurable: true,
-    });
+  it("renders a selectable, git-aware current-folder row", () => {
     const browser = {
-      browsePath: "~",
-      selectedBrowsePath: "~",
+      browsePath: "~/workspace/app",
+      selectedBrowsePath: "~/workspace/app/sub",
       setSelectedBrowsePath: vi.fn(),
-      directoryEntries: [],
-      currentDirectory: null,
+      directoryEntries: [{ name: "sub", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+      currentDirectory: { isGitRepo: true, hasLocalConfig: false },
       roots: [],
       selectedRootPath: "",
-      locationInput: "~",
+      locationInput: "~/workspace/app",
       setLocationInput: vi.fn(),
       loading: false,
       error: null,
-      parentPath: null,
+      parentPath: "~/workspace",
       canGoBack: false,
       canGoForward: false,
       browse: vi.fn(),
@@ -241,9 +195,10 @@ describe("DirectoryBrowser", () => {
 
     render(<DirectoryBrowser browser={browser} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "~/projects/old" }));
+    const currentRow = screen.getByRole("button", { name: "app, current folder, Git repository" });
+    fireEvent.click(currentRow);
 
-    expect(browser.browse).toHaveBeenCalledWith("~/projects/old", { selectedPath: "~/projects/old" });
+    expect(browser.setSelectedBrowsePath).toHaveBeenCalledWith("~/workspace/app");
   });
 
   it("does not descend on modified Enter when a folder is selected", async () => {
@@ -324,5 +279,36 @@ describe("DirectoryBrowser", () => {
     render(<DirectoryBrowser browser={browser} />);
 
     expect(browser.reset).not.toHaveBeenCalled();
+  });
+
+  it("handles keyboard navigation when focus is on an ancestor container", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          entries: [
+            { name: "alpha", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+            { name: "beta", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+          ],
+          roots: [],
+        }),
+      }),
+    );
+
+    render(
+      <div data-testid="dialog">
+        <Harness />
+      </div>,
+    );
+
+    const alpha = (await screen.findByText("alpha")).closest("button");
+    expect(alpha).not.toBeNull();
+
+    // The dialog wrapper is an ancestor of the browser panes — the state focus
+    // lands on when the modal opens. Keyboard nav must still respond.
+    fireEvent.keyDown(screen.getByTestId("dialog"), { key: "ArrowDown" });
+
+    await waitFor(() => expect(alpha?.className).toContain("is-selected"));
   });
 });

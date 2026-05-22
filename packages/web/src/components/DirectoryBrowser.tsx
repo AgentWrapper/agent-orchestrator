@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
@@ -8,9 +8,7 @@ import {
   FolderIcon,
   getBreadcrumbs,
   joinBrowsePath,
-  loadRecentPaths,
   RefreshIcon,
-  SidebarSection,
 } from "@/components/AddProjectModal.parts";
 import type { UseDirectoryBrowser } from "@/hooks/useDirectoryBrowser";
 
@@ -28,13 +26,17 @@ function isFolderRowTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.classList.contains("add-project-browser__row");
 }
 
+// A button/link handles Enter natively (breadcrumbs, toolbar buttons). Enter-to-descend
+// must skip those so it does not double-fire alongside the element's own activation.
+function isActivatableElement(target: EventTarget | null): boolean {
+  return target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement;
+}
+
 export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const typeaheadBufferRef = useRef("");
   const typeaheadLastTsRef = useRef(0);
-  const [recentOpen, setRecentOpen] = useState(true);
-  const [recentPaths] = useState(() => loadRecentPaths());
   const selectedIndex = useMemo(
     () =>
       browser.directoryEntries.findIndex(
@@ -46,11 +48,18 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
-      const isInsideBrowser =
-        target instanceof Node &&
-        (toolbarRef.current?.contains(target) || contentRef.current?.contains(target));
-      if (!isInsideBrowser) return;
-      if (isTextEditingTarget(event.target)) return;
+      if (!(target instanceof Node)) return;
+      if (isTextEditingTarget(target)) return;
+      // In scope when the event comes from inside the browser panes OR from an
+      // ancestor that contains them (the modal dialog focused on open, document.body).
+      // The plain ancestor `.contains` checks fail for that case because the dialog
+      // is an ancestor of the panes, not a descendant.
+      const content = contentRef.current;
+      const inScope =
+        (content?.contains(target) ?? false) ||
+        (toolbarRef.current?.contains(target) ?? false) ||
+        (content !== null && target.contains(content));
+      if (!inScope) return;
 
       if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
         const now = Date.now();
@@ -86,7 +95,7 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
       if (
         event.key === "Enter" &&
         selectedIndex >= 0 &&
-        isFolderRowTarget(event.target) &&
+        (isFolderRowTarget(target) || !isActivatableElement(target)) &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
@@ -100,6 +109,11 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [browser, selectedIndex]);
+
+  const breadcrumbs = getBreadcrumbs(browser.browsePath);
+  const currentName = breadcrumbs[breadcrumbs.length - 1]?.label ?? browser.browsePath;
+  const showCurrentFolder = browser.browsePath !== "~" && browser.currentDirectory !== null;
+  const currentSelected = browser.selectedBrowsePath === browser.browsePath;
 
   return (
     <>
@@ -169,70 +183,74 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
       </div>
 
       <div className="add-project-modal__content">
-        <div className="add-project-browser">
-          <aside className="add-project-browser__sidebar">
-            <SidebarSection title="Recent" open={recentOpen} onToggle={() => setRecentOpen((open) => !open)}>
-              {recentPaths.map((path) => (
+        <div ref={contentRef} className="add-project-browser">
+          <div className="add-project-browser__current">
+            <div className="add-project-browser__current-label">Current folder</div>
+            <div className="add-project-browser__breadcrumb">
+              {breadcrumbs.map((crumb) => (
                 <button
-                  key={path}
+                  key={crumb.path}
                   type="button"
-                  className="add-project-browser__sidebar-item"
-                  onClick={() => void browser.browse(path, { selectedPath: path })}
+                  className="add-project-browser__crumb"
+                  onClick={() => void browser.browse(crumb.path)}
                 >
-                  {path}
+                  {crumb.label}
                 </button>
               ))}
-            </SidebarSection>
-          </aside>
-          <div ref={contentRef} className="add-project-browser__main">
-            <div className="add-project-browser__current">
-              <div className="add-project-browser__current-label">Current folder</div>
-              <div className="add-project-browser__breadcrumb">
-                {getBreadcrumbs(browser.browsePath).map((crumb) => (
-                  <button
-                    key={crumb.path}
-                    type="button"
-                    className="add-project-browser__crumb"
-                    onClick={() => void browser.browse(crumb.path)}
-                  >
-                    {crumb.label}
-                  </button>
-                ))}
-              </div>
-              <div className="add-project-browser__current-path">{browser.browsePath}</div>
             </div>
-            {browser.error ? (
-              <div className="add-project-browser__state add-project-browser__state--error">
-                <p className="add-project-browser__state-title">Directory browser unavailable</p>
-                <p className="add-project-browser__state-copy">{browser.error}</p>
-              </div>
-            ) : browser.loading ? (
-              <div className="add-project-browser__state">
-                <p className="add-project-browser__state-title">Loading folders</p>
-                <p className="add-project-browser__state-copy">Fetching directories for this location.</p>
-              </div>
-            ) : browser.directoryEntries.length === 0 ? (
-              <div className="add-project-browser__state">
-                <p className="add-project-browser__state-title">No visible folders here</p>
-                <p className="add-project-browser__state-copy">Try navigating up or picking a different location.</p>
-              </div>
-            ) : (
-              <div className="add-project-browser__rows">
-                {browser.parentPath ? (
-                  <button
-                    type="button"
-                    onClick={browser.goUp}
-                    className="add-project-browser__row add-project-browser__row--parent"
-                  >
-                    ..
-                  </button>
-                ) : null}
-                {browser.directoryEntries.map((entry) => {
+          </div>
+          {browser.error ? (
+            <div className="add-project-browser__state add-project-browser__state--error">
+              <p className="add-project-browser__state-title">Directory browser unavailable</p>
+              <p className="add-project-browser__state-copy">{browser.error}</p>
+            </div>
+          ) : browser.loading ? (
+            <div className="add-project-browser__state">
+              <p className="add-project-browser__state-title">Loading folders</p>
+              <p className="add-project-browser__state-copy">Fetching directories for this location.</p>
+            </div>
+          ) : (
+            <div className="add-project-browser__rows">
+              {showCurrentFolder ? (
+                <button
+                  type="button"
+                  aria-label={
+                    browser.currentDirectory?.isGitRepo
+                      ? `${currentName}, current folder, Git repository`
+                      : `${currentName}, current folder`
+                  }
+                  onClick={() => browser.setSelectedBrowsePath(browser.browsePath)}
+                  className={`add-project-browser__row add-project-browser__row--current${currentSelected ? " is-selected" : ""}`}
+                >
+                  <FolderIcon className="add-project-browser__row-icon" />
+                  <span className="add-project-browser__row-name">{currentName}</span>
+                  <span className="add-project-browser__row-tag">this folder</span>
+                  {browser.currentDirectory?.isGitRepo ? (
+                    <span className="add-project-browser__badge" aria-hidden="true">
+                      git
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
+              {browser.parentPath ? (
+                <button
+                  type="button"
+                  onClick={browser.goUp}
+                  className="add-project-browser__row add-project-browser__row--parent"
+                >
+                  ..
+                </button>
+              ) : null}
+              {browser.directoryEntries.length === 0 ? (
+                <p className="add-project-browser__empty-row">No subfolders in this location.</p>
+              ) : (
+                browser.directoryEntries.map((entry) => {
                   const nextPath = joinBrowsePath(browser.browsePath, entry.name);
                   return (
                     <button
                       key={nextPath}
                       type="button"
+                      aria-label={entry.isGitRepo ? `${entry.name}, Git repository` : entry.name}
                       onClick={() => browser.setSelectedBrowsePath(nextPath)}
                       onDoubleClick={() => void browser.browse(nextPath)}
                       className={`add-project-browser__row${browser.selectedBrowsePath === nextPath ? " is-selected" : ""}`}
@@ -244,12 +262,15 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
                           git
                         </span>
                       ) : null}
+                      <span className="add-project-browser__row-chevron" aria-hidden="true">
+                        <ChevronRightIcon />
+                      </span>
                     </button>
                   );
-                })}
-              </div>
-            )}
-          </div>
+                })
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>
