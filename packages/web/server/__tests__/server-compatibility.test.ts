@@ -62,7 +62,7 @@ describe("start-all.ts", () => {
 describe("OrchestratorConfig compatibility", () => {
   it("OrchestratorConfig does not have dataDir property", () => {
     const typesSource = readFileSync(
-      join(__dirname, "..", "..", "..", "core", "src", "types.ts"),
+      join(__dirname, "..", "..", "..", "core", "src", "types", "config.ts"),
       "utf-8",
     );
 
