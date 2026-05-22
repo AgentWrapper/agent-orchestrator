@@ -1,0 +1,285 @@
+packages/core/src/__tests__/recovery-validator.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 122
+packages/cli/src/lib/update-check.ts
+  s_3c12ffb1648181::t_654752326ec70e 19,185,259,284-291,501,548,555-557,595
+packages/plugins/agent-grok/src/index.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-316
+packages/core/src/index.ts
+  s_3c12ffb1648181::t_654752326ec70e 44-50,376,436
+.changeset/config.json
+  s_3c12ffb1648181::t_654752326ec70e 40
+packages/core/src/__tests__/lifecycle-manager.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 152,229,535,562,568
+packages/cli/src/lib/detect-agent.ts
+  s_3c12ffb1648181::t_654752326ec70e 23
+packages/plugins/runtime-process/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/scm-github/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/web/server/__tests__/mux-websocket.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 3,8,991-1024
+packages/plugins/agent-opencode/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/recovery/validator.ts
+  s_3c12ffb1648181::t_654752326ec70e 24,47-49,52,54-56,63-64,66,122-123,128-130,149,197
+packages/plugins/agent-grok/src/__tests__/index.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-519
+packages/plugins/notifier-desktop/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/agent-cursor/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/terminal-web/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/notifier-webhook/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/scm-github/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/tracker-linear/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/workspace-clone/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/__tests__/recovery-actions.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 106,173
+packages/plugins/workspace-worktree/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/cli/src/lib/dashboard-url.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-24
+packages/web/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-86
+packages/web/server/single-port-server.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-378
+packages/cli/src/commands/send.ts
+  s_3c12ffb1648181::t_654752326ec70e 35
+.github/workflows/canary.yml
+  s_3c12ffb1648181::t_654752326ec70e 115-133,137
+packages/plugins/agent-codex/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/notifier-composio/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/plugins/notifier-webhook/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/cli/__tests__/commands/start.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1813-1852
+packages/plugins/agent-claude-code/src/index.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 81-82,498-509,520-533,1008-1267
+packages/plugins/scm-gitlab/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/web/src/app/projects/[projectId]/settings/page.test.tsx
+  s_3c12ffb1648181::t_654752326ec70e 80-81
+packages/web/src/lib/serialize.ts
+  s_3c12ffb1648181::t_654752326ec70e 550
+packages/plugins/notifier-discord/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/web/src/app/globals.css
+  s_3c12ffb1648181::t_654752326ec70e 1209,1350,1377-1393,2679,2686,2690-2695,8581,8630,8635-8640,8709-8716,8725-8739,8748
+packages/ao/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3,5-19,29-30
+packages/ao/README.md
+  s_3c12ffb1648181::t_654752326ec70e 1-93
+packages/plugins/agent-claude-code/src/activity-updater.integration.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-256
+packages/plugins/agent-claude-code/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-86
+packages/plugins/agent-aider/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/agent-claude-code/src/index.ts
+  s_3c12ffb1648181::t_654752326ec70e 388-617,800-819,821-948,957,960-961,963-970,972-979,993-994,1072-1086,1090-1093
+packages/plugins/notifier-discord/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/plugins/tracker-github/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/scm-gitlab/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/web/next.config.js
+  s_3c12ffb1648181::t_654752326ec70e 24-25
+packages/cli/src/lib/config-instruction.ts
+  s_3c12ffb1648181::t_654752326ec70e 32,185
+packages/web/src/components/__tests__/DirectTerminal.render.test.tsx
+  s_3c12ffb1648181::t_654752326ec70e 157
+packages/core/src/__tests__/platform.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 47-54
+packages/plugins/tracker-gitlab/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/workspace-worktree/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+eslint.config.js
+  s_3c12ffb1648181::t_654752326ec70e 60-74
+packages/plugins/tracker-github/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/runtime-tmux/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/recovery/actions.ts
+  s_3c12ffb1648181::t_654752326ec70e 54-59,110,131,236,296
+packages/web/src/app/api/version/route.ts
+  s_3c12ffb1648181::t_654752326ec70e 16,56-57,66
+packages/plugins/agent-opencode/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/core/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/activity-log.ts
+  s_3c12ffb1648181::t_654752326ec70e 38,101
+packages/plugins/agent-claude-code/src/__tests__/activity-detection.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 74-79,83-84,87,297-301,304-306,317-321,330,335-342
+packages/plugins/tracker-gitlab/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-26
+packages/cli/__tests__/scripts/doctor-script.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 10,38-45,72,263-321
+packages/web/src/lib/services.ts
+  s_3c12ffb1648181::t_654752326ec70e 42,115
+packages/core/src/__tests__/plugin-registry.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 154,160,168,173
+packages/plugins/agent-cursor/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/cli/__tests__/lib/dashboard-url.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-68
+packages/cli/src/commands/update.ts
+  s_3c12ffb1648181::t_654752326ec70e 71,73-78,80,120,140,144-146,148-155,157-159,172-174,189-191,194,197,199,201,209-224,226,229-236,239-252,254-282,284-312,314-334,344,346-347,363-365,369-371,373,388-390,405-407,416,463,492,511,513-516,528,543-545,551-556,558-570,572-613,616,618-631,639,643-654,657,661,666-794,808
+packages/core/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-87
+packages/core/src/__tests__/version-compare.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 3,10-43
+packages/core/src/__tests__/lifecycle-manager-instrumentation.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 79
+packages/plugins/notifier-slack/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/web/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3,50
+packages/plugins/agent-aider/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/notifier-openclaw/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/web/src/__tests__/services.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 13,48,75,126-131
+packages/web/server/__tests__/single-port-server.integration.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-308
+packages/plugins/agent-codex/src/index.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 2,25,40,73-83,694-744,1048-1162,1173-1191,1414-1438,1598
+packages/plugins/agent-kimicode/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/agent-claude-code/src/activity-detection.ts
+  s_3c12ffb1648181::t_654752326ec70e 279,282-299
+packages/plugins/notifier-openclaw/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/web/src/app/projects/[projectId]/page.test.tsx
+  s_3c12ffb1648181::t_654752326ec70e 83-84
+packages/cli/src/lib/routes.ts
+  s_3c12ffb1648181::t_654752326ec70e 1-2,4
+packages/plugins/runtime-tmux/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/cli/src/commands/dashboard.ts
+  s_3c12ffb1648181::t_654752326ec70e 15,46,94
+packages/cli/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-88
+packages/cli/src/assets/scripts/ao-doctor.sh
+  s_3c12ffb1648181::t_654752326ec70e 16,19,401-530,542
+packages/core/src/lifecycle-manager.ts
+  s_3c12ffb1648181::t_654752326ec70e 73,913-914
+packages/core/src/version-compare.ts
+  s_3c12ffb1648181::t_654752326ec70e 11-38
+packages/plugins/terminal-iterm2/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/plugins/notifier-slack/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/web/src/components/terminal/TerminalControls.tsx
+  s_3c12ffb1648181::t_654752326ec70e 220
+packages/cli/src/commands/start.ts
+  s_3c12ffb1648181::t_8dea880381dceb 13,90,824,890-891,951,1025-1026,1029-1032,1073-1074,1207,1242,1439-1440,1442,1462-1463,1474,1527,1537,1584,1616,1702,1704,1872-1913,1915-1929,1931-1939,1941,1943-1946,1949-2037,2039-2048,2050-2067,2070,2072-2080,2082-2085,2089-2094,2097-2139,2141-2146,2148-2153,2156-2167,2169,2171,2173-2174
+packages/plugins/agent-kimicode/src/index.ts
+  s_3c12ffb1648181::t_654752326ec70e 55-56,58-60,93-95
+packages/web/src/components/DegradedProjectState.tsx
+  s_3c12ffb1648181::t_654752326ec70e 2,64,67
+packages/core/src/__tests__/session-manager/spawn.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 1116-1127,1459-1469,2411-2420
+packages/plugins/notifier-composio/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/cli/src/commands/status.ts
+  s_3c12ffb1648181::t_654752326ec70e 15,130,163-165,168-173,509-511,528-530
+packages/plugins/notifier-dashboard/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 1-24
+packages/cli/__tests__/commands/update.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 8,56-57,85,98-99,145-149,151-166,183-185,253-255,325-327,372-374,386-388,396,419-423,433-435,461-463,471,477,481-490,520-522,554,557,559-570,573-582,584-586,589-595,599-619,621-625,628-635,637,639-645,648-651,655-664,669-681,684-687,689,692,694-701,704,712,714-716,718-751,818,934,979,1011-1015,1030,1032-1048,1090
+packages/core/src/session-manager.ts
+  s_3c12ffb1648181::t_654752326ec70e 97,275,541-555,617,629-633,648-650,654-655,730,925-927,930,968,970-975,1529-1532,2008-2014,2405,2407-2412,3579
+packages/notifier-macos/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/cli/__tests__/lib/update-check.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 87,119-154,1226-1228,1232-1233
+packages/plugins/tracker-linear/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/plugins/workspace-clone/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/agent-claude-code/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/web/src/lib/__tests__/serialize.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 34,61-62,1200-1272,1288
+packages/core/src/platform.ts
+  s_3c12ffb1648181::t_654752326ec70e 31-34
+packages/ao/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-22
+packages/plugins/agent-kimicode/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/plugins/notifier-desktop/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-25
+packages/core/src/__tests__/activity-log.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 243-251
+packages/plugins/terminal-web/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/types.ts
+  s_3c12ffb1648181::t_654752326ec70e 160,186,188-195,483-488
+packages/plugins/agent-grok/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 1-23
+packages/web/src/components/__tests__/SessionDetail.desktop.test.tsx
+  s_3c12ffb1648181::t_654752326ec70e 354,379-394,400,408,410-411,417-420,427-440,442-445,448,452-453,455,459-463,467,469-474,542
+packages/cli/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3,42
+SETUP.md
+  s_3c12ffb1648181::t_654752326ec70e 62-68
+packages/core/src/agent-selection.ts
+  s_3c12ffb1648181::t_654752326ec70e 32-56
+packages/plugins/agent-grok/tsconfig.json
+  s_3c12ffb1648181::t_654752326ec70e 1-9
+packages/notifier-macos/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 1-13
+packages/plugins/agent-codex/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/web/server/mux-websocket.ts
+  s_3c12ffb1648181::t_654752326ec70e 11-12,14,19,393-395,397-424,475,489-523,597
+CLAUDE.md
+  s_3c12ffb1648181::t_654752326ec70e 213,222-224
+packages/plugins/notifier-dashboard/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+packages/core/src/__tests__/session-manager/query.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 67-81,492
+packages/plugins/agent-grok/package.json
+  s_3c12ffb1648181::t_654752326ec70e 1-46
+packages/web/src/components/__tests__/DegradedProjectState.test.tsx
+  s_3c12ffb1648181::t_654752326ec70e 1-86
+packages/core/src/plugin-registry.ts
+  s_3c12ffb1648181::t_654752326ec70e 49
+packages/cli/src/lib/plugins.ts
+  s_3c12ffb1648181::t_654752326ec70e 7,17
+packages/plugins/agent-codex/src/index.ts
+  s_3c12ffb1648181::t_654752326ec70e 232-236,258-290,307-309,319-321,395-397,538,541-550,554-555,562-583,679-681,685,746-748,837,876-877,882,910-913
+packages/plugins/terminal-iterm2/CHANGELOG.md
+  s_3c12ffb1648181::t_654752326ec70e 3-24
+packages/core/src/__tests__/session-manager/communication.test.ts
+  s_3c12ffb1648181::t_654752326ec70e 601
+packages/plugins/runtime-process/package.json
+  s_3c12ffb1648181::t_654752326ec70e 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "87e3fce535fb0a1a110ed9d388f81ab397e381b5",
+  "prompts": {},
+  "sessions": {
+    "s_3c12ffb1648181": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2b3d-5c74-7c43-9d5a-c401453f9b3c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
