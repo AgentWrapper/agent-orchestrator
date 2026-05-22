@@ -27,8 +27,14 @@ function exportEntryPoints(): Record<string, string> {
     exports: Record<string, { import?: string }>;
   };
   const input: Record<string, string> = {};
-  for (const entry of Object.values(pkg.exports)) {
-    if (!entry.import) continue;
+  // Only entries with an `import` condition map to an emitted dist chunk.
+  // Warn (don't silently skip) on any other shape — e.g. a future string-form
+  // or require-only export — so a missing emit is visible at build time.
+  for (const [name, entry] of Object.entries(pkg.exports)) {
+    if (!entry?.import) {
+      console.warn(`[rollup] export "${name}" has no { import } field — not emitting a dist entry for it`);
+      continue;
+    }
     const key = entry.import.replace(/^\.\/dist\//, "").replace(/\.js$/, "");
     input[key] = `src/${key}.ts`;
   }
