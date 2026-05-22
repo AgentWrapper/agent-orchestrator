@@ -18,6 +18,7 @@ import {
   triggerCodeReviewForSession,
 } from "../code-review-manager.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
+import { isWindows } from "../platform.js";
 import {
   SessionNotFoundError,
   type OrchestratorConfig,
@@ -658,6 +659,7 @@ describe("escapeArgForCmd", () => {
     expect(escapeArgForCmd("a>b")).toBe('"a>b"');
     expect(escapeArgForCmd("a<b")).toBe('"a<b"');
     expect(escapeArgForCmd("a^b")).toBe('"a^b"');
+    expect(escapeArgForCmd("100%done")).toBe('"100%done"');
   });
 
   it("wraps empty string in double quotes", () => {
@@ -674,6 +676,33 @@ describe("escapeArgForCmd", () => {
     expect(escaped).toMatch(/^"/);
     expect(escaped).toMatch(/"$/);
     expect(escaped).toContain('{' + '""findings""' + ':[]}');
+  });
+});
+
+describe("execFileWithClosedStdin platform guard", () => {
+  const args = ["exec", "--sandbox", "read-only", "You are a reviewer."];
+  const shellEnabled = true;
+
+  it("escapes args when isWindows() is true and shell is enabled", () => {
+    const orig = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const result = shellEnabled && isWindows() ? args.map(escapeArgForCmd) : args;
+      expect(result[3]).toBe('"You are a reviewer."');
+    } finally {
+      Object.defineProperty(process, "platform", orig);
+    }
+  });
+
+  it("leaves args untouched when isWindows() is false", () => {
+    const orig = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    try {
+      const result = shellEnabled && isWindows() ? args.map(escapeArgForCmd) : args;
+      expect(result[3]).toBe("You are a reviewer.");
+    } finally {
+      Object.defineProperty(process, "platform", orig);
+    }
   });
 });
 

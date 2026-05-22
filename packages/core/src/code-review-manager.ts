@@ -39,8 +39,11 @@ const REVIEW_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
 // cmd.exe, losing multi-word argument boundaries (Node.js DEP0190). This wraps
 // args that contain spaces or cmd.exe metacharacters in double quotes so they
 // survive the cmd.exe re-parse.
+// Note: %VAR% expansion in cmd.exe cannot be fully suppressed inside double
+// quotes, but wrapping still protects against the other metacharacters. In
+// practice the review prompt and file-path args never contain literal `%`.
 export function escapeArgForCmd(arg: string): string {
-  if (arg.length > 0 && !/[\s"&|<>^]/.test(arg)) return arg;
+  if (arg.length > 0 && !/[\s"&|<>^%]/.test(arg)) return arg;
   return '"' + arg.replace(/"/g, '""') + '"';
 }
 
