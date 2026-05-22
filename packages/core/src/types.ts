@@ -17,6 +17,23 @@ import type { ObservabilityLevel } from "./observability.js";
  *   8. Lifecycle Manager (core, not pluggable)
  */
 
+
+// =============================================================================
+// AGENT MEMORY
+// =============================================================================
+
+export interface AgentMemoryEntry {
+  attempt: number;
+  agentId: string;
+  startedAt: Date;
+  finishedAt: Date;
+  status: "completed" | "failed" | "stuck" | "killed";
+  tried: string;
+  failedAt?: string;
+  nextSteps?: string;
+  outputDigest?: string;
+}
+
 // =============================================================================
 // SESSION
 // =============================================================================
@@ -746,6 +763,11 @@ export interface Tracker {
    * error message.
    */
   preflight?(context: PreflightContext): Promise<void>;
+  /** Read all prior agent memory entries from the issue */
+  readMemory?(identifier: string, project: ProjectConfig): Promise<AgentMemoryEntry[]>;
+
+  /** Append a new memory entry to the issue as a structured comment */
+  writeMemory?(identifier: string, entry: AgentMemoryEntry, project: ProjectConfig): Promise<void>;
 }
 
 export interface Issue {
@@ -758,6 +780,7 @@ export interface Issue {
   assignee?: string;
   priority?: number;
   branchName?: string;
+  agentMemory?: AgentMemoryEntry[];
 }
 
 export interface IssueFilters {
@@ -1584,12 +1607,12 @@ export interface ProjectConfig {
   orchestratorRules?: string;
 
   orchestratorSessionStrategy?:
-    | "reuse"
-    | "delete"
-    | "ignore"
-    | "delete-new"
-    | "ignore-new"
-    | "kill-previous";
+  | "reuse"
+  | "delete"
+  | "ignore"
+  | "delete-new"
+  | "ignore-new"
+  | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
 }
