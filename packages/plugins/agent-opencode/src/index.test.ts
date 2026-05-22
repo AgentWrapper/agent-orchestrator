@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm, readFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createActivitySignal,
   type Session,
@@ -829,9 +832,87 @@ describe("getRestoreCommand", () => {
 describe("setupWorkspaceHooks", () => {
   const agent = create();
 
-  it("is defined (delegates to shared setupPathWrapperWorkspace)", () => {
+  it("is defined", () => {
     expect(agent.setupWorkspaceHooks).toBeDefined();
     expect(typeof agent.setupWorkspaceHooks).toBe("function");
+  });
+
+  it("installs the activity plugin into .opencode/plugins/", async () => {
+    const ws = await mkdtemp(join(tmpdir(), "ao-oc-hooks-"));
+    try {
+      // git rev-parse goes through the mocked execFile; point it at this ws.
+      mockExecFileAsync.mockImplementation((cmd: string) => {
+        if (cmd === "git") return Promise.resolve({ stdout: ".git/info/exclude\n", stderr: "" });
+        return Promise.reject(new Error("unexpected"));
+      });
+
+      await agent.setupWorkspaceHooks!(ws, {});
+
+      const pluginPath = join(ws, ".opencode", "plugins", "ao-activity.js");
+      const content = await readFile(pluginPath, "utf8");
+      expect(content).toContain('source: "hook"');
+      expect(content).toContain("permission.asked");
+      expect(content).toContain("session.idle");
+      expect(content).toContain("AO_SESSION_ID");
+      expect(content).toContain("AO_OPENCODE_HOOK_ACTIVITY");
+    } finally {
+      await rm(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the plugin to git exclude so it stays out of the agent's PRs", async () => {
+    const ws = await mkdtemp(join(tmpdir(), "ao-oc-hooks-"));
+    try {
+      await mkdir(join(ws, ".git", "info"), { recursive: true });
+      mockExecFileAsync.mockImplementation((cmd: string) => {
+        if (cmd === "git") return Promise.resolve({ stdout: ".git/info/exclude\n", stderr: "" });
+        return Promise.reject(new Error("unexpected"));
+      });
+
+      await agent.setupWorkspaceHooks!(ws, {});
+
+      const exclude = await readFile(join(ws, ".git", "info", "exclude"), "utf8");
+      expect(exclude).toContain(".opencode/plugins/ao-activity.js");
+    } finally {
+      await rm(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("is idempotent — does not duplicate the git exclude entry", async () => {
+    const ws = await mkdtemp(join(tmpdir(), "ao-oc-hooks-"));
+    try {
+      await mkdir(join(ws, ".git", "info"), { recursive: true });
+      mockExecFileAsync.mockImplementation((cmd: string) => {
+        if (cmd === "git") return Promise.resolve({ stdout: ".git/info/exclude\n", stderr: "" });
+        return Promise.reject(new Error("unexpected"));
+      });
+
+      await agent.setupWorkspaceHooks!(ws, {});
+      await agent.setupWorkspaceHooks!(ws, {});
+
+      const exclude = await readFile(join(ws, ".git", "info", "exclude"), "utf8");
+      const occurrences = exclude
+        .split("\n")
+        .filter((l) => l.trim() === ".opencode/plugins/ao-activity.js").length;
+      expect(occurrences).toBe(1);
+    } finally {
+      await rm(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("still installs the plugin when git exclude resolution fails (best-effort)", async () => {
+    const ws = await mkdtemp(join(tmpdir(), "ao-oc-hooks-"));
+    try {
+      mockExecFileAsync.mockRejectedValue(new Error("not a git repo"));
+
+      await agent.setupWorkspaceHooks!(ws, {});
+
+      const pluginPath = join(ws, ".opencode", "plugins", "ao-activity.js");
+      const content = await readFile(pluginPath, "utf8");
+      expect(content).toContain('source: "hook"');
+    } finally {
+      await rm(ws, { recursive: true, force: true });
+    }
   });
 });
 
@@ -973,27 +1054,16 @@ describe("invalid session ID rejection", () => {
 });
 
 // =========================================================================
-// recordActivity
+// recordActivity — intentionally removed (hooks are the JSONL writer)
 // =========================================================================
 describe("recordActivity", () => {
   const agent = create();
 
-  it("is defined", () => {
-    expect(agent.recordActivity).toBeDefined();
-  });
-
-  it("does nothing when workspacePath is null", async () => {
-    await agent.recordActivity!(makeSession({ workspacePath: null }), "some output");
+  it("is not implemented — the plugin's hooks write activity directly", () => {
+    // Mirrors Claude Code (#1941): terminal-derived recordActivity writes would
+    // only add stale duplicates that shadow authoritative hook events.
+    expect(agent.recordActivity).toBeUndefined();
     expect(mockRecordTerminalActivity).not.toHaveBeenCalled();
-  });
-
-  it("delegates to recordTerminalActivity", async () => {
-    await agent.recordActivity!(makeSession(), "opencode is working");
-    expect(mockRecordTerminalActivity).toHaveBeenCalledWith(
-      "/workspace/test",
-      "opencode is working",
-      expect.any(Function),
-    );
   });
 });
 
@@ -1113,6 +1183,88 @@ describe("getActivityState with activity JSONL", () => {
       60_000,
     );
     expect(result?.state).toBe("idle");
+  });
+
+  it("prefers a fresh hook entry over the polled session-list API", async () => {
+    mockTmuxWithProcess("opencode");
+    // Hook says ready (turn just finished); the polled API says active (stale).
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "ready", source: "hook" },
+      modifiedAt: new Date(),
+    });
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  789 ttys003  opencode\n",
+          stderr: "",
+        });
+      }
+      if (cmd === "opencode") {
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            {
+              id: "ses_abc123",
+              title: "AO:test-1",
+              updated: new Date(Date.now() - 5_000).toISOString(),
+            },
+          ]),
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        metadata: { opencodeSessionId: "ses_abc123" },
+      }),
+      60_000,
+    );
+    // Hook wins: ready, not the API's active.
+    expect(result?.state).toBe("ready");
+  });
+
+  it("does NOT let a terminal-source entry win over the session-list API", async () => {
+    mockTmuxWithProcess("opencode");
+    // Legacy terminal entry says idle; API says active. API should win for
+    // non-hook sources (only hook entries are authoritative real-time signals).
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "idle", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  789 ttys003  opencode\n",
+          stderr: "",
+        });
+      }
+      if (cmd === "opencode") {
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            {
+              id: "ses_abc123",
+              title: "AO:test-1",
+              updated: new Date(Date.now() - 5_000).toISOString(),
+            },
+          ]),
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        metadata: { opencodeSessionId: "ses_abc123" },
+      }),
+      60_000,
+    );
+    expect(result?.state).toBe("active");
   });
 
   it("returns null when both session list and JSONL are unavailable", async () => {
