@@ -2326,8 +2326,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.readMemory || !tracker?.writeMemory) return;
 
-    const runtime = registry.get<Runtime>(project.runtime ?? config.defaults.runtime, "runtime") ??
-      registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
 
     let outputDigest: string | undefined;
     if (runtime && session.runtimeHandle) {
