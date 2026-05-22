@@ -34,6 +34,16 @@ import { getShell, isWindows, killProcessTree } from "./platform.js";
 
 const REVIEW_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const REVIEW_COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
+
+// spawn() with shell: true on Windows joins args with spaces and routes through
+// cmd.exe, losing multi-word argument boundaries (Node.js DEP0190). This wraps
+// args that contain spaces or cmd.exe metacharacters in double quotes so they
+// survive the cmd.exe re-parse.
+export function escapeArgForCmd(arg: string): string {
+  if (arg.length > 0 && !/[\s"&|<>^]/.test(arg)) return arg;
+  return '"' + arg.replace(/"/g, '""') + '"';
+}
+
 const REVIEW_RUN_CREATION_LOCK_FILE = ".create-run.lock";
 const REVIEW_RUN_EXECUTION_LOCK_PREFIX = ".execute-run-";
 const REVIEW_RUN_CREATION_LOCK_WAIT_MS = 5_000;
@@ -71,7 +81,8 @@ async function execFileWithClosedStdin(
   const { spawn } = await import("node:child_process");
 
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, {
+    const spawnArgs = options.shell && isWindows() ? args.map(escapeArgForCmd) : args;
+    const child = spawn(file, spawnArgs, {
       cwd: options.cwd,
       env: options.env,
       shell: options.shell,
