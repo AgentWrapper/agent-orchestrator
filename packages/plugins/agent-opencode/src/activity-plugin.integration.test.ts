@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { OPENCODE_ACTIVITY_PLUGIN } from "./index.js";
+import { OPENCODE_ACTIVITY_PLUGIN } from "./activity-plugin.js";
 
 /**
  * Executes the real generated OpenCode activity plugin against synthetic
