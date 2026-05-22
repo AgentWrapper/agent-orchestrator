@@ -7,7 +7,7 @@ interface AgentMemoryEntry {
   agentId: string;
   startedAt: string;
   finishedAt: string;
-  status: "completed" | "failed" | "stuck" | "killed";
+  status: "failed" | "stuck" | "killed";
   tried: string;
   failedAt?: string;
   nextSteps?: string;
@@ -15,7 +15,6 @@ interface AgentMemoryEntry {
 }
 
 const STATUS_STYLES: Record<AgentMemoryEntry["status"], { dot: string; label: string }> = {
-  completed: { dot: "bg-[var(--color-success)]", label: "Completed" },
   failed: { dot: "bg-[var(--color-danger)]", label: "Failed" },
   stuck: { dot: "bg-[var(--color-warning)]", label: "Stuck" },
   killed: { dot: "bg-[var(--color-text-tertiary)]", label: "Killed" },

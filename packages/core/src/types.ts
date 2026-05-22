@@ -27,7 +27,7 @@ export interface AgentMemoryEntry {
   agentId: string;
   startedAt: Date;
   finishedAt: Date;
-  status: "completed" | "failed" | "stuck" | "killed";
+  status: "failed" | "stuck" | "killed";
   tried: string;
   failedAt?: string;
   nextSteps?: string;

@@ -278,7 +278,10 @@ function createGitHubTracker(): Tracker {
       }
 
       // Inject prior agent memory if any exists
-      const memory = await tracker.readMemory!(identifier, project);
+      let memory: AgentMemoryEntry[] = [];
+      try {
+        memory = await tracker.readMemory!(identifier, project);
+      } catch { /* non-critical: missing memory should not block prompt generation */ }
       if (memory.length > 0) {
         lines.push(
           "",
@@ -493,14 +496,19 @@ function createGitHubTracker(): Tracker {
 
       return comments
         .filter((c) => c.body?.startsWith(MARKER))
-        .map((c) => {
-          const json = c.body
-            .replace(MARKER, "")
-            .replace("-->", "")
-            .trim();
-          return JSON.parse(json) as AgentMemoryEntry;
+        .flatMap((c) => {
+          try {
+            const json = c.body
+              .replace(MARKER, "")
+              .replace(/\s*-->$/, "")
+              .trim();
+            return [JSON.parse(json) as AgentMemoryEntry];
+          } catch {
+            return [];
+          }
         })
-        .sort((a, b) => a.attempt - b.attempt);
+        .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime())
+        .map((entry, index) => ({ ...entry, attempt: index + 1 }));
     },
 
     async writeMemory(
