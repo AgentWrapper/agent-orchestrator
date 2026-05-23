@@ -42,7 +42,34 @@ if ($SkipSmoke -and $SmokeOnly) {
 }
 
 $TargetBranch = if ($env:AO_UPDATE_BRANCH) { $env:AO_UPDATE_BRANCH } else { 'main' }
-$RepoRoot = if ($env:AO_REPO_ROOT) { $env:AO_REPO_ROOT } else { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
+
+function Test-AoRepoRoot([string]$path) {
+    return (Test-Path (Join-Path $path 'packages/ao/bin/ao.js')) -and
+           (Test-Path (Join-Path $path 'packages/cli'))
+}
+
+function Find-RepoRootFrom([string]$start) {
+    $dir = (Resolve-Path $start).Path
+    while ($dir) {
+        if (Test-AoRepoRoot $dir) { return $dir }
+        $parent = Split-Path -Parent $dir
+        if (-not $parent -or $parent -eq $dir) { break }
+        $dir = $parent
+    }
+    return $null
+}
+
+function Resolve-RepoRoot {
+    if ($env:AO_REPO_ROOT) { return $env:AO_REPO_ROOT }
+    $fromScript = Find-RepoRootFrom $PSScriptRoot
+    if ($fromScript) { return $fromScript }
+    $fromCwd = Find-RepoRootFrom (Get-Location).Path
+    if ($fromCwd) { return $fromCwd }
+    Write-Error "Unable to find Agent Orchestrator repo root. Fix: run via ao update or set AO_REPO_ROOT."
+    exit 1
+}
+
+$RepoRoot = Resolve-RepoRoot
 
 function Require-Command([string]$name, [string]$fixHint) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {

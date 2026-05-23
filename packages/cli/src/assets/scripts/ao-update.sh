@@ -40,7 +40,38 @@ if [ "$SKIP_SMOKE" = true ] && [ "$SMOKE_ONLY" = true ]; then
   exit 1
 fi
 
-REPO_ROOT="${AO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+is_repo_root() {
+  local candidate="$1"
+  [ -f "$candidate/packages/ao/bin/ao.js" ] && [ -d "$candidate/packages/cli" ]
+}
+
+find_repo_root_from() {
+  local dir="$1"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if is_repo_root "$dir"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+resolve_repo_root() {
+  if [ -n "${AO_REPO_ROOT:-}" ]; then
+    printf '%s\n' "$AO_REPO_ROOT"
+    return 0
+  fi
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  find_repo_root_from "$script_dir" || find_repo_root_from "$PWD"
+}
+
+if ! REPO_ROOT="$(resolve_repo_root)"; then
+  printf 'Unable to find Agent Orchestrator repo root. Fix: run via ao update or set AO_REPO_ROOT.\n' >&2
+  exit 1
+fi
 
 require_command() {
   local name="$1"

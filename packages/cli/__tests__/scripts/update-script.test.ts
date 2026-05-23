@@ -269,6 +269,43 @@ exit 0`,
     );
   });
 
+  it.skipIf(process.platform === "win32")(
+    "resolves the source checkout root when AO_REPO_ROOT is unset",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-root-detect-"));
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
+      createFakeBinary(
+        binDir,
+        "node",
+        `if [ "$1" = "--version" ]; then printf 'v20.11.1\\n'; fi
+printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}
+exit 0`,
+      );
+
+      const env = {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ""}`,
+      };
+      delete env["AO_REPO_ROOT"];
+
+      const result = spawnSync("bash", [scriptPath, "--smoke-only"], {
+        env,
+        encoding: "utf8",
+      });
+
+      const commands = readFileSync(commandLog, "utf8");
+      rmSync(tempRoot, { recursive: true, force: true });
+
+      const repoRoot = resolve(packageRoot, "../..");
+      expect(result.status).toBe(0);
+      expect(commands).toContain(
+        `node ${join(repoRoot, "packages", "ao", "bin", "ao.js")} --version`,
+      );
+    },
+  );
+
   it("fails fast on a dirty install repo with an actionable message", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-dirty-"));
     const fakeRepo = join(tempRoot, "repo");
