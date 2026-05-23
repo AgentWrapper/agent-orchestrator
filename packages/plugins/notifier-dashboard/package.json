@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-notifier-dashboard",
-  "version": "0.9.1",
+  "version": "0.10.1-nightly-249c67046d14809943d228b01eefedb10821e5dc",
   "description": "Notifier plugin: AO dashboard notifications",
   "license": "MIT",
   "type": "module",
