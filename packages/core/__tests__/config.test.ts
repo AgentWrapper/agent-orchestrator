@@ -263,6 +263,122 @@ projects:
     });
   });
 
+  describe("dashboard swimlanes config", () => {
+    it("accepts a valid swimlanes array", () => {
+      const configPath = join(testDir, "swimlane-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects: {}
+dashboard:
+  swimlanes:
+    - id: working
+      label: In Progress
+      statuses:
+        - working
+        - spawning
+    - id: waiting
+      label: Waiting
+      statuses:
+        - pr_open
+        - ci_failed
+    - id: ready
+      label: Ready to Merge
+      statuses:
+        - mergeable
+        - approved
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.dashboard?.swimlanes).toHaveLength(3);
+      expect(config.dashboard?.swimlanes?.[0]).toEqual({
+        id: "working",
+        label: "In Progress",
+        statuses: ["working", "spawning"],
+      });
+      expect(config.dashboard?.swimlanes?.[2]).toEqual({
+        id: "ready",
+        label: "Ready to Merge",
+        statuses: ["mergeable", "approved"],
+      });
+    });
+
+    it("works without swimlanes (backward compat)", () => {
+      const configPath = join(testDir, "no-swimlane-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects: {}
+dashboard:
+  attentionZones: simple
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.dashboard?.swimlanes).toBeUndefined();
+      expect(config.dashboard?.attentionZones).toBe("simple");
+    });
+
+    it("rejects a swimlane with empty id", () => {
+      const configPath = join(testDir, "invalid-swimlane-id.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects: {}
+dashboard:
+  swimlanes:
+    - id: ""
+      label: Bad Lane
+      statuses:
+        - working
+`,
+      );
+
+      expect(() => loadConfig(configPath)).toThrow();
+    });
+
+    it("rejects a swimlane with empty statuses array", () => {
+      const configPath = join(testDir, "invalid-swimlane-statuses.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects: {}
+dashboard:
+  swimlanes:
+    - id: empty-lane
+      label: Empty
+      statuses: []
+`,
+      );
+
+      expect(() => loadConfig(configPath)).toThrow();
+    });
+
+    it("rejects a swimlane with the reserved id 'done'", () => {
+      // `done` is the terminal-session bucket the Dashboard pre-seeds.
+      // A user-configured lane with the same id used to silently
+      // overwrite that bucket, causing done sessions to appear in
+      // both the kanban column and the Done accordion. The schema now
+      // refuses the id at parse time.
+      const configPath = join(testDir, "reserved-swimlane-id.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects: {}
+dashboard:
+  swimlanes:
+    - id: done
+      label: Done
+      statuses:
+        - done
+`,
+      );
+
+      expect(() => loadConfig(configPath)).toThrow(/reserved/i);
+    });
+  });
+
   describe("validateProjectUniqueness", () => {
     it("allows same path basename when projectIds differ", () => {
       expect(() =>

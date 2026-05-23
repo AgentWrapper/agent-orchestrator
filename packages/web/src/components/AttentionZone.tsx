@@ -7,7 +7,9 @@ import { getSessionTitle } from "@/lib/format";
 import { projectSessionPath } from "@/lib/routes";
 
 interface AttentionZoneProps {
-  level: AttentionLevel;
+  level: string;
+  /** Override the display label for this column. Falls back to built-in label for known levels. */
+  label?: string;
   sessions: DashboardSession[];
   onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
@@ -17,7 +19,7 @@ interface AttentionZoneProps {
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
   /** Accordion mode: called when the header is tapped to toggle */
-  onToggle?: (level: AttentionLevel) => void;
+  onToggle?: (level: string) => void;
   /** Dense mobile rows rendered instead of full cards */
   compactMobile?: boolean;
   /** Open the lightweight mobile preview sheet */
@@ -74,6 +76,7 @@ const zoneConfig: Record<
  */
 function AttentionZoneView({
   level,
+  label,
   sessions,
   onSend,
   onKill,
@@ -86,7 +89,11 @@ function AttentionZoneView({
   onPreview,
   resetKey,
 }: AttentionZoneProps) {
-  const config = zoneConfig[level];
+  const builtIn = zoneConfig[level as AttentionLevel];
+  const config = {
+    label: label ?? builtIn?.label ?? level,
+    emptyMessage: builtIn?.emptyMessage ?? "Nothing here.",
+  };
   const isAccordion = onToggle !== undefined;
   const [showAll, setShowAll] = useState(false);
   const visibleSessions =
@@ -224,7 +231,7 @@ function MobileSessionRow({
   onPreview,
 }: {
   session: DashboardSession;
-  level: AttentionLevel;
+  level: string;
   onPreview?: (session: DashboardSession) => void;
 }) {
   const meta = [
@@ -311,9 +318,9 @@ function SessionStateChip({
   level,
 }: {
   session: DashboardSession;
-  level: AttentionLevel;
+  level: string;
 }) {
-  let label = zoneConfig[level].label.toLowerCase();
+  let label = (zoneConfig[level as AttentionLevel]?.label ?? level).toLowerCase();
 
   if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
     label = "ready";

@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getAttentionLevel,
+  getCustomAttentionLevel,
   getActivitySignalLabel,
   getActivitySignalReasonLabel,
   isPRMergeReady,
@@ -17,6 +18,7 @@ import {
   isDashboardSessionTerminal,
   type DashboardSession,
   type DashboardPR,
+  type SwimlaneDef,
 } from "../types";
 import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
@@ -932,5 +934,55 @@ describe("activity signal fallback", () => {
 
     expect(getActivitySignalLabel(session)).toBe("active");
     expect(getActivitySignalReasonLabel(session)).toBeNull();
+  });
+});
+
+describe("getCustomAttentionLevel", () => {
+  const swimlanes: SwimlaneDef[] = [
+    { id: "active", label: "In Progress", statuses: ["working", "spawning"] },
+    { id: "waiting", label: "Waiting", statuses: ["pr_open", "ci_failed", "review_pending"] },
+    { id: "ready", label: "Ready to Merge", statuses: ["mergeable", "approved"] },
+  ];
+
+  it("maps session status to the first matching lane id", () => {
+    expect(getCustomAttentionLevel(createSession({ status: "working" }), swimlanes)).toBe("active");
+    expect(getCustomAttentionLevel(createSession({ status: "spawning" }), swimlanes)).toBe("active");
+  });
+
+  it("maps pr_open to the waiting lane", () => {
+    expect(getCustomAttentionLevel(createSession({ status: "pr_open" }), swimlanes)).toBe("waiting");
+  });
+
+  it("maps ci_failed to the waiting lane", () => {
+    expect(getCustomAttentionLevel(createSession({ status: "ci_failed" }), swimlanes)).toBe("waiting");
+  });
+
+  it("maps mergeable to the ready lane", () => {
+    expect(getCustomAttentionLevel(createSession({ status: "mergeable" }), swimlanes)).toBe("ready");
+  });
+
+  it("falls back to the last lane when status is not in any lane", () => {
+    // "errored" is not in any lane — should fall back to last lane ("ready")
+    expect(getCustomAttentionLevel(createSession({ status: "errored" }), swimlanes)).toBe("ready");
+  });
+
+  it("falls back to 'working' when swimlanes array is empty", () => {
+    expect(getCustomAttentionLevel(createSession({ status: "working" }), [])).toBe("working");
+  });
+
+  it("returns the single lane id when only one lane is defined", () => {
+    const single: SwimlaneDef[] = [
+      { id: "all", label: "All", statuses: ["working"] },
+    ];
+    expect(getCustomAttentionLevel(createSession({ status: "working" }), single)).toBe("all");
+    expect(getCustomAttentionLevel(createSession({ status: "merged" }), single)).toBe("all");
+  });
+
+  it("uses the first matching lane when status appears in multiple lanes (shouldn't happen in practice)", () => {
+    const overlapping: SwimlaneDef[] = [
+      { id: "first", label: "First", statuses: ["working", "pr_open"] },
+      { id: "second", label: "Second", statuses: ["working", "ci_failed"] },
+    ];
+    expect(getCustomAttentionLevel(createSession({ status: "working" }), overlapping)).toBe("first");
   });
 });

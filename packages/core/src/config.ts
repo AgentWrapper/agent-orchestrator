@@ -323,8 +323,22 @@ const PowerConfigSchema = z
   })
   .default({});
 
+const SwimlaneDefSchema = z.object({
+  // `"done"` is the reserved bucket the Dashboard pre-seeds for
+  // terminal sessions. A user-configured swimlane with the same id
+  // overwrites that bucket, so done sessions end up in both the kanban
+  // column and the Done accordion. Forbid it here.
+  id: z
+    .string()
+    .min(1, "Swimlane id must be non-empty")
+    .refine((v) => v !== "done", { message: "Swimlane id 'done' is reserved" }),
+  label: z.string().min(1, "Swimlane label must be non-empty"),
+  statuses: z.array(z.string()).min(1, "Swimlane statuses must have at least one entry"),
+});
+
 const DashboardConfigSchema = z.object({
   attentionZones: z.enum(["simple", "detailed"]).default("simple"),
+  swimlanes: z.array(SwimlaneDefSchema).optional(),
 });
 
 const LifecycleConfigSchema = z
