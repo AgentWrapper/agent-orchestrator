@@ -14,6 +14,7 @@ import {
   type IssueUpdate,
   type CreateIssueInput,
   type ProjectConfig,
+  type AgentMemoryEntry,
 } from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -276,6 +277,39 @@ function createGitHubTracker(): Tracker {
         lines.push("## Description", "", issue.description);
       }
 
+      // Inject prior agent memory if any exists
+      let memory: AgentMemoryEntry[] = [];
+      try {
+        memory = await tracker.readMemory!(identifier, project);
+      } catch { /* non-critical: missing memory should not block prompt generation */ }
+      if (memory.length > 0) {
+        lines.push(
+          "",
+          "=== PRIOR AGENT ATTEMPTS ===",
+          `This task has been attempted ${memory.length} time(s) before. Read carefully before starting.`,
+          "",
+        );
+        for (const entry of memory) {
+          lines.push(`Attempt #${entry.attempt} — Status: ${entry.status.toUpperCase()}`);
+          lines.push(`  Started:  ${new Date(entry.startedAt).toISOString()}`);
+          lines.push(`  Tried:    ${entry.tried}`);
+          if (entry.failedAt) {
+            lines.push(`  Failed at: ${entry.failedAt}`);
+          }
+          if (entry.nextSteps) {
+            lines.push(`  Next steps: ${entry.nextSteps}`);
+          }
+          if (entry.outputDigest) {
+            lines.push(`  Last output:\n${entry.outputDigest}`);
+          }
+          lines.push("");
+        }
+        lines.push(
+          "Do NOT repeat what failed. Start from the next steps left by the last agent.",
+          "============================",
+        );
+      }
+
       lines.push(
         "",
         "The issue title, description, and labels above are current. Fetch comments or linked issues via `gh` only if you need additional context beyond what is provided here.",
@@ -438,12 +472,61 @@ function createGitHubTracker(): Tracker {
     },
 
     async preflight(): Promise<void> {
-      // Memoize across plugins: tracker-github and scm-github both check the
-      // same gh CLI / auth state. Sharing key "gh-cli-auth" via process-cache
-      // means both plugins' preflights resolve to the same in-flight check
-      // (or cached result) — halving execs on the happy path and giving one
-      // error message instead of two on the failure path.
       await checkGhCliAuth();
+    },
+
+    async readMemory(
+      identifier: string,
+      project: ProjectConfig,
+    ): Promise<AgentMemoryEntry[]> {
+      const repo = requireRepo(project);
+      const raw = await gh([
+        "issue",
+        "comment",
+        "list",
+        identifier,
+        "--repo",
+        repo,
+        "--json",
+        "body",
+      ]);
+
+      const comments: Array<{ body: string }> = JSON.parse(raw);
+      const MARKER = "<!-- ao-agent-memory";
+
+      return comments
+        .filter((c) => c.body?.startsWith(MARKER))
+        .flatMap((c) => {
+          try {
+            const json = c.body
+              .replace(MARKER, "")
+              .replace(/\s*-->$/, "")
+              .trim();
+            return [JSON.parse(json) as AgentMemoryEntry];
+          } catch {
+            return [];
+          }
+        })
+        .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime())
+        .map((entry, index) => ({ ...entry, attempt: index + 1 }));
+    },
+
+    async writeMemory(
+      identifier: string,
+      entry: AgentMemoryEntry,
+      project: ProjectConfig,
+    ): Promise<void> {
+      const repo = requireRepo(project);
+      const body = `<!-- ao-agent-memory\n${JSON.stringify(entry, null, 2)}\n-->`;
+      await gh([
+        "issue",
+        "comment",
+        "--repo",
+        repo,
+        identifier,
+        "--body",
+        body,
+      ]);
     },
   };
 

@@ -1,6 +1,25 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
+// Set up dummy gh CLI path for test environment
+// ---------------------------------------------------------------------------
+vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { writeFileSync, mkdirSync } = require("node:fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { join } = require("node:path");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { tmpdir } = require("node:os");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { randomUUID } = require("node:crypto");
+
+  const tempBinDir = join(tmpdir(), `ao-test-gh-bin-${randomUUID()}`);
+  mkdirSync(tempBinDir, { recursive: true });
+  writeFileSync(join(tempBinDir, process.platform === "win32" ? "gh.cmd" : "gh"), "@echo off");
+  process.env.PATH = `${tempBinDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`;
+});
+
+// ---------------------------------------------------------------------------
 // Mock node:child_process
 // ---------------------------------------------------------------------------
 const { ghMock } = vi.hoisted(() => ({ ghMock: vi.fn() }));
@@ -318,6 +337,7 @@ describe("tracker-github plugin", () => {
   describe("generatePrompt", () => {
     it("includes title and URL", async () => {
       mockGh(sampleIssue);
+      mockGh([]);
       const prompt = await tracker.generatePrompt("123", project);
       expect(prompt).toContain("Fix login bug");
       expect(prompt).toContain("https://github.com/acme/repo/issues/123");
@@ -326,24 +346,28 @@ describe("tracker-github plugin", () => {
 
     it("includes labels when present", async () => {
       mockGh(sampleIssue);
+      mockGh([]);
       const prompt = await tracker.generatePrompt("123", project);
       expect(prompt).toContain("bug, priority-high");
     });
 
     it("includes description", async () => {
       mockGh(sampleIssue);
+      mockGh([]);
       const prompt = await tracker.generatePrompt("123", project);
       expect(prompt).toContain("Users can't log in with SSO");
     });
 
     it("omits labels section when no labels", async () => {
       mockGh({ ...sampleIssue, labels: [] });
+      mockGh([]);
       const prompt = await tracker.generatePrompt("123", project);
       expect(prompt).not.toContain("Labels:");
     });
 
     it("omits description section when body is empty", async () => {
       mockGh({ ...sampleIssue, body: null });
+      mockGh([]);
       const prompt = await tracker.generatePrompt("123", project);
       expect(prompt).not.toContain("## Description");
     });
@@ -567,6 +591,70 @@ describe("tracker-github plugin", () => {
       await expect(
         tracker.createIssue!({ title: "Test", description: "" }, project),
       ).rejects.toThrow("Failed to parse issue URL");
+    });
+  });
+
+  // ---- readMemory / writeMemory -------------------------------------------
+
+  describe("readMemory / writeMemory", () => {
+    it("readMemory parses and sorts memory comments from issue", async () => {
+      const mockComments = [
+        { body: "Normal user comment" },
+        {
+          body: "<!-- ao-agent-memory\n{\n  \"attempt\": 2,\n  \"agentId\": \"app-1\",\n  \"status\": \"killed\"\n}\n-->",
+        },
+        {
+          body: "<!-- ao-agent-memory\n{\n  \"attempt\": 1,\n  \"agentId\": \"app-1\",\n  \"status\": \"stuck\"\n}\n-->",
+        },
+      ];
+      mockGh(mockComments);
+
+      const memory = await tracker.readMemory!("123", project);
+
+      expect(memory).toHaveLength(2);
+      expect(memory[0]).toEqual({
+        attempt: 1,
+        agentId: "app-1",
+        status: "stuck",
+      });
+      expect(memory[1]).toEqual({
+        attempt: 2,
+        agentId: "app-1",
+        status: "killed",
+      });
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["issue", "comment", "list", "123", "--repo", "acme/repo", "--json", "body"],
+        expect.any(Object),
+      );
+    });
+
+    it("writeMemory appends memory entry comment to issue", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      const entry = {
+        attempt: 1,
+        agentId: "app-1",
+        status: "stuck" as const,
+        tried: "tried something",
+        startedAt: new Date("2026-05-22T22:00:00Z"),
+        finishedAt: new Date("2026-05-22T22:05:00Z"),
+      };
+
+      await tracker.writeMemory!("123", entry, project);
+
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        [
+          "issue",
+          "comment",
+          "--repo",
+          "acme/repo",
+          "123",
+          "--body",
+          `<!-- ao-agent-memory\n${JSON.stringify(entry, null, 2)}\n-->`,
+        ],
+        expect.any(Object),
+      );
     });
   });
 

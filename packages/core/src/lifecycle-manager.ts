@@ -34,6 +34,8 @@ import {
   type SCM,
   type Notifier,
   type Session,
+  type AgentMemoryEntry,
+  type Tracker,
   type CanonicalSessionLifecycle,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
@@ -2306,6 +2308,104 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  async function flushAgentMemory(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const shouldFlush =
+      newStatus === SESSION_STATUS.STUCK ||
+      newStatus === SESSION_STATUS.ERRORED ||
+      newStatus === SESSION_STATUS.KILLED;
+    if (!shouldFlush) return;
+    if (!session.issueId) return;
+
+    const project = config.projects[session.projectId];
+    if (!project?.tracker?.plugin) return;
+
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker?.readMemory || !tracker?.writeMemory) return;
+
+    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+
+    let outputDigest: string | undefined;
+    if (runtime && session.runtimeHandle) {
+      try {
+        const output = await runtime.getOutput(session.runtimeHandle, 50);
+        if (output) outputDigest = output.slice(-500);
+      } catch { /* non-critical */ }
+    }
+
+    const agentName = session.metadata["agent"];
+    const agent = agentName ? registry.get<Agent>("agent", agentName) : null;
+    let tried = "No summary available";
+    if (agent) {
+      try {
+        const info = await agent.getSessionInfo(session);
+        if (info?.summary) tried = info.summary;
+      } catch { /* non-critical */ }
+    }
+
+    let nextSteps: string | undefined;
+    let failedAt: string | undefined;
+    if (outputDigest) {
+      const nextMatch = outputDigest.match(/(?:Next:|TODO:|next step[s]?:|I should|Try:)\s*(.+)/i);
+      if (nextMatch?.[1]) nextSteps = nextMatch[1].trim().slice(0, 300);
+      const errorMatch = outputDigest.match(/(?:Error:|error:|Failed:|FAILED|Exception:|❌)\s*(.+)/);
+      if (errorMatch?.[1]) failedAt = errorMatch[1].trim().slice(0, 300);
+    }
+
+    let attemptNumber = 1;
+    try {
+      const prior = await tracker.readMemory(session.issueId, project);
+      attemptNumber = prior.length + 1;
+    } catch { /* default to 1 */ }
+
+    const entry: AgentMemoryEntry = {
+      attempt: attemptNumber,
+      agentId: session.id,
+      startedAt: session.createdAt,
+      finishedAt: new Date(),
+      status: newStatus === SESSION_STATUS.STUCK ? "stuck"
+        : newStatus === SESSION_STATUS.KILLED ? "killed"
+        : "failed",
+      tried,
+      failedAt,
+      nextSteps,
+      outputDigest,
+    };
+
+    try {
+      await tracker.writeMemory(session.issueId, entry, project);
+
+      const existingLog = session.metadata["agentMemoryLog"];
+      const existingEntries: AgentMemoryEntry[] = existingLog
+        ? (JSON.parse(existingLog) as AgentMemoryEntry[])
+        : [];
+      existingEntries.push(entry);
+      updateSessionMetadata(session, { agentMemoryLog: JSON.stringify(existingEntries) });
+
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "lifecycle.transition",
+        summary: `agent memory flushed for attempt #${attemptNumber}`,
+        data: { issueId: session.issueId, attempt: attemptNumber, status: entry.status },
+      });
+    } catch (err) {
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "lifecycle.transition",
+        level: "warn",
+        summary: "agent memory flush failed",
+        data: { errorMessage: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
   /**
    * When a session's PR is merged, tear down its tmux runtime, remove its
    * worktree, and archive its metadata. Guarded by an idleness check so we
@@ -2754,6 +2854,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      flushAgentMemory(session, oldStatus, newStatus),
     ]);
 
     // Report watcher: audit agent reports for issues (#140)

@@ -17,6 +17,7 @@ import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
+import { AgentMemoryPanel } from "./AgentMemoryPanel";
 import { sessionActivityMeta } from "./session-detail-utils";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
@@ -143,14 +144,17 @@ export function SessionDetail({
           {!showTerminal ? (
             <div className="session-detail-terminal-placeholder h-full" />
           ) : terminalEnded ? (
-            <SessionEndedSummary
-              session={session}
-              headline={headline}
-              pr={pr}
-              dashboardHref={dashboardHref}
-              isRestorable={isRestorable}
-              onRestore={handleRestore}
-            />
+            <div className="flex flex-col gap-0 overflow-y-auto p-4">
+              <SessionEndedSummary
+                session={session}
+                headline={headline}
+                pr={pr}
+                dashboardHref={dashboardHref}
+                isRestorable={isRestorable}
+                onRestore={handleRestore}
+              />
+              <AgentMemoryPanel session={session} />
+            </div>
           ) : (
             <DirectTerminal
               sessionId={session.id}
