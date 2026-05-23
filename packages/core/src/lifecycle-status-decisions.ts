@@ -300,7 +300,8 @@ export function resolveProbeDecision(input: ProbeDecisionInput): LifecycleDecisi
   if (
     input.activitySignal.state === "valid" &&
     input.activitySignal.activity === "exited" &&
-    input.processProbe.state === "dead"
+    input.processProbe.state === "dead" &&
+    !input.processProbe.failed
   ) {
     return createLifecycleDecision({
       status: SESSION_STATUS.KILLED,
