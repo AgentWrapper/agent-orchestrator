@@ -10,7 +10,7 @@
  */
 
 import { type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, basename, dirname } from "node:path";
 import { cwd } from "node:process";
 import chalk from "chalk";
@@ -566,29 +566,11 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const agent = await detectAgentRuntime(detectedAgents);
   console.log(chalk.green(`  ✓ Agent runtime: ${agent}`));
 
-  const port = await findFreePort(DEFAULT_PORT);
-  if (port !== null && port !== DEFAULT_PORT) {
-    console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
-  }
-
-  const config: Record<string, unknown> = {
-    port: port ?? DEFAULT_PORT,
-    defaults: {
-      runtime: getDefaultRuntime(),
-      agent,
-      workspace: "worktree",
-      notifiers: [],
-    },
-    projects: {
-      [projectId]: {
-        name: projectId,
-        sessionPrefix: generateSessionPrefix(projectId),
-        ...(repo ? { repo } : {}),
-        path,
-        defaultBranch,
-        ...(agentRules ? { agentRules } : {}),
-      },
-    },
+  const localConfig: LocalProjectConfig = {
+    runtime: getDefaultRuntime(),
+    agent,
+    workspace: "worktree",
+    ...(agentRules ? { agentRules } : {}),
   };
 
   const outputPath = resolve(workingDir, "agent-orchestrator.yaml");
@@ -597,10 +579,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
     console.log(chalk.dim("  Use 'ao start' to start with the existing config.\n"));
     return loadConfig(outputPath);
   }
-  const yamlContent = configToYaml(config);
-  writeFileSync(outputPath, yamlContent);
-
-  console.log(chalk.green(`✓ Config created: ${outputPath}\n`));
+  writeLocalProjectConfig(workingDir, localConfig, outputPath);
 
   try {
     const registeredProjectId = registerProjectInGlobalConfig(projectId, projectId, path, {
@@ -608,12 +587,14 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
       defaultBranch,
       sessionPrefix: generateSessionPrefix(projectId),
     });
+
     console.log(chalk.green(`✓ Registered "${registeredProjectId}" in global config\n`));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(chalk.yellow("⚠ Could not register project in global config."));
-    console.log(chalk.dim(`  ${message}\n`));
+    rmSync(outputPath, { force: true });
+    throw err;
   }
+
+  console.log(chalk.green(`✓ Config created: ${outputPath}\n`));
 
   if (!repo) {
     console.log(
