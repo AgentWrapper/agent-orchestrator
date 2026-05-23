@@ -823,7 +823,8 @@ function normalizeHookEntry(entry: unknown): unknown {
   if (!isRecord(entry)) return entry;
 
   if (isBareHookDefinition(entry)) {
-    return { matcher: "", hooks: [entry] };
+    const inheritedMatcher = typeof entry["matcher"] === "string" ? entry["matcher"] : "";
+    return { matcher: inheritedMatcher, hooks: [entry] };
   }
 
   if (Array.isArray(entry["hooks"]) && typeof entry["matcher"] !== "string") {

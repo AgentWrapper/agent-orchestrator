@@ -1196,6 +1196,64 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     expect(commands).toContain(ACTIVITY_CMD_UNIX);
   });
 
+  it("preserves matcher from a malformed bare hook entry while wrapping it", async () => {
+    const existingSettings = {
+      hooks: {
+        PostToolUse: [
+          {
+            matcher: "Bash",
+            type: "command",
+            command: "echo user-bash-hook",
+          },
+        ],
+      },
+    };
+    mockExistsSync.mockReturnValueOnce(true);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify(existingSettings));
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const settings = getParsedSettings();
+    const postToolUse = (settings.hooks as Record<string, unknown>)["PostToolUse"] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string }>;
+    }>;
+    const userEntry = postToolUse.find((g) =>
+      g.hooks.some((h) => h.command === "echo user-bash-hook"),
+    );
+    expect(userEntry?.matcher).toBe("Bash");
+  });
+
+  it("adds an empty matcher to hook groups that are missing one", async () => {
+    const existingSettings = {
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [{ type: "command", command: "echo user-prompt-hook" }],
+          },
+        ],
+      },
+    };
+    mockExistsSync.mockReturnValueOnce(true);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify(existingSettings));
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const settings = getParsedSettings();
+    const userPromptSubmit = (settings.hooks as Record<string, unknown>)[
+      "UserPromptSubmit"
+    ] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string }>;
+    }>;
+    const userEntry = userPromptSubmit.find((g) =>
+      g.hooks.some((h) => h.command === "echo user-prompt-hook"),
+    );
+    expect(userEntry?.matcher).toBe("");
+  });
+
   it("tolerates malformed hooks.<event> (object instead of array)", async () => {
     // A user could hand-edit settings.json or an older plugin could have
     // written a non-array shape there. We must not crash — start fresh.
