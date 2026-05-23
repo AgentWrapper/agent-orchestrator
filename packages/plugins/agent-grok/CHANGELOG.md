@@ -1,5 +1,11 @@
 # @aoagents/ao-plugin-agent-grok
 
+## 0.2.0
+
+### Minor Changes
+
+- cdd1030: Load agent-grok package metadata through JSON import attributes so packaged web and CLI runtimes do not keep a publish-host package.json lookup. This also raises the Node.js engine floor to 20.18.3+, where JSON modules with import attributes are non-experimental.
+
 ## 0.1.2
 
 ### Patch Changes
