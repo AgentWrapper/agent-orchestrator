@@ -3,9 +3,12 @@ import {
   createDetectingDecision,
   hashEvidence,
   isDetectingTimedOut,
+  resolveProbeDecision,
   DETECTING_MAX_ATTEMPTS,
   DETECTING_MAX_DURATION_MS,
 } from "../lifecycle-status-decisions.js";
+import { createActivitySignal } from "../activity-signal.js";
+import type { ActivitySignal } from "../types.js";
 
 describe("hashEvidence", () => {
   it("returns a 12-character hex string", () => {
@@ -214,5 +217,61 @@ describe("createDetectingDecision", () => {
 
       expect(result.detecting.startedAt).toBe(previousStartedAt);
     });
+  });
+});
+
+describe("resolveProbeDecision", () => {
+  const baseProbeInput = {
+    currentAttempts: 0,
+    canProbeRuntimeIdentity: true,
+    activityEvidence: "",
+    idleWasBlocked: false,
+  };
+
+  const exitedSignal: ActivitySignal = createActivitySignal("valid", {
+    activity: "exited",
+    source: "native",
+  });
+
+  it("terminates immediately when the native activity signal says the agent exited, even if the runtime is still alive", () => {
+    const result = resolveProbeDecision({
+      ...baseProbeInput,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "dead", failed: false },
+      activitySignal: exitedSignal,
+      activityEvidence: "activity_signal=valid via_native activity=exited",
+    });
+
+    expect(result?.sessionState).toBe("terminated");
+    expect(result?.sessionReason).toBe("agent_process_exited");
+    expect(result?.status).toBe("killed");
+    // Must not route into the detecting/stuck cycle.
+    expect(result?.detecting.attempts).toBe(0);
+  });
+
+  it("does not enter signal_disagreement detecting when activity confirms the agent exited", () => {
+    const result = resolveProbeDecision({
+      ...baseProbeInput,
+      // Carries 50 prior detecting attempts — a session already parked at stuck.
+      currentAttempts: 50,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "dead", failed: false },
+      activitySignal: exitedSignal,
+    });
+
+    expect(result?.sessionState).toBe("terminated");
+    expect(result?.evidence).not.toContain("signal_disagreement");
+  });
+
+  it("keeps treating runtime=alive process=dead as signal disagreement when the agent has NOT exited", () => {
+    const result = resolveProbeDecision({
+      ...baseProbeInput,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "dead", failed: false },
+      activitySignal: createActivitySignal("unavailable"),
+    });
+
+    expect(result?.sessionState).toBe("detecting");
+    expect(result?.evidence).toContain("signal_disagreement");
   });
 });

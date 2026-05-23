@@ -446,6 +446,7 @@ export function deriveLegacyStatus(
       switch (lifecycle.session.reason) {
         case "manually_killed":
         case "runtime_lost":
+        case "agent_process_exited":
           return "killed";
         case "auto_cleanup":
         case "pr_merged":

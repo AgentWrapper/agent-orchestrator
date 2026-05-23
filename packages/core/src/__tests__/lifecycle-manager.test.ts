@@ -589,7 +589,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when getActivityState returns exited", async () => {
+  it("terminates when getActivityState returns exited even though the runtime is still alive (#1933, #1966)", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "exited" });
     vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
 
@@ -598,7 +598,7 @@ describe("check (single session)", () => {
     });
 
     await lm.check("app-1");
-    expect(lm.getStates().get("app-1")).toBe("detecting");
+    expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
   it("detects killed via terminal fallback when getActivityState returns null", async () => {

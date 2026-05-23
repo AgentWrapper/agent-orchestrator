@@ -290,6 +290,27 @@ export function parseAttemptCount(raw: string | undefined): number {
 export function resolveProbeDecision(input: ProbeDecisionInput): LifecycleDecision | null {
   const recentActivitySupportsLiveness = supportsRecentLiveness(input.activitySignal);
 
+  // When the native activity signal and the process probe agree the agent has
+  // exited, the session is done — terminate it regardless of the runtime probe.
+  // The tmux keep-alive shell keeps the runtime "alive" after the agent dies,
+  // which would otherwise route this into the signal_disagreement detecting/stuck
+  // cycle and park the session at stuck forever (#1933, #1966). The
+  // processProbe=dead requirement excludes spawning sessions, whose process
+  // probe stays "unknown" until the agent has started (#1035).
+  if (
+    input.activitySignal.state === "valid" &&
+    input.activitySignal.activity === "exited" &&
+    input.processProbe.state === "dead"
+  ) {
+    return createLifecycleDecision({
+      status: SESSION_STATUS.KILLED,
+      evidence: `agent_exited runtime=${input.runtimeProbe.state} process=${input.processProbe.state} ${input.activityEvidence}`,
+      detecting: { attempts: 0 },
+      sessionState: "terminated",
+      sessionReason: "agent_process_exited",
+    });
+  }
+
   if (input.runtimeProbe.failed || input.processProbe.failed) {
     return createDetectingDecision({
       currentAttempts: input.currentAttempts,

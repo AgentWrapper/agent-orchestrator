@@ -55,10 +55,15 @@ describe("deriveLegacyStatus", () => {
     merged.session.state = "terminated";
     merged.session.reason = "pr_merged";
 
+    const agentExited = createOpenPRLifecycle();
+    agentExited.session.state = "terminated";
+    agentExited.session.reason = "agent_process_exited";
+
     expect(deriveLegacyStatus(killed)).toBe("killed");
     expect(deriveLegacyStatus(cleanup)).toBe("cleanup");
     expect(deriveLegacyStatus(errored)).toBe("errored");
     expect(deriveLegacyStatus(merged)).toBe("cleanup");
+    expect(deriveLegacyStatus(agentExited)).toBe("killed");
   });
 
   it("keeps PR-oriented aliases for idle workers with open PRs", () => {
