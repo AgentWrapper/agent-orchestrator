@@ -54,7 +54,9 @@ export function SessionDetail({
   const sidebarCtx = useSidebarContext();
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [showTerminal, setShowTerminal] = useState(false);
-  const pr = session.pr;
+  const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  const prs = session.prs ?? [];
+  const pr = prs[selectedPRIndex] ?? session.pr;
   const terminalEnded = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
   const activity = (session.activity && sessionActivityMeta[session.activity]) ?? {
@@ -114,6 +116,10 @@ export function SessionDetail({
   }, [isOrchestrator, projectOrchestratorId, session.projectId]);
 
   useEffect(() => {
+    setSelectedPRIndex(0);
+  }, [session.id]);
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));
     return () => {
       window.cancelAnimationFrame(frame);
@@ -134,6 +140,8 @@ export function SessionDetail({
         projects={projects}
         orchestratorHref={orchestratorHref}
         orchestratorZones={orchestratorZones}
+        selectedPRIndex={selectedPRIndex}
+        onSelectPR={setSelectedPRIndex}
         onToggleSidebar={sidebarCtx?.onToggleSidebar ?? (() => {})}
         onRestore={handleRestore}
         onKill={handleKill}
