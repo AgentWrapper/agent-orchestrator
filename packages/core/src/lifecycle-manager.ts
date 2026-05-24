@@ -1328,14 +1328,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               const aggregated: PREnrichmentData = {
                 ciStatus: allEnrichments.some((e) => e.ciStatus === "failing")
                   ? "failing"
-                  : allEnrichments.every((e) => e.ciStatus === "passing")
+                  : allEnrichments.every((e) => e.ciStatus === "passing" || e.ciStatus === "none")
                     ? "passing"
                     : "pending",
                 reviewDecision: allEnrichments.some(
                   (e) => e.reviewDecision === "changes_requested",
                 )
                   ? "changes_requested"
-                  : allEnrichments.every((e) => e.reviewDecision === "approved")
+                  : allEnrichments.every(
+                      (e) => e.reviewDecision === "approved" || e.reviewDecision === "none",
+                    )
                     ? "approved"
                     : "pending",
                 state: allEnrichments.every((e) => e.state === "merged")
