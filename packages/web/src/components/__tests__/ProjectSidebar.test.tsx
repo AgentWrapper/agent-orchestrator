@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { makePR, makeSession } from "@/__tests__/helpers";
 
@@ -263,10 +263,6 @@ describe("ProjectSidebar", () => {
       json: async () => ({ ok: true }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
 
     render(
       <ProjectSidebar
@@ -280,11 +276,64 @@ describe("ProjectSidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Remove project" }));
 
+    const dialog = await screen.findByRole("dialog", { name: /Remove project/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from AO" }));
+
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-2", { method: "DELETE" });
       expect(mockRefresh).toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: /^Project Two 0$/ })).not.toBeInTheDocument();
     });
+  });
+
+  it("cancels remove project without calling the API", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /Remove project/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: /Remove project/i })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a toast when remove project fails", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Cannot remove active project." }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-1"
+        activeSessionId={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /Remove project/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from AO" }));
+
+    expect(await screen.findByText("Cannot remove active project.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-2", { method: "DELETE" });
+    expect(screen.getByRole("button", { name: /^Project Two 0$/ })).toBeInTheDocument();
   });
 
   it("shows non-done worker sessions for the expanded active project", () => {

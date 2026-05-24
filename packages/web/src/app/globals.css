@@ -4591,6 +4591,26 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   box-shadow: 0 24px 64px rgb(0 0 0 / 18%);
 }
 
+.project-settings-modal--confirm {
+  width: min(480px, calc(100vw - 48px));
+  max-height: none;
+}
+
+.project-settings-modal__confirm-body {
+  margin: 0;
+  padding: 0 20px 18px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-settings-modal__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
 .project-settings-modal__header {
   display: flex;
   align-items: flex-start;
