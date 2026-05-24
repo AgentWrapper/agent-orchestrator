@@ -573,17 +573,17 @@ function ProjectSidebarInner({
     });
   };
 
-  const requestRemoveProject = (project: ProjectInfo) => {
+  const requestRemoveProject = useCallback((project: ProjectInfo) => {
     setProjectMenuOpenId(null);
     setProjectPendingRemoval(project);
-  };
+  }, []);
 
-  const cancelRemoveProject = () => {
+  const cancelRemoveProject = useCallback(() => {
     if (deletingProjectId) return;
     setProjectPendingRemoval(null);
-  };
+  }, [deletingProjectId]);
 
-  const confirmRemoveProject = async () => {
+  const confirmRemoveProject = useCallback(async () => {
     const project = projectPendingRemoval;
     if (!project) return;
 
@@ -620,7 +620,11 @@ function ProjectSidebarInner({
     } finally {
       setDeletingProjectId(null);
     }
-  };
+  }, [activeProjectId, onMobileClose, projectPendingRemoval, router, showToast]);
+
+  const handleConfirmRemoveProject = useCallback(() => {
+    void confirmRemoveProject();
+  }, [confirmRemoveProject]);
 
   if (collapsed) {
     return (
@@ -1206,7 +1210,7 @@ function ProjectSidebarInner({
         project={projectPendingRemoval}
         busy={projectPendingRemoval !== null && deletingProjectId === projectPendingRemoval.id}
         onCancel={cancelRemoveProject}
-        onConfirm={() => void confirmRemoveProject()}
+        onConfirm={handleConfirmRemoveProject}
       />
     </aside>
   );

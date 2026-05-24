@@ -6,6 +6,9 @@ import type { ProjectInfo } from "@/lib/project-name";
 export const REMOVE_PROJECT_CONFIRM_MESSAGE =
   "This clears its AO sessions/history and removes it from the portfolio, but keeps the repository folder on disk.";
 
+const FOCUSABLE_SELECTOR =
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 interface RemoveProjectConfirmModalProps {
   project: ProjectInfo | null;
   busy: boolean;
@@ -23,19 +26,36 @@ export function RemoveProjectConfirmModal({
 
   useEffect(() => {
     if (!project) return;
-    modalRef.current?.focus();
-  }, [project]);
+    const modal = modalRef.current;
+    if (!modal) return;
 
-  useEffect(() => {
-    if (!project) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const focusable = modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    first.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && !busy) {
         event.preventDefault();
         onCancel();
+        return;
       }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+
+      if (event.key === "Tab") {
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+
+    modal.addEventListener("keydown", handleKeyDown);
+    return () => modal.removeEventListener("keydown", handleKeyDown);
   }, [project, busy, onCancel]);
 
   if (!project) return null;
