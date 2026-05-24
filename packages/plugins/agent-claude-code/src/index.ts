@@ -367,9 +367,16 @@ if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
   const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
   if (prMatch) {
     const prUrl = prMatch[0];
-    const fileLines = readFileSync(metadataFile, "utf-8").split("\\n");
-    const prsLine = fileLines.find((l) => l.startsWith("prs="));
-    const existingPrs = prsLine ? prsLine.slice(4) : "";
+    let existingPrs = "";
+    try {
+      const raw = readFileSync(metadataFile, "utf-8");
+      if (metadataFile.endsWith(".json")) {
+        existingPrs = JSON.parse(raw).prs || "";
+      } else {
+        const prsLine = raw.split("\\n").find((l) => l.startsWith("prs="));
+        existingPrs = prsLine ? prsLine.slice(4) : "";
+      }
+    } catch {}
     const newPrs = !existingPrs
       ? prUrl
       : existingPrs.split(",").map((u) => u.trim()).includes(prUrl)
