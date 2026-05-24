@@ -62,7 +62,7 @@ export function findAffectedSessions(
   return sessions.filter((session) => {
     if (session.projectId !== projectId) return false;
     if (TERMINAL_STATUSES.has(session.status)) return false;
-    if (event.prNumber !== undefined && session.pr?.number === event.prNumber) return true;
+    if (event.prNumber !== undefined && (session.pr?.number === event.prNumber || session.prs?.some((p) => p.number === event.prNumber))) return true;
     if (event.branch && session.branch === event.branch) return true;
     return false;
   });
