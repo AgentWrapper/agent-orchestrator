@@ -3186,7 +3186,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     // Stack: push claimed PR to front — it becomes primary (prs[0]) on next load.
     // Filter out duplicates, keep all other tracked PRs at the back.
-    const existingPrs = raw["prs"] ?? "";
+    const existingPrs = raw["prs"] ?? raw["pr"] ?? "";
     const otherPrs = existingPrs
       .split(",")
       .map((u) => u.trim())
