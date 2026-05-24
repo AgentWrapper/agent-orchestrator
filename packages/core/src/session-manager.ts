@@ -3197,12 +3197,24 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       .filter((u) => u && u !== pr.url)
       .join(",");
     const newPrs = otherPrs ? `${pr.url},${otherPrs}` : pr.url;
+    // Clear stale positional enrichment blobs — claimPR reorders prs[] so
+    // index-keyed blobs no longer match. Lifecycle poll rewrites them within ~30s.
+    const staleEnrichmentKeys: Record<string, string> = {
+      prEnrichment: "",
+      prReviewComments: "",
+    };
+    for (const key of Object.keys(raw)) {
+      if (/^prEnrichment_\d+$/.test(key) || /^prReviewComments_\d+$/.test(key)) {
+        staleEnrichmentKeys[key] = "";
+      }
+    }
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
       prs: newPrs,
       status: deriveLegacyStatus(claimLifecycle),
       branch: pr.branch,
       prAutoDetect: "",
+      ...staleEnrichmentKeys,
       ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
     invalidateCache();

@@ -367,7 +367,16 @@ if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
   const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
   if (prMatch) {
     const prUrl = prMatch[0];
+    const fileLines = readFileSync(metadataFile, "utf-8").split("\\n");
+    const prsLine = fileLines.find((l) => l.startsWith("prs="));
+    const existingPrs = prsLine ? prsLine.slice(4) : "";
+    const newPrs = !existingPrs
+      ? prUrl
+      : existingPrs.split(",").map((u) => u.trim()).includes(prUrl)
+        ? existingPrs
+        : existingPrs + "," + prUrl;
     updateMetadataKey("pr", prUrl);
+    updateMetadataKey("prs", newPrs);
     updateMetadataKey("status", "pr_open");
     process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: PR created at " + prUrl }) + "\\n");
     process.exit(0);
