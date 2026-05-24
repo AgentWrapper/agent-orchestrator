@@ -3236,6 +3236,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
+        prs: "",
         prAutoDetect: "false",
         ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
           ? { status: "working" }

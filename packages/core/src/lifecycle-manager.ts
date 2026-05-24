@@ -1363,6 +1363,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               );
             }
           }
+          // Partial cache miss for multi-PR session: don't terminate based on
+          // primary PR alone — fall through to the live-API check that verifies all PRs.
+          if (session.prs.length > 1 && (cachedData.state === "merged" || cachedData.state === "closed")) {
+            // intentional fall-through to live-API block below
+          } else
           return commit(
             resolvePREnrichmentDecision(cachedData, {
               shouldEscalateIdleToStuck,
@@ -1377,19 +1382,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // delayed cleanup. Non-terminal state updates wait for the next batch
         // cycle (30s) to avoid ~110 individual REST calls per 15-min window.
         try {
-          const prState = await scm.getPRState(session.pr);
-          if (prState === "merged" || prState === "closed") {
-            return commit(
-              resolvePRLiveDecision({
-                prState,
-                ciStatus: "none",
-                reviewDecision: "none",
-                mergeable: false,
-                shouldEscalateIdleToStuck,
-                idleWasBlocked,
-                activityEvidence,
-              }),
-            );
+          if (session.prs.length > 1) {
+            // Multi-PR: only terminate when ALL PRs are in a terminal state.
+            const states = await Promise.all(session.prs.map((p) => scm.getPRState(p)));
+            if (states.every((s) => s === "merged" || s === "closed")) {
+              const prState = states.every((s) => s === "merged") ? "merged" : "closed";
+              return commit(
+                resolvePRLiveDecision({
+                  prState,
+                  ciStatus: "none",
+                  reviewDecision: "none",
+                  mergeable: false,
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
+          } else {
+            const prState = await scm.getPRState(session.pr);
+            if (prState === "merged" || prState === "closed") {
+              return commit(
+                resolvePRLiveDecision({
+                  prState,
+                  ciStatus: "none",
+                  reviewDecision: "none",
+                  mergeable: false,
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
           }
         } catch (err) {
           // Best-effort — batch will retry next cycle. Record AE evidence so

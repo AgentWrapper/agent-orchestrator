@@ -56,7 +56,8 @@ export function SessionDetail({
   const [showTerminal, setShowTerminal] = useState(false);
   const [selectedPRIndex, setSelectedPRIndex] = useState(0);
   const prs = session.prs ?? [];
-  const pr = prs[selectedPRIndex] ?? session.pr;
+  const safeSelectedPRIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const pr = prs[safeSelectedPRIndex] ?? session.pr;
   const terminalEnded = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
   const activity = (session.activity && sessionActivityMeta[session.activity]) ?? {
@@ -140,7 +141,7 @@ export function SessionDetail({
         projects={projects}
         orchestratorHref={orchestratorHref}
         orchestratorZones={orchestratorZones}
-        selectedPRIndex={selectedPRIndex}
+        selectedPRIndex={safeSelectedPRIndex}
         onSelectPR={setSelectedPRIndex}
         onToggleSidebar={sidebarCtx?.onToggleSidebar ?? (() => {})}
         onRestore={handleRestore}

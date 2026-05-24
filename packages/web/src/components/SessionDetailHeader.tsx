@@ -85,7 +85,8 @@ export function SessionDetailHeader({
   onKill,
 }: SessionDetailHeaderProps) {
   const prs = session.prs ?? [];
-  const pr = prs[selectedPRIndex] ?? session.pr;
+  const safeSelectedPRIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const pr = prs[safeSelectedPRIndex] ?? session.pr;
   const allGreen = pr ? isPRMergeReady(pr) : false;
   const [prPopoverOpen, setPrPopoverOpen] = useState(false);
   const prPopoverRef = useRef<HTMLDivElement>(null);
@@ -293,7 +294,7 @@ export function SessionDetailHeader({
                         onClick={() => onSelectPR(i)}
                         className={cn(
                           "flex items-center gap-1.5 px-2 py-0.5 rounded text-xs",
-                          selectedPRIndex === i
+                          safeSelectedPRIndex === i
                             ? "bg-[var(--color-bg-subtle)] text-[var(--color-text-primary)]"
                             : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
                         )}
