@@ -58,6 +58,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
     lastActivityAt: new Date(),
     metadata: {},
     ...overrides,
+    prs: overrides.prs ?? (overrides.pr ? [overrides.pr] : []),
   };
 }
 

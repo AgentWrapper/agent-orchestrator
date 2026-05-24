@@ -21,8 +21,14 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     configForObservation = config;
     const sessions = await sessionManager.list();
 
-    const session = sessions.find((s) => s.pr?.number === prNumber);
-    if (!session?.pr) {
+    const session = sessions.find(
+      (s) => s.pr?.number === prNumber || (s.prs ?? []).some((p) => p.number === prNumber),
+    );
+    const targetPR =
+      session?.pr?.number === prNumber
+        ? session.pr
+        : (session?.prs ?? []).find((p) => p.number === prNumber);
+    if (!session || !targetPR) {
       return jsonWithCorrelation({ error: "PR not found" }, { status: 404 }, correlationId);
     }
     projectId = session.projectId;
@@ -39,7 +45,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     // Validate PR is in a mergeable state
-    const state = await scm.getPRState(session.pr);
+    const state = await scm.getPRState(targetPR);
     if (state !== "open") {
       recordActivityEvent({
         projectId: session.projectId,
@@ -57,7 +63,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    const mergeability = await scm.getMergeability(session.pr);
+    const mergeability = await scm.getMergeability(targetPR);
     if (!mergeability.mergeable) {
       recordActivityEvent({
         projectId: session.projectId,
@@ -75,7 +81,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    await scm.mergePR(session.pr, "squash");
+    await scm.mergePR(targetPR, "squash");
     recordApiObservation({
       config,
       method: "POST",
