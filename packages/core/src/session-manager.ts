@@ -2660,11 +2660,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         const plugins = resolvePlugins(project);
         let shouldKill = false;
 
-        // Check if PR was closed without merging.
-        if (session.pr && plugins.scm) {
+        // Check if all tracked PRs are closed without merging.
+        // For multi-PR sessions, keep alive as long as any PR is still open.
+        const prsToCheck = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
+        if (prsToCheck.length > 0 && plugins.scm) {
           try {
-            const prState = await plugins.scm.getPRState(session.pr);
-            if (prState === PR_STATE.CLOSED) {
+            const states = await Promise.all(
+              prsToCheck.map((pr) => plugins.scm!.getPRState(pr)),
+            );
+            if (states.every((state) => state === PR_STATE.CLOSED)) {
               shouldKill = true;
             }
           } catch {
