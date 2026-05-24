@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { getProjectName } from "@/lib/project-name";
 
-export default function manifest(): MetadataRoute.Manifest {
+export function buildPwaManifest(): MetadataRoute.Manifest {
   const projectName = getProjectName();
   return {
     name: `ao | ${projectName}`,

@@ -6,9 +6,9 @@ vi.mock("@/lib/project-name", () => ({
 
 describe("app manifest", () => {
   it("builds the PWA manifest with project-aware naming and icons", async () => {
-    const { default: manifest } = await import("./manifest");
+    const { buildPwaManifest } = await import("@/lib/pwa-manifest");
 
-    expect(manifest()).toMatchObject({
+    expect(buildPwaManifest()).toMatchObject({
       name: "ao | Agent Orchestrator",
       short_name: "ao",
       start_url: "/",

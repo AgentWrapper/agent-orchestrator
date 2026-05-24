@@ -34,6 +34,9 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
+      </head>
       <body className="h-screen overflow-hidden bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
         <Providers>{children}</Providers>
         <ServiceWorkerRegistrar />
@@ -41,3 +44,4 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   );
 }
+
