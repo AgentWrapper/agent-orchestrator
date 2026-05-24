@@ -1335,11 +1335,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                   (e) => e.reviewDecision === "changes_requested",
                 )
                   ? "changes_requested"
-                  : allEnrichments.every(
-                      (e) => e.reviewDecision === "approved" || e.reviewDecision === "none",
-                    )
+                  : allEnrichments.every((e) => e.reviewDecision === "approved")
                     ? "approved"
-                    : "pending",
+                    : allEnrichments.every((e) => e.reviewDecision === "none")
+                      ? "none"
+                      : "pending",
                 state: allEnrichments.every((e) => e.state === "merged")
                   ? "merged"
                   : allEnrichments.some((e) => e.state === "open")
