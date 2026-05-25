@@ -13,6 +13,7 @@ import { projectDashboardPath, projectReviewPath, projectSessionPath } from "@/l
 import { ThemeToggle } from "./ThemeToggle";
 import { AddProjectModal } from "./AddProjectModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
+import { AddIssueModal } from "./AddIssueModal";
 
 /** Minimal shape needed to render an orchestrator link in the sidebar. */
 export interface ProjectSidebarOrchestrator {
@@ -306,6 +307,7 @@ function ProjectSidebarInner({
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [removedProjectIds, setRemovedProjectIds] = useState<Set<string>>(new Set());
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [addIssueOpen, setAddIssueOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsPopoverRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -1076,6 +1078,21 @@ function ProjectSidebarInner({
           );
         })}
       </div>
+      {/* Add issue button */}
+      {visibleProjects.length > 0 ? (
+        <div className="border-t border-[var(--color-border-subtle)] px-2 py-1.5">
+          <button
+            type="button"
+            onClick={() => setAddIssueOpen(true)}
+            className="flex w-full items-center gap-2 rounded px-2 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)] hover:text-[var(--color-text-primary)]"
+          >
+            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Add Issue
+          </button>
+        </div>
+      ) : null}
       <div className="project-sidebar__footer">
         <div className="flex items-center gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
           {/* Show killed toggle */}
@@ -1184,6 +1201,12 @@ function ProjectSidebarInner({
         open={projectSettingsProjectId !== null}
         projectId={projectSettingsProjectId}
         onClose={() => setProjectSettingsProjectId(null)}
+      />
+      <AddIssueModal
+        open={addIssueOpen}
+        onClose={() => setAddIssueOpen(false)}
+        projects={visibleProjects.map((p) => ({ id: p.id, name: p.name }))}
+        activeProjectId={activeProjectId}
       />
     </aside>
   );
