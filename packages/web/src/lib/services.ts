@@ -45,6 +45,7 @@ import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
+import pluginTrackerLocal from "@aoagents/ao-plugin-tracker-local";
 
 export interface Services {
   config: LoadedConfig;
@@ -118,6 +119,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
+  registry.register(pluginTrackerLocal);
 
   const sessionManager = createSessionManager({ config, registry });
 
