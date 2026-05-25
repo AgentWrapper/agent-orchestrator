@@ -30,7 +30,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -46,7 +46,7 @@ const DEFAULT_ISSUE_PREFIX = "LOCAL";
 function getStorageDir(project: ProjectConfig, config?: Record<string, unknown>): string {
   const customPath = config?.["storageDir"] ?? project.tracker?.["storageDir"];
   if (typeof customPath === "string") {
-    return join(project.path, customPath);
+    return resolve(project.path, customPath);
   }
   return join(homedir(), ".ao", "issues", basename(project.path));
 }

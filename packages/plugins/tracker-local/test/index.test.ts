@@ -64,7 +64,7 @@ describe("tracker-local plugin", () => {
   let tracker: ReturnType<typeof create>;
 
   beforeEach(() => {
-    tracker = create();
+    tracker = create({ storageDir });
   });
 
   // ---- manifest ----------------------------------------------------------
