@@ -22,7 +22,6 @@ export default tseslint.config(
       ".expect/**",
       ".gstack/**",
       ".worktrees/**",
-      "artifacts/**",
       "packages/web/next-env.d.ts",
       "packages/web/next.config.js",
       "packages/web/postcss.config.mjs",

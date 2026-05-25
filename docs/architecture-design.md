@@ -732,7 +732,7 @@ agent-orchestrator/
 │       ├── terminal-iterm2/
 │       └── terminal-web/
 │
-├── artifacts/                         # Research + design docs
+├── docs/                              # Research + design docs
 │   ├── competitive-research.md
 │   └── architecture-design.md
 │
