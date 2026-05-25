@@ -691,12 +691,8 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(enrichSpy).toHaveBeenCalledTimes(2);
-      expect(enrichSpy.mock.calls[0]).toEqual([
-        expect.objectContaining({ id: "worker-live" }),
-      ]);
-      expect(enrichSpy.mock.calls[1]).toEqual([
-        expect.objectContaining({ id: "worker-killed" }),
-      ]);
+      expect(enrichSpy.mock.calls[0]).toEqual([expect.objectContaining({ id: "worker-live" })]);
+      expect(enrichSpy.mock.calls[1]).toEqual([expect.objectContaining({ id: "worker-killed" })]);
 
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
@@ -748,9 +744,7 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(enrichSpy).toHaveBeenCalledTimes(1);
-      expect(enrichSpy.mock.calls[0]).toEqual([
-        expect.objectContaining({ id: "worker-open-pr" }),
-      ]);
+      expect(enrichSpy.mock.calls[0]).toEqual([expect.objectContaining({ id: "worker-open-pr" })]);
 
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
@@ -1517,8 +1511,25 @@ describe("API Routes", () => {
   // ── GET /api/events ────────────────────────────────────────────────
 
   describe("GET /api/events", () => {
-    it("streams dashboard events as SSE", async () => {
-      const res = eventsGET();
+    it("streams live-mode SSE without mock sessions by default", async () => {
+      const res = eventsGET(makeRequest("http://localhost:3000/api/events"));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toContain("text/event-stream");
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+      if (!reader) return;
+
+      const firstChunk = await reader.read();
+      await reader.cancel();
+      const text = new TextDecoder().decode(firstChunk.value);
+      expect(text).toContain("event: connected");
+      expect(text).toContain('"mode":"live"');
+      expect(text).not.toContain("event: sessions");
+    });
+
+    it("streams seeded mock sessions only when mock mode is requested", async () => {
+      const res = eventsGET(makeRequest("http://localhost:3000/api/events?mock=true"));
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toContain("text/event-stream");
 
@@ -1531,7 +1542,7 @@ describe("API Routes", () => {
       await reader.cancel();
       const decoder = new TextDecoder();
       const text = `${decoder.decode(firstChunk.value)}${decoder.decode(secondChunk.value)}`;
-      expect(text).toContain("event: connected");
+      expect(text).toContain('"mode":"mock"');
       expect(text).toContain("event: sessions");
     });
   });

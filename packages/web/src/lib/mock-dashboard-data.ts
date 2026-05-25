@@ -1,10 +1,8 @@
 import type { DashboardPR, DashboardSession } from "@/lib/types";
 import { computeStats } from "@/lib/serialize";
 
-const NOW = "2026-05-25T12:00:00.000Z";
-
 function ago(minutes: number): string {
-  return new Date(new Date(NOW).getTime() - minutes * 60_000).toISOString();
+  return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
 function makePR(overrides: Partial<DashboardPR> & { number: number; title: string }): DashboardPR {

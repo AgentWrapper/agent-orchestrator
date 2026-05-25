@@ -1,4 +1,4 @@
-import { getMockDashboardPayload } from "@/lib/mock-dashboard-data";
+import { getMockDashboardPayload, isMockDashboardRequested } from "@/lib/mock-dashboard-data";
 
 export const dynamic = "force-dynamic";
 
@@ -12,20 +12,49 @@ function encodeEvent({ event, data }: SseEvent): string {
 }
 
 /** GET /api/events — SSE stream for dashboard refresh events. */
-export function GET() {
-  // TODO: wire to core services event bus once lifecycle updates are emitted centrally.
+export function GET(request: Request) {
+  const shouldUseMockData = isMockDashboardRequested(request.url);
   const encoder = new TextEncoder();
   let interval: ReturnType<typeof setInterval> | undefined;
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (event: SseEvent) => controller.enqueue(encoder.encode(encodeEvent(event)));
-      const payload = getMockDashboardPayload();
+      const cleanup = () => {
+        if (interval) {
+          clearInterval(interval);
+          interval = undefined;
+        }
+      };
+      const send = (event: SseEvent): boolean => {
+        try {
+          controller.enqueue(encoder.encode(encodeEvent(event)));
+          return true;
+        } catch (error) {
+          cleanup();
+          controller.error(error);
+          return false;
+        }
+      };
 
-      send({ event: "connected", data: { ok: true, timestamp: new Date().toISOString() } });
-      send({
-        event: "sessions",
-        data: { sessions: payload.sessions, stats: payload.stats },
+      // TODO: wire to core services event bus once lifecycle updates are emitted centrally.
+      const connected = send({
+        event: "connected",
+        data: {
+          ok: true,
+          mode: shouldUseMockData ? "mock" : "live",
+          timestamp: new Date().toISOString(),
+        },
       });
+      if (!connected) return;
+
+      if (shouldUseMockData) {
+        const payload = getMockDashboardPayload();
+        const sentSessions = send({
+          event: "sessions",
+          data: { sessions: payload.sessions, stats: payload.stats },
+        });
+        if (!sentSessions) return;
+      }
 
       interval = setInterval(() => {
         send({ event: "heartbeat", data: { timestamp: new Date().toISOString() } });
