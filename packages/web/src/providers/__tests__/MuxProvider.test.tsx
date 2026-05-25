@@ -522,6 +522,13 @@ describe("MuxProvider message handling", () => {
           {
             id: "n1",
             receivedAt: "2026-05-13T10:00:00.000Z",
+            notification: {
+              version: 1,
+              category: "all_complete",
+              priority: "info",
+              title: "All sessions complete",
+              body: "Done",
+            },
             event: {
               id: "evt-1",
               type: "summary.all_complete",
@@ -549,6 +556,13 @@ describe("MuxProvider message handling", () => {
           {
             id: "n2",
             receivedAt: "2026-05-13T10:01:00.000Z",
+            notification: {
+              version: 1,
+              category: "agent_needs_input",
+              priority: "action",
+              title: "Agent needs input",
+              body: "s2 is waiting for input.",
+            },
             event: {
               id: "evt-2",
               type: "session.needs_input",
@@ -563,6 +577,13 @@ describe("MuxProvider message handling", () => {
           {
             id: "n3",
             receivedAt: "2026-05-13T10:02:00.000Z",
+            notification: {
+              version: 1,
+              category: "ci_failing",
+              priority: "action",
+              title: "CI failing",
+              body: "CI is failing and needs attention.",
+            },
             event: {
               id: "evt-3",
               type: "ci.failing",

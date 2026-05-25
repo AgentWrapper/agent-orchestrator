@@ -1807,9 +1807,18 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-family: var(--font-mono);
 }
 
-.dashboard-notification-item__message {
+.dashboard-notification-item__title {
   margin: 0;
   color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-notification-item__message {
+  margin: 2px 0 0;
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;

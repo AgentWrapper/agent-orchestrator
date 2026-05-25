@@ -140,12 +140,13 @@ describe("notifier-desktop", () => {
       expect(script).toContain("CI is failing");
     });
 
-    it("uses URGENT prefix for urgent priority", async () => {
+    it("does not encode priority labels into concise title text", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "urgent" }));
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("URGENT");
+      expect(script).toContain("Session Spawned");
+      expect(script).not.toContain("URGENT");
     });
 
     it("uses event-aware titles for non-urgent priority", async () => {
@@ -209,7 +210,7 @@ describe("notifier-desktop", () => {
       expect(script).toContain("\\\\backslash");
     });
 
-    it("formats v3 pull request context into a compact desktop summary", async () => {
+    it("formats v3 pull request context into concise presentation copy", async () => {
       const notifier = create();
       await notifier.notify(
         makeEvent({
@@ -240,17 +241,14 @@ describe("notifier-desktop", () => {
       );
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("PR #1579 ready to merge");
-      expect(script).toContain("Normalize AO notifier payloads");
+      expect(script).toContain("PR #1579 is ready to merge");
+      expect(script).toContain("Approved and CI is green.");
       expect(script).toContain("demo · demo-agent-29 · PR #1579");
-      expect(script).toContain("PR #1579");
-      expect(script).toContain("AO-1579");
-      expect(script).toContain("Branch: ao/demo-notifier-harness → main");
-      expect(script).toContain("CI: Passing");
-      expect(script).toContain("Review: Approved");
-      expect(script).toContain("Merge: Ready");
-      expect(script).toContain("Conflicts: None");
-      expect(script).toContain("Transition: approved → mergeable");
+      expect(script).not.toContain("Normalize AO notifier payloads");
+      expect(script).not.toContain("Context:");
+      expect(script).not.toContain("Status:");
+      expect(script).not.toContain("Branch:");
+      expect(script).not.toContain("Transition:");
     });
   });
 
@@ -273,7 +271,7 @@ describe("notifier-desktop", () => {
       expect(args).toContain("--urgency=critical");
       // Options must come before title/message for notify-send
       const urgencyIdx = args.indexOf("--urgency=critical");
-      const titleIdx = args.findIndex((a: string) => a.includes("URGENT"));
+      const titleIdx = args.findIndex((a: string) => a.includes("Session Spawned"));
       expect(urgencyIdx).toBeLessThan(titleIdx);
     });
 
@@ -358,7 +356,7 @@ describe("notifier-desktop", () => {
   });
 
   describe("notifyWithActions", () => {
-    it("includes action labels in the message", async () => {
+    it("keeps visible action notifications focused on presentation copy", async () => {
       const notifier = create();
       const actions: NotifyAction[] = [
         { label: "Merge", url: "https://github.com/pr/1" },
@@ -367,8 +365,10 @@ describe("notifier-desktop", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("Merge");
-      expect(script).toContain("Kill");
+      expect(script).toContain("Session app-1 spawned");
+      expect(script).not.toContain("Actions:");
+      expect(script).not.toContain("Merge");
+      expect(script).not.toContain("Kill");
     });
 
     it("includes sound for urgent with actions", async () => {
@@ -415,7 +415,7 @@ describe("notifier-desktop", () => {
       expect(args).toContain("-title");
       expect(args).toContain("-subtitle");
       expect(args).toContain("-message");
-      expect(args[args.indexOf("-subtitle") + 1]).toBe("my-project · s-1 · Info");
+      expect(args[args.indexOf("-subtitle") + 1]).toBe("my-project · s-1");
       expect(args[args.indexOf("-message") + 1]).toContain("hello");
     });
 
@@ -483,7 +483,7 @@ describe("notifier-desktop", () => {
       expect(mockExecFile.mock.calls[0][0]).toBe("notify-send");
     });
 
-    it("keeps action labels on non-macOS even when backend is ao-app", async () => {
+    it("uses concise body on non-macOS even when backend is ao-app", async () => {
       mockPlatform.mockReturnValue("linux");
       setProcessPlatform("linux");
       const notifier = create({ backend: "ao-app", dashboardUrl: "http://localhost:3000" });
@@ -492,7 +492,8 @@ describe("notifier-desktop", () => {
 
       expect(mockExecFile.mock.calls[0][0]).toBe("notify-send");
       const args = mockExecFile.mock.calls[0][1] as string[];
-      expect(args.join("\n")).toContain("Open PR");
+      expect(args.join("\n")).toContain("Session app-1 spawned");
+      expect(args.join("\n")).not.toContain("Open PR");
     });
 
     it("uses terminal-notifier for notifyWithActions too", async () => {
@@ -538,7 +539,7 @@ describe("notifier-desktop", () => {
       };
       expect(payload.notificationId).toMatch(/^evt-native\./);
       expect(payload.threadId).toBe("ao.notifications");
-      expect(payload.subtitle).toBe("my-project · s-9 · Info");
+      expect(payload.subtitle).toBe("my-project · s-9");
       expect(payload.defaultOpenUrl).toBe("http://localhost:3001/projects/my-project/sessions/s-9");
       expect(payload.event).toMatchObject({ id: "evt-native", sessionId: "s-9" });
     });
@@ -579,7 +580,9 @@ describe("notifier-desktop", () => {
       expect(payload.actions).toEqual([
         { label: "Open PR", url: "https://github.com/example/pr/1" },
       ]);
-      expect(payload.body).toContain("Kill");
+      expect(payload.body).toContain("Session app-1 spawned");
+      expect(payload.body).not.toContain("Actions:");
+      expect(payload.body).not.toContain("Kill");
       expect(payload.body).not.toContain("Open PR");
     });
 

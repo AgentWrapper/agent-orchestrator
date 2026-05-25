@@ -1,9 +1,14 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { NotifyAction, OrchestratorEvent } from "./types.js";
+import type { EventPriority, EventType, NotifyAction, OrchestratorEvent } from "./types.js";
 import type { NotificationDataV3 } from "./notification-data.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { getObservabilityBaseDir } from "./paths.js";
+import {
+  buildNotificationPresentation,
+  isNotificationPresentation,
+  type NotificationPresentation,
+} from "./notification-presentation.js";
 
 export const DEFAULT_DASHBOARD_NOTIFICATION_LIMIT = 50;
 export const MAX_DASHBOARD_NOTIFICATION_LIMIT = 500;
@@ -34,6 +39,7 @@ export interface SerializedDashboardAction {
 export interface DashboardNotificationRecord {
   id: string;
   receivedAt: string;
+  notification: NotificationPresentation;
   event: SerializedDashboardEvent;
   actions?: SerializedDashboardAction[];
 }
@@ -92,6 +98,7 @@ export function createDashboardNotificationRecord(
   return {
     id: `${event.id}:${receivedAtIso}`,
     receivedAt: receivedAtIso,
+    notification: buildNotificationPresentation(event),
     event: {
       id: event.id,
       type: event.type,
@@ -103,6 +110,35 @@ export function createDashboardNotificationRecord(
       data: toJsonRecord(event.data),
     },
     ...(actions && actions.length > 0 ? { actions: actions.map(serializeAction) } : {}),
+  };
+}
+
+function toOrchestratorEvent(event: SerializedDashboardEvent): OrchestratorEvent {
+  const timestamp = new Date(event.timestamp);
+  return {
+    id: event.id,
+    type: event.type as EventType,
+    priority: event.priority as EventPriority,
+    sessionId: event.sessionId,
+    projectId: event.projectId,
+    timestamp: Number.isNaN(timestamp.getTime()) ? new Date(0) : timestamp,
+    message: event.message,
+    data: event.data,
+  };
+}
+
+function withNotificationPresentation(
+  record: Omit<DashboardNotificationRecord, "notification"> & {
+    notification?: unknown;
+  },
+): DashboardNotificationRecord {
+  if (isNotificationPresentation(record.notification)) {
+    return record as DashboardNotificationRecord;
+  }
+
+  return {
+    ...record,
+    notification: buildNotificationPresentation(toOrchestratorEvent(record.event)),
   };
 }
 
@@ -143,7 +179,7 @@ export function readDashboardNotificationsFromFile(
     try {
       const parsed = JSON.parse(trimmed) as unknown;
       if (isDashboardNotificationRecord(parsed)) {
-        records.push(parsed);
+        records.push(withNotificationPresentation(parsed));
       }
     } catch {
       // Ignore malformed lines. A partial write should not break the dashboard.

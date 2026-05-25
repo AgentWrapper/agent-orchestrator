@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import {
   buildCIFailureNotificationData,
+  buildNotificationPresentation,
   buildPRStateNotificationData,
   buildReactionNotificationData,
   buildSessionTransitionNotificationData,
@@ -15,6 +16,7 @@ import {
   type NotificationDataV3,
   type NotificationEventContext,
   type Notifier,
+  type NotificationPresentation,
   type NotifyAction,
   type OrchestratorConfig,
   type OrchestratorEvent,
@@ -350,6 +352,7 @@ export interface NotifyTestResult {
   ok: boolean;
   dryRun: boolean;
   templateName: NotifyTestTemplateName;
+  notification: NotificationPresentation;
   event: OrchestratorEvent;
   actions: NotifyAction[];
   targets: NotifyTestTarget[];
@@ -539,6 +542,7 @@ export async function runNotifyTest(
   request: NotifyTestRequest = {},
 ): Promise<NotifyTestResult> {
   const { templateName, event } = createNotifyTestEvent(request);
+  const notification = buildNotificationPresentation(event);
   const targets = resolveNotifyTestTargets(config, event.priority, request);
   const actions = request.actions ? [...NOTIFY_TEST_ACTIONS] : [];
   const warnings: string[] = [];
@@ -554,6 +558,7 @@ export async function runNotifyTest(
       ok: false,
       dryRun: Boolean(request.dryRun),
       templateName,
+      notification,
       event,
       actions,
       targets,
@@ -670,6 +675,7 @@ export async function runNotifyTest(
     ok: errors.length === 0,
     dryRun: Boolean(request.dryRun),
     templateName,
+    notification,
     event,
     actions,
     targets,

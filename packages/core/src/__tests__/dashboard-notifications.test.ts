@@ -67,6 +67,11 @@ describe("dashboard notifications", () => {
     );
 
     expect(record.id).toBe("evt-1:2026-05-13T11:00:00.000Z");
+    expect(record.notification).toMatchObject({
+      category: "ci_failing",
+      title: "CI failing on PR #1",
+      body: "1 check failed: typecheck.",
+    });
     expect(record.event.timestamp).toBe("2026-05-13T10:00:00.000Z");
     expect(record.event.data).toMatchObject({
       schemaVersion: 3,
@@ -116,7 +121,7 @@ describe("dashboard notifications", () => {
     expect(readDashboardNotificationsFromFile(filePath)).toEqual([record]);
   });
 
-  it("keeps legacy JSONL records readable without transforming their data", () => {
+  it("keeps legacy JSONL records readable while backfilling presentation", () => {
     const filePath = makeTempPath();
     const legacyRecord = {
       id: "evt-legacy:2026-05-13T11:00:00.000Z",
@@ -134,7 +139,19 @@ describe("dashboard notifications", () => {
     };
     writeFileSync(filePath, `${JSON.stringify(legacyRecord)}\n`, "utf-8");
 
-    expect(readDashboardNotificationsFromFile(filePath)).toEqual([legacyRecord]);
+    expect(readDashboardNotificationsFromFile(filePath)).toEqual([
+      {
+        ...legacyRecord,
+        notification: {
+          version: 1,
+          category: "ci_failing",
+          priority: "warning",
+          title: "CI failing",
+          body: "CI is failing and needs attention.",
+          details: ["CI is failing"],
+        },
+      },
+    ]);
   });
 
   it("clamps invalid limits", () => {

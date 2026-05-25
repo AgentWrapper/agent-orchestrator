@@ -62,6 +62,8 @@ function printHumanResult(result: NotifyTestResult, sinkRequests?: unknown[]): v
   );
   console.log(`Event id: ${result.event.id}`);
   console.log(`Session: ${result.event.projectId}/${result.event.sessionId}`);
+  console.log(`Title: ${result.notification.title}`);
+  console.log(`Body: ${result.notification.body}`);
 
   if (result.targets.length > 0) {
     console.log("");

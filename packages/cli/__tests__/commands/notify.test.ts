@@ -72,9 +72,19 @@ vi.mock("@aoagents/ao-core", () => {
         return config.notificationRouting?.[priority] ?? [];
       }
       const defaults = config.defaults?.notifiers ?? [];
-      if (priority === "urgent" || priority === "warning") return defaults;
+      if (priority === "urgent" || priority === "warning") {
+        const withoutDesktop = defaults.filter((notifier) => notifier !== "desktop");
+        return defaults.includes("desktop") ? ["desktop", ...withoutDesktop] : withoutDesktop;
+      }
       return defaults.filter((notifier) => notifier !== "desktop");
     },
+    buildNotificationPresentation: (event: { priority: string; message: string }) => ({
+      version: 1,
+      category: "generic",
+      priority: event.priority,
+      title: "Test notification",
+      body: event.message,
+    }),
     buildCIFailureNotificationData: (input: {
       sessionId: string;
       projectId: string;

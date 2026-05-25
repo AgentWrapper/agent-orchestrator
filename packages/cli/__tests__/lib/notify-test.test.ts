@@ -141,6 +141,7 @@ describe("notify test helper", () => {
     const result = await runNotifyTest(config, registry, { to: ["alerts"] });
 
     expect(result.ok).toBe(true);
+    expect(result.notification.title).toBe("All sessions complete");
     expect(result.targets).toEqual([{ reference: "alerts", pluginName: "slack" }]);
     expect(registry.get).toHaveBeenCalledWith("notifier", "alerts");
     expect(registry.get).toHaveBeenCalledWith("notifier", "slack");

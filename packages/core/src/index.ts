@@ -399,6 +399,12 @@ export {
   type SerializedDashboardAction,
   type SerializedDashboardEvent,
 } from "./dashboard-notifications.js";
+export {
+  buildNotificationPresentation,
+  isNotificationPresentation,
+  type NotificationPresentation,
+  type NotificationPresentationCategory,
+} from "./notification-presentation.js";
 
 // Global config — Option C hybrid architecture (global registry + local behavior)
 export {

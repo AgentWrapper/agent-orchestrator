@@ -896,7 +896,6 @@ async function runStartup(
   // presence of `updateChannel` in the global config).
   await maybePromptForUpdateChannel();
   config = await ensureDefaultStartupNotifiers(config);
-  project = config.projects[projectId] ?? project;
 
   // Install the parent shutdown path before spawning any managed children.
   // This guarantees a SIGINT/SIGTERM in the middle of startup still performs

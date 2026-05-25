@@ -41,6 +41,13 @@ vi.mock("../../src/lib/script-runner.js", () => ({
 
 vi.mock("@aoagents/ao-core", () => ({
   buildCIFailureNotificationData: () => ({ schemaVersion: 3 }),
+  buildNotificationPresentation: (event: { priority: string; message: string }) => ({
+    version: 1,
+    category: "generic",
+    priority: event.priority,
+    title: "Test notification",
+    body: event.message,
+  }),
   buildPRStateNotificationData: () => ({ schemaVersion: 3 }),
   buildReactionNotificationData: () => ({ schemaVersion: 3 }),
   buildSessionTransitionNotificationData: () => ({ schemaVersion: 3 }),
@@ -50,6 +57,10 @@ vi.mock("@aoagents/ao-core", () => ({
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
   recordNotificationDelivery: (...args: unknown[]) => mockRecordNotificationDelivery(...args),
+  resolveNotificationRoute: (
+    config: { defaults?: { notifiers?: string[] }; notificationRouting?: Record<string, string[]> },
+    priority: string,
+  ) => config.notificationRouting?.[priority] ?? config.defaults?.notifiers ?? [],
   resolveNotifierTarget: (
     config: { notifiers?: Record<string, { plugin?: string }> },
     reference: string,

@@ -57,7 +57,7 @@ describe("notifier-desktop integration", () => {
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
       expect(script).not.toContain("sound name");
-      expect(script).toContain("URGENT");
+      expect(script).toContain("Session Spawned");
     });
 
     it("default config + urgent event -> sound clause present", async () => {
@@ -104,13 +104,13 @@ describe("notifier-desktop integration", () => {
       expect(script).toContain("with title");
     });
 
-    it("escapes newlines in message text (renders literally in notification)", async () => {
+    it("normalizes newlines in message text for notification-safe copy", async () => {
       const notifier = desktopPlugin.create();
       await notifier.notify(makeEvent({ message: "line1\nline2" }));
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      // newlines in AppleScript strings are ok, they render as literal newlines
-      expect(script).toContain("line1\nline2");
+      expect(script).toContain("line1 line2");
+      expect(script).not.toContain("line1\nline2");
     });
   });
 
@@ -184,7 +184,7 @@ describe("notifier-desktop integration", () => {
   });
 
   describe("notifyWithActions full pipeline", () => {
-    it("formats action labels into notification body text", async () => {
+    it("keeps action labels out of concise notification body text", async () => {
       const notifier = desktopPlugin.create();
       const actions: NotifyAction[] = [
         { label: "Merge PR", url: "https://github.com/pr/1" },
@@ -194,16 +194,17 @@ describe("notifier-desktop integration", () => {
       await notifier.notifyWithActions!(makeEvent({ priority: "urgent" }), actions);
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("Merge PR");
-      expect(script).toContain("Kill");
+      expect(script).toContain("Session app-1 spawned successfully");
+      expect(script).not.toContain("Merge PR");
+      expect(script).not.toContain("Kill");
       expect(script).toContain('sound name "default"');
     });
 
-    it("action labels with special chars are escaped in AppleScript", async () => {
+    it("message text with special chars is escaped in AppleScript", async () => {
       const notifier = desktopPlugin.create();
       const actions: NotifyAction[] = [{ label: 'Fix "bug"', url: "https://example.com" }];
 
-      await notifier.notifyWithActions!(makeEvent(), actions);
+      await notifier.notifyWithActions!(makeEvent({ message: 'Fix "bug"' }), actions);
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
       expect(script).toContain('Fix \\"bug\\"');

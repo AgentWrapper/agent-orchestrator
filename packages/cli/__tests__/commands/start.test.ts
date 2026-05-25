@@ -73,6 +73,11 @@ const { mockProcessCwd } = vi.hoisted(() => ({
   mockProcessCwd: vi.fn<() => string | undefined>(),
 }));
 
+const { mockIsMac, mockInstallAoNotifierAppForStartup } = vi.hoisted(() => ({
+  mockIsMac: vi.fn().mockReturnValue(false),
+  mockInstallAoNotifierAppForStartup: vi.fn().mockResolvedValue(undefined),
+}));
+
 const { mockPromptSelect, mockPromptConfirm } = vi.hoisted(() => ({
   mockPromptSelect: vi.fn(),
   mockPromptConfirm: vi.fn().mockResolvedValue(true),
@@ -150,6 +155,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     },
     findPidByPort: mockFindPidByPort,
     killProcessTree: mockKillProcessTree,
+    isMac: () => mockIsMac(),
     sweepDaemonChildren: mockSweepDaemonChildren,
     scanAoOrphans: mockScanAoOrphans,
     reapAoOrphans: mockReapAoOrphans,
@@ -240,6 +246,11 @@ vi.mock("../../src/lib/project-detection.js", () => ({
 
 vi.mock("../../src/lib/openclaw-probe.js", () => ({
   detectOpenClawInstallation: (...args: unknown[]) => mockDetectOpenClawInstallation(...args),
+}));
+
+vi.mock("../../src/lib/desktop-setup.js", () => ({
+  installAoNotifierAppForStartup: (...args: unknown[]) =>
+    mockInstallAoNotifierAppForStartup(...args),
 }));
 
 vi.mock("../../src/lib/prompts.js", () => ({
@@ -408,6 +419,10 @@ beforeEach(async () => {
   });
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
+  mockIsMac.mockReset();
+  mockIsMac.mockReturnValue(false);
+  mockInstallAoNotifierAppForStartup.mockReset();
+  mockInstallAoNotifierAppForStartup.mockResolvedValue(undefined);
   mockFindPidByPort.mockReset();
   mockFindPidByPort.mockResolvedValue(null);
   mockKillProcessTree.mockReset();
@@ -577,6 +592,54 @@ describe("start command — project resolution", () => {
     await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
 
     expect(readFileSync(configPath, "utf-8")).toBe(yaml);
+  });
+
+  it("installs AO Notifier.app on macOS without expanding notifier YAML", async () => {
+    mockIsMac.mockReturnValue(true);
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    const yaml = [
+      "port: 3000",
+      "defaults:",
+      "  notifiers:",
+      "    - dashboard",
+      "    - desktop",
+      "projects:",
+      "  my-app:",
+      "    name: My App",
+      "    path: ./main-repo",
+      "",
+    ].join("\n");
+    writeFileSync(configPath, yaml);
+    mockConfigRef.current = {
+      ...makeConfig({ "my-app": makeProject() }),
+      configPath,
+      defaults: {
+        runtime: "process",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: ["dashboard", "desktop"],
+      },
+      notifiers: {},
+      notificationRouting: {},
+    };
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    expect(mockInstallAoNotifierAppForStartup).toHaveBeenCalledOnce();
+    expect(readFileSync(configPath, "utf-8")).toBe(yaml);
+  });
+
+  it("continues startup with a warning when macOS AO Notifier.app setup fails", async () => {
+    mockIsMac.mockReturnValue(true);
+    mockInstallAoNotifierAppForStartup.mockRejectedValueOnce(new Error("copy failed"));
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    const output = vi.mocked(console.log).mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(output).toContain("Could not set up AO Notifier.app");
+    expect(output).toContain("copy failed");
+    expect(output).toContain("Startup complete");
   });
 
   it("uses explicit project arg when given", async () => {

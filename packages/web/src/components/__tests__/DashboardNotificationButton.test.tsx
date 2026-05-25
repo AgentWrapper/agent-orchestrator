@@ -38,6 +38,13 @@ function makeNotification(id: string, message: string): DashboardNotificationRec
   return {
     id: `${id}:2026-05-13T12:00:00.000Z`,
     receivedAt: `2026-05-13T12:00:0${id}.000Z`,
+    notification: {
+      version: 1,
+      category: "agent_needs_input",
+      priority: "action",
+      title: `Title ${id}`,
+      body: message,
+    },
     event: {
       id,
       type: "session.needs_input",
@@ -151,6 +158,33 @@ describe("DashboardNotificationButton", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.queryByText("Second notification")).not.toBeInTheDocument();
     expect(screen.getByText("First notification")).toBeInTheDocument();
+  });
+
+  it("renders notification presentation before raw event message", () => {
+    muxValue.notifications = [
+      {
+        ...makeNotification("1", "Concise body"),
+        notification: {
+          version: 1,
+          category: "ci_failing",
+          priority: "action",
+          title: "CI failing on PR #1",
+          body: "2 checks failed: typecheck, unit-tests.",
+        },
+        event: {
+          ...makeNotification("1", "Concise body").event,
+          message: "Context: PR #1\nStatus: failing\nBranch: feat/report\nTransition: ok → bad",
+        },
+      },
+    ];
+
+    render(<DashboardNotificationButton />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+
+    expect(screen.getByText("CI failing on PR #1")).toBeInTheDocument();
+    expect(screen.getByText("2 checks failed: typecheck, unit-tests.")).toBeInTheDocument();
+    expect(screen.queryByText(/Context: PR #1/)).not.toBeInTheDocument();
   });
 
   it("uses distinct classes for urgent and action notification colors", () => {

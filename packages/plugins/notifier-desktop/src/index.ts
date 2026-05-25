@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import {
+  buildNotificationPresentation,
   escapeAppleScript,
   getNotificationDataV3,
   isMac,
@@ -11,7 +12,6 @@ import {
   type OrchestratorEvent,
   type NotifyAction,
   type EventPriority,
-  type NotificationDataV3,
 } from "@aoagents/ao-core";
 
 function xmlEscape(s: string): string {
@@ -86,157 +86,24 @@ function shouldPlaySound(priority: EventPriority, soundEnabled: boolean): boolea
   return priority === "urgent";
 }
 
-function titleCaseStatus(value: string): string {
-  return value
-    .split(/[_\s.-]+/)
-    .filter(Boolean)
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
-
 function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }
 
-function eventTitle(event: OrchestratorEvent, data: NotificationDataV3 | null): string {
-  const pr = data?.subject.pr;
-
-  switch (event.type) {
-    case "ci.failing":
-      return pr ? `CI failing on PR #${pr.number}` : "CI failing";
-    case "merge.ready":
-      return pr ? `PR #${pr.number} ready to merge` : "Pull request ready to merge";
-    case "review.changes_requested":
-      return pr ? `Changes requested on PR #${pr.number}` : "Review changes requested";
-    case "session.needs_input":
-      return "Agent needs input";
-    case "session.stuck":
-      return "Agent may be stuck";
-    case "session.killed":
-    case "session.exited":
-      return "Agent exited";
-    case "pr.closed":
-      return pr ? `PR #${pr.number} closed` : "Pull request closed";
-    case "summary.all_complete":
-      return "All sessions complete";
-    default:
-      return titleCaseStatus(event.type);
-  }
-}
-
-function formatTitle(event: OrchestratorEvent): string {
+function formatSubtitle(event: OrchestratorEvent): string {
   const data = getNotificationDataV3(event.data);
-  const title = eventTitle(event, data);
-  if (event.priority === "urgent") return `URGENT: ${title}`;
-  if (event.priority === "warning") return `Warning: ${title}`;
-  return title;
-}
-
-function formatSubtitle(event: OrchestratorEvent, data: NotificationDataV3 | null): string {
   const segments = [event.projectId, event.sessionId];
   const pr = data?.subject.pr;
   if (pr) segments.push(`PR #${pr.number}`);
-  else segments.push(titleCaseStatus(event.priority));
   return truncate(segments.join(" · "), 120);
 }
 
-function formatBranch(data: NotificationDataV3 | null): string | undefined {
-  const pr = data?.subject.pr;
-  if (pr?.branch && pr.baseBranch) return `${pr.branch} → ${pr.baseBranch}`;
-  return pr?.branch ?? pr?.baseBranch ?? data?.subject.branch;
-}
-
-function appendLine(lines: string[], value: string | undefined, maxLength = 180): void {
-  const trimmed = value?.trim();
-  if (!trimmed) return;
-  lines.push(truncate(trimmed, maxLength));
-}
-
-function formatStatusLine(data: NotificationDataV3): string | undefined {
-  const segments: string[] = [];
-
-  if (data.ci?.status) {
-    const failedChecks = data.ci.failedChecks?.map((check) => check.name) ?? [];
-    const failedText = failedChecks.length > 0 ? ` (${failedChecks.slice(0, 3).join(", ")})` : "";
-    segments.push(`CI: ${titleCaseStatus(data.ci.status)}${failedText}`);
-  }
-
-  if (data.review?.decision) {
-    const threads =
-      typeof data.review.unresolvedThreads === "number"
-        ? `, ${data.review.unresolvedThreads} threads`
-        : "";
-    segments.push(`Review: ${titleCaseStatus(data.review.decision)}${threads}`);
-  }
-
-  if (typeof data.merge?.ready === "boolean") {
-    segments.push(`Merge: ${data.merge.ready ? "Ready" : "Not ready"}`);
-  }
-
-  if (typeof data.merge?.conflicts === "boolean") {
-    segments.push(`Conflicts: ${data.merge.conflicts ? "Found" : "None"}`);
-  }
-
-  return segments.length > 0 ? segments.join(" · ") : undefined;
-}
-
-function formatSubjectLine(data: NotificationDataV3 | null): string | undefined {
-  if (!data) return undefined;
-  const pr = data.subject.pr;
-  const issue = data.subject.issue;
-  const segments: string[] = [];
-
-  if (pr) segments.push(`PR #${pr.number}`);
-  if (issue) segments.push(issue.id);
-
-  return segments.length > 0 ? segments.join(" · ") : undefined;
-}
-
-function formatDetailLine(label: string, value: string | undefined): string | undefined {
-  return value ? `${label}: ${value}` : undefined;
-}
-
-function formatActionLine(
-  actions: NotifyAction[] | undefined,
-  hiddenActionIndexes: Set<number> = new Set(),
-): string | undefined {
-  const visibleActions = (actions ?? []).filter((_, index) => !hiddenActionIndexes.has(index));
-  if (visibleActions.length === 0) return undefined;
-  return `Actions: ${visibleActions.map((action) => action.label).join(" · ")}`;
-}
-
-function formatBody(
-  event: OrchestratorEvent,
-  actions?: NotifyAction[],
-  options: { hiddenActionIndexes?: Set<number> } = {},
-): string {
-  const data = getNotificationDataV3(event.data);
-  const lines: string[] = [];
-  const subtitle = data?.subject.pr?.title ?? data?.subject.summary;
-  const branch = formatBranch(data);
-
-  if (subtitle && subtitle !== event.message) appendLine(lines, subtitle, 150);
-  appendLine(lines, event.message, 180);
-  appendLine(lines, formatDetailLine("Context", formatSubjectLine(data)), 160);
-  if (data) appendLine(lines, formatDetailLine("Status", formatStatusLine(data)), 180);
-  appendLine(lines, formatDetailLine("Branch", branch), 140);
-  if (data?.transition)
-    appendLine(lines, `Transition: ${data.transition.from} → ${data.transition.to}`, 120);
-  appendLine(lines, formatActionLine(actions, options.hiddenActionIndexes), 160);
-
-  return lines.join("\n");
-}
-
-function formatContent(
-  event: OrchestratorEvent,
-  actions?: NotifyAction[],
-  options: { hiddenActionIndexes?: Set<number> } = {},
-): DesktopNotificationContent {
-  const data = getNotificationDataV3(event.data);
+function formatContent(event: OrchestratorEvent): DesktopNotificationContent {
+  const presentation = buildNotificationPresentation(event);
   return {
-    title: formatTitle(event),
-    subtitle: formatSubtitle(event, data),
-    body: formatBody(event, actions, options),
+    title: presentation.title,
+    subtitle: formatSubtitle(event),
+    body: presentation.body,
   };
 }
 
@@ -333,17 +200,6 @@ function nativeActionPayload(
   return callbackEndpoint ? { label: action.label, callbackEndpoint } : undefined;
 }
 
-function nativeActionIndexes(
-  actions: NotifyAction[] | undefined,
-  dashboardUrl: string | undefined,
-): Set<number> {
-  const indexes = new Set<number>();
-  for (const [index, action] of (actions ?? []).entries()) {
-    if (nativeActionPayload(action, dashboardUrl)) indexes.add(index);
-  }
-  return indexes;
-}
-
 function nativeActionPayloads(
   actions: NotifyAction[] | undefined,
   dashboardUrl: string | undefined,
@@ -386,10 +242,6 @@ function detectTerminalNotifier(): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ENOENT";
   }
-}
-
-function usesAoNotifierNativeActions(backend: DesktopBackend, appPath: string): boolean {
-  return isMac() && (backend === "ao-app" || (backend === "auto" && detectAoNotifierApp(appPath)));
 }
 
 /**
@@ -571,12 +423,7 @@ export function create(config?: Record<string, unknown>): Notifier {
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
       const nativeActions = nativeActionPayloads(actions, dashboardUrl);
-      const content = formatContent(event, actions, {
-        hiddenActionIndexes: usesAoNotifierNativeActions(backend, appPath)
-          ? nativeActionIndexes(actions, dashboardUrl)
-          : undefined,
-      });
-      const fallbackContent = formatContent(event, actions);
+      const content = formatContent(event);
       const sound = shouldPlaySound(event.priority, soundEnabled);
       const isUrgent = event.priority === "urgent";
       await sendNotification(content, event, {
@@ -586,7 +433,6 @@ export function create(config?: Record<string, unknown>): Notifier {
         notificationId: nextNativeNotificationId(event),
         openUrl: primaryOpenUrl(event, dashboardUrl, actions),
         actions: nativeActions,
-        fallbackContent,
       });
     },
   };

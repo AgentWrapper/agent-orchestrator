@@ -190,6 +190,14 @@ function notificationKey(notification: DashboardNotificationRecord): string {
   return `${notification.id}:${notification.receivedAt}`;
 }
 
+function presentationTitle(notification: DashboardNotificationRecord): string {
+  return notification.notification?.title ?? notification.event.message;
+}
+
+function presentationBody(notification: DashboardNotificationRecord): string {
+  return notification.notification?.body ?? notification.event.message;
+}
+
 function readStoredReadIds(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
@@ -249,7 +257,8 @@ function NotificationItem({
             {formatRelativeTime(notification.receivedAt)}
           </span>
         </div>
-        <p className="dashboard-notification-item__message">{event.message}</p>
+        <p className="dashboard-notification-item__title">{presentationTitle(notification)}</p>
+        <p className="dashboard-notification-item__message">{presentationBody(notification)}</p>
         <div className="dashboard-notification-item__meta">
           <span>{event.projectId}</span>
           <span>{event.sessionId}</span>
