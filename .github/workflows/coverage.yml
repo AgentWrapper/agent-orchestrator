@@ -84,9 +84,6 @@ jobs:
             done
           fi
 
-      - name: Generate coverage report
-        run: node .github/scripts/coverage-report.mjs
-
       - name: Post or update PR comment
         # Fork PR tokens lack comment permissions — don't fail the job
         continue-on-error: true

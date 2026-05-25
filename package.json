@@ -20,20 +20,14 @@
     "test": "pnpm -r --filter '!@aoagents/ao-web' test",
     "test:integration": "pnpm --filter @aoagents/ao-integration-tests test:integration",
     "clean": "pnpm -r clean",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "pnpm -r build && changeset publish",
-    "prepare": "husky",
     "postinstall": "node scripts/rebuild-node-pty.js"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8",
     "@eslint/js": "^10.0.1",
     "@next/eslint-plugin-next": "^15.5.15",
     "@types/node": "^25.2.3",
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
-    "husky": "^9.1.7",
     "istanbul-lib-coverage": "^3.2.2",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.55.0"

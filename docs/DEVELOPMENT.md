@@ -485,7 +485,9 @@ Node.js ESM requires explicit extensions on local imports. All packages use `"ty
 ## Resources
 
 - [`packages/core/README.md`](../packages/core/README.md) — Core service reference
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md) — Hash-based namespace design
-- [`SETUP.md`](../SETUP.md) — Installation and configuration reference
-- [`SECURITY.md`](../SECURITY.md) — Security practices
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Technical architecture (HTTP, WebSocket, process map)
+
+  - [`SETUP.md`](./SETUP.md) — Installation and configuration reference
+
+  - [`SECURITY.md`](./SECURITY.md) — Security practices
 - [`agent-orchestrator.yaml.example`](../agent-orchestrator.yaml.example) — Full config reference

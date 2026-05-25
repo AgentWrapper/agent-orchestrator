@@ -194,7 +194,7 @@ import {
 } from "@aoagents/ao-core";
 ```
 
-`getActivityFallbackState` is **mandatory** for new agent plugins. See [the agent-plugin section in the root CLAUDE.md](../CLAUDE.md#agent-plugin-implementation-standards) for the full contract — but the relevant cross-platform note is: AO activity JSONL works the same on all platforms, so write your activity-detection logic against it, not against tmux capture-pane / ps output.
+`getActivityFallbackState` is **mandatory** for new agent plugins. See [the agent-plugin section in the root CLAUDE.md](./CLAUDE.md#agent-plugin-implementation-standards) for the full contract — but the relevant cross-platform note is: AO activity JSONL works the same on all platforms, so write your activity-detection logic against it, not against tmux capture-pane / ps output.
 
 ### Shell escaping — `packages/core/src/utils.ts`
 

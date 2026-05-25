@@ -112,4 +112,4 @@ After copying an example:
 3. **Spawn an agent** - Try `ao spawn project-id ISSUE-123`
 4. **Monitor** - Use `ao status` or open the dashboard (default http://localhost:3000, configurable via `port:` in config)
 
-See [SETUP.md](../SETUP.md) for detailed configuration reference and troubleshooting.
+See [SETUP.md](../docs/SETUP.md) for detailed configuration reference and troubleshooting.

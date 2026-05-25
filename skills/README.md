@@ -55,14 +55,6 @@ Add to `.windsurf/rules/`:
 cp skills/bug-triage/SKILL.md .windsurf/rules/bug-triage.md
 ```
 
-### GitHub Copilot
-
-Add to `.github/copilot-instructions.md` or reference in `.github/`:
-
-```bash
-cp skills/bug-triage/SKILL.md .github/skills/bug-triage.md
-```
-
 ### Gemini CLI
 
 ```bash
