@@ -7,6 +7,7 @@ import {
   buildSessionTransitionNotificationData,
   createProjectObserver,
   recordNotificationDelivery,
+  resolveNotificationRoute,
   resolveNotifierTarget,
   type CICheck,
   type EventPriority,
@@ -464,7 +465,7 @@ function refsFromAllKnownSources(config: OrchestratorConfig): string[] {
 }
 
 function refsFromRoute(config: OrchestratorConfig, priority: EventPriority): string[] {
-  return uniqueRefs(config.notificationRouting?.[priority] ?? config.defaults?.notifiers ?? []);
+  return uniqueRefs(resolveNotificationRoute(config, priority));
 }
 
 export function createNotifyTestEvent(request: NotifyTestRequest = {}): {

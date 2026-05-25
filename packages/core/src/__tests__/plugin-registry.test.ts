@@ -352,36 +352,41 @@ describe("loadBuiltins", () => {
     });
   });
 
-  it("passes configPath for named notifier references without explicit config", async () => {
+  it("registers config-light dashboard and desktop defaults without explicit config blocks", async () => {
     const registry = createPluginRegistry();
     const fakeDashboard = makePlugin("notifier", "dashboard");
+    const fakeDesktop = makePlugin("notifier", "desktop");
     const cfg = makeOrchestratorConfig({
       configPath: "/test/config.yaml",
       defaults: {
         runtime: "tmux",
         agent: "codex",
         workspace: "worktree",
-        notifiers: ["dashboard"],
-      },
-      notificationRouting: {
-        urgent: ["dashboard"],
-        action: [],
-        warning: [],
-        info: [],
+        notifiers: ["dashboard", "desktop"],
       },
       notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
     });
 
     await registry.loadBuiltins(cfg, async (pkg: string) => {
       if (pkg === "@aoagents/ao-plugin-notifier-dashboard") return fakeDashboard;
+      if (pkg === "@aoagents/ao-plugin-notifier-desktop") return fakeDesktop;
       throw new Error(`Not found: ${pkg}`);
     });
 
     expect(fakeDashboard.create).toHaveBeenCalledWith({
       configPath: "/test/config.yaml",
     });
+    expect(fakeDesktop.create).toHaveBeenCalledWith({
+      configPath: "/test/config.yaml",
+    });
     expect(
       registry.get<{ _config: Record<string, unknown> }>("notifier", "dashboard")?._config,
+    ).toEqual({
+      configPath: "/test/config.yaml",
+    });
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "desktop")?._config,
     ).toEqual({
       configPath: "/test/config.yaml",
     });

@@ -401,7 +401,7 @@
         },
         "notifiers": {
           "type": "array",
-          "default": [],
+          "default": ["dashboard", "desktop"],
           "items": {
             "type": "string"
           }

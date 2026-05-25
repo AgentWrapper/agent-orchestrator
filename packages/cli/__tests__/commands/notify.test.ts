@@ -61,6 +61,20 @@ vi.mock("@aoagents/ao-core", () => {
       reference,
       pluginName: config.notifiers?.[reference]?.plugin ?? reference,
     }),
+    resolveNotificationRoute: (
+      config: {
+        defaults?: { notifiers?: string[] };
+        notificationRouting?: Record<string, string[]>;
+      },
+      priority: string,
+    ) => {
+      if (Object.prototype.hasOwnProperty.call(config.notificationRouting ?? {}, priority)) {
+        return config.notificationRouting?.[priority] ?? [];
+      }
+      const defaults = config.defaults?.notifiers ?? [];
+      if (priority === "urgent" || priority === "warning") return defaults;
+      return defaults.filter((notifier) => notifier !== "desktop");
+    },
     buildCIFailureNotificationData: (input: {
       sessionId: string;
       projectId: string;

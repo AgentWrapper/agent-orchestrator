@@ -9,8 +9,8 @@ import { parseDocument } from "yaml";
 import { CONFIG_SCHEMA_URL, findConfigFile, isCanonicalGlobalConfigPath } from "@aoagents/ao-core";
 import {
   applyNotifierRoutingPreset,
+  ensureNotifierDefault,
   getNotifierRoutingState,
-  promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
@@ -60,6 +60,7 @@ interface ResolvedDesktopSetup {
   dashboardUrl?: string;
   appPath: string;
   shouldWriteAppPath: boolean;
+  shouldWriteConfig: boolean;
   shouldSendTest: boolean;
   refresh: boolean;
   routingPreset?: NotifierRoutingPreset;
@@ -431,6 +432,22 @@ function resolveDashboardUrl(
   );
 }
 
+function hasDesktopConfig(entry: Record<string, unknown>): boolean {
+  return Object.keys(entry).length > 0;
+}
+
+function shouldWriteDesktopConfig(
+  opts: DesktopSetupOptions,
+  existingDesktop: Record<string, unknown>,
+): boolean {
+  return (
+    hasDesktopConfig(existingDesktop) ||
+    opts.backend !== undefined ||
+    opts.dashboardUrl !== undefined ||
+    opts.appPath !== undefined
+  );
+}
+
 async function maybeInstallTerminalNotifier(nonInteractive: boolean): Promise<void> {
   if (commandExists("terminal-notifier")) return;
 
@@ -493,23 +510,6 @@ async function resolveDesktopSetup(
       stringValue(opts.appPath) ??
       stringValue(context.existingDesktop["appPath"]) ??
       getInstalledNotifierAppPath();
-    const routingSelection =
-      optionRoutingPreset ??
-      (nonInteractive || !context.configPath
-        ? opts.refresh
-          ? undefined
-          : "urgent-only"
-        : await promptNotifierRoutingPreset(
-            await import("@clack/prompts"),
-            context.rawConfig,
-            "desktop",
-            "desktop",
-            () => {
-              throw new DesktopSetupError("Setup cancelled.", 0);
-            },
-          ));
-
-    if (routingSelection === "back") continue;
 
     return {
       backend,
@@ -518,9 +518,10 @@ async function resolveDesktopSetup(
       shouldWriteAppPath:
         Boolean(stringValue(opts.appPath)) ||
         stringValue(context.existingDesktop["appPath"]) !== undefined,
+      shouldWriteConfig: shouldWriteDesktopConfig(opts, context.existingDesktop),
       shouldSendTest: opts.test !== false,
       refresh: Boolean(opts.refresh),
-      routingPreset: routingSelection === "preserve" ? undefined : routingSelection,
+      routingPreset: optionRoutingPreset,
     };
   }
 }
@@ -604,9 +605,9 @@ export async function installAoNotifierAppForStartup(): Promise<void> {
       backend: "ao-app",
       appPath: getInstalledNotifierAppPath(),
       shouldWriteAppPath: false,
+      shouldWriteConfig: false,
       shouldSendTest: false,
       refresh: true,
-      routingPreset: "urgent-only",
     },
     false,
     true,
@@ -638,19 +639,23 @@ async function wireDesktopConfig(
     return false;
   }
 
-  const desktopConfig: Record<string, unknown> = {
-    ...existingDesktop,
-    plugin: "desktop",
-    backend: resolved.backend,
-  };
-  if (resolved.dashboardUrl) desktopConfig["dashboardUrl"] = resolved.dashboardUrl;
-  if (resolved.shouldWriteAppPath) desktopConfig["appPath"] = resolved.appPath;
+  if (resolved.shouldWriteConfig) {
+    const desktopConfig: Record<string, unknown> = {
+      ...existingDesktop,
+      plugin: "desktop",
+      backend: resolved.backend,
+    };
+    if (resolved.dashboardUrl) desktopConfig["dashboardUrl"] = resolved.dashboardUrl;
+    if (resolved.shouldWriteAppPath) desktopConfig["appPath"] = resolved.appPath;
 
-  notifiers["desktop"] = desktopConfig;
-  rawConfig["notifiers"] = notifiers;
+    notifiers["desktop"] = desktopConfig;
+    rawConfig["notifiers"] = notifiers;
+  } else if (notifiers["desktop"] !== undefined) {
+    delete notifiers["desktop"];
+    rawConfig["notifiers"] = notifiers;
+  }
 
-  const defaults = (rawConfig["defaults"] as Record<string, unknown> | undefined) ?? {};
-  rawConfig["defaults"] = defaults;
+  ensureNotifierDefault(rawConfig, "desktop");
 
   applyNotifierRoutingPreset(rawConfig, "desktop", resolved.routingPreset);
 
@@ -660,8 +665,10 @@ async function wireDesktopConfig(
       doc.set("$schema", CONFIG_SCHEMA_URL);
     }
   }
-  doc.setIn(["notifiers"], rawConfig["notifiers"]);
   doc.setIn(["defaults"], rawConfig["defaults"]);
+  if (rawConfig["notifiers"] !== undefined) {
+    doc.setIn(["notifiers"], rawConfig["notifiers"]);
+  }
   if (rawConfig["notificationRouting"] !== undefined) {
     doc.setIn(["notificationRouting"], rawConfig["notificationRouting"]);
   }

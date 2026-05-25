@@ -265,7 +265,7 @@ export {
   readObservabilitySummary,
 } from "./observability.js";
 export { execGhObserved, getGhTraceFilePath } from "./gh-trace.js";
-export { resolveNotifierTarget } from "./notifier-resolution.js";
+export { resolveNotificationRoute, resolveNotifierTarget } from "./notifier-resolution.js";
 export {
   recordNotificationDelivery,
   sanitizeNotificationDeliveryReason,

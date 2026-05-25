@@ -280,7 +280,7 @@ const DefaultPluginsSchema = z.object({
   runtime: z.string().default(() => getDefaultRuntime()),
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
-  notifiers: z.array(z.string()).default([]),
+  notifiers: z.array(z.string()).default(["dashboard", "desktop"]),
   orchestrator: RoleAgentDefaultsSchema,
   worker: RoleAgentDefaultsSchema,
 });

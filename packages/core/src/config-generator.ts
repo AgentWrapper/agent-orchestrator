@@ -287,7 +287,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
       runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: [],
+      notifiers: ["dashboard", "desktop"],
     },
     projects: {
       [projectId]: projectConfig,

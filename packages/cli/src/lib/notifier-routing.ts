@@ -68,7 +68,9 @@ export function isNotifierRoutingPreset(value: string | undefined): value is Not
   return value === "urgent-only" || value === "urgent-action" || value === "all";
 }
 
-export function parseNotifierRoutingPreset(value: string | undefined): NotifierRoutingPreset | undefined {
+export function parseNotifierRoutingPreset(
+  value: string | undefined,
+): NotifierRoutingPreset | undefined {
   return isNotifierRoutingPreset(value) ? value : undefined;
 }
 
@@ -119,12 +121,15 @@ export function getNotifierRoutingState(
   };
 }
 
-export function ensureNotifierDefault(rawConfig: Record<string, unknown>, notifierName: string): void {
+export function ensureNotifierDefault(
+  rawConfig: Record<string, unknown>,
+  notifierName: string,
+): void {
   const defaults = isRecord(rawConfig["defaults"]) ? rawConfig["defaults"] : {};
-  defaults["notifiers"] = unique([
-    ...asStringArray(defaults["notifiers"]).filter((value) => value !== notifierName),
-    notifierName,
-  ]);
+  const existing = asStringArray(defaults["notifiers"]);
+  defaults["notifiers"] = existing.includes(notifierName)
+    ? unique(existing)
+    : unique([...existing, notifierName]);
   rawConfig["defaults"] = defaults;
 }
 
@@ -163,7 +168,9 @@ export function resolveRoutingPresetOption(
   if (value === undefined) return undefined;
   const parsed = parseNotifierRoutingPreset(value);
   if (parsed) return parsed;
-  throw new Error(`Invalid ${label} routing preset "${value}". Expected ${notifierRoutingPresetValues()}.`);
+  throw new Error(
+    `Invalid ${label} routing preset "${value}". Expected ${notifierRoutingPresetValues()}.`,
+  );
 }
 
 export async function promptNotifierRoutingPreset(

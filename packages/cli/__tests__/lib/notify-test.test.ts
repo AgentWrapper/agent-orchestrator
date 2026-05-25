@@ -159,6 +159,32 @@ describe("notify test helper", () => {
     ]);
   });
 
+  it("uses implicit dashboard and desktop routing for default routes", () => {
+    const config = makeConfig({
+      defaults: {
+        runtime: "tmux",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: ["dashboard", "desktop"],
+      },
+      notifiers: {},
+      notificationRouting: {},
+    });
+
+    expect(
+      resolveNotifyTestTargets(config, "urgent", {}).map((target) => target.reference),
+    ).toEqual(["desktop", "dashboard"]);
+    expect(
+      resolveNotifyTestTargets(config, "warning", {}).map((target) => target.reference),
+    ).toEqual(["desktop", "dashboard"]);
+    expect(
+      resolveNotifyTestTargets(config, "action", {}).map((target) => target.reference),
+    ).toEqual(["dashboard"]);
+    expect(
+      resolveNotifyTestTargets(config, "info", {}).map((target) => target.reference),
+    ).toEqual(["dashboard"]);
+  });
+
   it("deduplicates --all targets across configured, default, and routed refs", () => {
     const config = makeConfig({
       defaults: {

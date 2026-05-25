@@ -546,6 +546,39 @@ describe("start command — project resolution", () => {
     expect(output).toContain("Startup complete");
   });
 
+  it("does not expand default notifier config or routing during startup", async () => {
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    const yaml = [
+      "port: 3000",
+      "defaults:",
+      "  notifiers:",
+      "    - dashboard",
+      "    - desktop",
+      "projects:",
+      "  my-app:",
+      "    name: My App",
+      "    path: ./main-repo",
+      "",
+    ].join("\n");
+    writeFileSync(configPath, yaml);
+    mockConfigRef.current = {
+      ...makeConfig({ "my-app": makeProject() }),
+      configPath,
+      defaults: {
+        runtime: "process",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: ["dashboard", "desktop"],
+      },
+      notifiers: {},
+      notificationRouting: {},
+    };
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    expect(readFileSync(configPath, "utf-8")).toBe(yaml);
+  });
+
   it("uses explicit project arg when given", async () => {
     mockConfigRef.current = makeConfig({
       frontend: makeProject({ name: "Frontend", sessionPrefix: "fe" }),
@@ -2362,7 +2395,7 @@ describe("start command — platform-aware runtime fallback", () => {
 // ---------------------------------------------------------------------------
 
 describe("start command — autoCreateConfig", () => {
-  it("writes a flat local config, returns global project identity, and creates startup notifier defaults", async () => {
+  it("writes a flat local config, returns global project identity, and creates config-light notifier defaults", async () => {
     const { detectEnvironment } = await import("../../src/lib/detect-env.js");
     vi.mocked(detectEnvironment).mockResolvedValue({
       isGitRepo: true,
@@ -2421,19 +2454,9 @@ describe("start command — autoCreateConfig", () => {
       notificationRouting?: Record<string, string[]>;
       projects?: Record<string, { path?: string; sessionPrefix?: string }>;
     };
-    expect(globalParsed.defaults?.notifiers).toEqual([]);
-    expect(globalParsed.notifiers?.["dashboard"]).toEqual({ plugin: "dashboard", limit: 50 });
-    expect(globalParsed.notifiers?.["desktop"]).toMatchObject({
-      plugin: "desktop",
-      backend: "ao-app",
-      dashboardUrl: "http://localhost:3000",
-    });
-    expect(globalParsed.notificationRouting).toEqual({
-      urgent: ["desktop", "dashboard"],
-      action: ["dashboard"],
-      warning: ["dashboard"],
-      info: ["dashboard"],
-    });
+    expect(globalParsed.defaults?.notifiers).toEqual(["dashboard", "desktop"]);
+    expect(globalParsed.notifiers).toEqual({});
+    expect(globalParsed.notificationRouting).toEqual({});
     expect(globalContent).not.toContain("composio");
 
     const projectIds = Object.keys(globalParsed.projects ?? {});
@@ -2441,13 +2464,9 @@ describe("start command — autoCreateConfig", () => {
     expect(config.configPath).toBe(configPath);
     expect(Object.keys(config.projects)).toEqual(projectIds);
     expect(config.projects[projectIds[0]!]!.path).toBe(realpathSync(tmpDir));
-    expect(config.defaults.notifiers).toEqual([]);
-    expect(config.notificationRouting).toEqual({
-      urgent: ["desktop", "dashboard"],
-      action: ["dashboard"],
-      warning: ["dashboard"],
-      info: ["dashboard"],
-    });
+    expect(config.defaults.notifiers).toEqual(["dashboard", "desktop"]);
+    expect(config.notifiers).toEqual({});
+    expect(config.notificationRouting).toEqual({});
   });
 
   it("removes the flat local config when global registration fails", async () => {

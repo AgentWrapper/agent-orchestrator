@@ -81,27 +81,12 @@ describe("global-config storage identity", () => {
     expect(config?.projects[projectId]).not.toHaveProperty("runtime");
   });
 
-  it("creates fresh global configs without Composio and with startup notifier defaults", () => {
+  it("creates fresh global configs without Composio and with config-light notifier defaults", () => {
     const config = createDefaultGlobalConfig();
 
-    expect(config.defaults.notifiers).toEqual([]);
-    expect(config.notifiers).toEqual({
-      desktop: {
-        plugin: "desktop",
-        backend: "ao-app",
-        dashboardUrl: "http://localhost:3000",
-      },
-      dashboard: {
-        plugin: "dashboard",
-        limit: 50,
-      },
-    });
-    expect(config.notificationRouting).toEqual({
-      urgent: ["desktop", "dashboard"],
-      action: ["dashboard"],
-      warning: ["dashboard"],
-      info: ["dashboard"],
-    });
+    expect(config.defaults.notifiers).toEqual(["dashboard", "desktop"]);
+    expect(config.notifiers).toEqual({});
+    expect(config.notificationRouting).toEqual({});
     expect(JSON.stringify(config)).not.toContain("composio");
   });
 

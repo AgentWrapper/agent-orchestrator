@@ -110,7 +110,6 @@ import { installShutdownHandlers, isShutdownInProgress } from "../lib/shutdown.j
 import { resolveOrCreateProject } from "../lib/resolve-project.js";
 import { pathsEqual } from "../lib/path-equality.js";
 import { maybePromptForUpdateChannel } from "../lib/update-channel-onboarding.js";
-import { ensureStartupNotifierDefaults } from "../lib/startup-notifier-defaults.js";
 import { installAoNotifierAppForStartup } from "../lib/desktop-setup.js";
 
 import { DEFAULT_PORT } from "../lib/constants.js";
@@ -131,36 +130,13 @@ function isCliFailureEventRecordedError(err: unknown): boolean {
   return err instanceof CliFailureEventRecordedError;
 }
 
-function resolveStartupNotifierConfigPath(configPath: string): string {
-  if (isCanonicalGlobalConfigPath(configPath)) return configPath;
-
-  try {
-    const parsed = yamlParse(readFileSync(configPath, "utf-8"));
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && !("projects" in parsed)) {
-      const globalPath = getGlobalConfigPath();
-      if (existsSync(globalPath)) return globalPath;
-    }
-  } catch {
-    // Fall through to the loaded config path. Notifier onboarding is best-effort.
-  }
-
-  return configPath;
-}
-
 async function ensureDefaultStartupNotifiers(
   config: OrchestratorConfig,
 ): Promise<OrchestratorConfig> {
-  if (!config.configPath || !existsSync(config.configPath)) return config;
-
-  const targetConfigPath = resolveStartupNotifierConfigPath(config.configPath);
-  const dashboardUrl = `http://localhost:${config.port ?? DEFAULT_PORT}`;
-  let desktopMode: "enable" | "disable-default" = "enable";
-
   if (isMac()) {
     try {
       await installAoNotifierAppForStartup();
     } catch (error) {
-      desktopMode = "disable-default";
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         chalk.yellow(
@@ -171,12 +147,7 @@ async function ensureDefaultStartupNotifiers(
     }
   }
 
-  const changed = ensureStartupNotifierDefaults({
-    configPath: targetConfigPath,
-    dashboardUrl,
-    desktopMode,
-  });
-  return changed ? loadConfig(targetConfigPath) : config;
+  return config;
 }
 
 function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {

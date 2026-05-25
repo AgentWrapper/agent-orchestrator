@@ -278,7 +278,7 @@ describe("generateConfigFromUrl", () => {
       runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: [],
+      notifiers: ["dashboard", "desktop"],
     });
 
     // Check project config

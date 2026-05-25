@@ -12,10 +12,9 @@ import {
 } from "@aoagents/ao-core";
 import {
   applyNotifierRoutingPreset,
+  ensureNotifierDefault,
   getNotifierRoutingState,
-  promptNotifierRoutingPreset,
   resolveRoutingPresetOption,
-  type ClackPrompts,
   type NotifierRoutingPreset,
 } from "./notifier-routing.js";
 
@@ -40,6 +39,7 @@ interface DashboardConfig {
 
 interface ResolvedDashboardSetup {
   limit: number;
+  shouldWriteConfig: boolean;
   routingPreset?: NotifierRoutingPreset;
 }
 
@@ -114,17 +114,32 @@ function toDashboardConfig(resolved: ResolvedDashboardSetup): DashboardConfig {
   };
 }
 
+function hasDashboardConfig(entry: Record<string, unknown>): boolean {
+  return Object.keys(entry).length > 0;
+}
+
+function shouldWriteDashboardConfig(
+  existingDashboard: Record<string, unknown>,
+  limit: number,
+): boolean {
+  return hasDashboardConfig(existingDashboard) || limit !== DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
+}
+
 function writeDashboardConfig(configPath: string, resolved: ResolvedDashboardSetup): void {
   const rawYaml = readFileSync(configPath, "utf-8");
   const doc = parseDocument(rawYaml);
   const rawConfig = (doc.toJS() as Record<string, unknown>) ?? {};
 
   const notifiers = isRecord(rawConfig["notifiers"]) ? rawConfig["notifiers"] : {};
-  notifiers["dashboard"] = toDashboardConfig(resolved);
-  rawConfig["notifiers"] = notifiers;
+  if (resolved.shouldWriteConfig) {
+    notifiers["dashboard"] = toDashboardConfig(resolved);
+    rawConfig["notifiers"] = notifiers;
+  } else if (isRecord(notifiers["dashboard"])) {
+    delete notifiers["dashboard"];
+    rawConfig["notifiers"] = notifiers;
+  }
 
-  const defaults = isRecord(rawConfig["defaults"]) ? rawConfig["defaults"] : {};
-  rawConfig["defaults"] = defaults;
+  ensureNotifierDefault(rawConfig, "dashboard");
 
   applyNotifierRoutingPreset(rawConfig, "dashboard", resolved.routingPreset);
 
@@ -135,17 +150,14 @@ function writeDashboardConfig(configPath: string, resolved: ResolvedDashboardSet
     }
   }
 
-  doc.setIn(["notifiers"], rawConfig["notifiers"]);
   doc.setIn(["defaults"], rawConfig["defaults"]);
+  if (rawConfig["notifiers"] !== undefined) {
+    doc.setIn(["notifiers"], rawConfig["notifiers"]);
+  }
   if (rawConfig["notificationRouting"] !== undefined) {
     doc.setIn(["notificationRouting"], rawConfig["notificationRouting"]);
   }
   writeFileSync(configPath, doc.toString({ indent: 2 }));
-}
-
-function cancelSetup(clack: ClackPrompts): never {
-  clack.cancel("Dashboard setup cancelled.");
-  throw new DashboardSetupError("Dashboard setup cancelled.", 0);
 }
 
 async function shouldReplaceConflictingDashboard(
@@ -168,7 +180,8 @@ async function shouldReplaceConflictingDashboard(
   });
 
   if (clack.isCancel(answer)) {
-    cancelSetup(clack);
+    clack.cancel("Dashboard setup cancelled.");
+    throw new DashboardSetupError("Dashboard setup cancelled.", 0);
   }
 
   return answer === true;
@@ -177,7 +190,6 @@ async function shouldReplaceConflictingDashboard(
 async function resolveInteractiveSetup(
   opts: DashboardSetupOptions,
   existingDashboard: Record<string, unknown>,
-  rawConfig: Record<string, unknown>,
 ): Promise<ResolvedDashboardSetup> {
   const clack = await import("@clack/prompts");
   const optionRoutingPreset = resolveDashboardRoutingPreset(opts.routingPreset);
@@ -200,19 +212,15 @@ async function resolveInteractiveSetup(
     });
 
     if (clack.isCancel(limitInput)) {
-      cancelSetup(clack);
+      clack.cancel("Dashboard setup cancelled.");
+      throw new DashboardSetupError("Dashboard setup cancelled.", 0);
     }
 
-    const routingSelection =
-      optionRoutingPreset ??
-      (await promptNotifierRoutingPreset(clack, rawConfig, "dashboard", "dashboard", () =>
-        cancelSetup(clack),
-      ));
-    if (routingSelection === "back") continue;
-
+    const limit = parseLimit(limitInput);
     return {
-      limit: parseLimit(limitInput),
-      routingPreset: routingSelection === "preserve" ? undefined : routingSelection,
+      limit,
+      shouldWriteConfig: shouldWriteDashboardConfig(existingDashboard, limit),
+      routingPreset: optionRoutingPreset,
     };
   }
 }
@@ -224,13 +232,16 @@ function resolveNonInteractiveSetup(
   const limit =
     opts.limit !== undefined
       ? parseLimit(opts.limit)
-      : opts.refresh
+      : opts.refresh || existingDashboard["limit"] !== undefined
         ? parseLimit(existingDashboard["limit"])
         : DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
-  const routingPreset =
-    resolveDashboardRoutingPreset(opts.routingPreset) ?? (opts.refresh ? undefined : "all");
+  const routingPreset = resolveDashboardRoutingPreset(opts.routingPreset) ?? undefined;
 
-  return { limit, routingPreset };
+  return {
+    limit,
+    shouldWriteConfig: shouldWriteDashboardConfig(existingDashboard, limit),
+    routingPreset,
+  };
 }
 
 function printStatus(): void {
@@ -272,7 +283,7 @@ export async function runDashboardSetupAction(opts: DashboardSetupOptions): Prom
 
   const resolved = nonInteractive
     ? resolveNonInteractiveSetup(opts, existingDashboard)
-    : await resolveInteractiveSetup(opts, existingDashboard, context.rawConfig);
+    : await resolveInteractiveSetup(opts, existingDashboard);
 
   writeDashboardConfig(context.configPath, resolved);
   console.log(chalk.green(`Config written to ${context.configPath}`));

@@ -268,7 +268,7 @@ describe("setup dashboard command", () => {
     vi.unstubAllGlobals();
   });
 
-  it("writes dashboard notifier config with the all-priorities routing default", async () => {
+  it("adds dashboard to defaults and writes limit overrides without default routing", async () => {
     const program = createProgram();
 
     await program.parseAsync([
@@ -283,15 +283,31 @@ describe("setup dashboard command", () => {
 
     const written = String(mockWriteFileSync.mock.calls[0][1]);
     const parsed = parseYaml(written) as {
+      defaults?: { notifiers?: string[] };
       notifiers?: Record<string, { plugin?: string; limit?: number }>;
       notificationRouting?: Record<string, string[]>;
     };
 
+    expect(parsed.defaults?.notifiers).toEqual(["dashboard"]);
     expect(parsed.notifiers?.["dashboard"]).toEqual({ plugin: "dashboard", limit: 75 });
-    expect(parsed.notificationRouting?.urgent).toContain("dashboard");
-    expect(parsed.notificationRouting?.action).toContain("dashboard");
-    expect(parsed.notificationRouting?.warning).toContain("dashboard");
-    expect(parsed.notificationRouting?.info).toContain("dashboard");
+    expect(parsed.notificationRouting).toBeUndefined();
+  });
+
+  it("adds dashboard to defaults without writing a config block for default options", async () => {
+    const program = createProgram();
+
+    await program.parseAsync(["node", "test", "setup", "dashboard", "--non-interactive"]);
+
+    const written = String(mockWriteFileSync.mock.calls[0][1]);
+    const parsed = parseYaml(written) as {
+      defaults?: { notifiers?: string[] };
+      notifiers?: Record<string, unknown>;
+      notificationRouting?: Record<string, string[]>;
+    };
+
+    expect(parsed.defaults?.notifiers).toEqual(["dashboard"]);
+    expect(parsed.notifiers?.["dashboard"]).toBeUndefined();
+    expect(parsed.notificationRouting).toBeUndefined();
   });
 
   it("prints status without mutating config", async () => {
@@ -2717,7 +2733,7 @@ describe("setup desktop command", () => {
     expect(setup?.commands.some((command) => command.name() === "desktop")).toBe(true);
   });
 
-  it("installs the bundled app and wires desktop routing to urgent only", async () => {
+  it("installs the bundled app and enables desktop without default config or routing blocks", async () => {
     const program = createProgram();
 
     await program.parseAsync(["node", "test", "setup", "desktop", "--non-interactive"]);
@@ -2725,19 +2741,14 @@ describe("setup desktop command", () => {
     expect(mockCpSync).toHaveBeenCalledWith(sourceApp, targetApp, { recursive: true });
     const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = parseYaml(writtenYaml) as {
+      defaults?: { notifiers?: string[] };
       notifiers?: Record<string, { plugin?: string; backend?: string; dashboardUrl?: string }>;
       notificationRouting?: Record<string, string[]>;
     };
 
-    expect(parsed.notifiers?.["desktop"]).toMatchObject({
-      plugin: "desktop",
-      backend: "ao-app",
-      dashboardUrl: "http://localhost:3000",
-    });
-    expect(parsed.notificationRouting?.["urgent"]).toContain("desktop");
-    expect(parsed.notificationRouting?.["action"] ?? []).not.toContain("desktop");
-    expect(parsed.notificationRouting?.["warning"] ?? []).not.toContain("desktop");
-    expect(parsed.notificationRouting?.["info"] ?? []).not.toContain("desktop");
+    expect(parsed.defaults?.notifiers).toEqual(["desktop"]);
+    expect(parsed.notifiers?.["desktop"]).toBeUndefined();
+    expect(parsed.notificationRouting).toBeUndefined();
   });
 
   it("configures terminal-notifier backend without installing AO Notifier.app", async () => {
@@ -2773,8 +2784,10 @@ describe("setup desktop command", () => {
 
     const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = parseYaml(writtenYaml) as {
+      defaults?: { notifiers?: string[] };
       notifiers?: Record<string, { plugin?: string; backend?: string; dashboardUrl?: string }>;
     };
+    expect(parsed.defaults?.notifiers).toEqual(["desktop"]);
     expect(parsed.notifiers?.["desktop"]).toMatchObject({
       plugin: "desktop",
       backend: "terminal-notifier",
@@ -2808,8 +2821,10 @@ describe("setup desktop command", () => {
 
     const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = parseYaml(writtenYaml) as {
+      defaults?: { notifiers?: string[] };
       notifiers?: Record<string, { plugin?: string; backend?: string }>;
     };
+    expect(parsed.defaults?.notifiers).toEqual(["desktop"]);
     expect(parsed.notifiers?.["desktop"]).toMatchObject({
       plugin: "desktop",
       backend: "osascript",
@@ -2952,7 +2967,7 @@ projects:
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("preserves existing routing entries while adding desktop", async () => {
+  it("preserves existing routing entries while adding desktop to defaults", async () => {
     mockReadFileSync.mockReturnValue(`
 port: 3001
 defaults:
@@ -2977,9 +2992,10 @@ projects:
       notificationRouting?: Record<string, string[]>;
       defaults?: { notifiers?: string[] };
     };
-    expect(parsed.notificationRouting?.["urgent"]).toEqual(["slack", "desktop"]);
-    expect(parsed.notificationRouting?.["action"]).toEqual(["slack"]);
-    expect(parsed.defaults?.notifiers).toEqual(["slack"]);
+    expect(parsed.notificationRouting).toEqual({
+      urgent: ["slack"],
+    });
+    expect(parsed.defaults?.notifiers).toEqual(["slack", "desktop"]);
   });
 
   it("fails on conflicting desktop notifier config in non-interactive mode", async () => {
@@ -3043,8 +3059,10 @@ projects:
 
     const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
     const parsed = parseYaml(writtenYaml) as {
+      defaults?: { notifiers?: string[] };
       notifiers?: Record<string, { plugin?: string; backend?: string }>;
     };
+    expect(parsed.defaults?.notifiers).toEqual(["desktop"]);
     expect(parsed.notifiers?.["desktop"]).toMatchObject({ plugin: "desktop", backend: "ao-app" });
   });
 

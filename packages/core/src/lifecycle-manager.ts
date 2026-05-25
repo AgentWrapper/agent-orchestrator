@@ -68,7 +68,7 @@ import {
   REPORT_WATCHER_METADATA_KEYS,
 } from "./report-watcher.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
-import { resolveNotifierTarget } from "./notifier-resolution.js";
+import { resolveNotificationRoute, resolveNotifierTarget } from "./notifier-resolution.js";
 import { recordNotificationDelivery } from "./notification-observability.js";
 import { resolveSessionRole } from "./agent-selection.js";
 import {
@@ -2261,7 +2261,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
-    const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    const notifierNames = resolveNotificationRoute(config, priority);
 
     for (const name of notifierNames) {
       const target = resolveNotifierTarget(config, name);
@@ -2650,8 +2650,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         // For transitions not already notified by a reaction, notify humans.
-        // All priorities (including "info") are routed through notificationRouting
-        // so the config controls which notifiers receive each priority level.
+        // Explicit notificationRouting entries override the implicit defaults
+        // derived from defaults.notifiers.
         if (!reactionHandledNotify) {
           const priority = inferPriority(eventType);
           const context = buildEventContext(session, prEnrichmentCache);

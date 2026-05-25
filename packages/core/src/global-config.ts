@@ -12,7 +12,6 @@ import { generateSessionPrefix } from "./paths.js";
 import { normalizeOriginUrl } from "./storage-key.js";
 import { getDefaultRuntime } from "./platform.js";
 import { recordActivityEvent } from "./activity-events.js";
-import { DEFAULT_DASHBOARD_NOTIFICATION_LIMIT } from "./dashboard-notifications.js";
 
 function globalConfigLockPath(configPath: string): string {
   return `${configPath}.lock`;
@@ -67,32 +66,6 @@ function sanitizeBasename(name: string): string {
 export interface RegisterProjectOptions {
   /** @deprecated No longer used — storageKey has been removed */
   allowStorageKeyReuse?: boolean;
-}
-
-function createDefaultNotifierConfigs(): Record<
-  string,
-  { plugin: string } & Record<string, unknown>
-> {
-  return {
-    desktop: {
-      plugin: "desktop",
-      backend: "ao-app",
-      dashboardUrl: "http://localhost:3000",
-    },
-    dashboard: {
-      plugin: "dashboard",
-      limit: DEFAULT_DASHBOARD_NOTIFICATION_LIMIT,
-    },
-  };
-}
-
-function createDefaultNotificationRouting(): Record<string, string[]> {
-  return {
-    urgent: ["desktop", "dashboard"],
-    action: ["dashboard"],
-    warning: ["dashboard"],
-    info: ["dashboard"],
-  };
 }
 
 // =============================================================================
@@ -246,7 +219,7 @@ export const GlobalConfigSchema = z
         runtime: z.string().default(() => getDefaultRuntime()),
         agent: z.string().default("claude-code"),
         workspace: z.string().default("worktree"),
-        notifiers: z.array(z.string()).default([]),
+        notifiers: z.array(z.string()).default(["dashboard", "desktop"]),
         orchestrator: z.object({ agent: z.string().optional() }).optional(),
         worker: z.object({ agent: z.string().optional() }).optional(),
       })
@@ -256,13 +229,9 @@ export const GlobalConfigSchema = z
     /** Optional explicit project ordering for sidebar / portfolio display. */
     projectOrder: z.array(z.string()).optional(),
     /** Notification channel configurations. */
-    notifiers: z
-      .record(z.object({ plugin: z.string() }).passthrough())
-      .default(() => createDefaultNotifierConfigs()),
+    notifiers: z.record(z.object({ plugin: z.string() }).passthrough()).default({}),
     /** Maps priority levels to notifier channel IDs. */
-    notificationRouting: z
-      .record(z.array(z.string()))
-      .default(() => createDefaultNotificationRouting()),
+    notificationRouting: z.record(z.array(z.string())).default({}),
     /** Reaction rules (default reactions merged at load time). */
     reactions: z.record(z.object({}).passthrough()).default({}),
   })
@@ -1214,11 +1183,11 @@ export function createDefaultGlobalConfig(): GlobalConfig {
       runtime: getDefaultRuntime(),
       agent: "claude-code",
       workspace: "worktree",
-      notifiers: [],
+      notifiers: ["dashboard", "desktop"],
     },
     projects: {},
-    notifiers: createDefaultNotifierConfigs(),
-    notificationRouting: createDefaultNotificationRouting(),
+    notifiers: {},
+    notificationRouting: {},
     reactions: {},
   };
 }
