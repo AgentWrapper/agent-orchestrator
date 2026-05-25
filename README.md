@@ -95,8 +95,6 @@ mkdir -p "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao"
 ao completion zsh > "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/ao/_ao"
 ```
 
-If you are contributing from a source checkout, you can also symlink the repo copy at [`completions/_ao`](completions/_ao).
-
 ### Start
 
 Point it at any repo — it clones, configures, and launches the dashboard in one command:

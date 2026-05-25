@@ -159,11 +159,11 @@ gh api -X POST repos/<repo>/git/refs \
 
 # Upload (portable base64)
 IMG_B64=$(base64 < /path/to/screenshot.png | tr -d '\n')
-gh api -X PUT "repos/<repo>/contents/.issue-assets/${SLUG}/name.png" \
+gh api -X PUT "repos/<repo>/contents/screenshots/${SLUG}/name.png" \
   -f message="chore: upload screenshot" \
   -f content="$IMG_B64" \
   -f branch="issue-assets-${SLUG}"
-# Use: ![screenshot](https://raw.githubusercontent.com/<repo>/issue-assets-<slug>/.issue-assets/<file>)
+# Use: ![screenshot](https://raw.githubusercontent.com/<repo>/main/screenshots/<file>)
 ```
 
 ### 5c. Create the issue

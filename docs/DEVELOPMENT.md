@@ -437,7 +437,7 @@ gitleaks detect --no-git   # scan current files
 gitleaks protect --staged  # scan staged files (same as pre-commit)
 ```
 
-To allow a false positive, add it to `.gitleaks.toml`:
+To allow a false positive, add it to a `.gitleaks.toml` at the repo root (create one if missing):
 
 ```toml
 [allowlist]

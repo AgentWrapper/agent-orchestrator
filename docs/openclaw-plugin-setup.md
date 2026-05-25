@@ -12,18 +12,7 @@ How to set up the Agent Orchestrator (AO) plugin for OpenClaw so the AI bot dele
 ## 1. Install the Plugin
 
 ```bash
-# From the agent-orchestrator repo
-cd openclaw-plugin
-openclaw plugins install .
-```
-
-Or manually copy the plugin files:
-
-```bash
-mkdir -p ~/.openclaw/extensions/agent-orchestrator
-cp openclaw-plugin/index.ts ~/.openclaw/extensions/agent-orchestrator/
-cp openclaw-plugin/openclaw.plugin.json ~/.openclaw/extensions/agent-orchestrator/
-cp openclaw-plugin/package.json ~/.openclaw/extensions/agent-orchestrator/
+openclaw plugins install composio-ao-plugin
 ```
 
 ## 2. Install the Skill

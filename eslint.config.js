@@ -18,7 +18,6 @@ export default tseslint.config(
       ".ao/**",
       ".claude/**",
       ".context/**",
-      ".cursor/**",
       ".expect/**",
       ".gstack/**",
       ".worktrees/**",

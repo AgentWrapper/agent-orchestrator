@@ -142,7 +142,7 @@ If you accidentally commit a secret:
 
 1. **Rotate the secret immediately** — Assume it's compromised
 2. **Remove from git history** — Use `git filter-repo` or similar (dangerous!)
-3. **Update `.gitleaks.toml`** — Add pattern to prevent similar leaks
+3. **Add a `.gitleaks.toml` allowlist pattern** — Prevent similar leaks
 4. **Report internally** — Document in SECURITY.md
 
 **Never** just delete the file and commit — the secret remains in git history!
