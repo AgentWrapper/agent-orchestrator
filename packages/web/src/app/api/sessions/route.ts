@@ -11,6 +11,7 @@ import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/l
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 import { type DashboardOrchestratorLink } from "@/lib/types";
+import { getMockDashboardPayload, isMockDashboardRequested } from "@/lib/mock-dashboard-data";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
@@ -73,6 +74,11 @@ export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
+    if (isMockDashboardRequested(request.url)) {
+      // TODO: wire mock mode to core services fixtures once the service layer exposes seeded projects.
+      return jsonWithCorrelation(getMockDashboardPayload(), { status: 200 }, correlationId);
+    }
+
     const { searchParams } = new URL(request.url);
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";

@@ -245,6 +245,7 @@ import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 import { GET as patchesGET } from "@/app/api/sessions/patches/route";
+import { GET as eventsGET } from "@/app/api/events/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -296,6 +297,15 @@ describe("API Routes", () => {
       expect(session).toHaveProperty("status");
       expect(session).toHaveProperty("activity");
       expect(session).toHaveProperty("createdAt");
+    });
+
+    it("returns seeded mock sessions when mock mode is requested", async () => {
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions?mock=true"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.sessions).toHaveLength(12);
+      expect(data.sessions.map((session: { id: string }) => session.id)).toContain("backend-3");
+      expect(data.stats.totalSessions).toBe(12);
     });
 
     it("skips PR enrichment when metadata enrichment hits timeout", async () => {
@@ -1503,6 +1513,28 @@ describe("API Routes", () => {
     });
   });
   // ── GET /api/sessions/patches ──────────────────────────────────────────
+
+  // ── GET /api/events ────────────────────────────────────────────────
+
+  describe("GET /api/events", () => {
+    it("streams dashboard events as SSE", async () => {
+      const res = eventsGET();
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toContain("text/event-stream");
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+      if (!reader) return;
+
+      const firstChunk = await reader.read();
+      const secondChunk = await reader.read();
+      await reader.cancel();
+      const decoder = new TextDecoder();
+      const text = `${decoder.decode(firstChunk.value)}${decoder.decode(secondChunk.value)}`;
+      expect(text).toContain("event: connected");
+      expect(text).toContain("event: sessions");
+    });
+  });
 
   describe("GET /api/sessions/patches", () => {
     it("returns patches array with lightweight fields", async () => {
