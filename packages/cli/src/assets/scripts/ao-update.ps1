@@ -6,15 +6,17 @@ $ErrorActionPreference = 'Stop'
 # Manual arg parsing — matches ao-update.sh's `--skip-smoke` / `--smoke-only` /
 # `-h` / `--help` flags rather than PowerShell's `-SkipSmoke` convention, so the
 # calling contract is identical on Linux/macOS/Windows.
-$SkipSmoke = $false
-$SmokeOnly = $false
-$Help      = $false
+$SkipSmoke    = $false
+$SmokeOnly    = $false
+$ForceRebuild = $false
+$Help         = $false
 foreach ($a in $args) {
     switch ($a) {
-        '--skip-smoke' { $SkipSmoke = $true }
-        '--smoke-only' { $SmokeOnly = $true }
-        '-h'           { $Help = $true }
-        '--help'       { $Help = $true }
+        '--skip-smoke'    { $SkipSmoke = $true }
+        '--smoke-only'    { $SmokeOnly = $true }
+        '--force-rebuild' { $ForceRebuild = $true }
+        '-h'              { $Help = $true }
+        '--help'          { $Help = $true }
         default {
             Write-Error "Unknown option: $a"
             exit 1
@@ -24,14 +26,19 @@ foreach ($a in $args) {
 
 if ($Help) {
     @'
-Usage: ao update [--skip-smoke] [--smoke-only]
+Usage: ao update [--skip-smoke] [--smoke-only] [--force-rebuild]
 
 Fast-forwards the local Agent Orchestrator install repo to main, installs deps,
 clean-rebuilds all workspace packages, refreshes the ao launcher, and runs smoke tests.
 
+The rebuild runs whenever the compiled output is out of sync with the source at
+the current commit — not only when new commits are pulled. This catches a manual
+`git pull`, a branch switch, an interrupted earlier build, or a manual clean.
+
 Options:
-  --skip-smoke  Skip smoke tests after rebuild
-  --smoke-only  Run smoke tests without fetching or rebuilding
+  --skip-smoke    Skip smoke tests after rebuild
+  --smoke-only    Run smoke tests without fetching or rebuilding
+  --force-rebuild Rebuild even when the build is already up to date
 '@ | Write-Host
     exit 0
 }
@@ -70,6 +77,28 @@ function Resolve-RepoRoot {
 }
 
 $RepoRoot = Resolve-RepoRoot
+
+# Records the commit the compiled output was last built from. Lives under
+# node_modules (gitignored) so it never dirties the working tree, and is rewritten
+# only after a fully successful build + launcher refresh. Comparing it to HEAD is
+# how we tell "dist is in sync with src at this commit" without fragile mtime checks.
+$BuildShaFile = Join-Path $RepoRoot 'node_modules/.ao-build-sha'
+# A representative build artifact. Its absence means dist was wiped (e.g. a manual
+# `pnpm clean`) even if the marker still matches HEAD, so we rebuild regardless.
+$BuildOutputSentinel = Join-Path $RepoRoot 'packages/core/dist/index.js'
+
+function Read-BuiltSha {
+    if (Test-Path $BuildShaFile) {
+        return ((Get-Content $BuildShaFile -Raw -ErrorAction SilentlyContinue) | Out-String).Trim()
+    }
+    return ''
+}
+
+function Write-BuiltSha([string]$sha) {
+    $dir = Split-Path -Parent $BuildShaFile
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    Set-Content -Path $BuildShaFile -Value $sha -NoNewline
+}
 
 function Require-Command([string]$name, [string]$fixHint) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -190,11 +219,33 @@ if (-not $SmokeOnly) {
     $localSha  = (& git rev-parse HEAD).Trim()
     $remoteSha = (& git rev-parse "$UpdateRemote/$TargetBranch").Trim()
 
-    if ($localSha -eq $remoteSha) {
-        Write-Host ""
-        Write-Host "Already on latest version."
-    } else {
+    if ($localSha -ne $remoteSha) {
         Run-Cmd git pull --ff-only $UpdateRemote $TargetBranch
+        # HEAD moved; rebuild decision below must compare against the new commit.
+        $localSha = (& git rev-parse HEAD).Trim()
+    }
+
+    # Decide whether to rebuild. Gating purely on "did the SHA advance" misses the
+    # common case where dist is stale at the current commit — a manual git pull, a
+    # branch switch, an interrupted earlier build, or a manual clean. Rebuild when
+    # the user forces it, the output is missing, or it wasn't built from HEAD.
+    $builtSha = Read-BuiltSha
+    $rebuildReason = ''
+    if ($ForceRebuild) {
+        $rebuildReason = 'forced via --force-rebuild'
+    } elseif (-not (Test-Path $BuildOutputSentinel)) {
+        $rebuildReason = 'build output missing'
+    } elseif ($builtSha -ne $localSha) {
+        $lastBuilt = if ($builtSha) { $builtSha } else { 'unknown' }
+        $rebuildReason = "build is stale (last built $lastBuilt, HEAD is $localSha)"
+    }
+
+    if (-not $rebuildReason) {
+        Write-Host ""
+        Write-Host "Already on latest version; build is up to date."
+    } else {
+        Write-Host ""
+        Write-Host "Rebuilding: $rebuildReason"
         Run-Cmd pnpm install
 
         Run-Cmd pnpm -r --if-present clean
@@ -212,6 +263,10 @@ if (-not $SmokeOnly) {
         } finally { Pop-Location }
 
         Ensure-RepoClean 'Update modified tracked files. Inspect git status, review the changes, and rerun after restoring a clean checkout if needed.'
+
+        # Only reached on a fully successful build + launcher refresh + clean tree.
+        # Recording HEAD here lets the next run skip the rebuild when nothing changed.
+        Write-BuiltSha $localSha
     }
 }
 
