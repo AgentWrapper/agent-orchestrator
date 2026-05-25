@@ -29,6 +29,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ function getStorageDir(project: ProjectConfig, config?: Record<string, unknown>)
   if (typeof customPath === "string") {
     return join(project.path, customPath);
   }
-  return join(project.path, DEFAULT_STORAGE_DIR);
+  return join(homedir(), ".ao", "issues", basename(project.path));
 }
 
 function getIssuePrefix(config?: Record<string, unknown>): string {
