@@ -1698,6 +1698,7 @@ export function registerStart(program: Command): void {
           const agentOverride = opts?.interactive ? await promptAgentSelection() : null;
           if (agentOverride) {
             const { orchestratorAgent, workerAgent } = agentOverride;
+            let updatedProject: ProjectConfig | null = null;
 
             if (isCanonicalGlobalConfigPath(config.configPath)) {
               const nextLocalConfig = readProjectBehaviorConfig(project.path);
@@ -1713,15 +1714,70 @@ export function registerStart(program: Command): void {
               console.log(chalk.dim(`  ✓ Saved to ${project.path}/agent-orchestrator.yaml\n`));
             } else {
               const rawYaml = readFileSync(config.configPath, "utf-8");
-              const rawConfig = yamlParse(rawYaml);
-              const proj = rawConfig.projects[projectId];
-              proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-              proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-              writeFileSync(config.configPath, configToYaml(rawConfig as Record<string, unknown>));
+              const rawConfig = yamlParse(rawYaml) as Record<string, unknown> | null;
+              const projects =
+                rawConfig &&
+                typeof rawConfig === "object" &&
+                rawConfig["projects"] &&
+                typeof rawConfig["projects"] === "object"
+                  ? (rawConfig["projects"] as Record<string, Record<string, unknown> | undefined>)
+                  : null;
+
+              if (projects) {
+                const proj = projects[projectId];
+                if (!proj) {
+                  throw new Error(`Project "${projectId}" not found in ${config.configPath}`);
+                }
+                proj.orchestrator = {
+                  ...((proj.orchestrator as Record<string, unknown> | undefined) ?? {}),
+                  agent: orchestratorAgent,
+                };
+                proj.worker = {
+                  ...((proj.worker as Record<string, unknown> | undefined) ?? {}),
+                  agent: workerAgent,
+                };
+                writeFileSync(
+                  config.configPath,
+                  configToYaml(rawConfig as Record<string, unknown>),
+                );
+              } else {
+                const nextLocalConfig = readProjectBehaviorConfig(project.path);
+                nextLocalConfig.orchestrator = {
+                  ...(nextLocalConfig.orchestrator ?? {}),
+                  agent: orchestratorAgent,
+                };
+                nextLocalConfig.worker = {
+                  ...(nextLocalConfig.worker ?? {}),
+                  agent: workerAgent,
+                };
+                writeProjectBehaviorConfig(project.path, nextLocalConfig);
+                updatedProject = {
+                  ...project,
+                  orchestrator: {
+                    ...(project.orchestrator ?? {}),
+                    agent: orchestratorAgent,
+                  },
+                  worker: {
+                    ...(project.worker ?? {}),
+                    agent: workerAgent,
+                  },
+                };
+              }
               console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
             }
-            config = loadConfig(config.configPath);
-            project = config.projects[projectId];
+            if (updatedProject) {
+              project = updatedProject;
+              config = {
+                ...config,
+                projects: {
+                  ...config.projects,
+                  [projectId]: updatedProject,
+                },
+              };
+            } else {
+              config = loadConfig(config.configPath);
+              project = config.projects[projectId];
+            }
           }
 
           const actualPort = await runStartup(config, projectId, project, opts);

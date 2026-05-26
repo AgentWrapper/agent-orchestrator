@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { EventEmitter } from "node:events";
 import {
+  generateExternalId,
   getDefaultRuntime,
   recordActivityEvent,
   type SessionManager,
@@ -3206,6 +3207,62 @@ describe("start command — global registry mutations", () => {
       else process.env["AO_CONFIG_PATH"] = origEnv;
       if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
       else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+  });
+
+  it("writes interactive agent overrides to a flat repo-local config", async () => {
+    const repoDir = join(tmpDir, "current");
+    createFakeRepo(repoDir, "https://github.com/org/current.git");
+
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const projectId = generateExternalId(repoDir, "https://github.com/org/current.git");
+    mockConfigRef.current = makeConfig({
+      [projectId]: makeProject({
+        name: "Current",
+        path: repoDir,
+        sessionPrefix: "current",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = localConfigPath;
+
+    const detectAgent = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAgent.detectAvailableAgents).mockResolvedValue([
+      { name: "claude-code", displayName: "Claude Code" },
+      { name: "codex", displayName: "OpenAI Codex" },
+    ]);
+    mockPromptSelect.mockResolvedValueOnce("claude-code").mockResolvedValueOnce("codex");
+    const originalStdinTty = process.stdin.isTTY;
+    const originalStdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "--interactive",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const localConfig = readFileSync(localConfigPath, "utf-8");
+      expect(localConfig).toContain("agent: claude-code");
+      expect(localConfig).toContain("orchestrator:");
+      expect(localConfig).toContain("worker:");
+      expect(localConfig).toContain("agent: codex");
+      expect(localConfig).not.toContain("projects:");
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: originalStdinTty,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: originalStdoutTty,
+        configurable: true,
+      });
     }
   });
 });
