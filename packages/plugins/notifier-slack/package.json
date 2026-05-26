@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-notifier-slack",
-  "version": "0.9.1",
+  "version": "0.9.3-nightly-96ea22a77476c7a2c040eca7828df0204264e3eb",
   "description": "Notifier plugin: Slack",
   "license": "MIT",
   "type": "module",
