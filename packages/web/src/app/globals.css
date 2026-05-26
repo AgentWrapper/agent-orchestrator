@@ -26,154 +26,165 @@
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
+  /* Type — distinctive UI grotesk + mono, injected via next/font (layout.tsx) */
   --font-geist-sans:
-    "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-jetbrains-mono: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+    var(--font-ui-sans), "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --font-jetbrains-mono:
+    var(--font-ui-mono), "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
 
-  /* Base surfaces — design-system light palette */
-  --color-bg-base: #f5f3f0;
+  /* ════════════════════════════════════════════════════════════════════
+     "Quiet instrument" — LIGHT (secondary theme)
+     Near-monochrome neutral surfaces · one accent (electric indigo) ·
+     green = pass/merge · red = fail/blocked · gray = dormant.
+     ════════════════════════════════════════════════════════════════════ */
+
+  /* Base surfaces — neutral off-white, no warm tint */
+  --color-bg-base: #fafafa;
   --color-bg-surface: #ffffff;
-  --color-bg-elevated: #f9f7f5;
-  --color-bg-elevated-hover: #f7f5f2;
-  --color-bg-subtle: rgba(120, 100, 80, 0.06);
-  --color-bg-hover: #f7f5f2;
-  --color-bg-inset: #f0ede9;
-  --color-bg-sidebar: #f0ede9;
+  --color-bg-elevated: #f4f4f5;
+  --color-bg-elevated-hover: #ececee;
+  --color-bg-subtle: rgba(9, 9, 11, 0.04);
+  --color-bg-hover: #f4f4f5;
+  --color-bg-inset: #f4f4f5;
+  --color-bg-sidebar: #f7f7f8;
   --color-bg-card: #ffffff;
+  --color-bg-muted: #f4f4f5;
 
   /* Backward-compat aliases */
   --color-bg-primary: var(--color-bg-base);
   --color-bg-secondary: var(--color-bg-surface);
   --color-bg-tertiary: var(--color-bg-elevated);
 
-  /* Borders — warm stone tint */
-  --color-border-subtle: rgba(0, 0, 0, 0.06);
-  --color-border-default: #d6d3d1;
-  --color-border-strong: #c4bfba;
+  /* Borders — neutral hairlines */
+  --color-border-subtle: rgba(9, 9, 11, 0.07);
+  --color-border-default: #e4e4e7;
+  --color-border-strong: #d4d4d8;
 
   /* Backward-compat aliases */
   --color-border-muted: var(--color-border-subtle);
   --color-border-emphasis: var(--color-border-strong);
 
-  /* Text — warm near-black and stone tones */
-  --color-text-primary: #1c1917;
-  --color-text-secondary: #57534e;
-  --color-text-tertiary: #78716c;
-  --color-text-muted: #a8a29e;
+  /* Text — neutral zinc ramp */
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-tertiary: #71717a;
+  --color-text-muted: #a1a1aa;
   --color-text-inverse: #ffffff;
 
-  /* Interactive accent — warm periwinkle, darkened for light mode contrast */
-  --color-accent: #5c64b5;
-  --color-accent-hover: #4a52a0;
-  --color-accent-subtle: rgba(92, 100, 181, 0.1);
+  /* Interactive accent — electric indigo */
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-subtle: rgba(99, 102, 241, 0.1);
 
-  /* Amber accent — orchestrator / CTA */
-  --color-accent-amber: #d97706;
-  --color-accent-amber-dim: rgba(217, 119, 6, 0.1);
-  --color-accent-amber-border: rgba(217, 119, 6, 0.3);
+  /* "Amber" tokens repointed to indigo — single-accent system.
+     (Name retained so all existing consumers recolor without markup edits.) */
+  --color-accent-amber: #6366f1;
+  --color-accent-amber-dim: rgba(99, 102, 241, 0.1);
+  --color-accent-amber-border: rgba(99, 102, 241, 0.32);
 
-  /* Status / semantic colors */
-  --color-status-working: #16a34a;
-  --color-status-ready: #6b73c4;
-  --color-status-respond: #ea580c;
-  --color-status-review: #0891b2;
-  --color-status-pending: #ca8a04;
-  --color-status-attention: #b8860b;
-  --color-status-idle: #a8a29e;
-  --color-status-done: #a8a29e;
+  /* Status — collapsed to indigo (active/attention) · green (good) · red (bad) · gray (dormant) */
+  --color-status-working: var(--color-accent);
+  --color-status-ready: #71717a;
+  --color-status-respond: var(--color-accent);
+  --color-status-review: #dc2626;
+  --color-status-pending: #a1a1aa;
+  --color-status-attention: var(--color-accent);
+  --color-status-idle: #a1a1aa;
+  --color-status-done: #a1a1aa;
   --color-status-error: #dc2626;
   --color-status-merge: #16a34a;
   --color-ci-pass: #16a34a;
   --color-ci-fail: #dc2626;
 
-  /* Semantic aliases */
-  --color-accent-blue: #2563eb;
+  /* Semantic aliases — only green/red carry hue; the rest map to accent/neutral */
+  --color-accent-blue: var(--color-accent);
   --color-accent-green: #16a34a;
-  --color-accent-yellow: #ca8a04;
-  --color-accent-orange: #bc4c00;
+  --color-accent-yellow: var(--color-accent);
+  --color-accent-orange: #dc2626;
   --color-accent-red: #dc2626;
-  --color-accent-violet: #7c3aed;
-  --color-accent-purple: #7c3aed;
+  --color-accent-violet: var(--color-accent);
+  --color-accent-purple: var(--color-accent);
 
   /* Theme-adaptive tints (bg tints behind status pills) */
-  --color-tint-blue: rgba(37, 99, 235, 0.08);
-  --color-tint-green: rgba(22, 163, 74, 0.07);
-  --color-tint-yellow: rgba(184, 134, 11, 0.07);
-  --color-tint-red: rgba(220, 38, 38, 0.07);
-  --color-tint-violet: rgba(92, 100, 181, 0.08);
-  --color-tint-orange: rgba(188, 76, 0, 0.08);
-  --color-tint-neutral: rgba(0, 0, 0, 0.04);
+  --color-tint-blue: rgba(99, 102, 241, 0.09);
+  --color-tint-green: rgba(22, 163, 74, 0.08);
+  --color-tint-yellow: rgba(99, 102, 241, 0.09);
+  --color-tint-red: rgba(220, 38, 38, 0.08);
+  --color-tint-violet: rgba(99, 102, 241, 0.09);
+  --color-tint-orange: rgba(220, 38, 38, 0.08);
+  --color-tint-neutral: rgba(9, 9, 11, 0.05);
 
   /* Chip/badge background */
-  --color-chip-bg: #f0ece8;
+  --color-chip-bg: #f4f4f5;
 
   /* Hover overlay */
-  --color-hover-overlay: #f7f5f2;
+  --color-hover-overlay: #f4f4f5;
 
   /* Scrollbar */
-  --color-scrollbar: rgba(0, 0, 0, 0.08);
-  --color-scrollbar-hover: rgba(0, 0, 0, 0.15);
-  --color-scrollbar-active: rgba(0, 0, 0, 0.25);
+  --color-scrollbar: rgba(0, 0, 0, 0.1);
+  --color-scrollbar-hover: rgba(0, 0, 0, 0.18);
+  --color-scrollbar-active: rgba(0, 0, 0, 0.28);
 
   /* Body radial gradient tints — none in light mode */
   --color-body-gradient-blue: transparent;
   --color-body-gradient-violet: transparent;
 
   /* Nav */
-  --color-nav-bg: #ffffff;
+  --color-nav-bg: rgba(255, 255, 255, 0.82);
 
-  /* Card surfaces — warm white on warm parchment */
-  --card-bg: linear-gradient(180deg, #ffffff 0%, #faf9f7 100%);
-  --card-merge-bg: #f6faf5;
-  --card-expanded-bg: #f7f5f2;
-  --card-shadow: none;
-  --card-shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.08);
+  /* Card surfaces — flat white, hairline border, whisper shadow */
+  --card-bg: #ffffff;
+  --card-merge-bg: #f4fbf6;
+  --card-expanded-bg: #fafafa;
+  --card-shadow: 0 1px 2px rgba(9, 9, 11, 0.04);
+  --card-shadow-hover: 0 4px 14px rgba(9, 9, 11, 0.08);
   --card-inset: none;
-  --card-border: #d6d3d1;
+  --card-border: #e4e4e7;
 
   /* Done card surfaces */
-  --card-done-bg: #faf9f7;
-  --card-done-border: #e7e5e4;
+  --card-done-bg: #fafafa;
+  --card-done-border: #ececee;
 
-  --done-pill-exited-bg: #f0ece8;
-  --done-pill-exited-color: #78716c;
-  --done-pill-merged-bg: rgba(26, 127, 55, 0.08);
-  --done-pill-merged-color: #1a7f37;
-  --done-pill-killed-bg: rgba(207, 34, 46, 0.06);
-  --done-pill-killed-color: #cf222e;
-  --done-meta-chip-bg: #f0ece8;
-  --done-meta-chip-border: #e7e5e4;
-  --done-section-border: #e7e5e4;
-  --done-title-color: #57534e;
-  --done-restore-bg: rgba(92, 100, 181, 0.06);
-  --done-restore-border: rgba(92, 100, 181, 0.2);
-  --done-restore-hover-bg: rgba(92, 100, 181, 0.12);
+  --done-pill-exited-bg: #f4f4f5;
+  --done-pill-exited-color: #71717a;
+  --done-pill-merged-bg: rgba(22, 163, 74, 0.08);
+  --done-pill-merged-color: #15803d;
+  --done-pill-killed-bg: rgba(220, 38, 38, 0.07);
+  --done-pill-killed-color: #dc2626;
+  --done-meta-chip-bg: #f4f4f5;
+  --done-meta-chip-border: #ececee;
+  --done-section-border: #ececee;
+  --done-title-color: #52525b;
+  --done-restore-bg: rgba(99, 102, 241, 0.07);
+  --done-restore-border: rgba(99, 102, 241, 0.22);
+  --done-restore-hover-bg: rgba(99, 102, 241, 0.13);
 
   /* Detail card */
   --detail-card-bg: #ffffff;
-  --detail-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --detail-card-shadow: 0 1px 3px rgba(9, 9, 11, 0.06), 0 1px 2px rgba(9, 9, 11, 0.04);
 
   /* Orchestrator button */
-  --btn-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --btn-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --btn-shadow: 0 1px 2px rgba(9, 9, 11, 0.05);
+  --btn-shadow-hover: 0 2px 6px rgba(9, 9, 11, 0.09);
   --btn-inset: none;
 
-  /* Kanban column */
-  --color-column-bg: #ece9e4;
+  /* Kanban column — quiet lane, not a heavy box */
+  --color-column-bg: transparent;
   --color-column-header: transparent;
 
-  /* Alert colors */
+  /* Alert colors — red for problems, indigo for action, gray-neutral otherwise */
   --color-alert-ci: #dc2626;
   --color-alert-ci-bg: rgba(220, 38, 38, 0.06);
-  --color-alert-ci-unknown: #b8860b;
-  --color-alert-review: #2563eb;
-  --color-alert-review-bg: rgba(37, 99, 235, 0.06);
-  --color-alert-changes: #d97706;
-  --color-alert-changes-bg: rgba(217, 119, 6, 0.06);
-  --color-alert-conflict: #ca8a04;
-  --color-alert-conflict-bg: rgba(202, 138, 4, 0.06);
-  --color-alert-comment: #7c3aed;
-  --color-alert-comment-bg: rgba(124, 58, 237, 0.06);
+  --color-alert-ci-unknown: #71717a;
+  --color-alert-review: var(--color-accent);
+  --color-alert-review-bg: rgba(99, 102, 241, 0.07);
+  --color-alert-changes: #dc2626;
+  --color-alert-changes-bg: rgba(220, 38, 38, 0.06);
+  --color-alert-conflict: #dc2626;
+  --color-alert-conflict-bg: rgba(220, 38, 38, 0.06);
+  --color-alert-comment: var(--color-accent);
+  --color-alert-comment-bg: rgba(99, 102, 241, 0.07);
 }
 
 /* ── Dark mode ────────────────────────────────────────────────────── */
@@ -181,145 +192,148 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Base surfaces — warm charcoal (brown-tinted, not blue/neutral) */
-  --color-bg-base: #121110;
-  --color-bg-surface: #1a1918;
-  --color-bg-elevated: #222120;
-  --color-bg-elevated-hover: #2a2928;
-  --color-bg-subtle: rgba(255, 240, 220, 0.05);
-  --color-bg-hover: rgba(255, 240, 220, 0.08);
-  --color-bg-inset: #161514;
-  --color-bg-sidebar: #0e0d0c;
-  --color-bg-card: #1c1b19;
+  /* ════════════════════════════════════════════════════════════════════
+     "Quiet instrument" — DARK (primary theme)
+     Neutral near-black canvas · micro-stepped elevation · hairline borders ·
+     electric-indigo accent · green = pass/merge · red = fail/blocked.
+     ════════════════════════════════════════════════════════════════════ */
 
-  /* Borders — warm-tinted transparency */
-  --color-border-subtle: rgba(255, 240, 220, 0.07);
-  --color-border-default: rgba(255, 240, 220, 0.13);
-  --color-border-strong: rgba(255, 240, 220, 0.24);
+  /* Base surfaces — true neutral near-black, no warm/brown tint */
+  --color-bg-base: #0a0a0b;
+  --color-bg-surface: #131316;
+  --color-bg-elevated: #1a1a1e;
+  --color-bg-elevated-hover: #212126;
+  --color-bg-subtle: rgba(255, 255, 255, 0.04);
+  --color-bg-hover: rgba(255, 255, 255, 0.06);
+  --color-bg-inset: #0e0e10;
+  --color-bg-sidebar: #0c0c0e;
+  --color-bg-card: #131316;
+  --color-bg-muted: #1a1a1e;
 
-  /* Text — cream, not blue-white */
-  --color-text-primary: #f0ece8;
-  --color-text-secondary: #a8a29e;
-  --color-text-tertiary: #78716c;
-  --color-text-muted: #57534e;
-  --color-text-inverse: #121110;
+  /* Borders — neutral white-alpha hairlines */
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-default: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
 
-  /* Interactive accent — warm periwinkle */
-  --color-accent: #8b9cf7;
-  --color-accent-hover: #a3b1fa;
-  --color-accent-subtle: rgba(139, 156, 247, 0.12);
+  /* Text — neutral zinc ramp, near-white primary */
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-text-muted: #52525b;
+  --color-text-inverse: #0a0a0b;
 
-  /* Amber accent — orchestrator / CTA */
-  --color-accent-amber: #f97316;
-  --color-accent-amber-dim: rgba(249, 115, 22, 0.12);
-  --color-accent-amber-border: rgba(249, 115, 22, 0.35);
+  /* Interactive accent — electric indigo, lifted for contrast on near-black */
+  --color-accent: #818cf8;
+  --color-accent-hover: #a5b4fc;
+  --color-accent-subtle: rgba(129, 140, 248, 0.16);
 
-  /* Status */
-  --color-status-working: #22c55e;
-  --color-status-ready: #8b9cf7;
-  --color-status-respond: #ea580c;
-  --color-status-review: #06b6d4;
-  --color-status-pending: #eab308;
-  --color-status-attention: #e2a336;
-  --color-status-idle: #44403c;
-  --color-status-done: #44403c;
+  /* "Amber" tokens repointed to indigo — single-accent system. */
+  --color-accent-amber: #818cf8;
+  --color-accent-amber-dim: rgba(129, 140, 248, 0.14);
+  --color-accent-amber-border: rgba(129, 140, 248, 0.38);
+
+  /* Status — indigo (active/attention) · green (good) · red (bad) · gray (dormant) */
+  --color-status-working: var(--color-accent);
+  --color-status-ready: #71717a;
+  --color-status-respond: var(--color-accent);
+  --color-status-review: #ef4444;
+  --color-status-pending: #71717a;
+  --color-status-attention: var(--color-accent);
+  --color-status-idle: #52525b;
+  --color-status-done: #52525b;
   --color-status-error: #ef4444;
   --color-status-merge: #22c55e;
   --color-ci-pass: #22c55e;
   --color-ci-fail: #ef4444;
 
-  /* Semantic aliases */
-  --color-accent-blue: #60a5fa;
+  /* Semantic aliases — only green/red carry hue */
+  --color-accent-blue: var(--color-accent);
   --color-accent-green: #22c55e;
-  --color-accent-yellow: #eab308;
-  --color-accent-orange: #ff9d57;
+  --color-accent-yellow: var(--color-accent);
+  --color-accent-orange: #ef4444;
   --color-accent-red: #ef4444;
-  --color-accent-violet: #a78bfa;
-  --color-accent-purple: #a78bfa;
+  --color-accent-violet: var(--color-accent);
+  --color-accent-purple: var(--color-accent);
 
   /* Theme-adaptive tints */
-  --color-tint-blue: rgba(96, 165, 250, 0.12);
-  --color-tint-green: rgba(34, 197, 94, 0.12);
-  --color-tint-yellow: rgba(226, 163, 54, 0.12);
-  --color-tint-red: rgba(239, 68, 68, 0.12);
-  --color-tint-violet: rgba(139, 156, 247, 0.12);
-  --color-tint-orange: rgba(255, 157, 87, 0.12);
+  --color-tint-blue: rgba(129, 140, 248, 0.14);
+  --color-tint-green: rgba(34, 197, 94, 0.13);
+  --color-tint-yellow: rgba(129, 140, 248, 0.14);
+  --color-tint-red: rgba(239, 68, 68, 0.13);
+  --color-tint-violet: rgba(129, 140, 248, 0.14);
+  --color-tint-orange: rgba(239, 68, 68, 0.13);
   --color-tint-neutral: rgba(255, 255, 255, 0.05);
 
   /* Chip/badge background */
-  --color-chip-bg: rgba(255, 240, 220, 0.06);
+  --color-chip-bg: rgba(255, 255, 255, 0.05);
 
   /* Hover overlay */
-  --color-hover-overlay: rgba(255, 240, 220, 0.05);
+  --color-hover-overlay: rgba(255, 255, 255, 0.05);
 
   /* Scrollbar */
   --color-scrollbar: rgba(255, 255, 255, 0.08);
   --color-scrollbar-hover: rgba(255, 255, 255, 0.15);
   --color-scrollbar-active: rgba(255, 255, 255, 0.25);
 
-  /* Body — warm ambient glow, not blue radials */
-  --color-body-gradient-blue: rgba(139, 156, 247, 0.08);
-  --color-body-gradient-violet: rgba(139, 120, 100, 0.06);
+  /* Body — single whisper-faint indigo glow, top-left only */
+  --color-body-gradient-blue: rgba(99, 102, 241, 0.06);
+  --color-body-gradient-violet: transparent;
 
   /* Nav glass */
-  --color-nav-bg: rgba(18, 17, 16, 0.82);
+  --color-nav-bg: rgba(10, 10, 11, 0.82);
 
-  /* Card surfaces — match cards.html dark reference */
+  /* Card surfaces — flat elevated panel, hairline border, no heavy drop shadow */
   --card-bg: var(--color-bg-card);
-  --card-merge-bg: rgba(20, 22, 18, 0.98);
-  --card-expanded-bg: linear-gradient(
-    180deg,
-    rgba(34, 33, 32, 0.98) 0%,
-    rgba(26, 25, 24, 0.98) 100%
-  );
-  --card-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
-  --card-shadow-hover: 0 24px 54px rgba(0, 0, 0, 0.34);
-  --card-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --card-merge-bg: #10160f;
+  --card-expanded-bg: #1a1a1e;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --card-shadow-hover: 0 6px 22px rgba(0, 0, 0, 0.42);
+  --card-inset: none;
   --card-border: var(--color-border-subtle);
 
   /* Done card surfaces */
-  --card-done-bg: linear-gradient(180deg, rgba(30, 29, 28, 0.8) 0%, rgba(24, 23, 22, 0.8) 100%);
-  --card-done-border: rgba(255, 240, 220, 0.12);
+  --card-done-bg: #101012;
+  --card-done-border: rgba(255, 255, 255, 0.06);
 
-  --done-pill-exited-bg: rgba(255, 240, 220, 0.06);
-  --done-pill-exited-color: #a8a29e;
-  --done-pill-merged-bg: rgba(95, 211, 154, 0.14);
-  --done-pill-merged-color: #5fd39a;
-  --done-pill-killed-bg: rgba(255, 123, 114, 0.12);
-  --done-pill-killed-color: #ff7b72;
-  --done-meta-chip-bg: rgba(255, 240, 220, 0.04);
-  --done-meta-chip-border: rgba(255, 240, 220, 0.08);
-  --done-section-border: rgba(255, 240, 220, 0.06);
-  --done-title-color: #a8a29e;
-  --done-restore-bg: rgba(139, 156, 247, 0.1);
-  --done-restore-border: rgba(139, 156, 247, 0.24);
-  --done-restore-hover-bg: rgba(139, 156, 247, 0.18);
+  --done-pill-exited-bg: rgba(255, 255, 255, 0.05);
+  --done-pill-exited-color: #a1a1aa;
+  --done-pill-merged-bg: rgba(34, 197, 94, 0.14);
+  --done-pill-merged-color: #4ade80;
+  --done-pill-killed-bg: rgba(239, 68, 68, 0.13);
+  --done-pill-killed-color: #f87171;
+  --done-meta-chip-bg: rgba(255, 255, 255, 0.04);
+  --done-meta-chip-border: rgba(255, 255, 255, 0.07);
+  --done-section-border: rgba(255, 255, 255, 0.06);
+  --done-title-color: #a1a1aa;
+  --done-restore-bg: rgba(129, 140, 248, 0.12);
+  --done-restore-border: rgba(129, 140, 248, 0.26);
+  --done-restore-hover-bg: rgba(129, 140, 248, 0.2);
 
   /* Detail card */
-  --detail-card-bg: linear-gradient(180deg, rgba(26, 25, 24, 0.98) 0%, rgba(18, 17, 16, 0.98) 100%);
-  --detail-card-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --detail-card-bg: #131316;
+  --detail-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
   /* Orchestrator button */
-  --btn-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
-  --btn-shadow-hover: 0 16px 34px rgba(0, 0, 0, 0.22);
-  --btn-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --btn-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --btn-shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --btn-inset: none;
 
-  /* Kanban column */
-  --color-column-bg: var(--color-bg-subtle);
+  /* Kanban column — quiet lane, not a heavy box */
+  --color-column-bg: transparent;
   --color-column-header: transparent;
 
-  /* Alert colors — warm-tinted */
+  /* Alert colors — red for problems, indigo for action */
   --color-alert-ci: #ef4444;
-  --color-alert-ci-bg: rgba(239, 68, 68, 0.08);
-  --color-alert-ci-unknown: #e2a336;
-  --color-alert-review: #60a5fa;
-  --color-alert-review-bg: rgba(96, 165, 250, 0.08);
-  --color-alert-changes: #f97316;
-  --color-alert-changes-bg: rgba(249, 115, 22, 0.08);
-  --color-alert-conflict: #eab308;
-  --color-alert-conflict-bg: rgba(234, 179, 8, 0.08);
-  --color-alert-comment: #a78bfa;
-  --color-alert-comment-bg: rgba(167, 139, 250, 0.08);
+  --color-alert-ci-bg: rgba(239, 68, 68, 0.09);
+  --color-alert-ci-unknown: #71717a;
+  --color-alert-review: var(--color-accent);
+  --color-alert-review-bg: rgba(129, 140, 248, 0.1);
+  --color-alert-changes: #ef4444;
+  --color-alert-changes-bg: rgba(239, 68, 68, 0.09);
+  --color-alert-conflict: #ef4444;
+  --color-alert-conflict-bg: rgba(239, 68, 68, 0.09);
+  --color-alert-comment: var(--color-accent);
+  --color-alert-comment-bg: rgba(129, 140, 248, 0.1);
 }
 
 @theme {
@@ -327,12 +341,12 @@
   --font-sans: var(--font-geist-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
-  /* ── Border radius ───────────────────────────────────────────────── */
+  /* ── Border radius — gentle modern radii (softens the old 0px identity) ── */
   --radius-base: 0;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
 
   /* ── Transitions ──────────────────────────────────────────────────── */
   --transition-quick: 0.1s;
@@ -381,36 +395,24 @@
     0 4px 8px rgba(0, 0, 0, 0.85), 0 14px 36px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 
-  /* Gradient surfaces — warm tints */
-  --gradient-session-card: linear-gradient(
-    175deg,
-    rgba(30, 29, 28, 1) 0%,
-    rgba(23, 22, 21, 1) 100%
-  );
-  --gradient-session-card-expanded: linear-gradient(
-    175deg,
-    rgba(38, 37, 36, 1) 0%,
-    rgba(30, 29, 28, 1) 100%
-  );
-  --gradient-session-card-merge: linear-gradient(
-    175deg,
-    rgba(23, 25, 22, 1) 0%,
-    rgba(17, 18, 16, 1) 100%
-  );
-  --gradient-detail-card: linear-gradient(175deg, rgba(30, 29, 28, 1) 0%, rgba(23, 22, 21, 1) 100%);
+  /* Gradient surfaces — flat neutral panels + one indigo accent gradient */
+  --gradient-session-card: var(--color-bg-card);
+  --gradient-session-card-expanded: var(--color-bg-elevated);
+  --gradient-session-card-merge: var(--card-merge-bg);
+  --gradient-detail-card: var(--color-bg-card);
   --gradient-orchestrator-btn: linear-gradient(
     175deg,
-    rgba(139, 156, 247, 0.12) 0%,
-    rgba(139, 156, 247, 0.06) 100%
+    rgba(99, 102, 241, 0.16) 0%,
+    rgba(99, 102, 241, 0.08) 100%
   );
   --gradient-orchestrator-btn-hover: linear-gradient(
     175deg,
-    rgba(139, 156, 247, 0.18) 0%,
-    rgba(139, 156, 247, 0.1) 100%
+    rgba(99, 102, 241, 0.24) 0%,
+    rgba(99, 102, 241, 0.12) 100%
   );
   --gradient-status-strip: linear-gradient(
     to bottom,
-    rgba(139, 156, 247, 0.04) 0%,
+    rgba(99, 102, 241, 0.05) 0%,
     transparent 100%
   );
 }
@@ -1086,14 +1088,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
 .orchestrator-btn {
-  border-radius: 0;
+  border-radius: var(--radius-md);
   color: var(--color-accent);
   background: linear-gradient(
     175deg,
-    color-mix(in srgb, var(--color-accent) 12%, transparent) 0%,
-    color-mix(in srgb, var(--color-accent) 6%, transparent) 100%
+    color-mix(in srgb, var(--color-accent) 14%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 7%, transparent) 100%
   );
-  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
   box-shadow: var(--btn-shadow);
   transition:
     transform 0.16s ease-out,
@@ -1159,7 +1161,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -1226,25 +1228,28 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 2px;
   margin-left: 8px;
   border: 1px solid var(--color-border-subtle);
-  border-radius: 5px;
-  background: var(--color-bg-primary);
-  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+  padding: 3px;
 }
 
 .workspace-mode-switch__item {
   display: inline-flex;
   align-items: center;
   height: 22px;
-  padding: 0 8px;
-  border-radius: 3px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   text-decoration: none;
   font-size: 11px;
   font-weight: 500;
+  transition:
+    background 100ms,
+    color 100ms,
+    box-shadow 100ms;
 }
 
 .workspace-mode-switch__item:hover {
-  background: var(--color-bg-hover);
   color: var(--color-text-primary);
   text-decoration: none;
 }
@@ -1252,7 +1257,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .workspace-mode-switch__item--active {
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
-  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+  box-shadow: var(--card-shadow);
 }
 
 .dashboard-app-btn {
@@ -1262,7 +1267,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 27px;
   padding: 0 10px;
   border: 1px solid var(--color-border-default);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   text-decoration: none;
@@ -2382,24 +2387,21 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-status-working);
 }
 .kanban-column__dot[data-level="pending"] {
-  background: var(--color-status-attention);
+  background: var(--color-status-pending);
 }
 .kanban-column__dot[data-level="review"] {
-  background: var(--color-accent-orange);
+  background: var(--color-status-error);
 }
 .kanban-column__dot[data-level="respond"] {
   background: var(--color-status-respond);
 }
 .kanban-column__dot[data-level="action"] {
-  /* Yellow-severity to match DynamicFavicon.computeHealthFromLevels: the
-     collapsed bucket includes routine review work (ci_failed,
-     changes_requested) that used to be orange. Painting it at
-     --color-status-respond (red) would disagree with the favicon and make
-     every typical review PR scream critical. */
-  background: var(--color-accent-orange);
+  /* Collapsed "act here" bucket — accent indigo signals "needs you" without
+     screaming critical for routine review work. */
+  background: var(--color-accent);
 }
 .kanban-column__dot[data-level="merge"] {
-  background: var(--color-status-ready);
+  background: var(--color-status-merge);
 }
 .kanban-column__dot[data-level="done"] {
   background: var(--color-text-tertiary);
@@ -2992,11 +2994,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-left-width: 3px;
+  border-left-width: 2px;
   border-left-style: solid;
-  border-radius: 6px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--color-text-primary) 96%, transparent);
+  border-left-color: var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--card-shadow);
+  color: var(--color-text-primary);
   contain: layout style paint;
   transition:
     transform 120ms ease-out,
@@ -3004,24 +3007,27 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     box-shadow 120ms ease-out;
 }
 
+/* Left edge carries the accent ONLY when the card needs you (respond = indigo)
+   or is merge-ready (green). Working/idle stay neutral — the live status dot
+   carries that signal, keeping the board quiet. */
 .session-card--accent-working {
-  border-left-color: var(--color-status-working);
+  border-left-color: var(--color-border-subtle);
 }
 
 .session-card--accent-attention {
-  border-left-color: var(--color-status-attention);
+  border-left-color: var(--color-border-default);
 }
 
 .session-card--accent-respond {
-  border-left-color: var(--color-status-respond);
+  border-left-color: var(--color-accent);
 }
 
 .session-card--accent-merge {
-  border-left-color: var(--color-status-ready);
+  border-left-color: var(--color-status-merge);
 }
 
 .session-card--accent-default {
-  border-left-color: var(--color-border-default);
+  border-left-color: var(--color-border-subtle);
 }
 
 .session-card--fixed {
@@ -3070,8 +3076,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .session-card:hover {
   transform: translateY(-1px);
-  border-color: var(--color-border-strong);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border-color: var(--color-border-default);
+  box-shadow: var(--card-shadow-hover);
 }
 
 .session-card:active {
@@ -3092,15 +3098,15 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card__header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px 3px;
+  gap: 7px;
+  padding: 11px 13px 5px;
 }
 
 .card__id {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.04em;
-  color: var(--color-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
   flex: 1;
 }
 
@@ -3159,13 +3165,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .card__title-wrap {
-  padding: 0 10px 4px;
+  padding: 0 13px 6px;
 }
 
 .card__title {
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -3182,13 +3189,13 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 10px 5px;
+  gap: 5px;
+  padding: 0 13px 6px;
 }
 
 .card__branch {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3249,8 +3256,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .card__ci {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  padding: 0 10px 5px;
+  gap: 4px;
+  padding: 0 13px 6px;
 }
 
 .ci-chip {
@@ -3431,7 +3438,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 6px;
   border-top: 1px solid var(--color-border-subtle);
   background: transparent;
-  padding: 5px 10px 7px;
+  padding: 7px 13px 9px;
 }
 
 .session-card__footer-actions {
@@ -3499,6 +3506,41 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: var(--color-accent-amber-border);
   color: var(--color-accent-amber);
   text-decoration: none;
+}
+
+/* ── Quiet at rest: secondary affordances fade in on hover / keyboard focus ──
+   Keeps the resting board calm; primary CTAs (review/merge/quick-reply) stay
+   always-visible. Touch devices (no hover) always show them. */
+.session-card__terminal-link,
+.session-card__restore-control,
+.session-card__terminate {
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 100ms ease,
+    border-color 100ms ease,
+    color 100ms ease,
+    transform 160ms ease-out;
+}
+
+.session-card:hover .session-card__terminal-link,
+.session-card:hover .session-card__restore-control,
+.session-card:hover .session-card__terminate,
+.session-card:focus-within .session-card__terminal-link,
+.session-card:focus-within .session-card__restore-control,
+.session-card:focus-within .session-card__terminate,
+.session-card__terminal-link:focus-visible,
+.session-card__restore-control:focus-visible,
+.session-card__terminate:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .session-card__terminal-link,
+  .session-card__restore-control,
+  .session-card__terminate {
+    opacity: 1;
+  }
 }
 
 .session-card__restore-control {
@@ -4345,10 +4387,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar {
-  --sidebar-bg: #f0ede9;
-  --sidebar-border: rgba(0, 0, 0, 0.06);
-  --sidebar-row-hover: rgba(120, 100, 80, 0.05);
-  --sidebar-row-active: rgba(120, 100, 80, 0.09);
+  --sidebar-bg: var(--color-bg-sidebar);
+  --sidebar-border: var(--color-border-subtle);
+  --sidebar-row-hover: rgba(9, 9, 11, 0.05);
+  --sidebar-row-active: rgba(9, 9, 11, 0.08);
   border-right: 1px solid var(--sidebar-border);
   background: var(--sidebar-bg);
   color: var(--color-text-primary);
@@ -4357,10 +4399,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .dark .project-sidebar {
-  --sidebar-bg: #0e0d0c;
-  --sidebar-border: rgba(255, 240, 220, 0.07);
-  --sidebar-row-hover: rgba(255, 240, 220, 0.05);
-  --sidebar-row-active: rgba(255, 240, 220, 0.07);
+  --sidebar-bg: var(--color-bg-sidebar);
+  --sidebar-border: var(--color-border-subtle);
+  --sidebar-row-hover: rgba(255, 255, 255, 0.05);
+  --sidebar-row-active: rgba(255, 255, 255, 0.08);
 }
 
 .project-sidebar--collapsed {
@@ -4986,13 +5028,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__sess-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 12px 0 26px;
+  gap: 8px;
+  padding: 5px 12px 5px 26px;
   width: 100%;
   border: 0;
+  border-left: 2px solid transparent;
   background: transparent;
   cursor: pointer;
-  transition: background 80ms;
+  transition:
+    background 80ms,
+    border-color 80ms;
   text-align: left;
   text-decoration: none;
   color: inherit;
@@ -5010,9 +5055,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__sess-row--active {
-  background: transparent;
-  border-left: 2px solid var(--color-accent-amber);
-  padding-left: 24px;
+  background: var(--color-accent-subtle);
+  border-left: 2px solid var(--color-accent);
 }
 
 /* Session label */
@@ -5684,16 +5728,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 7px;
+  border: none;
+  border-radius: 0;
   background: var(--color-column-bg);
   overflow: hidden;
 }
 
 .kanban-column__header {
   flex-shrink: 0;
-  padding: 8px 10px 7px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 2px 4px 10px;
+  border-bottom: none;
 }
 
 .kanban-column__title-row {
