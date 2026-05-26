@@ -8,8 +8,6 @@ import {
   isPRUnenriched,
   CI_STATUS,
   getSessionTruthLabel,
-  getPRTruthLabel,
-  getRuntimeTruthLabel,
   isDashboardSessionDone,
   isDashboardSessionTerminal,
   isDashboardSessionRestorable,
@@ -226,19 +224,12 @@ function SessionCardView({
   const isRestorable = isDashboardSessionRestorable(session);
 
   const title = getSessionTitle(session);
-  const footerStatus = getFooterStatusLabel(session, level, Boolean(isReadyToMerge));
+  const footerDetail = getFooterDetail(session, Boolean(isReadyToMerge), rateLimited, prUnenriched);
   const visiblePassingChecks =
     !rateLimited && pr && !prUnenriched
       ? pr.ciChecks.filter((check) => check.status === "passed").slice(0, 3)
       : [];
   const isDone = isDashboardSessionDone(session) || level === "done";
-  const truthLine = session.lifecycle
-    ? [
-        `Session ${getSessionTruthLabel(session)}`,
-        `PR ${getPRTruthLabel(session)}`,
-        `Runtime ${getRuntimeTruthLabel(session)}`,
-      ].join(" · ")
-    : null;
   const secondaryText = session.issueLabel
     ? `${session.issueLabel}${session.issueTitle ? ` · ${session.issueTitle}` : ""}`
     : (session.issueTitle ??
@@ -568,39 +559,19 @@ function SessionCardView({
           <p className="card__title">{title}</p>
         </div>
 
-        <div className="card__meta">
-          {session.branch && <span className="card__branch">{session.branch}</span>}
-          {session.branch && pr ? (
-            <span className="card__meta-sep" aria-hidden="true">
-              ·
+        {session.branch && (
+          <div className="card__meta">
+            <span className="card__branch-icon" aria-hidden="true">
+              <svg fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                <line x1="6" y1="4" x2="6" y2="14" />
+                <circle cx="6" cy="17" r="2.3" />
+                <circle cx="18" cy="7" r="2.3" />
+                <path d="M18 9.3a8 8 0 0 1-8 8" />
+              </svg>
             </span>
-          ) : null}
-          {pr && (
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="card__pr"
-            >
-              #{pr.number}
-            </a>
-          )}
-          {pr &&
-            !rateLimited &&
-            (prUnenriched ? (
-              <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
-            ) : (
-              <span className="card__diff inline-flex items-center">
-                <span className="card__diff-add">+{pr.additions}</span>{" "}
-                <span className="card__diff-del">-{pr.deletions}</span>{" "}
-                <span className="card__diff-size">{getSizeLabel(pr.additions, pr.deletions)}</span>
-                <span className="sr-only">
-                  {`+${pr.additions} -${pr.deletions} ${getSizeLabel(pr.additions, pr.deletions)}`}
-                </span>
-              </span>
-            ))}
-        </div>
+            <span className="card__branch">{session.branch}</span>
+          </div>
+        )}
 
         {secondaryText && (
           <div className="px-[10px] pb-[5px]">
@@ -622,14 +593,6 @@ function SessionCardView({
             ) : (
               <p className="session-card__secondary">{secondaryText}</p>
             )}
-          </div>
-        )}
-
-        {truthLine && (
-          <div className="px-[10px] pb-[5px]">
-            <p className="text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
-              {truthLine}
-            </p>
           </div>
         )}
 
@@ -822,43 +785,39 @@ function SessionCardView({
         )}
 
         <div className="session-card__footer">
-          <span className="card__status min-w-0 truncate" title={session.userPrompt ?? undefined}>
-            {!session.issueUrl && session.userPrompt
-              ? session.userPrompt.length > 60
-                ? session.userPrompt.slice(0, 60) + "…"
-                : session.userPrompt
-              : footerStatus}
-          </span>
+          <div className="session-card__footer-info">
+            {pr ? (
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="card__pr"
+              >
+                PR #{pr.number}
+              </a>
+            ) : null}
+            {pr && footerDetail ? (
+              <span className="card__meta-sep" aria-hidden="true">
+                ·
+              </span>
+            ) : null}
+            {footerDetail ? (
+              <span className="session-card__footer-detail" data-tone={footerDetail.tone}>
+                {footerDetail.text}
+              </span>
+            ) : null}
+          </div>
 
-          {isReadyToMerge && pr ? (
-            <div className="session-card__footer-actions">
-              {onReview ? (
-                <button
-                  type="button"
-                  onClick={(e) => void handleReviewClick(e)}
-                  disabled={requestingReview}
-                  className="session-card__control session-card__review-control"
-                  aria-label="Request review"
-                >
-                  <svg
-                    className="session-card__control-icon"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z" />
-                    <path d="M8 7h6M8 11h6M8 15h4" />
-                  </svg>
-                  {requestingReview ? "Queued" : "Review"}
-                </button>
-              ) : null}
+          <div className="session-card__footer-actions">
+            {isReadyToMerge && pr ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onMerge?.(pr.number);
                 }}
                 className="session-card__control session-card__merge-control"
+                aria-label={`Merge PR #${pr.number}`}
               >
                 <svg
                   className="session-card__control-icon"
@@ -872,64 +831,61 @@ function SessionCardView({
                   <circle cx="18" cy="6" r="2" />
                   <path d="M8 6h5a3 3 0 0 1 3 3v7" />
                 </svg>
-                Merge PR #{pr.number}
+                Merge
               </button>
-            </div>
-          ) : (
-            !isTerminal && (
-              <div className="session-card__footer-actions">
-                {onReview ? (
-                  <button
-                    type="button"
-                    onClick={(e) => void handleReviewClick(e)}
-                    disabled={requestingReview}
-                    className="session-card__control session-card__review-control"
-                    aria-label="Request review"
-                  >
-                    <svg
-                      className="session-card__control-icon"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z" />
-                      <path d="M8 7h6M8 11h6M8 15h4" />
-                    </svg>
-                    {requestingReview ? "Queued" : "Review"}
-                  </button>
-                ) : null}
-                <button
-                  onClick={handleKillClick}
-                  onMouseLeave={() => setKillConfirming(false)}
-                  onBlur={() => setKillConfirming(false)}
-                  aria-label={killConfirming ? "Confirm terminate session" : "Terminate session"}
-                  className={cn(
-                    "session-card__control session-card__terminate btn--danger",
-                    killConfirming && "is-confirming",
-                  )}
+            ) : null}
+            {!isTerminal && onReview ? (
+              <button
+                type="button"
+                onClick={(e) => void handleReviewClick(e)}
+                disabled={requestingReview}
+                className="session-card__control session-card__review-control"
+                aria-label="Request review"
+              >
+                <svg
+                  className="session-card__control-icon"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
                 >
-                  {killConfirming ? (
-                    <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
-                      kill?
-                    </span>
-                  ) : (
-                    <svg
-                      className="session-card__control-icon"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M3 6h18" />
-                      <path d="M8 6V4h8v2" />
-                      <path d="M19 6l-1 14H6L5 6" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            )
-          )}
+                  <path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5Z" />
+                  <path d="M8 7h6M8 11h6M8 15h4" />
+                </svg>
+                {requestingReview ? "Queued" : "Review"}
+              </button>
+            ) : null}
+            {!isTerminal ? (
+              <button
+                onClick={handleKillClick}
+                onMouseLeave={() => setKillConfirming(false)}
+                onBlur={() => setKillConfirming(false)}
+                aria-label={killConfirming ? "Confirm terminate session" : "Terminate session"}
+                className={cn(
+                  "session-card__control session-card__terminate btn--danger",
+                  killConfirming && "is-confirming",
+                )}
+              >
+                {killConfirming ? (
+                  <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                    kill?
+                  </span>
+                ) : (
+                  <svg
+                    className="session-card__control-icon"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4h8v2" />
+                    <path d="M19 6l-1 14H6L5 6" />
+                  </svg>
+                )}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
@@ -949,19 +905,51 @@ function areSessionCardPropsEqual(prev: SessionCardProps, next: SessionCardProps
 
 export const SessionCard = memo(SessionCardView, areSessionCardPropsEqual);
 
-function getFooterStatusLabel(
+type FooterTone = "fail" | "amber" | "green" | undefined;
+
+/**
+ * Terse PR/CI detail for the card's thin info footer (mockup: `PR #N · CI …`).
+ * No cost is shown (the dashboard session carries none).
+ */
+function getFooterDetail(
   session: DashboardSession,
-  level: ReturnType<typeof getAttentionLevel>,
   isReadyToMerge: boolean,
-): string {
-  if (isReadyToMerge || level === "merge") return "mergeable";
-  if (session.lifecycle?.sessionState === "detecting") return "detecting";
-  if (level === "respond") return getSessionTruthLabel(session);
-  if (session.lifecycle?.prReason === "ci_failing" || session.status === "ci_failed")
-    return "ci failing";
-  if (level === "review") return getPRTruthLabel(session);
-  if (level === "working") return getSessionTruthLabel(session);
-  return getSessionTruthLabel(session);
+  rateLimited: boolean,
+  prUnenriched: boolean,
+): { text: string; tone: FooterTone } | null {
+  const pr = session.pr;
+  if (!pr) {
+    if (session.lifecycle?.sessionState === "detecting") {
+      return { text: "detecting…", tone: undefined };
+    }
+    return { text: "no PR yet", tone: undefined };
+  }
+  if (rateLimited) return { text: "PR data rate limited", tone: undefined };
+  if (prUnenriched) return { text: "loading…", tone: undefined };
+
+  if (
+    pr.ciStatus === CI_STATUS.FAILING ||
+    session.lifecycle?.prReason === "ci_failing" ||
+    session.status === "ci_failed"
+  ) {
+    const failed = pr.ciChecks.filter((c) => c.status === "failed").length;
+    return { text: failed > 0 ? `${failed} check${failed === 1 ? "" : "s"} failed` : "CI failed", tone: "fail" };
+  }
+  if (pr.reviewDecision === "changes_requested") {
+    return { text: "changes requested", tone: "amber" };
+  }
+  if (pr.unresolvedThreads > 0) {
+    return {
+      text: `${pr.unresolvedThreads} comment${pr.unresolvedThreads === 1 ? "" : "s"}`,
+      tone: "amber",
+    };
+  }
+  if (isReadyToMerge && pr.reviewDecision === "approved") {
+    return { text: "approved", tone: "green" };
+  }
+  if (pr.ciStatus === CI_STATUS.PASSING) return { text: "CI passed", tone: "green" };
+  if (pr.ciStatus === CI_STATUS.PENDING) return { text: "CI running", tone: undefined };
+  return { text: "review pending", tone: undefined };
 }
 
 interface Alert {

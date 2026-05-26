@@ -3106,27 +3106,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: var(--card-border);
 }
 
-.session-card--fixed {
-  display: flex;
-  min-height: 150px;
-  flex-direction: column;
-  overflow: hidden;
-}
-
+/* Compact, content-height cards (mockup) — no fixed min-height. */
+.session-card--fixed,
 .session-card--alert-frame,
 .session-card--merge-frame {
   display: flex;
   height: auto;
   flex-direction: column;
   overflow: hidden;
-}
-
-.session-card--alert-frame {
-  min-height: 174px;
-}
-
-.session-card--merge-frame {
-  min-height: 166px;
 }
 
 .dark .session-card {
@@ -3173,16 +3160,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card__header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px 3px;
+  gap: 8px;
+  padding: 12px 13px 9px;
 }
 
 .card__id {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-  flex: 1;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
 }
 
 .card__adot {
@@ -3240,13 +3227,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .card__title-wrap {
-  padding: 0 10px 4px;
+  padding: 0 13px 10px;
 }
 
 .card__title {
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.45;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.42;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -3262,19 +3250,28 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .card__meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 10px 5px;
+  gap: 6px;
+  padding: 0 13px 10px;
+}
+
+.card__branch-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.card__branch-icon svg {
+  width: 11px;
+  height: 11px;
 }
 
 .card__branch {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--color-text-muted);
+  font-size: 11px;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 104px;
 }
 
 .card__meta-sep {
@@ -3284,25 +3281,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .card__pr {
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 10.5px;
   color: var(--color-text-secondary);
-  background: var(--color-bg-subtle);
-  border: 1px solid var(--color-border-default);
-  padding: 1px 5px;
-  border-radius: 3px;
   text-decoration: none;
   white-space: nowrap;
-  transition:
-    color 80ms,
-    border-color 80ms,
-    background 80ms;
+  flex-shrink: 0;
+  transition: color 80ms;
 }
 
 .card__pr:hover {
   color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-  background: var(--color-bg-elevated);
   text-decoration: none;
 }
 
@@ -3512,27 +3500,52 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 6px;
   border-top: 1px solid var(--color-border-subtle);
   background: transparent;
-  padding: 5px 10px 7px;
+  padding: 9px 13px 11px;
 }
 
+/* Thin info footer — mockup: `PR #N · CI/review detail` (mono, faint). */
+.session-card__footer-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.session-card__footer-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-card__footer-detail[data-tone="fail"] {
+  color: var(--color-status-error);
+}
+.session-card__footer-detail[data-tone="amber"] {
+  color: var(--color-status-respond);
+}
+.session-card__footer-detail[data-tone="green"] {
+  color: var(--color-status-merge);
+}
+
+/* Actions stay quiet until the card is hovered/focused — the footer reads as
+   information at rest (matching the mockup) and reveals controls on intent. */
 .session-card__footer-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.14s ease;
 }
 
-.card__status {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10.5px;
-  line-height: 1.2;
-  font-family: var(--font-mono);
-  font-weight: 400;
-  color: var(--color-text-muted);
+.session-card:hover .session-card__footer-actions,
+.session-card:focus-within .session-card__footer-actions,
+.session-card__footer-actions:focus-within {
+  opacity: 1;
 }
 
 .session-card__control {
