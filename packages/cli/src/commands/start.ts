@@ -1630,12 +1630,44 @@ export function registerStart(program: Command): void {
 
           // ── Handle "new orchestrator" choice (deferred from already-running check) ──
           if (startNewOrchestrator) {
-            const rawYaml = readFileSync(config.configPath, "utf-8");
-            const rawConfig = yamlParse(rawYaml);
+            let mutationConfigPath = config.configPath;
+            let rawYaml = readFileSync(mutationConfigPath, "utf-8");
+            let rawConfig = yamlParse(rawYaml) as Record<string, unknown> | null;
+            let projects =
+              rawConfig &&
+              typeof rawConfig === "object" &&
+              rawConfig["projects"] &&
+              typeof rawConfig["projects"] === "object"
+                ? (rawConfig["projects"] as Record<string, Record<string, unknown> | undefined>)
+                : null;
+
+            if (!projects && !isCanonicalGlobalConfigPath(mutationConfigPath)) {
+              const globalPath = getGlobalConfigPath();
+              if (existsSync(globalPath)) {
+                mutationConfigPath = globalPath;
+                rawYaml = readFileSync(mutationConfigPath, "utf-8");
+                rawConfig = yamlParse(rawYaml) as Record<string, unknown> | null;
+                projects =
+                  rawConfig &&
+                  typeof rawConfig === "object" &&
+                  rawConfig["projects"] &&
+                  typeof rawConfig["projects"] === "object"
+                    ? (rawConfig["projects"] as Record<
+                        string,
+                        Record<string, unknown> | undefined
+                      >)
+                    : null;
+              }
+            }
+
+            if (!rawConfig || !projects || !projects[projectId]) {
+              throw new Error(`Project "${projectId}" not found in a writable project registry.`);
+            }
 
             // Collect existing prefixes to avoid collisions
             const existingPrefixes = new Set(
-              Object.values(rawConfig.projects as Record<string, Record<string, unknown>>)
+              Object.values(projects)
+                .filter((p): p is Record<string, unknown> => p !== undefined)
                 .map((p) => p.sessionPrefix as string)
                 .filter(Boolean),
             );
@@ -1646,18 +1678,18 @@ export function registerStart(program: Command): void {
               const suffix = Math.random().toString(36).slice(2, 6);
               newId = `${projectId}-${suffix}`;
               newPrefix = generateSessionPrefix(newId);
-            } while (rawConfig.projects[newId] || existingPrefixes.has(newPrefix));
+            } while (projects[newId] || existingPrefixes.has(newPrefix));
 
-            rawConfig.projects[newId] = {
-              ...rawConfig.projects[projectId],
+            projects[newId] = {
+              ...projects[projectId],
               sessionPrefix: newPrefix,
             };
-            const nextYaml = isCanonicalGlobalConfigPath(config.configPath)
+            const nextYaml = isCanonicalGlobalConfigPath(mutationConfigPath)
               ? yamlStringify(rawConfig, { indent: 2 })
               : configToYaml(rawConfig as Record<string, unknown>);
-            writeFileSync(config.configPath, nextYaml);
+            writeFileSync(mutationConfigPath, nextYaml);
             console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
-            config = loadConfig(config.configPath);
+            config = loadConfig(mutationConfigPath);
             projectId = newId;
             project = config.projects[newId];
           }
