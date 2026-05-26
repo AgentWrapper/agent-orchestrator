@@ -129,15 +129,16 @@ write_built_sha() {
   printf '%s\n' "$1" > "$BUILD_SHA_FILE" 2>/dev/null || true
 }
 
-first_missing_build_output() {
+all_build_outputs_present() {
   local sentinel
   for sentinel in "${BUILD_OUTPUT_SENTINELS[@]}"; do
     if [ ! -f "$sentinel" ]; then
-      printf '%s\n' "$sentinel"
-      return 0
+      missing_build_output="$sentinel"
+      return 1
     fi
   done
-  return 1
+  missing_build_output=""
+  return 0
 }
 
 require_command() {
@@ -290,9 +291,7 @@ if [ "$SMOKE_ONLY" = false ]; then
   # the user forces it, the output is missing, or it wasn't built from HEAD.
   built_sha="$(read_built_sha)"
   missing_build_output=""
-  if ! missing_build_output="$(first_missing_build_output)"; then
-    missing_build_output=""
-  fi
+  all_build_outputs_present || true
   rebuild_reason=""
   if [ "$FORCE_REBUILD" = true ]; then
     rebuild_reason="forced via --force-rebuild"

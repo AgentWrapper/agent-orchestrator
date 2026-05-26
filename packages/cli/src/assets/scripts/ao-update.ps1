@@ -116,15 +116,19 @@ $BuildOutputSentinels = @(
 
 function Read-BuiltSha {
     if (Test-Path $BuildShaFile) {
-        return ((Get-Content $BuildShaFile -Raw -ErrorAction SilentlyContinue) | Out-String).Trim()
+        return (Get-Content $BuildShaFile -Raw -ErrorAction SilentlyContinue).Trim()
     }
     return ''
 }
 
 function Write-BuiltSha([string]$sha) {
-    $dir = Split-Path -Parent $BuildShaFile
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    Set-Content -Path $BuildShaFile -Value $sha -NoNewline
+    try {
+        $dir = Split-Path -Parent $BuildShaFile
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        Set-Content -Path $BuildShaFile -Value $sha -NoNewline
+    } catch {
+        Write-Host "Warning: could not write build-sha marker: $_"
+    }
 }
 
 function Get-MissingBuildOutput {
