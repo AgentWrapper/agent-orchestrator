@@ -97,6 +97,56 @@ async function extractKimiSummary(sessionDir: string): Promise<string | null> {
   return summary;
 }
 
+async function detectCompletedOneShotKimiActivity(
+  sessionDir: string,
+  timestamp: Date,
+): Promise<ActivityDetection | null> {
+  const wirePath = join(sessionDir, "wire.jsonl");
+  if (!(await isKimiSessionFile(wirePath))) return null;
+
+  let sawAssistantContent = false;
+  let sawInterrupted = false;
+  let sawTurnEnd = false;
+  let sawError = false;
+
+  try {
+    const rl = createInterface({
+      input: createReadStream(wirePath, { encoding: "utf-8" }),
+      crlfDelay: Infinity,
+    });
+    let bytes = 0;
+    for await (const line of rl) {
+      bytes += line.length;
+      if (bytes > SUMMARY_SCAN_BYTE_LIMIT) break;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        const entry = parsed as Record<string, unknown>;
+        const message = entry["message"];
+        if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+        const msg = message as Record<string, unknown>;
+        const type = typeof msg["type"] === "string" ? msg["type"] : "";
+        if (type === "ContentPart") sawAssistantContent = true;
+        if (type === "StepInterrupted") sawInterrupted = true;
+        if (type === "TurnEnd") sawTurnEnd = true;
+        if (/error|exception|failed/i.test(line)) sawError = true;
+      } catch {
+        // Skip malformed line.
+      }
+    }
+    rl.close();
+  } catch {
+    return null;
+  }
+
+  if (!sawTurnEnd) return null;
+  if (sawAssistantContent) return { state: "ready", timestamp };
+  if (sawInterrupted || sawError) return { state: "blocked", timestamp };
+  return null;
+}
+
 // =============================================================================
 // Plugin Manifest
 // =============================================================================
@@ -257,7 +307,16 @@ function createKimicodeAgent(): Agent {
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) {
+        if (session.workspacePath) {
+          const match = await findKimiSessionMatch(session);
+          if (match) {
+            const oneShotActivity = await detectCompletedOneShotKimiActivity(match.dir, match.mtime);
+            if (oneShotActivity) return oneShotActivity;
+          }
+        }
+        return { state: "exited", timestamp: exitedAt };
+      }
 
       if (!session.workspacePath) return null;
 

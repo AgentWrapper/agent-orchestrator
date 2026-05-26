@@ -579,6 +579,51 @@ describe("getActivityState", () => {
     expect(result?.state).toBe("exited");
   });
 
+  it("1a. treats a completed one-shot kimi transcript as ready after process exit", async () => {
+    mockTmuxWithProcess("zsh", false);
+    writeKimiSession(workspace, "sess-complete", {
+      wireContent:
+        [
+          '{"type":"metadata","protocol_version":"1.10"}',
+          '{"timestamp":1778503361,"message":{"type":"TurnBegin","payload":{"user_input":"say ready"}}}',
+          '{"timestamp":1778503366,"message":{"type":"ContentPart","payload":{"type":"text","text":"KIMI_AO_READY"}}}',
+          '{"timestamp":1778503366,"message":{"type":"TurnEnd","payload":{}}}',
+        ].join("\n") + "\n",
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        workspacePath: workspace,
+        createdAt: new Date(Date.now() - 60 * 1000),
+      }),
+    );
+    expect(result?.state).toBe("ready");
+  });
+
+  it("1c. treats an interrupted one-shot kimi transcript without content as blocked", async () => {
+    mockTmuxWithProcess("zsh", false);
+    writeKimiSession(workspace, "sess-interrupted", {
+      wireContent:
+        [
+          '{"type":"metadata","protocol_version":"1.10"}',
+          '{"timestamp":1778503177,"message":{"type":"TurnBegin","payload":{"user_input":"say ready"}}}',
+          '{"timestamp":1778503178,"message":{"type":"StepBegin","payload":{"n":1}}}',
+          '{"timestamp":1778503178,"message":{"type":"StepInterrupted","payload":{}}}',
+          '{"timestamp":1778503178,"message":{"type":"TurnEnd","payload":{}}}',
+        ].join("\n") + "\n",
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        workspacePath: workspace,
+        createdAt: new Date(Date.now() - 60 * 1000),
+      }),
+    );
+    expect(result?.state).toBe("blocked");
+  });
+
   it("1b. returns exited when runtimeHandle is null", async () => {
     const result = await agent.getActivityState(makeSession({ runtimeHandle: null }));
     expect(result?.state).toBe("exited");
