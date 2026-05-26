@@ -320,26 +320,27 @@ function buildEventContext(
   session: Session | ReactionSessionContext,
   prEnrichmentCache: Map<string, PREnrichmentData>,
 ): EventContext {
-  let pr: EventContext["pr"] = null;
+  const sessionPRs = "prs" in session && Array.isArray(session.prs) ? session.prs : (session.pr ? [session.pr] : []);
 
-  if (session.pr) {
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-    const cached = prEnrichmentCache.get(prKey);
-
-    pr = {
-      url: session.pr.url,
+  const prs: EventContext["prs"] = sessionPRs.map((p) => {
+    const cached = prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`);
+    return {
+      url: p.url,
       title: cached?.title ?? null,
-      number: session.pr.number,
-      branch: session.pr.branch,
-      baseBranch: session.pr.baseBranch,
-      owner: session.pr.owner,
-      repo: session.pr.repo,
-      isDraft: session.pr.isDraft,
+      number: p.number,
+      branch: p.branch,
+      baseBranch: p.baseBranch,
+      owner: p.owner,
+      repo: p.repo,
+      isDraft: p.isDraft,
     };
-  }
+  });
+
+  const pr = prs[0] ?? null;
 
   return {
     pr,
+    prs,
     issueId: session.issueId,
     issueTitle: session.metadata["issueTitle"] ?? null,
     summary: session.agentInfo?.summary ?? null,
@@ -1350,7 +1351,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 title: cachedData.title,
                 additions: cachedData.additions,
                 deletions: cachedData.deletions,
-                isDraft: cachedData.isDraft,
+                isDraft: allEnrichments.some((e) => e.isDraft),
                 hasConflicts: allEnrichments.some((e) => e.hasConflicts),
                 isBehind: allEnrichments.some((e) => e.isBehind),
               };
@@ -1363,18 +1364,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               );
             }
           }
-          // Partial cache miss for multi-PR session: don't terminate based on
-          // primary PR alone — fall through to the live-API check that verifies all PRs.
-          if (session.prs.length > 1 && (cachedData.state === "merged" || cachedData.state === "closed")) {
-            // intentional fall-through to live-API block below
-          } else
-          return commit(
-            resolvePREnrichmentDecision(cachedData, {
-              shouldEscalateIdleToStuck,
-              idleWasBlocked,
-              activityEvidence,
-            }),
-          );
+          // Partial cache miss for multi-PR session: never decide on primary PR
+          // alone — fall through to the live-API check that verifies all PRs.
+          if (session.prs.length <= 1) {
+            return commit(
+              resolvePREnrichmentDecision(cachedData, {
+                shouldEscalateIdleToStuck,
+                idleWasBlocked,
+                activityEvidence,
+              }),
+            );
+          }
+          // intentional fall-through to live-API block below
         }
 
         // Batch enrichment cache miss — fall back to getPRState for terminal

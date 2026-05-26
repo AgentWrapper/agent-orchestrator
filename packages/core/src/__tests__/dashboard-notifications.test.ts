@@ -42,6 +42,18 @@ function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEven
           repo: "app",
           isDraft: false,
         },
+        prs: [
+          {
+            number: 1,
+            url: "https://github.com/acme/app/pull/1",
+            title: "Fix dashboard notifications",
+            branch: "fix/dashboard-notifications",
+            baseBranch: "main",
+            owner: "acme",
+            repo: "app",
+            isDraft: false,
+          },
+        ],
         issueId: "AO-1",
         issueTitle: "Fix dashboard notifications",
         summary: "Fix dashboard notifications",

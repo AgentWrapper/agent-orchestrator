@@ -3163,7 +3163,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
         continue;
 
-      const samePr = otherRaw["pr"] === pr.url;
+      const otherPrUrls = new Set<string>(
+        [
+          otherRaw["pr"],
+          ...(typeof otherRaw["prs"] === "string" ? otherRaw["prs"].split(",") : []),
+        ]
+          .map((u) => (typeof u === "string" ? u.trim() : ""))
+          .filter(Boolean),
+      );
+      const samePr = otherPrUrls.has(pr.url);
       const sameBranch =
         otherRaw["branch"] === pr.branch && (otherRaw["prAutoDetect"] ?? "on") !== "off" && otherRaw["prAutoDetect"] !== "false";
 

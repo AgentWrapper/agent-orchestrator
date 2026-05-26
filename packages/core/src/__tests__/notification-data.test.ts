@@ -21,6 +21,18 @@ const context: NotificationEventContext = {
     repo: "app",
     isDraft: false,
   },
+  prs: [
+    {
+      number: 42,
+      url: "https://github.com/acme/app/pull/42",
+      title: "Normalize notifier payloads",
+      branch: "ao/notifier-payloads",
+      baseBranch: "main",
+      owner: "acme",
+      repo: "app",
+      isDraft: false,
+    },
+  ],
   issueId: "AO-42",
   issueTitle: "Notifier payloads",
   summary: "Normalize notifier payloads",
