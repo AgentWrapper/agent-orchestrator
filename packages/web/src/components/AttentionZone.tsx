@@ -11,7 +11,7 @@ interface AttentionZoneProps {
   sessions: DashboardSession[];
   onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
-  onMerge?: (prNumber: number) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
   onReview?: (sessionId: string) => Promise<void> | void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
