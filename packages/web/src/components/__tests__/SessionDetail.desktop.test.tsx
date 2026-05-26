@@ -134,14 +134,9 @@ describe("SessionDetail desktop layout", () => {
       "href",
       "https://github.com/acme/app/tree/feat/desktop-detail",
     );
-    // PR button is anchored to the PR URL (ctrl-click opens on GitHub, plain click toggles popover)
-    const prButton = screen.getByRole("link", { name: "PR #310" });
-    expect(prButton).toHaveAttribute("href", "https://github.com/acme/app/pull/100");
 
-    // PR details (blockers, file count, unresolved comments) now live inside a
-    // popover anchored to the PR button. Click to open it before asserting contents.
-    fireEvent.click(prButton);
-
+    // On desktop, PR details (blockers, file count, unresolved comments) live in
+    // the always-visible inspector rail Summary view — no popover to open.
     expect(screen.getByText("3 files")).toBeInTheDocument();
     expect(screen.getByText("Draft")).toBeInTheDocument();
     expect(screen.getByText(/Changes requested/i)).toBeInTheDocument();
@@ -175,9 +170,8 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    // Open the PR popover (button is now a link with aria-label "PR #311")
-    fireEvent.click(screen.getByRole("link", { name: "PR #311" }));
-
+    // On desktop the PR card (with its unresolved comments) lives in the
+    // always-visible inspector rail — no popover to open first.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Ask Agent to Fix" }));
     });
@@ -434,7 +428,9 @@ describe("SessionDetail desktop layout", () => {
 
     expect(banner.getByText("My App")).toBeInTheDocument();
     expect(banner.getByText("Orchestrator")).toBeInTheDocument();
-    expect(banner.getByText("Active")).toBeInTheDocument();
+    // Topbar status pill now uses the shared status system; this session's PR
+    // (makePR defaults to approved + mergeable) resolves to "Mergeable".
+    expect(banner.getByText("Mergeable")).toBeInTheDocument();
     expect(banner.getByText("Fleet")).toBeInTheDocument();
     expect(banner.getByText("review")).toBeInTheDocument();
     expect(banner.getByText("working")).toBeInTheDocument();

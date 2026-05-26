@@ -713,13 +713,13 @@ describe("AttentionZone", () => {
     const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })];
     render(<AttentionZone level="respond" sessions={sessions} />);
     // Labels use CSS text-transform:uppercase but DOM text is title-cased
-    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.getByText("Needs you")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
   });
 
   it("renders empty state when sessions array is empty", () => {
     render(<AttentionZone level="respond" sessions={[]} />);
-    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.getByText("Needs you")).toBeInTheDocument();
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.queryByText("No agents need your input.")).not.toBeInTheDocument();
   });
@@ -727,7 +727,7 @@ describe("AttentionZone", () => {
   it("renders zone-specific empty messages for all attention zones", () => {
     const cases: Array<[string, string]> = [
       ["review", "Review"],
-      ["pending", "Pending"],
+      ["pending", "In review"],
       ["working", "Working"],
       ["done", "Done"],
     ];
@@ -751,8 +751,9 @@ describe("AttentionZone", () => {
   it("working zone is collapsed by default", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="working" sessions={sessions} />);
-    // working is defaultCollapsed: false (Kanban always shows), so sessions visible
-    expect(screen.getByText("Working")).toBeInTheDocument();
+    // working is defaultCollapsed: false (Kanban always shows), so sessions visible.
+    // "Working" appears as both the column header and the card's StatusBadge.
+    expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
   });
 
   it("done zone always shows sessions (kanban columns are always expanded)", () => {

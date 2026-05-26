@@ -34,15 +34,15 @@ const zoneConfig: Record<
   }
 > = {
   merge: {
-    label: "Ready",
+    label: "Ready to merge",
     emptyMessage: "Nothing cleared to land yet.",
   },
   action: {
-    label: "Action",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   respond: {
-    label: "Respond",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   review: {
@@ -50,7 +50,7 @@ const zoneConfig: Record<
     emptyMessage: "No code waiting for review.",
   },
   pending: {
-    label: "Pending",
+    label: "In review",
     emptyMessage: "Nothing blocked.",
   },
   working: {

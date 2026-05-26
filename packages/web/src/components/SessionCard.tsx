@@ -16,6 +16,7 @@ import {
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
+import { StatusBadge } from "./StatusBadge";
 import { CICheckList } from "./CIBadge";
 import { getSizeLabel } from "./PRStatus";
 import { projectSessionHashPath, projectSessionPath } from "@/lib/routes";
@@ -498,15 +499,6 @@ function SessionCardView({
     );
   }
 
-  const cardDotTone = (() => {
-    if (isTerminal) return "exited";
-    if (isReadyToMerge || level === "merge" || level === "review") return "ready";
-    if (level === "respond") return "waiting";
-    if (level === "pending") return "idle";
-    if (level === "working") return "working";
-    return "idle";
-  })();
-
   /* ── Standard card (non-done) ────────────────────────────────────── */
   return (
     <div
@@ -519,18 +511,9 @@ function SessionCardView({
       )}
     >
       <div className="session-card__header">
-        <span
-          className={cn(
-            "card__adot",
-            cardDotTone === "working" && "card__adot--working",
-            cardDotTone === "ready" && "card__adot--ready",
-            cardDotTone === "idle" && "card__adot--idle",
-            cardDotTone === "waiting" && "card__adot--waiting",
-            cardDotTone === "exited" && "card__adot--exited",
-          )}
-        />
-        <span className="card__id">{session.id}</span>
+        <StatusBadge session={session} />
         <div className="flex-1" />
+        <span className="card__id">{session.id}</span>
         {isRestorable && (
           <button
             onClick={(e) => {

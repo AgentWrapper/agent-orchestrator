@@ -15,6 +15,7 @@ import {
   isDashboardSessionTerminated,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
+import { AppMark } from "./AppMark";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
@@ -43,8 +44,8 @@ interface DashboardProps {
   dashboardLoadError?: string;
 }
 
-const SIMPLE_KANBAN_LEVELS = ["working", "pending", "action", "merge"] as const;
-const DETAILED_KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const SIMPLE_KANBAN_LEVELS = ["working", "action", "pending", "merge"] as const;
+const DETAILED_KANBAN_LEVELS = ["working", "respond", "review", "pending", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function formatRelativeTimeCompact(isoDate: string | null): string {
@@ -610,6 +611,7 @@ function DashboardInner({
             )}
           </button>
           <div className="dashboard-app-header__brand dashboard-app-header__brand--hide-mobile">
+            <AppMark />
             <span>Agent Orchestrator</span>
           </div>
           {showHeaderProjectLabel ? (

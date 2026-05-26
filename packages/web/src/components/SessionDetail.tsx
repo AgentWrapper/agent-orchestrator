@@ -17,7 +17,7 @@ import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
-import { sessionActivityMeta } from "./session-detail-utils";
+import { SessionInspector } from "./SessionInspector";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -57,10 +57,6 @@ export function SessionDetail({
   const pr = session.pr;
   const terminalEnded = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
-  const activity = (session.activity && sessionActivityMeta[session.activity]) ?? {
-    label: session.activity ?? "unknown",
-    color: "var(--color-text-muted)",
-  };
   const headline = getSessionTitle(session);
 
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
@@ -129,7 +125,6 @@ export function SessionDetail({
         isMobile={isMobile}
         terminalEnded={terminalEnded}
         isRestorable={isRestorable}
-        activity={activity}
         headline={headline}
         projects={projects}
         orchestratorHref={orchestratorHref}
@@ -138,8 +133,8 @@ export function SessionDetail({
         onRestore={handleRestore}
         onKill={handleKill}
       />
-      <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
-        <div className="flex-1 min-h-0 flex flex-col">
+      <main className="session-detail-page session-workspace flex-1 min-h-0 flex bg-[var(--color-bg-base)]">
+        <div className="session-workspace__main flex-1 min-h-0 flex flex-col">
           {!showTerminal ? (
             <div className="session-detail-terminal-placeholder h-full" />
           ) : terminalEnded ? (
@@ -166,6 +161,7 @@ export function SessionDetail({
             />
           )}
         </div>
+        {!isMobile && !terminalEnded ? <SessionInspector session={session} /> : null}
       </main>
       <MobileBottomNav
         ariaLabel="Session navigation"

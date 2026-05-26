@@ -39,8 +39,10 @@ describe("Dashboard kanban layout", () => {
     const board = document.querySelector(".kanban-board");
     expect(board).toHaveAttribute("data-columns", "4");
     expect(board).toHaveStyle({ "--kanban-column-count": "4" });
-    expect(screen.getByText("Action")).toBeInTheDocument();
-    expect(screen.queryByText("Respond")).not.toBeInTheDocument();
+    const titles = Array.from(document.querySelectorAll(".kanban-column__title")).map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual(["Working", "Needs you", "In review", "Ready to merge"]);
   });
 
   it("uses five board columns in detailed attention mode", () => {
@@ -63,6 +65,6 @@ describe("Dashboard kanban layout", () => {
     const board = document.querySelector(".kanban-board");
     expect(board).toHaveAttribute("data-columns", "5");
     expect(board).toHaveStyle({ "--kanban-column-count": "5" });
-    expect(screen.getByText("Respond")).toBeInTheDocument();
+    expect(screen.getByText("Needs you")).toBeInTheDocument();
   });
 });

@@ -10,7 +10,7 @@ describe("app layout metadata", () => {
 
     expect(viewport.themeColor).toEqual([
       { media: "(prefers-color-scheme: light)", color: "#f5f3f0" },
-      { media: "(prefers-color-scheme: dark)", color: "#121110" },
+      { media: "(prefers-color-scheme: dark)", color: "#0a0b0d" },
     ]);
   });
 

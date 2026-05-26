@@ -5,7 +5,9 @@ import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
+import { AppMark } from "./AppMark";
 import { DashboardNotificationButton } from "./DashboardNotificationButton";
+import { StatusBadge } from "./StatusBadge";
 import { SessionDetailPRCard } from "./SessionDetailPRCard";
 import { askAgentToFix } from "./session-detail-agent-actions";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
@@ -26,7 +28,6 @@ interface SessionDetailHeaderProps {
   isMobile: boolean;
   terminalEnded: boolean;
   isRestorable: boolean;
-  activity: { label: string; color: string };
   headline: string;
   projects: ProjectInfo[];
   orchestratorHref: string | null;
@@ -34,10 +35,6 @@ interface SessionDetailHeaderProps {
   onToggleSidebar: () => void;
   onRestore: () => void;
   onKill: () => void;
-}
-
-function normalizeActivityLabelForClass(activityLabel: string): string {
-  return activityLabel.toLowerCase().replace(/\s+/g, "-");
 }
 
 function OrchestratorZonePills({ zones }: { zones: OrchestratorZones }) {
@@ -71,7 +68,6 @@ export function SessionDetailHeader({
   isMobile,
   terminalEnded,
   isRestorable,
-  activity,
   headline,
   projects,
   orchestratorHref,
@@ -150,6 +146,7 @@ export function SessionDetailHeader({
       ) : null}
       {showProductBrand ? (
         <div className="dashboard-app-header__brand dashboard-app-header__brand--hide-mobile">
+          <AppMark />
           <span>Agent Orchestrator</span>
         </div>
       ) : null}
@@ -193,15 +190,7 @@ export function SessionDetailHeader({
           ) : null}
         </div>
         <div className="topbar-session-pills">
-          <div
-            className={cn(
-              "topbar-status-pill",
-              `topbar-status-pill--${normalizeActivityLabelForClass(activity.label)}`,
-            )}
-          >
-            <span className="topbar-status-pill__dot" />
-            <span className="topbar-status-pill__label">{activity.label}</span>
-          </div>
+          <StatusBadge session={session} variant="pill" />
           {!isOrchestrator && session.branch ? (
             pr ? (
               <a
@@ -235,7 +224,9 @@ export function SessionDetailHeader({
       <div className="dashboard-app-header__spacer" />
       <div className="dashboard-app-header__actions">
         <DashboardNotificationButton />
-        {!isOrchestrator && pr ? (
+        {/* PR lives in the desktop inspector rail; the topbar popover is the
+            mobile-only affordance (no inspector there). */}
+        {!isOrchestrator && pr && isMobile ? (
           <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
             <a
               href={pr.url}
@@ -334,7 +325,7 @@ export function SessionDetailHeader({
         {orchestratorHref ? (
           <a
             href={orchestratorHref}
-            className="dashboard-app-btn dashboard-app-btn--amber topbar-desktop-only"
+            className="dashboard-app-btn dashboard-app-btn--primary topbar-desktop-only"
             aria-label="Orchestrator"
           >
             <svg

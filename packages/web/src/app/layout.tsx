@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { getProjectName } from "@/lib/project-name";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { Providers } from "@/app/providers";
+import { schibstedGrotesk, jetbrainsMono } from "@/fonts/fonts";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -11,7 +12,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f5f3f0" },
-    { media: "(prefers-color-scheme: dark)", color: "#121110" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0b0d" },
   ],
 };
 
@@ -33,7 +34,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`dark ${schibstedGrotesk.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
       <body className="h-screen overflow-hidden bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
         <Providers>{children}</Providers>
         <ServiceWorkerRegistrar />
