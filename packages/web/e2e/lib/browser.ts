@@ -41,7 +41,17 @@ export async function captureScreenshots(
   const savedPaths: string[] = [];
 
   try {
-    const context = await browser.newContext({ viewport: { width, height } });
+    // Theme is controllable for design QA; defaults to dark (the app's
+    // defaultTheme). SHOT_SCHEME=light captures the secondary theme.
+    const scheme = process.env.SHOT_SCHEME === "light" ? "light" : "dark";
+    const context = await browser.newContext({ viewport: { width, height }, colorScheme: scheme });
+    await context.addInitScript((s) => {
+      try {
+        localStorage.setItem("theme", s);
+      } catch {
+        /* ignore */
+      }
+    }, scheme);
     const page = await context.newPage();
 
     for (const spec of pages) {
