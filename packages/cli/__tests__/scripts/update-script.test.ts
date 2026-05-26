@@ -12,6 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isWindows } from "@aoagents/ao-core";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scriptPath = join(packageRoot, "src", "assets", "scripts", "ao-update.sh");
@@ -92,7 +93,7 @@ esac\nexit 0`,
   // Bash-script tests skipped on Windows: spawnSync("bash", ...) requires bash
   // which isn't guaranteed without Git for Windows. The Windows code path uses
   // detectWindowsBash() at runtime, exercised separately.
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "syncs the fork with upstream via gh and fast-forwards the local checkout from upstream",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-upstream-script-"));
@@ -162,7 +163,7 @@ esac\nexit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")("uses forced npm link so stale global ao shims are overwritten", () => {
+  it.skipIf(isWindows())("uses forced npm link so stale global ao shims are overwritten", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
@@ -228,7 +229,7 @@ exit 0`,
     expect(result.stdout).not.toContain("Permission denied");
   });
 
-  it.skipIf(process.platform === "win32")("runs the built-in smoke commands in smoke-only mode", () => {
+  it.skipIf(isWindows())("runs the built-in smoke commands in smoke-only mode", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
@@ -269,7 +270,7 @@ exit 0`,
     );
   });
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "resolves the source checkout root when AO_REPO_ROOT is unset",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-root-detect-"));
@@ -295,11 +296,11 @@ exit 0`,
         encoding: "utf8",
       });
 
+      const repoRoot = resolve(packageRoot, "../..");
+      expect(result.status, result.stderr || result.stdout).toBe(0);
       const commands = readFileSync(commandLog, "utf8");
       rmSync(tempRoot, { recursive: true, force: true });
 
-      const repoRoot = resolve(packageRoot, "../..");
-      expect(result.status).toBe(0);
       expect(commands).toContain(
         `node ${join(repoRoot, "packages", "ao", "bin", "ao.js")} --version`,
       );
@@ -352,7 +353,7 @@ exit 0`,
     expect(result.stderr).toContain("commit or stash");
   });
 
-  it.skipIf(process.platform === "win32")("skips rebuild but still runs smoke tests when local HEAD matches remote HEAD", () => {
+  it.skipIf(isWindows())("skips rebuild but still runs smoke tests when local HEAD matches remote HEAD", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-already-latest-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
