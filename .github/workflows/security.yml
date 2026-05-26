@@ -77,7 +77,10 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # The dependency-review API requires dependency graph support (and GitHub
+    # Advanced Security for private repos). Keep it enabled for upstream while
+    # allowing mirrors/forks without that feature to run the rest of CI.
+    if: github.event_name == 'pull_request' && github.repository == 'ComposioHQ/agent-orchestrator'
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
