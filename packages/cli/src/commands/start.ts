@@ -1712,13 +1712,17 @@ export function registerStart(program: Command): void {
               writeProjectBehaviorConfig(project.path, nextLocalConfig);
               console.log(chalk.dim(`  ✓ Saved to ${project.path}/agent-orchestrator.yaml\n`));
             } else {
-              const rawYaml = readFileSync(config.configPath, "utf-8");
-              const rawConfig = yamlParse(rawYaml);
-              const proj = rawConfig.projects[projectId];
-              proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-              proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-              writeFileSync(config.configPath, configToYaml(rawConfig as Record<string, unknown>));
-              console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
+              const nextLocalConfig = readProjectBehaviorConfig(project.path);
+              nextLocalConfig.orchestrator = {
+                ...(nextLocalConfig.orchestrator ?? {}),
+                agent: orchestratorAgent,
+              };
+              nextLocalConfig.worker = {
+                ...(nextLocalConfig.worker ?? {}),
+                agent: workerAgent,
+              };
+              writeProjectBehaviorConfig(project.path, nextLocalConfig);
+              console.log(chalk.dim(`  ✓ Saved to ${project.path}/agent-orchestrator.yaml\n`));
             }
             config = loadConfig(config.configPath);
             project = config.projects[projectId];
