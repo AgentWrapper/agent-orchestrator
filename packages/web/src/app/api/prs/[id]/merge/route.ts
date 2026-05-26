@@ -12,6 +12,14 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     return jsonWithCorrelation({ error: "Invalid PR number" }, { status: 400 }, correlationId);
   }
   const prNumber = Number(id);
+  const owner = _request.nextUrl.searchParams.get("owner") ?? undefined;
+  const repo = _request.nextUrl.searchParams.get("repo") ?? undefined;
+
+  const prMatches = (p: { number: number; owner?: string; repo?: string }) =>
+    p.number === prNumber &&
+    (!owner || p.owner?.toLowerCase() === owner.toLowerCase()) &&
+    (!repo || p.repo?.toLowerCase() === repo.toLowerCase());
+
   let configForObservation: OrchestratorConfig | undefined;
   let projectId: string | undefined;
   let sessionId: string | undefined;
@@ -22,12 +30,12 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     const sessions = await sessionManager.list();
 
     const session = sessions.find(
-      (s) => s.pr?.number === prNumber || (s.prs ?? []).some((p) => p.number === prNumber),
+      (s) => (s.pr && prMatches(s.pr)) || (s.prs ?? []).some(prMatches),
     );
     const targetPR =
-      session?.pr?.number === prNumber
+      session?.pr && prMatches(session.pr)
         ? session.pr
-        : (session?.prs ?? []).find((p) => p.number === prNumber);
+        : (session?.prs ?? []).find(prMatches);
     if (!session || !targetPR) {
       return jsonWithCorrelation({ error: "PR not found" }, { status: 404 }, correlationId);
     }
