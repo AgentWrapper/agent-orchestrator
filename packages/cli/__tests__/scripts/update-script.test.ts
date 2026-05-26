@@ -12,9 +12,40 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isWindows } from "@aoagents/ao-core";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scriptPath = join(packageRoot, "src", "assets", "scripts", "ao-update.sh");
+const buildOutputSentinels = [
+  "packages/core/dist/index.js",
+  "packages/cli/dist/index.js",
+  "packages/web/.next/BUILD_ID",
+  "packages/plugins/agent-aider/dist/index.js",
+  "packages/plugins/agent-claude-code/dist/index.js",
+  "packages/plugins/agent-codex/dist/index.js",
+  "packages/plugins/agent-cursor/dist/index.js",
+  "packages/plugins/agent-grok/dist/index.js",
+  "packages/plugins/agent-kimicode/dist/index.js",
+  "packages/plugins/agent-opencode/dist/index.js",
+  "packages/plugins/notifier-composio/dist/index.js",
+  "packages/plugins/notifier-dashboard/dist/index.js",
+  "packages/plugins/notifier-desktop/dist/index.js",
+  "packages/plugins/notifier-discord/dist/index.js",
+  "packages/plugins/notifier-openclaw/dist/index.js",
+  "packages/plugins/notifier-slack/dist/index.js",
+  "packages/plugins/notifier-webhook/dist/index.js",
+  "packages/plugins/runtime-process/dist/index.js",
+  "packages/plugins/runtime-tmux/dist/index.js",
+  "packages/plugins/scm-github/dist/index.js",
+  "packages/plugins/scm-gitlab/dist/index.js",
+  "packages/plugins/terminal-iterm2/dist/index.js",
+  "packages/plugins/terminal-web/dist/index.js",
+  "packages/plugins/tracker-github/dist/index.js",
+  "packages/plugins/tracker-gitlab/dist/index.js",
+  "packages/plugins/tracker-linear/dist/index.js",
+  "packages/plugins/workspace-clone/dist/index.js",
+  "packages/plugins/workspace-worktree/dist/index.js",
+];
 
 function writeExecutable(path: string, content: string): void {
   writeFileSync(path, content);
@@ -23,6 +54,14 @@ function writeExecutable(path: string, content: string): void {
 
 function createFakeBinary(binDir: string, name: string, body: string): void {
   writeExecutable(join(binDir, name), `#!/bin/bash\nset -e\n${body}\n`);
+}
+
+function createBuildOutputs(repoRoot: string): void {
+  for (const sentinel of buildOutputSentinels) {
+    const path = join(repoRoot, sentinel);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "");
+  }
 }
 
 describe("ao-update.sh", () => {
@@ -92,7 +131,7 @@ esac\nexit 0`,
   // Bash-script tests skipped on Windows: spawnSync("bash", ...) requires bash
   // which isn't guaranteed without Git for Windows. The Windows code path uses
   // detectWindowsBash() at runtime, exercised separately.
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "syncs the fork with upstream via gh and fast-forwards the local checkout from upstream",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-upstream-script-"));
@@ -162,7 +201,7 @@ esac\nexit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "uses forced npm link so stale global ao shims are overwritten",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
@@ -231,7 +270,7 @@ exit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "runs the built-in smoke commands in smoke-only mode",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
@@ -275,7 +314,7 @@ exit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "resolves the source checkout root when AO_REPO_ROOT is unset",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-root-detect-"));
@@ -358,7 +397,7 @@ exit 0`,
     expect(result.stderr).toContain("commit or stash");
   });
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "skips rebuild but still runs smoke tests when local HEAD matches remote HEAD and the build is fresh",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-already-latest-"));
@@ -376,8 +415,7 @@ exit 0`,
       // Build is fresh: the output exists and the marker records the current HEAD,
       // so the rebuild should be skipped even though the script no longer relies on
       // the SHA having advanced.
-      mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
-      writeFileSync(join(fakeRepo, "packages", "core", "dist", "index.js"), "");
+      createBuildOutputs(fakeRepo);
       mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
       writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), `${sha}\n`);
 
@@ -443,7 +481,7 @@ exit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "rebuilds when HEAD matches remote but the build is stale (marker mismatch)",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-build-"));
@@ -456,8 +494,7 @@ exit 0`,
 
       // Dist exists, but it was built from a different commit (e.g. the user ran a
       // manual `git pull` so HEAD already matches remote, yet dist is from before).
-      mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
-      writeFileSync(join(fakeRepo, "packages", "core", "dist", "index.js"), "");
+      createBuildOutputs(fakeRepo);
       mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
       writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), "stale000stale000\n");
 
@@ -506,23 +543,26 @@ exit 0`,
         encoding: "utf8",
       });
 
-      const commands = readFileSync(commandLog, "utf8");
-      const markerAfter = readFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), "utf8");
-      rmSync(tempRoot, { recursive: true, force: true });
+      try {
+        expect(result.status, result.stderr || result.stdout).toBe(0);
+        const commands = readFileSync(commandLog, "utf8");
+        const markerAfter = readFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), "utf8");
 
-      expect(result.status).toBe(0);
-      // No new commits, so no pull — but the stale build must be rebuilt.
-      expect(commands).not.toContain("git pull --ff-only origin main");
-      expect(result.stdout).toContain("Rebuilding");
-      expect(commands).toContain("pnpm install");
-      expect(commands).toContain("pnpm build");
-      expect(commands).toContain("npm link --force");
-      // Marker is updated to the freshly-built HEAD.
-      expect(markerAfter.trim()).toBe(sha);
+        // No new commits, so no pull — but the stale build must be rebuilt.
+        expect(commands).not.toContain("git pull --ff-only origin main");
+        expect(result.stdout).toContain("Rebuilding");
+        expect(commands).toContain("pnpm install");
+        expect(commands).toContain("pnpm build");
+        expect(commands).toContain("npm link --force");
+        // Marker is updated to the freshly-built HEAD.
+        expect(markerAfter.trim()).toBe(sha);
+      } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "rebuilds on --force-rebuild even when HEAD matches remote and the build is fresh",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-force-rebuild-"));
@@ -534,8 +574,7 @@ exit 0`,
       const sha = "abc123def456abc123def456abc123def456abc123";
 
       // Build is fresh — without --force-rebuild this would be a no-op.
-      mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
-      writeFileSync(join(fakeRepo, "packages", "core", "dist", "index.js"), "");
+      createBuildOutputs(fakeRepo);
       mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
       writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), `${sha}\n`);
 

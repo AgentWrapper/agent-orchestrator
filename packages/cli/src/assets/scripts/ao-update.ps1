@@ -83,9 +83,36 @@ $RepoRoot = Resolve-RepoRoot
 # only after a fully successful build + launcher refresh. Comparing it to HEAD is
 # how we tell "dist is in sync with src at this commit" without fragile mtime checks.
 $BuildShaFile = Join-Path $RepoRoot 'node_modules/.ao-build-sha'
-# A representative build artifact. Its absence means dist was wiped (e.g. a manual
-# `pnpm clean`) even if the marker still matches HEAD, so we rebuild regardless.
-$BuildOutputSentinel = Join-Path $RepoRoot 'packages/core/dist/index.js'
+$BuildOutputSentinels = @(
+    'packages/core/dist/index.js',
+    'packages/cli/dist/index.js',
+    'packages/web/.next/BUILD_ID',
+    'packages/plugins/agent-aider/dist/index.js',
+    'packages/plugins/agent-claude-code/dist/index.js',
+    'packages/plugins/agent-codex/dist/index.js',
+    'packages/plugins/agent-cursor/dist/index.js',
+    'packages/plugins/agent-grok/dist/index.js',
+    'packages/plugins/agent-kimicode/dist/index.js',
+    'packages/plugins/agent-opencode/dist/index.js',
+    'packages/plugins/notifier-composio/dist/index.js',
+    'packages/plugins/notifier-dashboard/dist/index.js',
+    'packages/plugins/notifier-desktop/dist/index.js',
+    'packages/plugins/notifier-discord/dist/index.js',
+    'packages/plugins/notifier-openclaw/dist/index.js',
+    'packages/plugins/notifier-slack/dist/index.js',
+    'packages/plugins/notifier-webhook/dist/index.js',
+    'packages/plugins/runtime-process/dist/index.js',
+    'packages/plugins/runtime-tmux/dist/index.js',
+    'packages/plugins/scm-github/dist/index.js',
+    'packages/plugins/scm-gitlab/dist/index.js',
+    'packages/plugins/terminal-iterm2/dist/index.js',
+    'packages/plugins/terminal-web/dist/index.js',
+    'packages/plugins/tracker-github/dist/index.js',
+    'packages/plugins/tracker-gitlab/dist/index.js',
+    'packages/plugins/tracker-linear/dist/index.js',
+    'packages/plugins/workspace-clone/dist/index.js',
+    'packages/plugins/workspace-worktree/dist/index.js'
+) | ForEach-Object { Join-Path $RepoRoot $_ }
 
 function Read-BuiltSha {
     if (Test-Path $BuildShaFile) {
@@ -98,6 +125,13 @@ function Write-BuiltSha([string]$sha) {
     $dir = Split-Path -Parent $BuildShaFile
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     Set-Content -Path $BuildShaFile -Value $sha -NoNewline
+}
+
+function Get-MissingBuildOutput {
+    foreach ($sentinel in $BuildOutputSentinels) {
+        if (-not (Test-Path $sentinel)) { return $sentinel }
+    }
+    return ''
 }
 
 function Require-Command([string]$name, [string]$fixHint) {
@@ -230,11 +264,12 @@ if (-not $SmokeOnly) {
     # branch switch, an interrupted earlier build, or a manual clean. Rebuild when
     # the user forces it, the output is missing, or it wasn't built from HEAD.
     $builtSha = Read-BuiltSha
+    $missingBuildOutput = Get-MissingBuildOutput
     $rebuildReason = ''
     if ($ForceRebuild) {
         $rebuildReason = 'forced via --force-rebuild'
-    } elseif (-not (Test-Path $BuildOutputSentinel)) {
-        $rebuildReason = 'build output missing'
+    } elseif ($missingBuildOutput) {
+        $rebuildReason = "build output missing ($missingBuildOutput)"
     } elseif ($builtSha -ne $localSha) {
         $lastBuilt = if ($builtSha) { $builtSha } else { 'unknown' }
         $rebuildReason = "build is stale (last built $lastBuilt, HEAD is $localSha)"

@@ -87,9 +87,36 @@ fi
 # only after a fully successful build + launcher refresh. Comparing it to HEAD is
 # how we tell "dist is in sync with src at this commit" without fragile mtime checks.
 BUILD_SHA_FILE="$REPO_ROOT/node_modules/.ao-build-sha"
-# A representative build artifact. Its absence means dist was wiped (e.g. a manual
-# `pnpm clean`) even if the marker still matches HEAD, so we rebuild regardless.
-BUILD_OUTPUT_SENTINEL="$REPO_ROOT/packages/core/dist/index.js"
+BUILD_OUTPUT_SENTINELS=(
+  "$REPO_ROOT/packages/core/dist/index.js"
+  "$REPO_ROOT/packages/cli/dist/index.js"
+  "$REPO_ROOT/packages/web/.next/BUILD_ID"
+  "$REPO_ROOT/packages/plugins/agent-aider/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-claude-code/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-codex/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-cursor/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-grok/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-kimicode/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-opencode/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-composio/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-dashboard/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-desktop/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-discord/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-openclaw/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-slack/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-webhook/dist/index.js"
+  "$REPO_ROOT/packages/plugins/runtime-process/dist/index.js"
+  "$REPO_ROOT/packages/plugins/runtime-tmux/dist/index.js"
+  "$REPO_ROOT/packages/plugins/scm-github/dist/index.js"
+  "$REPO_ROOT/packages/plugins/scm-gitlab/dist/index.js"
+  "$REPO_ROOT/packages/plugins/terminal-iterm2/dist/index.js"
+  "$REPO_ROOT/packages/plugins/terminal-web/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-github/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-gitlab/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-linear/dist/index.js"
+  "$REPO_ROOT/packages/plugins/workspace-clone/dist/index.js"
+  "$REPO_ROOT/packages/plugins/workspace-worktree/dist/index.js"
+)
 
 read_built_sha() {
   if [ -f "$BUILD_SHA_FILE" ]; then
@@ -100,6 +127,17 @@ read_built_sha() {
 write_built_sha() {
   mkdir -p "$(dirname "$BUILD_SHA_FILE")" 2>/dev/null || true
   printf '%s\n' "$1" > "$BUILD_SHA_FILE" 2>/dev/null || true
+}
+
+first_missing_build_output() {
+  local sentinel
+  for sentinel in "${BUILD_OUTPUT_SENTINELS[@]}"; do
+    if [ ! -f "$sentinel" ]; then
+      printf '%s\n' "$sentinel"
+      return 0
+    fi
+  done
+  return 1
 }
 
 require_command() {
@@ -251,11 +289,15 @@ if [ "$SMOKE_ONLY" = false ]; then
   # branch switch, an interrupted earlier build, or a manual clean. Rebuild when
   # the user forces it, the output is missing, or it wasn't built from HEAD.
   built_sha="$(read_built_sha)"
+  missing_build_output=""
+  if ! missing_build_output="$(first_missing_build_output)"; then
+    missing_build_output=""
+  fi
   rebuild_reason=""
   if [ "$FORCE_REBUILD" = true ]; then
     rebuild_reason="forced via --force-rebuild"
-  elif [ ! -f "$BUILD_OUTPUT_SENTINEL" ]; then
-    rebuild_reason="build output missing"
+  elif [ -n "$missing_build_output" ]; then
+    rebuild_reason="build output missing ($missing_build_output)"
   elif [ "$built_sha" != "$local_sha" ]; then
     rebuild_reason="build is stale (last built ${built_sha:-unknown}, HEAD is $local_sha)"
   fi
