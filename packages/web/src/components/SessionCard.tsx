@@ -32,7 +32,7 @@ interface SessionCardProps {
   session: DashboardSession;
   onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
-  onMerge?: (prNumber: number) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
   onReview?: (sessionId: string) => Promise<void> | void;
 }
@@ -1017,7 +1017,7 @@ function SessionCardView({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onMerge?.(effectivePR.number);
+                  onMerge?.(effectivePR.number, effectivePR.owner, effectivePR.repo);
                 }}
                 className="session-card__control session-card__merge-control"
               >

@@ -425,9 +425,13 @@ function DashboardInner({
   }, [previewSession, killSession]);
 
   const handleMerge = useCallback(
-    async (prNumber: number) => {
+    async (prNumber: number, owner?: string, repo?: string) => {
       try {
-        const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+        const params = new URLSearchParams();
+        if (owner) params.set("owner", owner);
+        if (repo) params.set("repo", repo);
+        const qs = params.size > 0 ? `?${params.toString()}` : "";
+        const res = await fetch(`/api/prs/${prNumber}/merge${qs}`, { method: "POST" });
         if (!res.ok) {
           const text = await res.text();
           console.error(`Failed to merge PR #${prNumber}:`, text);
