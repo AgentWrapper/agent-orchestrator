@@ -319,7 +319,7 @@ describe("SessionCard", () => {
     const session = makeSession({ status: "mergeable", activity: "idle", pr });
     render(<SessionCard session={session} onMerge={onMerge} />);
     fireEvent.click(screen.getByRole("button", { name: /merge/i }));
-    expect(onMerge).toHaveBeenCalledWith(42);
+    expect(onMerge).toHaveBeenCalledWith(42, "acme", "app");
   });
 
   it("renders passing CI check chips as hyperlinks when url is present", () => {
