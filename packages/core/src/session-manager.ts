@@ -22,6 +22,7 @@ import {
   isRestorable,
   isTerminalSession,
   NON_RESTORABLE_STATUSES,
+  IssueNotSpawnableError,
   SessionNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -1256,6 +1257,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             },
           });
           throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
+        }
+      }
+
+      if (resolvedIssue) {
+        const { state } = resolvedIssue;
+        if (state === "closed" || state === "cancelled") {
+          recordActivityEvent({
+            projectId: spawnConfig.projectId,
+            source: "session-manager",
+            kind: "session.spawn_rejected",
+            level: "warn",
+            summary: `spawn rejected: issue ${spawnConfig.issueId} is ${state}`,
+            data: {
+              issueId: spawnConfig.issueId,
+              issueState: state,
+              tracker: plugins.tracker.name,
+              reason: "issue_not_spawnable",
+            },
+          });
+          throw new IssueNotSpawnableError(spawnConfig.issueId, state);
         }
       }
     }

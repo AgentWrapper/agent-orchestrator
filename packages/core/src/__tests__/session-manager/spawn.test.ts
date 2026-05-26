@@ -21,6 +21,7 @@ import type {
   Agent,
   Workspace,
   Tracker,
+  Issue,
 } from "../../types.js";
 import {
   setupTestContext,
@@ -1087,6 +1088,78 @@ describe("spawn", () => {
     // Should not create workspace or runtime when auth fails
     expect(mockWorkspace.create).not.toHaveBeenCalled();
     expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  function registryWithTracker(mockTracker: Tracker): PluginRegistry {
+    return {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+  }
+
+  function baseMockTracker(issue: Partial<Issue> & Pick<Issue, "id" | "state">): Tracker {
+    return {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        title: "Test issue",
+        description: "",
+        url: "https://example.com/issues/1",
+        labels: [],
+        ...issue,
+      }),
+      isCompleted: vi.fn().mockResolvedValue(issue.state === "closed" || issue.state === "cancelled"),
+      issueUrl: vi.fn().mockReturnValue("https://example.com/issues/1"),
+      branchName: vi.fn().mockReturnValue(`feat/${issue.id}`),
+      generatePrompt: vi.fn().mockResolvedValue("Work on issue"),
+    };
+  }
+
+  it("rejects spawn when tracker issue is closed", async () => {
+    const mockTracker = baseMockTracker({ id: "42", state: "closed" });
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker(mockTracker),
+    });
+
+    await expect(sm.spawn({ projectId: "my-app", issueId: "42" })).rejects.toThrow(
+      /Issue 42 is closed/,
+    );
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects spawn when tracker issue is cancelled", async () => {
+    const mockTracker = baseMockTracker({ id: "99", state: "cancelled" });
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker(mockTracker),
+    });
+
+    await expect(sm.spawn({ projectId: "my-app", issueId: "99" })).rejects.toThrow(
+      /Issue 99 is cancelled/,
+    );
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("allows spawn when tracker issue is in_progress", async () => {
+    const mockTracker = baseMockTracker({ id: "INT-50", state: "in_progress" });
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker(mockTracker),
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-50" });
+
+    expect(session.issueId).toBe("INT-50");
+    expect(mockWorkspace.create).toHaveBeenCalled();
+    expect(mockRuntime.create).toHaveBeenCalled();
   });
 
   it("spawns without issue tracking when no issueId provided", async () => {
