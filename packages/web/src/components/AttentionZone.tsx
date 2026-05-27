@@ -9,11 +9,8 @@ import { projectSessionPath } from "@/lib/routes";
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
-  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
-  onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
-  onReview?: (sessionId: string) => Promise<void> | void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
   /** Accordion mode: called when the header is tapped to toggle */
@@ -34,15 +31,15 @@ const zoneConfig: Record<
   }
 > = {
   merge: {
-    label: "Ready",
+    label: "Ready to merge",
     emptyMessage: "Nothing cleared to land yet.",
   },
   action: {
-    label: "Action",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   respond: {
-    label: "Respond",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   review: {
@@ -50,7 +47,7 @@ const zoneConfig: Record<
     emptyMessage: "No code waiting for review.",
   },
   pending: {
-    label: "Pending",
+    label: "In review",
     emptyMessage: "Nothing blocked.",
   },
   working: {
@@ -75,11 +72,8 @@ const zoneConfig: Record<
 function AttentionZoneView({
   level,
   sessions,
-  onSend,
   onKill,
-  onMerge,
   onRestore,
-  onReview,
   collapsed,
   onToggle,
   compactMobile,
@@ -139,11 +133,8 @@ function AttentionZoneView({
                   <SessionCard
                     key={session.id}
                     session={session}
-                    onSend={onSend}
                     onKill={onKill}
-                    onMerge={onMerge}
                     onRestore={onRestore}
-                    onReview={onReview}
                   />
                 ),
               )}
@@ -184,11 +175,8 @@ function AttentionZoneView({
               <SessionCard
                 key={session.id}
                 session={session}
-                onSend={onSend}
                 onKill={onKill}
-                onMerge={onMerge}
                 onRestore={onRestore}
-                onReview={onReview}
               />
             ))}
           </div>
@@ -203,11 +191,8 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.level === next.level &&
     prev.collapsed === next.collapsed &&
     prev.onToggle === next.onToggle &&
-    prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
-    prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
-    prev.onReview === next.onReview &&
     prev.compactMobile === next.compactMobile &&
     prev.onPreview === next.onPreview &&
     prev.resetKey === next.resetKey &&

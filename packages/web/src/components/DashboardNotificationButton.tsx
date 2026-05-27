@@ -406,11 +406,11 @@ export function DashboardNotificationButton() {
         onClick={() => setOpen((value) => !value)}
       >
         <svg
-          width="13"
-          height="13"
+          width="17"
+          height="17"
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.8"
+          strokeWidth="1.6"
           viewBox="0 0 24 24"
           aria-hidden="true"
         >
