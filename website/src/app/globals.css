@@ -72,158 +72,342 @@ a {
   color: inherit;
 }
 
-/* ── Landing Page ─────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+   LANDING PAGE — Redesigned Design System
+   ═══════════════════════════════════════════════════════════════════ */
+
 .landing-page {
-  --landing-bg: #121110;
-  --landing-fg: #f0ece8;
-  --landing-muted: #a8a29e;
-  --landing-muted-dim: #57534e;
-  --landing-accent: #f97316;
-  --landing-border-subtle: rgba(255, 240, 220, 0.07);
-  --landing-border-default: rgba(255, 240, 220, 0.13);
-  --landing-border-strong: rgba(255, 240, 220, 0.24);
-  --landing-surface: #1a1918;
-  --landing-card-bg: #1c1b19;
+  /* Core palette */
+  --landing-bg: #050505;
+  --landing-bg-secondary: #0a0a0a;
+  --landing-fg: #fafafa;
+  --landing-fg-secondary: #e5e5e5;
+  --landing-muted: #888;
+  --landing-muted-dim: #444;
+  --landing-border: rgba(255,255,255,0.06);
+  --landing-border-hover: rgba(255,255,255,0.12);
+  --landing-border-strong: rgba(255,255,255,0.18);
+
+  /* Accent colors */
+  --accent-orange: #f97316;
+  --accent-blue: #3b82f6;
+  --accent-purple: #8b5cf6;
+  --accent-green: #22c55e;
+  --accent-cyan: #06b6d4;
+
+  /* Surfaces */
+  --surface-card: rgba(255,255,255,0.02);
+  --surface-card-hover: rgba(255,255,255,0.04);
+  --surface-glass: rgba(255,255,255,0.03);
+
   background: var(--landing-bg);
   color: var(--landing-fg);
   font-family: var(--font-sans, -apple-system, "SF Pro Text", system-ui, sans-serif);
+  overflow-x: hidden;
 }
 
-.liquid-glass-solid {
-  background: var(--landing-accent);
-  color: #121110;
-  font-weight: 500;
-  border: none;
+/* ── Grain overlay ─────────────────────────────────────────────── */
+.landing-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
-.liquid-glass-solid:hover {
-  opacity: 0.9;
-}
-
+/* ── Glass card ────────────────────────────────────────────────── */
 .landing-card {
-  background: var(--landing-card-bg);
-  border: 1px solid var(--landing-border-subtle);
-  transition: border-color 0.2s, background 0.2s;
+  background: var(--surface-card);
+  border: 1px solid var(--landing-border);
+  border-radius: 16px;
+  transition: border-color 0.3s, background 0.3s, box-shadow 0.3s;
 }
-
 .landing-card:hover {
-  border-color: var(--landing-border-default);
+  border-color: var(--landing-border-hover);
+  background: var(--surface-card-hover);
 }
 
-.landing-hero-grid {
-  background-image: radial-gradient(rgba(255, 240, 220, 0.04) 1px, transparent 1px);
-  background-size: 24px 24px;
-  mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+/* ── Shimmer border card ───────────────────────────────────────── */
+.shimmer-card {
+  position: relative;
+  background: var(--surface-card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.shimmer-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.1) 25%,
+    rgba(255,255,255,0) 50%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: shimmer-rotate 6s linear infinite;
+}
+@keyframes shimmer-rotate {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 200% 200%; }
 }
 
-@keyframes landing-fade-rise {
-  from {
-    opacity: 0;
-    transform: translateY(24px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* ── Glow card ─────────────────────────────────────────────────── */
+.glow-card {
+  position: relative;
+  background: var(--surface-card);
+  border: 1px solid var(--landing-border);
+  border-radius: 16px;
+  transition: all 0.4s ease;
+}
+.glow-card:hover {
+  border-color: var(--landing-border-hover);
+  box-shadow: 0 0 40px -10px rgba(249,115,22,0.15);
 }
 
-@keyframes landing-pulse-dot {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-
-  50% {
-    opacity: 1;
-  }
+/* ── Animated gradient mesh ────────────────────────────────────── */
+.mesh-gradient {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.mesh-gradient .orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.3;
+  animation: float-orb 20s ease-in-out infinite;
+}
+.mesh-gradient .orb-1 {
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(249,115,22,0.4), transparent 70%);
+  top: -20%; left: -10%;
+  animation-delay: 0s;
+}
+.mesh-gradient .orb-2 {
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(139,92,246,0.3), transparent 70%);
+  top: 10%; right: -15%;
+  animation-delay: -7s;
+}
+.mesh-gradient .orb-3 {
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(59,130,246,0.25), transparent 70%);
+  bottom: -10%; left: 30%;
+  animation-delay: -14s;
+}
+@keyframes float-orb {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -40px) scale(1.05); }
+  50% { transform: translate(-20px, 20px) scale(0.95); }
+  75% { transform: translate(40px, 30px) scale(1.02); }
 }
 
-.landing-fade-rise {
-  animation: landing-fade-rise 0.8s ease-out both;
+/* ── Grid pattern background ───────────────────────────────────── */
+.grid-pattern {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 70% 50% at 50% 50%, black 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 50% at 50% 50%, black 30%, transparent 70%);
 }
 
-.landing-fade-rise-d1 {
-  animation: landing-fade-rise 0.8s ease-out 0.2s both;
+/* ── Fade-in animations ────────────────────────────────────────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.landing-fade-up {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.landing-fade-up-d1 {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+.landing-fade-up-d2 {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
+}
+.landing-fade-up-d3 {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.45s both;
+}
+.landing-fade-up-d4 {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.6s both;
 }
 
-.landing-fade-rise-d2 {
-  animation: landing-fade-rise 0.8s ease-out 0.4s both;
-}
-
+/* ── Scroll reveal ─────────────────────────────────────────────── */
 .landing-reveal {
   opacity: 0;
-  transform: translateY(32px);
-  transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+  transform: translateY(40px);
+  transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
 }
-
 .landing-reveal.visible {
   opacity: 1;
   transform: translateY(0);
 }
 
-.landing-agent-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(134, 239, 172, 0.7);
-  animation: landing-pulse-dot 2s ease-in-out infinite;
+/* ── Cursor blink ──────────────────────────────────────────────── */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
-
-/* Terminal typing animations */
-.landing-line-appear {
-  animation: landing-fade-rise 0.3s ease-out both;
-}
-
-@keyframes landing-cursor-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0;
-  }
-}
-
 .landing-cursor-blink {
-  animation: landing-cursor-blink 0.8s step-end infinite;
+  animation: cursor-blink 0.8s step-end infinite;
 }
 
-/* Workflow pipeline pulse */
-@keyframes landing-node-pulse {
-  0% {
-    box-shadow: 0 0 0 0 currentColor;
-    opacity: 0.6;
-  }
-
-  70% {
-    box-shadow: 0 0 0 10px transparent;
-    opacity: 0;
-  }
-
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-    opacity: 0;
-  }
+/* ── Pulse dot ─────────────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.landing-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
 }
 
+/* ── Node pulse ring ───────────────────────────────────────────── */
+@keyframes node-pulse {
+  0% { box-shadow: 0 0 0 0 currentColor; opacity: 0.6; }
+  70% { box-shadow: 0 0 0 12px transparent; opacity: 0; }
+  100% { box-shadow: 0 0 0 0 transparent; opacity: 0; }
+}
 .landing-node-pulse {
   border: 1.5px solid;
-  animation: landing-node-pulse 1.5s ease-out infinite;
+  animation: node-pulse 1.5s ease-out infinite;
 }
 
-/* ── Landing page spacing protection ─────────────────────────────────────────
-   Fumadocs bundles its own Tailwind inside @layer fumadocs. Because that sheet
-   loads after the root layout, @layer fumadocs has higher cascade priority than
-   root-level @layer utilities. Its universal preflight reset (* { margin:0;
-   padding:0 }) zeros any spacing utility not present in fumadocs' own bundle.
-   These unlayered rules (outside any @layer) beat ALL named layers and restore
-   the correct values for every margin/padding class used in the landing page. */
+/* ── Line appear ───────────────────────────────────────────────── */
+.landing-line-appear {
+  animation: fade-up 0.3s ease-out both;
+}
 
+/* ── Gradient text ─────────────────────────────────────────────── */
+.text-gradient-orange {
+  background: linear-gradient(135deg, #f97316, #fb923c, #fbbf24);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-purple {
+  background: linear-gradient(135deg, #8b5cf6, #a78bfa, #c4b5fd);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-blue {
+  background: linear-gradient(135deg, #3b82f6, #60a5fa, #93c5fd);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Animated counter ──────────────────────────────────────────── */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Feature icon glow ─────────────────────────────────────────── */
+.icon-glow {
+  position: relative;
+}
+.icon-glow::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: inherit;
+  filter: blur(12px);
+  opacity: 0.4;
+  z-index: -1;
+}
+
+/* ── Button styles ─────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 0 20px -5px rgba(249,115,22,0.4);
+  text-decoration: none;
+}
+.btn-primary:hover {
+  box-shadow: 0 0 30px -5px rgba(249,115,22,0.6);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  background: var(--surface-card);
+  color: var(--landing-fg);
+  border: 1px solid var(--landing-border);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+}
+.btn-secondary:hover {
+  border-color: var(--landing-border-hover);
+  background: var(--surface-card-hover);
+}
+
+/* ── Animated pipeline line ────────────────────────────────────── */
+@keyframes pipeline-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* ── Stagger children animation ────────────────────────────────── */
+.stagger-children > * {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stagger-children.visible > *:nth-child(1) { transition-delay: 0s; opacity: 1; transform: translateY(0); }
+.stagger-children.visible > *:nth-child(2) { transition-delay: 0.1s; opacity: 1; transform: translateY(0); }
+.stagger-children.visible > *:nth-child(3) { transition-delay: 0.2s; opacity: 1; transform: translateY(0); }
+.stagger-children.visible > *:nth-child(4) { transition-delay: 0.3s; opacity: 1; transform: translateY(0); }
+.stagger-children.visible > *:nth-child(5) { transition-delay: 0.4s; opacity: 1; transform: translateY(0); }
+.stagger-children.visible > *:nth-child(6) { transition-delay: 0.5s; opacity: 1; transform: translateY(0); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   SPACING PROTECTION — fumadocs cascade override
+   Unlayered rules beat all named layers.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Margin top */
 .landing-page .mt-1  { margin-top: calc(var(--spacing) * 1); }
+.landing-page .mt-2  { margin-top: calc(var(--spacing) * 2); }
+.landing-page .mt-3  { margin-top: calc(var(--spacing) * 3); }
+.landing-page .mt-4  { margin-top: calc(var(--spacing) * 4); }
+.landing-page .mt-5  { margin-top: calc(var(--spacing) * 5); }
 .landing-page .mt-6  { margin-top: calc(var(--spacing) * 6); }
 .landing-page .mt-8  { margin-top: calc(var(--spacing) * 8); }
 .landing-page .mt-10 { margin-top: calc(var(--spacing) * 10); }
@@ -231,6 +415,7 @@ a {
 .landing-page .mt-16 { margin-top: calc(var(--spacing) * 16); }
 .landing-page .mt-20 { margin-top: calc(var(--spacing) * 20); }
 
+/* Margin bottom */
 .landing-page .mb-1  { margin-bottom: calc(var(--spacing) * 1); }
 .landing-page .mb-2  { margin-bottom: calc(var(--spacing) * 2); }
 .landing-page .mb-3  { margin-bottom: calc(var(--spacing) * 3); }
@@ -243,19 +428,22 @@ a {
 .landing-page .mb-16 { margin-bottom: calc(var(--spacing) * 16); }
 .landing-page .mb-1\.5 { margin-bottom: calc(var(--spacing) * 1.5); }
 
+/* Margin left/right */
 .landing-page .ml-1  { margin-left: calc(var(--spacing) * 1); }
 .landing-page .ml-2  { margin-left: calc(var(--spacing) * 2); }
 .landing-page .ml-1\.5 { margin-left: calc(var(--spacing) * 1.5); }
-
 .landing-page .mr-1  { margin-right: calc(var(--spacing) * 1); }
 .landing-page .mr-1\.5 { margin-right: calc(var(--spacing) * 1.5); }
 
+/* Padding */
 .landing-page .p-2   { padding: calc(var(--spacing) * 2); }
 .landing-page .p-3   { padding: calc(var(--spacing) * 3); }
 .landing-page .p-6   { padding: calc(var(--spacing) * 6); }
 .landing-page .p-7   { padding: calc(var(--spacing) * 7); }
 .landing-page .p-8   { padding: calc(var(--spacing) * 8); }
 .landing-page .p-2\.5 { padding: calc(var(--spacing) * 2.5); }
+.landing-page .p-10  { padding: calc(var(--spacing) * 10); }
+.landing-page .p-12  { padding: calc(var(--spacing) * 12); }
 
 .landing-page .pt-10 { padding-top: calc(var(--spacing) * 10); }
 .landing-page .pt-32 { padding-top: calc(var(--spacing) * 32); }
@@ -285,33 +473,36 @@ a {
 /* Arbitrary padding values */
 .landing-page .py-\[100px\] { padding-top: 100px; padding-bottom: 100px; }
 .landing-page .py-\[120px\] { padding-top: 120px; padding-bottom: 120px; }
+.landing-page .py-\[140px\] { padding-top: 140px; padding-bottom: 140px; }
+.landing-page .py-\[160px\] { padding-top: 160px; padding-bottom: 160px; }
 .landing-page .pt-\[60px\]  { padding-top: 60px; }
 .landing-page .pb-\[120px\] { padding-bottom: 120px; }
 
-/* Border colors — fumadocs * { border-color: var(--color-fd-border) } persists from docs
-   navigation. In light mode --color-fd-border = #d6d3d1 which looks bright on the dark
-   landing background, overriding explicit border-[var(--landing-border-*)] utilities. */
-.landing-page .border-\[var\(--landing-border-subtle\)\]  { border-color: var(--landing-border-subtle); }
-.landing-page .border-\[var\(--landing-border-default\)\] { border-color: var(--landing-border-default); }
-.landing-page .border-\[var\(--landing-border-strong\)\]  { border-color: var(--landing-border-strong); }
+/* Border colors */
+.landing-page .border-\[var\(--landing-border\)\]       { border-color: var(--landing-border); }
+.landing-page .border-\[var\(--landing-border-hover\)\]  { border-color: var(--landing-border-hover); }
+.landing-page .border-\[var\(--landing-border-strong\)\] { border-color: var(--landing-border-strong); }
 
-/* Font weight — fumadocs heading reset zeroes h1-h6 { font-weight: inherit } */
+/* Font weight */
 .landing-page .font-\[680\] { font-weight: 680; }
+.landing-page .font-\[700\] { font-weight: 700; }
 
-/* Font size (clamp values) — fumadocs heading reset zeroes h1-h6 { font-size: inherit } */
+/* Font size (clamp values) */
 .landing-page .text-\[clamp\(1\.75rem\,4vw\,2\.75rem\)\] { font-size: clamp(1.75rem, 4vw, 2.75rem); }
 .landing-page .text-\[clamp\(1\.375rem\,3vw\,2rem\)\]    { font-size: clamp(1.375rem, 3vw, 2rem); }
 .landing-page .text-\[clamp\(2rem\,4vw\,3rem\)\]          { font-size: clamp(2rem, 4vw, 3rem); }
 .landing-page .text-\[clamp\(2rem\,5vw\,3\.5rem\)\]       { font-size: clamp(2rem, 5vw, 3.5rem); }
+.landing-page .text-\[clamp\(2\.5rem\,6vw\,4\.5rem\)\]    { font-size: clamp(2.5rem, 6vw, 4.5rem); }
+.landing-page .text-\[clamp\(3rem\,8vw\,6rem\)\]          { font-size: clamp(3rem, 8vw, 6rem); }
 
-/* Responsive md: utilities — fumadocs bundles .hidden but not all md: variants,
-   so its higher-priority layer keeps elements hidden / wrong grid at desktop widths. */
+/* Responsive md: utilities */
 @media (min-width: 768px) {
   .landing-page .md\:flex         { display: flex; }
   .landing-page .md\:block        { display: block; }
   .landing-page .md\:hidden       { display: none; }
 
   .landing-page .md\:flex-row     { flex-direction: row; }
+  .landing-page .md\:flex-col     { flex-direction: column; }
 
   .landing-page .md\:grid-cols-2  { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .landing-page .md\:grid-cols-3  { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -330,3 +521,8 @@ a {
   .landing-page .md\:order-1      { order: 1; }
   .landing-page .md\:order-2      { order: 2; }
 }
+
+/* Border radius overrides */
+.landing-page .rounded-2xl { border-radius: 16px; }
+.landing-page .rounded-xl  { border-radius: 12px; }
+.landing-page .rounded-lg  { border-radius: 8px; }

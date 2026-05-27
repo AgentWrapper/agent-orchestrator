@@ -12,10 +12,11 @@ export function ScrollRevealProvider({ children }: { children: React.ReactNode }
           }
         });
       },
-      { threshold: 0.1, rootMargin: "-50px" }
+      { threshold: 0.1, rootMargin: "-40px" }
     );
 
-    document.querySelectorAll(".landing-reveal").forEach((el) => {
+    // Observe both landing-reveal and stagger-children elements
+    document.querySelectorAll(".landing-reveal, .stagger-children").forEach((el) => {
       observer.observe(el);
     });
 

@@ -22,8 +22,8 @@ export default async function LandingPage() {
     <ScrollRevealProvider>
       <LandingNav />
       <LandingHero starsLabel={formatCompactNumber(githubStats.stars)} />
-      <LandingAbout />
       <LandingAgentsBar />
+      <LandingAbout />
       <LandingFeatures />
       <LandingWorkflow />
       <LandingUseCases />
@@ -34,8 +34,11 @@ export default async function LandingPage() {
       <LandingTestimonials />
       <LandingQuickStart />
       <LandingCTA />
-      <footer className="py-12 px-8 text-center text-[var(--landing-muted)] opacity-30 text-[0.8125rem] border-t border-white/[0.04]">
-        MIT Licensed · Open Source
+      <footer className="py-12 px-8 text-center border-t" style={{
+        borderColor: "var(--landing-border)",
+        color: "var(--landing-muted-dim)"
+      }}>
+        <div className="text-[0.8125rem]">MIT Licensed · Open Source</div>
       </footer>
     </ScrollRevealProvider>
   );

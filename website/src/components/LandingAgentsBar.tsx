@@ -28,19 +28,24 @@ const agents = [
 
 export function LandingAgentsBar() {
   return (
-    <div className="landing-reveal text-center px-6 pt-[60px]">
-      <div className="text-[0.6875rem] tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-40 mb-5">
+    <div className="landing-reveal text-center px-6 pt-[60px] pb-4">
+      <div className="text-[0.6875rem] tracking-[0.2em] uppercase text-[var(--landing-muted)] mb-8 font-mono">
         Works with your favorite AI agents
       </div>
-      <div className="flex items-center justify-center gap-6 flex-wrap">
+      <div className="flex items-center justify-center gap-8 flex-wrap">
         {agents.map((agent) => (
-          <div key={agent.name} className="flex flex-col items-center gap-2">
-            <img
-              src={agent.src}
-              alt={agent.alt}
-              className="w-8 h-8 rounded-md object-contain"
-            />
-            <div className="text-[0.6875rem] font-mono text-[var(--landing-muted)] opacity-50">
+          <div
+            key={agent.name}
+            className="group flex flex-col items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 hover:bg-[var(--landing-border)]"
+          >
+            <div className="w-10 h-10 rounded-lg bg-[var(--landing-border)] flex items-center justify-center p-2 transition-all duration-300 group-hover:bg-[var(--landing-border-hover)] group-hover:shadow-[0_0_20px_rgba(249,115,22,0.08)]">
+              <img
+                src={agent.src}
+                alt={agent.alt}
+                className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-110"
+              />
+            </div>
+            <div className="text-[0.6875rem] font-mono text-[var(--landing-muted)] transition-colors duration-300 group-hover:text-[var(--landing-fg-secondary)]">
               {agent.name}
             </div>
           </div>

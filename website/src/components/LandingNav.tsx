@@ -26,38 +26,37 @@ function GithubIcon() {
 
 export function LandingNav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto bg-[var(--landing-bg)]/90 backdrop-blur-sm">
+    <nav className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-2 py-2 rounded-full" style={{
+      background: "rgba(10,10,10,0.7)",
+      backdropFilter: "blur(20px)",
+      border: "1px solid rgba(255,255,255,0.06)",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.4)"
+    }}>
       <a
         href="#"
-        className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold text-white no-underline hover:bg-white/5 transition-colors"
       >
-        <img src="/ao-logo.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7" />
-        Agent Orchestrator
+        <img src="/ao-logo.svg" alt="" aria-hidden="true" width={22} height={22} className="h-[22px] w-[22px]" />
+        <span className="hidden md:inline">Agent Orchestrator</span>
       </a>
-      <ul className="hidden md:flex items-center gap-8 list-none">
-        <li>
-          <a href="/docs" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            Docs
-          </a>
-        </li>
-        <li>
-          <a href="#features" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            Features
-          </a>
-        </li>
-        <li>
-          <a href="#how" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            How It Works
-          </a>
-        </li>
-      </ul>
-      <div className="flex items-center gap-2">
+      <div className="hidden md:flex items-center gap-0.5 ml-2">
+        <a href="/docs" className="px-3 py-1.5 rounded-full text-sm text-[var(--landing-muted)] no-underline hover:text-white hover:bg-white/5 transition-all">
+          Docs
+        </a>
+        <a href="#features" className="px-3 py-1.5 rounded-full text-sm text-[var(--landing-muted)] no-underline hover:text-white hover:bg-white/5 transition-all">
+          Features
+        </a>
+        <a href="#how" className="px-3 py-1.5 rounded-full text-sm text-[var(--landing-muted)] no-underline hover:text-white hover:bg-white/5 transition-all">
+          How It Works
+        </a>
+      </div>
+      <div className="flex items-center gap-0.5 ml-2">
         <a
           href="https://x.com/aoagents"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="X (Twitter)"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--landing-muted)] transition-all hover:text-white hover:bg-white/5"
         >
           <XIcon />
         </a>
@@ -66,7 +65,7 @@ export function LandingNav() {
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Discord"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--landing-muted)] transition-all hover:text-white hover:bg-white/5"
         >
           <DiscordIcon />
         </a>
@@ -75,7 +74,7 @@ export function LandingNav() {
           target="_blank"
           rel="noopener noreferrer"
           aria-label="GitHub"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--landing-muted)] transition-all hover:text-white hover:bg-white/5"
         >
           <GithubIcon />
         </a>
