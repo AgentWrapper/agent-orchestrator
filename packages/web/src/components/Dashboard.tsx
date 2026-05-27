@@ -15,7 +15,6 @@ import {
   isDashboardSessionTerminated,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
-import { AppMark } from "./AppMark";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useMuxOptional } from "@/providers/MuxProvider";
@@ -344,38 +343,6 @@ function DashboardInner({
     });
   }, [activeOrchestrators, allProjectsView, attentionZones, projects, sessionsByProject]);
 
-  const handleSend = useCallback(
-    async (sessionId: string, message: string) => {
-      try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          const messageText = text || "Unknown error";
-          console.error(`Failed to send message to ${sessionId}:`, messageText);
-          showToast(`Send failed: ${messageText}`, "error");
-          const errorWithToast = new Error(messageText);
-          (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
-          throw errorWithToast;
-        }
-      } catch (error) {
-        const toastShown =
-          error instanceof Error &&
-          "toastShown" in error &&
-          (error as Error & { toastShown?: boolean }).toastShown;
-        if (!toastShown) {
-          console.error(`Network error sending message to ${sessionId}:`, error);
-          showToast("Network error while sending message", "error");
-        }
-        throw error;
-      }
-    },
-    [showToast],
-  );
-
   const killSession = useCallback(
     async (sessionId: string) => {
       try {
@@ -465,32 +432,6 @@ function DashboardInner({
       }
     },
     [showToast],
-  );
-
-  const handleRequestReview = useCallback(
-    async (sessionId: string) => {
-      try {
-        const res = await fetch("/api/reviews", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-        });
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        if (!res.ok) {
-          throw new Error(data?.error ?? "Failed to request review");
-        }
-
-        const session = sessionsRef.current.find((entry) => entry.id === sessionId);
-        showToast("Review run requested", "success");
-        routerRef.current.push(projectReviewPath(session?.projectId ?? projectId));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to request review";
-        console.error(`Failed to request review for ${sessionId}:`, error);
-        showToast(`Review failed: ${message}`, "error");
-        throw error;
-      }
-    },
-    [projectId, showToast],
   );
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
@@ -610,10 +551,6 @@ function DashboardInner({
               </svg>
             )}
           </button>
-          <div className="dashboard-app-header__brand dashboard-app-header__brand--hide-mobile">
-            <AppMark />
-            <span>Agent Orchestrator</span>
-          </div>
           {showHeaderProjectLabel ? (
             <>
               <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
@@ -671,7 +608,7 @@ function DashboardInner({
             {!allProjectsView && orchestratorHref ? (
               <Link
                 href={orchestratorHref}
-                className="dashboard-app-btn dashboard-app-btn--amber"
+                className="dashboard-app-btn dashboard-app-btn--primary"
                 aria-label="Orchestrator"
               >
                 <svg
@@ -694,7 +631,7 @@ function DashboardInner({
             ) : canSpawnProjectOrchestrator && activeProject ? (
               <button
                 type="button"
-                className="dashboard-app-btn dashboard-app-btn--amber"
+                className="dashboard-app-btn dashboard-app-btn--primary"
                 aria-label="Spawn Orchestrator"
                 onClick={() => void handleSpawnOrchestrator(activeProject)}
                 disabled={isSpawningCurrentProject}
@@ -723,9 +660,9 @@ function DashboardInner({
         <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
           <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
           <div className="dashboard-main__subhead">
-            <h1 className="dashboard-main__title">Dashboard</h1>
+            <h1 className="dashboard-main__title">Board</h1>
             <p className="dashboard-main__subtitle">
-              Live agent sessions, pull requests, and merge status.
+              Live agent sessions flowing from work → review → merge.
             </p>
           </div>
 
@@ -791,11 +728,8 @@ function DashboardInner({
                       key={level}
                       level={level}
                       sessions={grouped[level]}
-                      onSend={handleSend}
                       onKill={handleKill}
-                      onMerge={handleMerge}
                       onRestore={handleRestore}
-                      onReview={handleRequestReview}
                       compactMobile={isMobile}
                       collapsed={isMobile && collapsedZones.has(level)}
                       onToggle={isMobile ? handleZoneToggle : undefined}

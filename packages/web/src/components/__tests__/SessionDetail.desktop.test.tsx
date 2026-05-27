@@ -124,7 +124,12 @@ describe("SessionDetail desktop layout", () => {
     );
 
     expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
-    expect(screen.getAllByText("My App").length).toBeGreaterThanOrEqual(1);
+    // Worker topbar leads with the "‹ Kanban" back link to the project board
+    // (the project brand now lives in the sidebar, not the topbar).
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Kanban" })).toHaveAttribute(
+      "href",
+      "/projects/my-app",
+    );
     // Scope to topbar since MobileBottomNav also has an Orchestrator link
     expect(
       within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),

@@ -1942,7 +1942,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex-direction: column;
   flex-shrink: 0;
   height: 100%;
-  width: 224px;
+  width: var(--ao-sidebar-w, 240px);
+}
+
+/* No width transition while actively dragging the resize handle. */
+body:not(.is-resizing-x) .sidebar-wrapper {
   transition: width 0.2s ease;
 }
 
@@ -8910,8 +8914,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .session-inspector {
+  position: relative;
   display: flex;
-  width: 344px;
+  width: var(--ao-inspector-w, 344px);
   flex-shrink: 0;
   flex-direction: column;
   min-height: 0;
@@ -9120,4 +9125,46 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   height: 23px;
   object-fit: contain;
   image-rendering: pixelated;
+}
+
+/* ── Resizable panel handles (sidebar + inspector) ──────────────────────── */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.resize-handle--right {
+  right: -3px;
+}
+
+.resize-handle--left {
+  left: -3px;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.resize-handle:hover::after,
+body.is-resizing-x .resize-handle::after {
+  background: var(--color-accent);
+}
+
+body.is-resizing-x {
+  cursor: col-resize;
+  user-select: none;
 }

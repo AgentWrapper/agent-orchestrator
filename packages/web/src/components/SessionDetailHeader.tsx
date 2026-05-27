@@ -1,17 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CI_STATUS } from "@aoagents/ao-core/types";
-import { cn } from "@/lib/cn";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import type { DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
-import { AppMark } from "./AppMark";
 import { DashboardNotificationButton } from "./DashboardNotificationButton";
 import { StatusBadge } from "./StatusBadge";
-import { SessionDetailPRCard } from "./SessionDetailPRCard";
-import { askAgentToFix } from "./session-detail-agent-actions";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
 import { projectDashboardPath } from "@/lib/routes";
+import { GitBranchIcon, MobilePrButton, OrchestratorZonePills } from "./SessionDetailHeader.parts";
 
 export interface OrchestratorZones {
   merge: number;
@@ -37,31 +32,6 @@ interface SessionDetailHeaderProps {
   onKill: () => void;
 }
 
-function OrchestratorZonePills({ zones }: { zones: OrchestratorZones }) {
-  const stats: Array<{ value: number; label: string; toneClass: string }> = [
-    { value: zones.merge, label: "merge", toneClass: "topbar-zone-pill--merge" },
-    { value: zones.respond, label: "respond", toneClass: "topbar-zone-pill--respond" },
-    { value: zones.review, label: "review", toneClass: "topbar-zone-pill--review" },
-    { value: zones.working, label: "working", toneClass: "topbar-zone-pill--working" },
-    { value: zones.pending, label: "pending", toneClass: "topbar-zone-pill--pending" },
-    { value: zones.done, label: "done", toneClass: "topbar-zone-pill--done" },
-  ].filter((s) => s.value > 0);
-
-  if (stats.length === 0) return null;
-
-  return (
-    <span className="topbar-fleet-pills" aria-label="Fleet session counts">
-      <span className="topbar-fleet-pills__label">Fleet</span>
-      {stats.map((s) => (
-        <span key={s.label} className={cn("topbar-zone-pill", s.toneClass)}>
-          <span className="topbar-zone-pill__value">{s.value}</span>
-          <span className="topbar-zone-pill__label">{s.label}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
 export function SessionDetailHeader({
   session,
   isOrchestrator,
@@ -77,38 +47,12 @@ export function SessionDetailHeader({
   onKill,
 }: SessionDetailHeaderProps) {
   const pr = session.pr;
-  const allGreen = pr ? isPRMergeReady(pr) : false;
-  const [prPopoverOpen, setPrPopoverOpen] = useState(false);
-  const prPopoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!prPopoverOpen) return;
-    const handler = (event: MouseEvent) => {
-      if (prPopoverRef.current && !prPopoverRef.current.contains(event.target as Node)) {
-        setPrPopoverOpen(false);
-      }
-    };
-    const keyHandler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPrPopoverOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("keydown", keyHandler);
-    return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("keydown", keyHandler);
-    };
-  }, [prPopoverOpen]);
 
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
-  const showHeaderProjectLabel = headerProjectLabel.trim().toLowerCase() !== "agent orchestrator";
-  const showProductBrand = !isOrchestrator;
-  const showProjectLabel = isOrchestrator || showHeaderProjectLabel;
-  const showDesktopTitle = !isOrchestrator;
-  const showDesktopHeaderSep = showProductBrand && showProjectLabel;
 
   return (
-    <header className="dashboard-app-header">
+    <header className="dashboard-app-header session-topbar">
       {projects.length > 0 ? (
         <button
           type="button"
@@ -144,26 +88,42 @@ export function SessionDetailHeader({
           )}
         </button>
       ) : null}
-      {showProductBrand ? (
-        <div className="dashboard-app-header__brand dashboard-app-header__brand--hide-mobile">
-          <AppMark />
-          <span>Agent Orchestrator</span>
-        </div>
+
+      {/* ‹ Kanban back button → the project board. Workers get a plain "Kanban"
+          back; orchestrators keep their dedicated "Open Kanban"/fleet button
+          further along the row. */}
+      {!isOrchestrator ? (
+        <a
+          className="session-board-btn"
+          href={projectDashboardPath(session.projectId)}
+          title="Back to Kanban"
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          <span className="topbar-btn-label">Kanban</span>
+        </a>
       ) : null}
-      {showDesktopHeaderSep && (
-        <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
-      )}
-      <div className="topbar-project-pills-group">
-        <div className="topbar-project-line">
-          {showProjectLabel && (
+
+      {!isOrchestrator ? <span className="session-topbar__vdiv" aria-hidden="true" /> : null}
+
+      {isOrchestrator ? (
+        <div className="topbar-project-pills-group">
+          <div className="topbar-project-line">
             <span className="dashboard-app-header__project">{headerProjectLabel}</span>
-          )}
-          {showProjectLabel && isOrchestrator ? (
             <span className="topbar-identity-sep" aria-hidden="true">
               ·
             </span>
-          ) : null}
-          {isOrchestrator ? (
             <span className="session-detail-mode-badge session-detail-mode-badge--neutral">
               <svg
                 width="12"
@@ -182,106 +142,54 @@ export function SessionDetailHeader({
               </svg>
               Orchestrator
             </span>
-          ) : null}
-          {!isOrchestrator ? (
-            <span className="dashboard-app-header__session-id topbar-mobile-only">
-              {session.id}
-            </span>
-          ) : null}
+          </div>
+          <div className="topbar-session-pills">
+            <StatusBadge session={session} variant="pill" />
+            {orchestratorZones ? <OrchestratorZonePills zones={orchestratorZones} /> : null}
+          </div>
         </div>
-        <div className="topbar-session-pills">
-          <StatusBadge session={session} variant="pill" />
-          {!isOrchestrator && session.branch ? (
-            pr ? (
-              <a
-                href={buildGitHubBranchUrl(pr)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="topbar-branch-pill topbar-branch-pill--link"
-              >
-                {session.branch}
-              </a>
-            ) : (
-              <span className="topbar-branch-pill">{session.branch}</span>
-            )
-          ) : null}
-          {isOrchestrator && orchestratorZones ? (
-            <OrchestratorZonePills zones={orchestratorZones} />
-          ) : null}
-        </div>
-      </div>
-      {showDesktopTitle ? (
+      ) : (
         <>
-          <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
-          <span className="dashboard-app-header__session-title topbar-desktop-only">
-            {headline}
-          </span>
+          {/* Session identity — TITLE first, BRANCH to its right (mono + git icon). */}
+          <div className="session-topbar__id">
+            <span className="session-topbar__title" title={headline}>
+              {headline}
+            </span>
+            {session.branch ? (
+              pr ? (
+                <a
+                  href={buildGitHubBranchUrl(pr)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="session-topbar__branch session-topbar__branch--link"
+                  title={session.branch}
+                >
+                  <span className="session-topbar__branch-icon">
+                    <GitBranchIcon />
+                  </span>
+                  {session.branch}
+                </a>
+              ) : (
+                <span className="session-topbar__branch" title={session.branch}>
+                  <span className="session-topbar__branch-icon">
+                    <GitBranchIcon />
+                  </span>
+                  {session.branch}
+                </span>
+              )
+            ) : null}
+          </div>
+          <StatusBadge session={session} variant="pill" />
+          <span className="dashboard-app-header__session-id topbar-mobile-only">{session.id}</span>
         </>
-      ) : null}
-      {!isOrchestrator ? (
-        <span className="dashboard-app-header__session-id topbar-desktop-only">{session.id}</span>
-      ) : null}
+      )}
+
       <div className="dashboard-app-header__spacer" />
       <div className="dashboard-app-header__actions">
         <DashboardNotificationButton />
         {/* PR lives in the desktop inspector rail; the topbar popover is the
             mobile-only affordance (no inspector there). */}
-        {!isOrchestrator && pr && isMobile ? (
-          <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
-            <a
-              href={pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(
-                "dashboard-app-btn topbar-pr-btn",
-                prPopoverOpen && "topbar-pr-btn--open",
-              )}
-              onClick={(event) => {
-                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
-                event.preventDefault();
-                setPrPopoverOpen((value) => !value);
-              }}
-              aria-expanded={prPopoverOpen}
-              aria-label={`PR #${pr.number}`}
-            >
-              <span
-                className={cn(
-                  "topbar-pr-dot",
-                  allGreen
-                    ? "topbar-pr-dot--green"
-                    : pr.ciStatus === CI_STATUS.FAILING || pr.reviewDecision === "changes_requested"
-                      ? "topbar-pr-dot--red"
-                      : "topbar-pr-dot--amber",
-                )}
-              />
-              PR #{pr.number}
-              <svg
-                width="10"
-                height="10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path d={prPopoverOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
-              </svg>
-            </a>
-
-            {prPopoverOpen && (
-              <div className="topbar-pr-popover">
-                <SessionDetailPRCard
-                  pr={pr as DashboardPR}
-                  metadata={session.metadata}
-                  lifecyclePrReason={session.lifecycle?.prReason ?? undefined}
-                  onAskAgentToFix={(comment, onSuccess, onError) =>
-                    askAgentToFix(session.id, comment, onSuccess, onError)
-                  }
-                />
-              </div>
-            )}
-          </div>
-        ) : null}
+        {!isOrchestrator && pr && isMobile ? <MobilePrButton session={session} pr={pr} /> : null}
 
         {!isOrchestrator && isRestorable ? (
           <button
@@ -313,10 +221,16 @@ export function SessionDetailHeader({
               className="h-3.5 w-3.5"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
               viewBox="0 0 24 24"
             >
-              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M4 7h16" />
+              <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+              <line x1="10" y1="11.5" x2="10" y2="17.5" />
+              <line x1="14" y1="11.5" x2="14" y2="17.5" />
             </svg>
             <span className="topbar-btn-label">Kill</span>
           </button>

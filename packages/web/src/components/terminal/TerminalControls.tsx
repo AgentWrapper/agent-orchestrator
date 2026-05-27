@@ -5,7 +5,6 @@ import { cn } from "@/lib/cn";
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from "./terminal-font";
 
 type MuxStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
-type DisplayStatus = MuxStatus | "error";
 
 interface TerminalControlsProps {
   sessionId: string;
@@ -17,7 +16,8 @@ interface TerminalControlsProps {
   fullscreen: boolean;
   toggleFullscreen: () => void;
   muxStatus: MuxStatus;
-  error: string | null;
+  /** Reserved for callers; the mockup header surfaces no connection state. */
+  error?: string | null;
 }
 
 export function TerminalControls({
@@ -30,7 +30,6 @@ export function TerminalControls({
   fullscreen,
   toggleFullscreen,
   muxStatus,
-  error,
 }: TerminalControlsProps) {
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -74,51 +73,21 @@ export function TerminalControls({
     }
   }
 
-  // Local errors (e.g. xterm.js load failure) take priority over mux connection state
-  const displayStatus: DisplayStatus = error ? "error" : muxStatus;
-
-  const statusDotClass =
-    displayStatus === "connected"
-      ? "bg-[var(--color-status-ready)]"
-      : displayStatus === "error" || displayStatus === "disconnected"
-        ? "bg-[var(--color-status-error)]"
-        : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
-
-  const statusText =
-    displayStatus === "connected"
-      ? "Connected"
-      : displayStatus === "error"
-        ? (error ?? "Error")
-        : displayStatus === "disconnected"
-          ? "Disconnected"
-          : "Connecting…";
-
-  const statusTextColor =
-    displayStatus === "connected"
-      ? "text-[var(--color-status-ready)]"
-      : displayStatus === "error" || displayStatus === "disconnected"
-        ? "text-[var(--color-status-error)]"
-        : "text-[var(--color-text-tertiary)]";
-
-  const accentColor = "var(--color-accent)";
-
   const fontSizeControls = (
-    <div className="flex items-center">
+    <div className="terminal-chrome-zoom flex items-center">
       <button
         onClick={() => setFontSize((prev) => Math.max(FONT_SIZE_MIN, prev - 1))}
         disabled={fontSize <= FONT_SIZE_MIN}
-        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="terminal-chrome-zoom__btn"
         aria-label="Decrease font size"
       >
         −
       </button>
-      <span className="w-9 text-center text-xs font-medium text-[var(--color-text-secondary)]">
-        {fontSize}px
-      </span>
+      <span className="terminal-chrome-zoom__value">{fontSize}px</span>
       <button
         onClick={() => setFontSize((prev) => Math.min(FONT_SIZE_MAX, prev + 1))}
         disabled={fontSize >= FONT_SIZE_MAX}
-        className="w-5 h-5 text-xs flex items-center justify-center rounded hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="terminal-chrome-zoom__btn"
         aria-label="Increase font size"
       >
         +
@@ -169,36 +138,41 @@ export function TerminalControls({
     <button
       onClick={toggleFullscreen}
       className={cn(
-        "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
-        !isOpenCodeSession && !chromeless && "ml-auto",
+        "terminal-chrome-fs-btn",
+        chromeless && "flex items-center gap-1 px-2 py-0.5 text-[11px]",
       )}
       aria-label={fullscreen ? "exit fullscreen" : "fullscreen"}
+      title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
     >
       {fullscreen ? (
         <>
           <svg
-            className="h-3 w-3"
+            className="h-3.5 w-3.5"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             viewBox="0 0 24 24"
           >
             <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
           </svg>
-          exit fullscreen
+          <span className="terminal-chrome-fs-btn__label">exit fullscreen</span>
         </>
       ) : (
         <>
           <svg
-            className="h-3 w-3"
+            className="h-3.5 w-3.5"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             viewBox="0 0 24 24"
           >
-            <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
+            <path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3" />
           </svg>
-          fullscreen
+          <span className="terminal-chrome-fs-btn__label">fullscreen</span>
         </>
       )}
     </button>
@@ -214,23 +188,10 @@ export function TerminalControls({
   }
 
   return (
-    <div className="terminal-chrome-bar flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
-      {/* Pane label — matches the workspace pane-header style used elsewhere */}
-      <span className="terminal-chrome-pane-label">TERMINAL</span>
-      {/* Identity group: session name on top, status below on mobile */}
-      <div className="terminal-chrome-identity">
-        <span className="terminal-chrome-session-id font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
-          {sessionId}
-        </span>
-        <div className="terminal-chrome-status-row">
-          <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
-          <span
-            className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
-          >
-            {statusText}
-          </span>
-        </div>
-      </div>
+    <div className="terminal-chrome-bar flex items-center gap-2.5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-[15px]">
+      {/* Uppercase pane label + mono session id (no connection-status text) */}
+      <span className="terminal-chrome-pane-label">Terminal</span>
+      <span className="terminal-chrome-session-id">{sessionId}</span>
       <div className="flex-1" />
       {fontSizeControls}
       {reloadButton}

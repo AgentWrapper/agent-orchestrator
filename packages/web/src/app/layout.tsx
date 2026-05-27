@@ -5,6 +5,11 @@ import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { Providers } from "@/app/providers";
 import { schibstedGrotesk, jetbrainsMono } from "@/fonts/fonts";
 import "./globals.css";
+// Per-screen mission-control styles, loaded after globals.css so they win on
+// equal specificity (see DESIGN.md). Split per screen to keep them focused.
+import "./mc-sidebar.css";
+import "./mc-board.css";
+import "./mc-session.css";
 
 export const viewport: Viewport = {
   width: "device-width",

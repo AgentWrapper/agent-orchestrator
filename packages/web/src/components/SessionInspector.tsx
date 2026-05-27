@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import type { DashboardSession } from "@/lib/types";
+import { useResizable } from "@/hooks/useResizable";
 import { StatusBadge } from "./StatusBadge";
 import { SessionDetailPRCard } from "./SessionDetailPRCard";
 import { askAgentToFix } from "./session-detail-agent-actions";
@@ -65,9 +66,25 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
  */
 export function SessionInspector({ session }: SessionInspectorProps) {
   const [view, setView] = useState<InspectorView>("summary");
+  const { onPointerDown, onDoubleClick } = useResizable({
+    cssVar: "--ao-inspector-w",
+    storageKey: "ao-inspector-w",
+    defaultWidth: 344,
+    min: 280,
+    max: 560,
+    edge: "left",
+  });
 
   return (
     <aside className="session-inspector" aria-label="Session inspector">
+      <div
+        className="resize-handle resize-handle--left"
+        onPointerDown={onPointerDown}
+        onDoubleClick={onDoubleClick}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector"
+      />
       <div className="session-inspector__tabs" role="tablist">
         {VIEWS.map((entry) => (
           <button
@@ -147,16 +164,7 @@ function SummaryView({ session }: { session: DashboardSession }) {
       </Section>
 
       <Section title="Activity">
-        <div className="inspector-activity">
-          <StatusBadge session={session} />
-          {session.lifecycle?.summary ? (
-            <p className="inspector-activity__summary">{session.lifecycle.summary}</p>
-          ) : null}
-          <dl className="inspector-kv">
-            <Row k="Started" v={formatTimeCompact(session.createdAt)} mono />
-            <Row k="Last active" v={formatTimeCompact(session.lastActivityAt)} mono />
-          </dl>
-        </div>
+        <ActivityTimeline session={session} />
       </Section>
 
       <Section title="Overview">
@@ -164,9 +172,75 @@ function SummaryView({ session }: { session: DashboardSession }) {
           {session.metadata["agent"] ? <Row k="Agent" v={session.metadata["agent"]} mono /> : null}
           {session.branch ? <Row k="Branch" v={session.branch} mono /> : null}
           {session.issueLabel ? <Row k="Issue" v={session.issueLabel} mono /> : null}
+          <Row k="Started" v={formatTimeCompact(session.createdAt)} mono />
           <Row k="Session" v={session.id} mono />
         </dl>
       </Section>
+    </div>
+  );
+}
+
+type TimelineTone = "now" | "good" | "warn" | "neutral";
+
+/**
+ * Honest activity timeline — only events we can derive from the session object:
+ * the live status (now), the PR (good), the last-active beat, and worktree
+ * creation (oldest). No fabricated commit/CI rows.
+ */
+function ActivityTimeline({ session }: { session: DashboardSession }) {
+  const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+
+  events.push({
+    tone: "now",
+    node: (
+      <>
+        <span className="inspector-timeline__badge">
+          <StatusBadge session={session} variant="pill" />
+        </span>
+        {session.lifecycle?.summary ? (
+          <span className="inspector-timeline__detail"> — {session.lifecycle.summary}</span>
+        ) : null}
+      </>
+    ),
+    ts: formatTimeCompact(session.lastActivityAt),
+  });
+
+  if (session.pr) {
+    events.push({
+      tone: "good",
+      node: (
+        <>
+          Opened <b>PR #{session.pr.number}</b>
+          {session.pr.baseBranch ? ` against ${session.pr.baseBranch}` : ""}
+        </>
+      ),
+      ts: null,
+    });
+  }
+
+  events.push({
+    tone: "neutral",
+    node: <>Created worktree &amp; branch</>,
+    ts: formatTimeCompact(session.createdAt),
+  });
+
+  return (
+    <div className="inspector-timeline">
+      {events.map((event, index) => (
+        <div
+          key={index}
+          className={cn(
+            "inspector-timeline__ev",
+            event.tone === "now" && "inspector-timeline__ev--now",
+            event.tone === "good" && "inspector-timeline__ev--good",
+            event.tone === "warn" && "inspector-timeline__ev--warn",
+          )}
+        >
+          <span className="inspector-timeline__node" aria-hidden="true" />
+          <div className="inspector-timeline__et">{event.node}</div>
+          {event.ts ? <div className="inspector-timeline__ets">{event.ts}</div> : null}
+        </div>
+      ))}
     </div>
   );
 }
