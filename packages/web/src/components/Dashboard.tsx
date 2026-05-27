@@ -518,13 +518,15 @@ function DashboardInner({
   const mainPanel = (
     <div className="dashboard-main--desktop">
         <header className="dashboard-app-header">
-          <button
-            type="button"
-            className="dashboard-app-sidebar-toggle"
-            onClick={handleToggleSidebar}
-            aria-label="Toggle sidebar"
-          >
-            {isMobile ? (
+          {/* Mobile-only drawer toggle. On desktop the sidebar owns its own
+              collapse/expand affordance, so the topbar doesn't duplicate it. */}
+          {isMobile ? (
+            <button
+              type="button"
+              className="dashboard-app-sidebar-toggle"
+              onClick={handleToggleSidebar}
+              aria-label="Toggle sidebar"
+            >
               <svg
                 width="16"
                 height="16"
@@ -536,21 +538,8 @@ function DashboardInner({
               >
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
-            ) : (
-              <svg
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </svg>
-            )}
-          </button>
+            </button>
+          ) : null}
           {showHeaderProjectLabel ? (
             <>
               <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />

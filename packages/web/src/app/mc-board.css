@@ -258,3 +258,32 @@
   font-size: 11px;
   color: var(--t4);
 }
+
+/* ── Empty-state ghost columns — match the live frameless tinted troughs ──
+   (override globals.css: 4 columns, no dashed/warm border, per the new board.) */
+.kanban-ghost {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.kanban-ghost__col {
+  border: none;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.018);
+  opacity: 1;
+}
+
+.dark .kanban-ghost__col {
+  border-color: transparent;
+}
+
+.kanban-ghost__head {
+  padding: 14px 15px 11px;
+  border-bottom: none;
+  letter-spacing: 0.08em;
+  color: var(--t3, #646a73);
+}
+
+.dark .kanban-ghost__head {
+  border-bottom-color: transparent;
+}
