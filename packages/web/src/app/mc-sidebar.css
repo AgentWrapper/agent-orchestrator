@@ -136,6 +136,14 @@
   padding: 7px 6px;
   background: transparent;
   border-radius: 5px;
+  transition: padding-right 0.12s ease;
+}
+
+/* On hover the action icons reveal over the right slot — reserve room so the
+   project name re-truncates (ellipsis) instead of running under the icons. */
+.project-sidebar__proj-row:hover .project-sidebar__proj-toggle,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-toggle {
+  padding-right: 78px;
 }
 
 .project-sidebar__proj-toggle:hover {
