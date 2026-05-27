@@ -236,6 +236,7 @@
 }
 
 .project-sidebar__sess-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -254,12 +255,25 @@
 }
 
 .project-sidebar__sess-label {
+  display: block;
   font-size: 12px;
   font-family: var(--mono, var(--font-mono));
   color: var(--t2, #9ba1aa);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* At rest the link spans the row so the label gets full width (with ellipsis).
+   On hover the rename pencil reveals as an absolute overlay, so we reserve room
+   for it by padding the link — the text re-truncates instead of being covered. */
+.project-sidebar__sess-link {
+  transition: padding-right 0.12s ease;
+}
+
+.project-sidebar__sess-row:hover .project-sidebar__sess-link,
+.project-sidebar__sess-row:focus-within .project-sidebar__sess-link {
+  padding-right: 22px;
 }
 
 .project-sidebar__sess-row--active .project-sidebar__sess-label,
@@ -309,6 +323,13 @@
 
 /* Rename pencil — hover-only, neutral. */
 .project-sidebar__sess-rename-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 18px;
   color: var(--t4, #444951);
