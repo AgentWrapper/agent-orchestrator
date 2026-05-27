@@ -496,11 +496,10 @@ function DashboardInner({
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
     [sessions],
   );
-  const normalizedProjectName = projectName?.trim().toLowerCase();
+  // Always show the human-readable project name in the titlebar — never the raw
+  // project id hash (that was a poor disambiguation hack and reads as gibberish).
   const headerProjectLabel =
-    normalizedProjectName === "agent orchestrator"
-      ? (projectId ?? projectName ?? (allProjectsView ? "All projects" : "Dashboard"))
-      : (projectName ?? (allProjectsView ? "All projects" : "Dashboard"));
+    projectName ?? (allProjectsView ? "All projects" : "Dashboard");
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
   const handleZoneToggle = (level: AttentionLevel) => {
