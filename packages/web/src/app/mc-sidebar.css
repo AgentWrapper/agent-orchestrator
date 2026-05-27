@@ -13,7 +13,7 @@
   background: var(--bg-side, #08090b);
   border-right: 1px solid var(--line, rgba(255, 255, 255, 0.06));
   width: 100%;
-  padding: 16px 12px;
+  padding: 14px 7px;
 }
 
 .dark .project-sidebar {
@@ -133,7 +133,7 @@
   gap: 9px;
   flex: 1;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 7px 6px;
   background: transparent;
   border-radius: 5px;
 }
@@ -230,16 +230,16 @@
 
 /* ── Sessions list ───────────────────────────────────────────────────── */
 .project-sidebar__sessions {
-  padding: 2px 0 8px 5px;
-  margin-left: 8px;
+  padding: 2px 0 8px 4px;
+  margin-left: 5px;
   border-left: 1px solid var(--line, rgba(255, 255, 255, 0.06));
 }
 
 .project-sidebar__sess-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 5px 8px 5px 10px;
+  gap: 9px;
+  padding: 5px 6px 5px 8px;
   border-radius: 5px;
 }
 
@@ -250,7 +250,7 @@
 .project-sidebar__sess-row--active {
   background: var(--hover-2, rgba(255, 255, 255, 0.07));
   border-left: 0;
-  padding-left: 10px;
+  padding-left: 8px;
 }
 
 .project-sidebar__sess-label {

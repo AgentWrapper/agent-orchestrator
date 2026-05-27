@@ -123,7 +123,9 @@ describe("SessionDetail desktop layout", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+    // On desktop the topbar has no sidebar toggle — the sidebar carries its own
+    // collapse/expand affordance, so the redundant topbar toggle is mobile-only.
+    expect(screen.queryByRole("button", { name: "Toggle sidebar" })).not.toBeInTheDocument();
     // Worker topbar leads with the "‹ Kanban" back link to the project board
     // (the project brand now lives in the sidebar, not the topbar).
     expect(within(screen.getByRole("banner")).getByRole("link", { name: "Kanban" })).toHaveAttribute(
