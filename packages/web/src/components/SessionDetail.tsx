@@ -161,7 +161,11 @@ export function SessionDetail({
             />
           )}
         </div>
-        {!isMobile && !terminalEnded ? <SessionInspector session={session} /> : null}
+        {/* The orchestrator session has no PR/changes/browser to inspect — give
+            it the full-width terminal (no inspector rail). */}
+        {!isMobile && !terminalEnded && !isOrchestrator ? (
+          <SessionInspector session={session} />
+        ) : null}
       </main>
       <MobileBottomNav
         ariaLabel="Session navigation"

@@ -868,6 +868,9 @@ function ProjectSidebarInner({
                   </button>
                 )}
 
+                {/* Row actions — absolutely positioned over the count slot; the
+                    count shows at rest, these reveal on hover (frees name space). */}
+                <div className="project-sidebar__proj-actions">
                 {/* Dashboard button */}
                 {!isDegraded ? (
                   <Link
@@ -1002,6 +1005,7 @@ function ProjectSidebarInner({
                       </button>
                     </div>
                   ) : null}
+                </div>
                 </div>
               </div>
 

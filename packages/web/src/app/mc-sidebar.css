@@ -170,30 +170,52 @@
   font-weight: 600;
 }
 
-/* Plain mono count — no colored box. */
+/* Plain mono count — shows at rest in the same right slot the action icons
+   reveal into on hover, so the project name keeps full width at rest. */
 .project-sidebar__proj-count {
   font-size: 11px;
   color: var(--t3, #646a73);
   font-family: var(--mono, var(--font-mono));
   flex-shrink: 0;
+  transition: opacity 0.12s ease;
 }
 
-/* ── Hover-only per-project action icons ─────────────────────────────── */
+.project-sidebar__proj-row:hover .project-sidebar__proj-count,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-count {
+  opacity: 0;
+}
+
+/* ── Per-project action icons — out of flow, revealed on hover ────────── */
+.project-sidebar__proj-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.project-sidebar__proj-row:hover .project-sidebar__proj-actions,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .project-sidebar__proj-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
   border-radius: 5px;
   color: var(--t3, #646a73);
-  opacity: 0;
   transition:
-    opacity 0.12s ease,
     background 0.12s ease,
     color 0.12s ease;
-}
-
-.project-sidebar__proj-row:hover .project-sidebar__proj-action,
-.project-sidebar__proj-row:focus-within .project-sidebar__proj-action {
-  opacity: 1;
 }
 
 .project-sidebar__proj-action:hover {
@@ -202,7 +224,6 @@
 }
 
 .project-sidebar__proj-action--menu[aria-expanded="true"] {
-  opacity: 1;
   background: var(--hover-2, rgba(255, 255, 255, 0.07));
   color: var(--t1, #f4f5f7);
 }
@@ -261,6 +282,9 @@
 .sidebar-session-dot {
   width: 6px;
   height: 6px;
+  /* Nudge down ~1px: mono text sits slightly low in its line box, so a
+     geometrically-centered dot reads high next to the label. */
+  margin-top: 1px;
   background: var(--t4, #444951);
 }
 
