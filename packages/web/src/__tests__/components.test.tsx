@@ -300,10 +300,27 @@ describe("SessionCard", () => {
     });
     const session = makeSession({ status: "mergeable", activity: "idle", pr });
     render(<SessionCard session={session} />);
-    // Cards are informational — no merge button; merge happens on the session page.
-    expect(screen.queryByRole("button", { name: /merge/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PR #42" })).toBeInTheDocument();
     expect(screen.getByText("approved")).toBeInTheDocument();
+  });
+
+  it("calls onMerge when merge button is clicked", () => {
+    const onMerge = vi.fn();
+    const pr = makePR({
+      number: 42,
+      state: "open",
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "mergeable", activity: "idle", pr });
+    render(<SessionCard session={session} onMerge={onMerge} />);
+    fireEvent.click(screen.getByRole("button", { name: /merge/i }));
+    expect(onMerge).toHaveBeenCalledWith(42, "acme", "app");
   });
 
   it("does not render passing CI check chips on the card", () => {

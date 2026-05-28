@@ -41,6 +41,18 @@ function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEven
           repo: "app",
           isDraft: false,
         },
+        prs: [
+          {
+            number: 1,
+            url: "https://github.com/acme/app/pull/1",
+            title: "Demo PR",
+            branch: "demo/pr",
+            baseBranch: "main",
+            owner: "acme",
+            repo: "app",
+            isDraft: false,
+          },
+        ],
         issueId: null,
         issueTitle: null,
         summary: "Demo session",

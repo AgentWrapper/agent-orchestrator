@@ -3,6 +3,7 @@
 import { memo, useState, useEffect } from "react";
 import {
   type DashboardSession,
+  type DashboardPR,
   getAttentionLevel,
   isPRRateLimited,
   isPRUnenriched,
@@ -27,10 +28,62 @@ const enteredSessionIds = new Set<string>();
 interface SessionCardProps {
   session: DashboardSession;
   onKill?: (sessionId: string) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
 }
 
-function SessionCardView({ session, onKill, onRestore }: SessionCardProps) {
+function getPRDotClass(p: DashboardPR): string {
+  if (!p.enriched) return "bg-[var(--color-text-tertiary)] opacity-30";
+  if (p.state === "merged") return "bg-[var(--color-status-merge)]";
+  if (p.state === "closed") return "bg-[var(--color-text-muted)]";
+  if (p.ciStatus === "failing" || p.reviewDecision === "changes_requested")
+    return "bg-[var(--color-status-error)]";
+  if (p.isDraft) return "bg-[var(--color-text-muted)]";
+  if (p.ciStatus === "passing") return "bg-[var(--color-status-merge)]";
+  if (p.ciStatus === "pending") return "bg-[var(--color-status-pending)]";
+  return "bg-[var(--color-text-tertiary)] opacity-30";
+}
+
+function getPRChipColorClass(p: DashboardPR): string {
+  if (!p.enriched)
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.state === "merged")
+    return "bg-[color-mix(in_srgb,var(--color-status-merge)_15%,transparent)] text-[var(--color-status-merge)]";
+  if (p.state === "closed")
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.ciStatus === "failing" || p.reviewDecision === "changes_requested")
+    return "bg-[color-mix(in_srgb,var(--color-status-error)_15%,transparent)] text-[var(--color-status-error)]";
+  if (p.isDraft)
+    return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+  if (p.ciStatus === "passing")
+    return "bg-[color-mix(in_srgb,var(--color-status-merge)_15%,transparent)] text-[var(--color-status-merge)]";
+  if (p.ciStatus === "pending")
+    return "bg-[color-mix(in_srgb,var(--color-status-pending)_15%,transparent)] text-[var(--color-status-pending)]";
+  return "bg-[var(--color-bg-subtle)] text-[var(--color-text-muted)]";
+}
+
+function getPRStatusLabel(p: DashboardPR): string {
+  if (!p.enriched) return "";
+  if (p.state === "merged") return "merged";
+  if (p.state === "closed") return "closed";
+  if (p.ciStatus === "failing") return "CI failing";
+  if (p.reviewDecision === "changes_requested") return "changes requested";
+  if (p.isDraft) return "draft";
+  if (p.reviewDecision === "approved") return "approved";
+  if (p.ciStatus === "passing") return "needs review";
+  if (p.ciStatus === "pending") return "CI running";
+  return "";
+}
+
+function getRepoInitials(repo: string): string {
+  return repo
+    .split("-")
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 3);
+}
+
+function SessionCardView({ session, onKill, onMerge, onRestore }: SessionCardProps) {
   const [killConfirming, setKillConfirming] = useState(false);
 
   // Only play the entrance animation on the very first mount of this session.
@@ -51,10 +104,18 @@ function SessionCardView({ session, onKill, onRestore }: SessionCardProps) {
 
   const level = getAttentionLevel(session);
   const pr = session.pr;
+  const prs = session.prs ?? [];
+  const isMultiRepo = new Set(prs.map((p) => p.repo)).size > 1;
+  // For multi-PR sessions, track which PR's details are shown in the card body.
+  const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  useEffect(() => setSelectedPRIndex(0), [session.id]);
+  const safeIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const selectedPR = prs.length > 1 ? (prs[safeIndex] ?? pr) : pr;
 
-  const rateLimited = pr ? isPRRateLimited(pr) : false;
-  const prUnenriched = pr ? isPRUnenriched(pr) : false;
-  const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
+  const effectivePR = prs.length > 1 ? selectedPR : pr;
+  const rateLimited = effectivePR ? isPRRateLimited(effectivePR) : false;
+  const prUnenriched = effectivePR ? isPRUnenriched(effectivePR) : false;
+  const isReadyToMerge = !rateLimited && effectivePR?.mergeability.mergeable && effectivePR.state === "open";
   const isTerminal = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
 
@@ -138,17 +199,89 @@ function SessionCardView({ session, onKill, onRestore }: SessionCardProps) {
           <p className="card__title">{title}</p>
         </div>
 
-        {session.branch && (
-          <div className="card__meta">
-            <span className="card__branch-icon" aria-hidden="true">
-              <svg fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                <line x1="6" y1="4" x2="6" y2="14" />
-                <circle cx="6" cy="17" r="2.3" />
-                <circle cx="18" cy="7" r="2.3" />
-                <path d="M18 9.3a8 8 0 0 1-8 8" />
-              </svg>
-            </span>
-            <span className="card__branch">{session.branch}</span>
+        <div className="card__meta">
+          {session.branch && <span className="card__branch">{session.branch}</span>}
+          {prs.length === 1 && (
+            <>
+              {session.branch && (
+                <span className="card__meta-sep" aria-hidden="true">·</span>
+              )}
+              <a
+                href={prs[0].url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="card__pr inline-flex items-center gap-1"
+              >
+                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", getPRDotClass(prs[0]))} />
+                #{prs[0].number}
+              </a>
+            </>
+          )}
+        </div>
+
+        {/* Per-PR rows: shown only when session has more than one PR.
+            Clicking a row selects it — the footer detail below updates to that PR. */}
+        {prs.length > 1 && (
+          <div className="px-[10px] pb-[5px] flex flex-col gap-[2px]">
+            {prs.map((p, i) => {
+              const statusLabel = getPRStatusLabel(p);
+              const isSelected = i === safeIndex;
+              return (
+                <div
+                  key={p.url}
+                  role="button"
+                  tabIndex={0}
+                  className={cn(
+                    "flex items-center gap-1.5 min-w-0 rounded px-1 -mx-1 cursor-pointer transition-colors",
+                    isSelected
+                      ? "bg-[var(--color-bg-subtle)] border-l-2 border-[var(--color-accent)] pl-[2px]"
+                      : "hover:bg-[var(--color-bg-subtle)] border-l-2 border-transparent pl-[2px]",
+                  )}
+                  onClick={(e) => { e.stopPropagation(); setSelectedPRIndex(i); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); setSelectedPRIndex(i); } }}
+                >
+                  {isMultiRepo && (
+                    <span className="shrink-0 font-[var(--font-mono)] text-[9px] text-[var(--color-text-tertiary)] bg-[var(--color-bg-subtle)] px-1 py-0.5 rounded leading-none">
+                      {getRepoInitials(p.repo)}
+                    </span>
+                  )}
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => { e.stopPropagation(); setSelectedPRIndex(i); }}
+                    className={cn(
+                      "shrink-0 inline-flex items-center font-[var(--font-mono)] text-[10px] font-bold px-1.5 py-0.5 rounded leading-none no-underline",
+                      getPRChipColorClass(p),
+                    )}
+                  >
+                    #{p.number}
+                  </a>
+                  {p.title ? (
+                    <span
+                      className="flex-1 truncate text-[11px] text-[var(--color-text-secondary)]"
+                      title={p.title}
+                    >
+                      {p.title}
+                    </span>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  {p.enriched && (
+                    <span className="shrink-0 font-[var(--font-mono)] text-[10px]">
+                      <span className="text-[var(--color-status-merge)]">+{p.additions}</span>{" "}
+                      <span className="text-[var(--color-status-error)]">-{p.deletions}</span>
+                    </span>
+                  )}
+                  {statusLabel && statusLabel !== "needs review" && (
+                    <span className="shrink-0 text-[10px] text-[var(--color-text-tertiary)]">
+                      · {statusLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -178,6 +311,29 @@ function SessionCardView({ session, onKill, onRestore }: SessionCardProps) {
           </div>
 
           <div className="session-card__footer-actions">
+            {isReadyToMerge && effectivePR ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMerge?.(effectivePR.number, effectivePR.owner, effectivePR.repo);
+                }}
+                className="session-card__control session-card__merge-control"
+              >
+                <svg
+                  className="session-card__control-icon"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="6" cy="6" r="2" />
+                  <circle cx="18" cy="18" r="2" />
+                  <circle cx="18" cy="6" r="2" />
+                  <path d="M8 6h5a3 3 0 0 1 3 3v7" />
+                </svg>
+                Merge PR #{effectivePR.number}
+              </button>
+            ) : null}
             {!isTerminal ? (
               <button
                 onClick={handleKillClick}
@@ -219,6 +375,7 @@ function areSessionCardPropsEqual(prev: SessionCardProps, next: SessionCardProps
   return (
     prev.session === next.session &&
     prev.onKill === next.onKill &&
+    prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore
   );
 }

@@ -1,12 +1,17 @@
 "use client";
 
-import type { DashboardSession } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { CI_STATUS } from "@aoagents/ao-core/types";
+import { cn } from "@/lib/cn";
+import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import { DashboardNotificationButton } from "./DashboardNotificationButton";
+import { SessionDetailPRCard } from "./SessionDetailPRCard";
+import { askAgentToFix } from "./session-detail-agent-actions";
 import { StatusBadge } from "./StatusBadge";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
 import { projectDashboardPath } from "@/lib/routes";
-import { GitBranchIcon, MobilePrButton, OrchestratorZonePills } from "./SessionDetailHeader.parts";
+import { GitBranchIcon, OrchestratorZonePills } from "./SessionDetailHeader.parts";
 
 export interface OrchestratorZones {
   merge: number;
@@ -27,6 +32,8 @@ interface SessionDetailHeaderProps {
   projects: ProjectInfo[];
   orchestratorHref: string | null;
   orchestratorZones?: OrchestratorZones;
+  selectedPRIndex: number;
+  onSelectPR: (index: number) => void;
   onToggleSidebar: () => void;
   onRestore: () => void;
   onKill: () => void;
@@ -42,11 +49,36 @@ export function SessionDetailHeader({
   projects,
   orchestratorHref,
   orchestratorZones,
+  selectedPRIndex,
+  onSelectPR,
   onToggleSidebar,
   onRestore,
   onKill,
 }: SessionDetailHeaderProps) {
-  const pr = session.pr;
+  const prs = session.prs ?? [];
+  const safeSelectedPRIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const pr = prs[safeSelectedPRIndex] ?? session.pr;
+  const allGreen = pr ? isPRMergeReady(pr) : false;
+  const [prPopoverOpen, setPrPopoverOpen] = useState(false);
+  const prPopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!prPopoverOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (prPopoverRef.current && !prPopoverRef.current.contains(event.target as Node)) {
+        setPrPopoverOpen(false);
+      }
+    };
+    const keyHandler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPrPopoverOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
+  }, [prPopoverOpen]);
 
   const headerProjectLabel =
     projects.find((project) => project.id === session.projectId)?.name ?? session.projectId;
@@ -174,9 +206,92 @@ export function SessionDetailHeader({
       <div className="dashboard-app-header__spacer" />
       <div className="dashboard-app-header__actions">
         <DashboardNotificationButton />
-        {/* PR lives in the desktop inspector rail; the topbar popover is the
-            mobile-only affordance (no inspector there). */}
-        {!isOrchestrator && pr && isMobile ? <MobilePrButton session={session} pr={pr} /> : null}
+        {!isOrchestrator && pr ? (
+          <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
+            <a
+              href={pr.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "dashboard-app-btn topbar-pr-btn",
+                prPopoverOpen && "topbar-pr-btn--open",
+              )}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
+                event.preventDefault();
+                setPrPopoverOpen((value) => !value);
+              }}
+              aria-expanded={prPopoverOpen}
+              aria-label={`PR #${pr.number}`}
+            >
+              <span
+                className={cn(
+                  "topbar-pr-dot",
+                  allGreen
+                    ? "topbar-pr-dot--green"
+                    : pr.ciStatus === CI_STATUS.FAILING || pr.reviewDecision === "changes_requested"
+                      ? "topbar-pr-dot--red"
+                      : "topbar-pr-dot--amber",
+                )}
+              />
+              PR #{pr.number}
+              <svg
+                width="10"
+                height="10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d={prPopoverOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+              </svg>
+            </a>
+
+            {prPopoverOpen && (
+              <div className="topbar-pr-popover">
+                {prs.length > 1 && (
+                  <div className="flex gap-0.5 px-3 pt-2 pb-1.5 border-b border-[var(--color-border-subtle)]">
+                    {prs.map((p, i) => (
+                      <button
+                        key={p.url}
+                        type="button"
+                        onClick={() => onSelectPR(i)}
+                        className={cn(
+                          "flex items-center gap-1.5 px-2 py-0.5 rounded text-xs",
+                          safeSelectedPRIndex === i
+                            ? "bg-[var(--color-bg-subtle)] text-[var(--color-text-primary)]"
+                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "topbar-pr-dot",
+                            isPRMergeReady(p)
+                              ? "topbar-pr-dot--green"
+                              : p.ciStatus === CI_STATUS.FAILING ||
+                                  p.reviewDecision === "changes_requested"
+                                ? "topbar-pr-dot--red"
+                                : "topbar-pr-dot--amber",
+                          )}
+                        />
+                        PR #{p.number}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <SessionDetailPRCard
+                  pr={pr as DashboardPR}
+                  metadata={session.metadata}
+                  lifecyclePrReason={session.lifecycle?.prReason ?? undefined}
+                  onAskAgentToFix={(comment, onSuccess, onError) =>
+                    askAgentToFix(session.id, comment, onSuccess, onError)
+                  }
+                />
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {!isOrchestrator && isRestorable ? (
           <button

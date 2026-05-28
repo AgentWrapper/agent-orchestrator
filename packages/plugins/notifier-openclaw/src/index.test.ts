@@ -36,6 +36,18 @@ const prContext: NotificationEventContext = {
     repo: "agent-orchestrator",
     isDraft: false,
   },
+  prs: [
+    {
+      number: 1579,
+      url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1579",
+      title: "Normalize AO notifier payloads",
+      branch: "ao/demo-notifier-harness",
+      baseBranch: "main",
+      owner: "ComposioHQ",
+      repo: "agent-orchestrator",
+      isDraft: false,
+    },
+  ],
   issueId: "AO-1579",
   issueTitle: "Make AO notification payloads API-grade",
   summary: "Normalize AO notifier payloads",
