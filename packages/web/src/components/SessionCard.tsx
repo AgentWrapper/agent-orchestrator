@@ -220,6 +220,7 @@ function SessionCardView({
   const isMultiRepo = new Set(prs.map((p) => p.repo)).size > 1;
   // For multi-PR sessions, track which PR's details are shown in the card body.
   const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  useEffect(() => setSelectedPRIndex(0), [session.id]);
   const safeIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
   const selectedPR = prs.length > 1 ? (prs[safeIndex] ?? pr) : pr;
 

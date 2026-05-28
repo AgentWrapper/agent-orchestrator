@@ -57,15 +57,24 @@ export function SessionEndedSummary({
   const runtimeLabel = session.lifecycle?.runtime.label ?? "Unavailable";
   const prs = session.prs ?? [];
   const primaryPR = pr ?? prs[0];
-  const prLabel = primaryPR
-    ? primaryPR.state === "merged"
-      ? "Merged"
-      : primaryPR.state === "closed"
-        ? "Closed"
-        : primaryPR.mergeability.mergeable
-          ? "Open, merge-ready"
-          : "Open"
-    : "No PR";
+  const allMerged = prs.length > 0 && prs.every((p) => p.state === "merged");
+  const anyOpen = prs.some((p) => p.state === "open");
+  const prLabel =
+    prs.length > 1
+      ? allMerged
+        ? "All merged"
+        : anyOpen
+          ? "In progress"
+          : "Closed"
+      : primaryPR
+        ? primaryPR.state === "merged"
+          ? "Merged"
+          : primaryPR.state === "closed"
+            ? "Closed"
+            : primaryPR.mergeability.mergeable
+              ? "Open, merge-ready"
+              : "Open"
+        : "No PR";
   const prCount = prs.length;
 
   return (

@@ -692,12 +692,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // This allows detecting additional PRs on different repos (multi-repo support).
       const trackedRepos = new Set(session.prs.map((p) => `${p.owner}/${p.repo}`));
       const projectRepoForDetect = config.projects[session.projectId]?.repo;
-      const primaryPR = session.prs[0] ?? null;
+      // primaryPR.branch is always the session branch (metadata doesn't store per-PR branches),
+      // so use the lifecycle closed-state alone to allow re-detection after a PR is rejected.
+      const primaryPRIsClosed = session.lifecycle.pr.state === "closed";
       if (
         session.prs.length > 0 &&
         projectRepoForDetect &&
         trackedRepos.has(projectRepoForDetect) &&
-        !(session.lifecycle.pr.state === "closed" && primaryPR?.branch !== session.branch)
+        !primaryPRIsClosed
       ) {
         continue;
       }
