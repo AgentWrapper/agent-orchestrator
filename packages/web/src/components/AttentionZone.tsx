@@ -10,6 +10,7 @@ interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
   onKill?: (sessionId: string) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
@@ -73,6 +74,7 @@ function AttentionZoneView({
   level,
   sessions,
   onKill,
+  onMerge,
   onRestore,
   collapsed,
   onToggle,
@@ -134,6 +136,7 @@ function AttentionZoneView({
                     key={session.id}
                     session={session}
                     onKill={onKill}
+                    onMerge={onMerge}
                     onRestore={onRestore}
                   />
                 ),
@@ -176,6 +179,7 @@ function AttentionZoneView({
                 key={session.id}
                 session={session}
                 onKill={onKill}
+                onMerge={onMerge}
                 onRestore={onRestore}
               />
             ))}
@@ -192,6 +196,7 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.collapsed === next.collapsed &&
     prev.onToggle === next.onToggle &&
     prev.onKill === next.onKill &&
+    prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
     prev.compactMobile === next.compactMobile &&
     prev.onPreview === next.onPreview &&
@@ -284,10 +289,11 @@ export function getActionChipLabel(session: DashboardSession): string {
   // Review-class: status
   if (session.status === "ci_failed") return "ci failed";
   if (session.status === "changes_requested") return "changes";
-  // Review-class: PR signals
-  if (session.pr?.ciStatus === "failing") return "ci failed";
-  if (session.pr?.reviewDecision === "changes_requested") return "changes";
-  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  // Review-class: PR signals — aggregate across all PRs
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (prs.some((p) => p.ciStatus === "failing")) return "ci failed";
+  if (prs.some((p) => p.reviewDecision === "changes_requested")) return "changes";
+  if (prs.some((p) => !p.mergeability.noConflicts)) return "conflicts";
   return "action";
 }
 
@@ -300,16 +306,17 @@ function SessionStateChip({
 }) {
   let label = zoneConfig[level].label.toLowerCase();
 
-  if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (level === "merge" && prs.length > 0 && prs.every((p) => isPRMergeReady(p))) {
     label = "ready";
   } else if (level === "action") {
     label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {
-    label = session.pr?.reviewDecision === "changes_requested" ? "changes" : "review";
+    label = prs.some((p) => p.reviewDecision === "changes_requested") ? "changes" : "review";
   } else if (level === "pending") {
-    label = session.pr?.unresolvedThreads ? "threads" : "pending";
+    label = prs.some((p) => p.unresolvedThreads) ? "threads" : "pending";
   } else if (level === "working") {
     label = session.activity === "idle" ? "idle" : "active";
   }

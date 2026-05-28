@@ -1040,7 +1040,14 @@ describe("check (single session)", () => {
       url: "https://github.com/org/repo/pull/43",
       title: "Follow up fix",
     });
-    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(followUpPR) });
+    const mockSCM = createMockSCM({
+      detectPR: vi.fn().mockResolvedValue(followUpPR),
+      // Enrichment cache must show closedPR as closed so the detectPR filter
+      // can remove it using per-PR state rather than the aggregate lifecycle state.
+      getPRState: vi.fn().mockImplementation((pr: PRInfo) =>
+        Promise.resolve(pr.number === closedPR.number ? "closed" : "open"),
+      ),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -4471,5 +4478,177 @@ describe("event enrichment", () => {
         }),
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-PR state machine aggregation (issue #1821)
+// ---------------------------------------------------------------------------
+
+describe("multi-PR state machine aggregation", () => {
+  /** Batch enrichment mock returning different data per PR key. */
+  function mockBatchEnrichmentPerPR(
+    perPR: Record<
+      string,
+      { state?: string; ciStatus?: string; reviewDecision?: string; mergeable?: boolean }
+    >,
+  ) {
+    return vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+      const result = new Map();
+      for (const p of prs) {
+        const key = `${p.owner}/${p.repo}#${p.number}`;
+        const data = perPR[key] ?? {};
+        result.set(key, {
+          state: data.state ?? "open",
+          ciStatus: data.ciStatus ?? "passing",
+          reviewDecision: data.reviewDecision ?? "none",
+          mergeable: data.mergeable ?? false,
+        });
+      }
+      return result;
+    });
+  }
+
+  it("2.1 — session stays open when only one of two PRs is merged", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "merged" },
+          "org/my-app#11": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).not.toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.2 — session merges when ALL PRs are merged", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "merged" },
+          "org/my-app#11": { state: "merged" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.3 — ci_failed if ANY PR has failing CI", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+          "org/my-app#11": { state: "open", ciStatus: "failing" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.4 — review_pending when not all PRs are approved", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+          "org/my-app#11": { state: "open", ciStatus: "passing", reviewDecision: "pending" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      const state = lm.getStates().get("app-1");
+      expect(state).not.toBe("merged");
+      expect(state).toBe("review_pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.5 — single PR session still merges correctly (backwards compat)", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10 });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
