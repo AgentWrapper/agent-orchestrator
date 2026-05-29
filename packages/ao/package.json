@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao",
-  "version": "0.9.2",
+  "version": "0.9.3-nightly-936e57af9952e7e9f4f939949b78116cc1133f72",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
   "keywords": [
     "ai",

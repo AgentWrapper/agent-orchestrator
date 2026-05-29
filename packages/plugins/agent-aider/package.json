@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-plugin-agent-aider",
-  "version": "0.9.1",
+  "version": "0.9.3-nightly-936e57af9952e7e9f4f939949b78116cc1133f72",
   "description": "Agent plugin: Aider",
   "license": "MIT",
   "type": "module",
