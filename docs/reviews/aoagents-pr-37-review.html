@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Review — aoagents PR #37: SQLite storage + CDC pipeline</title>
+<style>
+  :root{
+    --bg:#0a0b0d; --bg-side:#08090b; --card:#15171b; --term:#0c0d10;
+    --line:rgba(255,255,255,0.06); --line-2:rgba(255,255,255,0.10);
+    --t1:#f4f5f7; --t2:#9ba1aa; --t3:#646a73; --t4:#444951;
+    --blue:#4d8dff; --orange:#f59f4c; --amber:#e8c14a; --red:#ef6b6b; --green:#74b98a;
+    --mono:'JetBrains Mono','SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+    --sans:'Schibsted Grotesk','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--t1);font-family:var(--sans);
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 120px}
+  code,kbd,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- header ---- */
+  header.top{
+    border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0c0e12,var(--bg));
+    padding:40px 28px 30px;margin-bottom:8px;
+  }
+  header.top .inner{max-width:1080px;margin:0 auto}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--blue);margin-bottom:14px;display:flex;align-items:center;gap:9px}
+  h1{font-size:30px;line-height:1.2;margin:0 0 14px;font-weight:600;letter-spacing:-.01em}
+  .meta-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .pill{
+    display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;
+    padding:5px 11px;border:1px solid var(--line-2);border-radius:99px;color:var(--t2);background:#101216;
+  }
+  .pill svg{width:13px;height:13px}
+  .pill b{color:var(--t1);font-weight:500}
+
+  /* ---- toc ---- */
+  nav.toc{
+    border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
+    padding:18px 22px;margin:26px 0 38px;
+  }
+  nav.toc .toc-h{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--t3);margin-bottom:12px}
+  nav.toc ol{margin:0;padding:0;list-style:none;counter-reset:s;columns:2;column-gap:34px}
+  nav.toc li{counter-increment:s;margin:0 0 7px;break-inside:avoid}
+  nav.toc a{color:var(--t2);text-decoration:none;display:flex;gap:10px;font-size:14px;padding:2px 0}
+  nav.toc a:hover{color:var(--t1)}
+  nav.toc a::before{content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:11px;color:var(--blue);min-width:22px}
+
+  /* ---- sections ---- */
+  section{margin:0 0 46px;scroll-margin-top:24px}
+  h2{
+    font-size:13px;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;
+    color:var(--t1);margin:0 0 18px;padding-bottom:11px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:11px;font-weight:600;
+  }
+  h2 .num{color:var(--blue);font-size:12px}
+  h2 svg{width:16px;height:16px;color:var(--t3);stroke-width:1.6}
+  h3{font-size:15px;margin:26px 0 10px;color:var(--t1);font-weight:600}
+  p{margin:0 0 14px;color:var(--t2)}
+  p strong,li strong{color:var(--t1);font-weight:600}
+  a.ref{color:var(--blue);text-decoration:none;font-family:var(--mono);font-size:.92em;border-bottom:1px dotted rgba(77,141,255,.4)}
+  a.ref:hover{border-bottom-style:solid}
+  ul,ol{margin:0 0 16px;padding-left:22px;color:var(--t2)}
+  li{margin:0 0 8px}
+  .lead{color:var(--t1);font-size:16px;line-height:1.65}
+
+  /* code ref token */
+  .fl{font-family:var(--mono);font-size:.86em;color:var(--orange);background:#1a1410;border:1px solid rgba(245,159,76,.18);padding:1px 6px;border-radius:5px;white-space:nowrap}
+  code.in{font-family:var(--mono);font-size:.88em;color:var(--t1);background:#101216;border:1px solid var(--line);padding:1px 6px;border-radius:5px}
+
+  /* ---- cards / callouts ---- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin:0 0 16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}nav.toc ol{columns:1}.meta-row{gap:6px}}
+
+  /* finding blocks */
+  .finding{border:1px solid var(--line);border-left-width:3px;border-radius:8px;background:var(--card);padding:15px 18px;margin:0 0 14px}
+  .finding.high{border-left-color:var(--red)}
+  .finding.med{border-left-color:var(--amber)}
+  .finding.low{border-left-color:var(--t4)}
+  .finding.ok{border-left-color:var(--green)}
+  .finding .fh{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+  .finding .fid{font-family:var(--mono);font-size:12px;color:var(--t3)}
+  .finding .ft{font-weight:600;color:var(--t1);font-size:15px}
+  .finding p{margin:6px 0 0;font-size:14.5px}
+  .sev{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:99px;font-weight:600}
+  .sev.high{color:var(--red);background:rgba(239,107,107,.1);border:1px solid rgba(239,107,107,.25)}
+  .sev.med{color:var(--amber);background:rgba(232,193,74,.08);border:1px solid rgba(232,193,74,.25)}
+  .sev.low{color:var(--t2);background:rgba(255,255,255,.04);border:1px solid var(--line-2)}
+  .sev.ok{color:var(--green);background:rgba(116,185,138,.08);border:1px solid rgba(116,185,138,.25)}
+
+  /* pre / code blocks */
+  pre{background:var(--term);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;margin:0 0 16px}
+  pre code{font-family:var(--mono);font-size:12.5px;color:#c8cdd4;line-height:1.6;white-space:pre}
+  .c-com{color:var(--t3)}
+  .c-key{color:var(--blue)}
+  .c-str{color:var(--green)}
+  .c-fn{color:var(--orange)}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;margin:0 0 18px;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);font-weight:600;background:#101216}
+  td{color:var(--t2)}
+  td:first-child{color:var(--t1);font-weight:500}
+  tr:last-child td{border-bottom:none}
+  table.cap td.exist{color:var(--green)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:4px;letter-spacing:.04em}
+  .tag.yes{color:var(--green);background:rgba(116,185,138,.1)}
+  .tag.no{color:var(--red);background:rgba(239,107,107,.1)}
+  .tag.partial{color:var(--amber);background:rgba(232,193,74,.1)}
+
+  /* flow diagram */
+  .flow{font-family:var(--mono);font-size:12px;color:var(--t2);background:var(--term);border:1px solid var(--line);border-radius:8px;padding:18px;overflow-x:auto;line-height:1.9;margin:0 0 18px}
+  .flow .n{color:var(--t1)}
+  .flow .a{color:var(--blue)}
+
+  /* priority badges for recs */
+  .prio{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;padding:2px 7px;border-radius:4px;margin-right:9px}
+  .prio.p0{color:var(--red);background:rgba(239,107,107,.12)}
+  .prio.p1{color:var(--amber);background:rgba(232,193,74,.12)}
+  .prio.p2{color:var(--t2);background:rgba(255,255,255,.05)}
+
+  .q{counter-increment:q;display:flex;gap:14px;margin:0 0 16px;padding:14px 18px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+  .q::before{content:"Q" counter(q);font-family:var(--mono);color:var(--blue);font-size:13px;font-weight:600;min-width:26px}
+  .qlist{counter-reset:q}
+  .q p{margin:0}
+  footer{border-top:1px solid var(--line);margin-top:50px;padding-top:24px;color:var(--t3);font-size:12.5px;font-family:var(--mono)}
+  .disc{color:var(--t3);font-size:12.5px;font-style:italic;border-left:2px solid var(--line-2);padding-left:14px;margin:0 0 18px}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="inner">
+    <div class="kicker">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M9 18l6-6-6-6"/></svg>
+      Code Review · Capability Comparison
+    </div>
+    <h1>aoagents PR #37 — SQLite storage layer + CDC pipeline</h1>
+    <p class="lead" style="max-width:760px">An independent review of the Go-rewrite's persistence + change-data-capture work, measured against the mature flat-file AO it re-implements.</p>
+    <div class="meta-row">
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> PR <b>#37</b></span>
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg> <b>feat/sqlite-storage-cdc</b> → main</span>
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></svg> Pritom14</span>
+      <span class="pill" style="color:var(--green)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg> +3849 / −11 · 40 files</span>
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Go · modernc/sqlite · goose · sqlc</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <div class="toc-h">Contents</div>
+  <ol>
+    <li><a href="#summary">Executive summary</a></li>
+    <li><a href="#what">What this PR does</a></li>
+    <li><a href="#why">Motivation</a></li>
+    <li><a href="#correctness">Correctness assessment</a></li>
+    <li><a href="#integrity">Data-integrity: SQLite + CDC</a></li>
+    <li><a href="#tests">Test coverage gaps</a></li>
+    <li><a href="#capability">Capability comparison vs AO</a></li>
+    <li><a href="#decisions">Design decisions + alternatives</a></li>
+    <li><a href="#recs">Recommended improvements</a></li>
+    <li><a href="#questions">Open questions</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="summary">
+  <h2><span class="num">01</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg> Executive summary</h2>
+  <p class="lead">PR&nbsp;#37 replaces the rewrite's in-memory <code class="in">fakeStore</code> with two real outbound adapters: a SQLite <span class="fl">internal/storage/sqlite</span> persistence layer satisfying <code class="in">ports.LifecycleStore</code>, and a <span class="fl">internal/cdc</span> transactional-outbox → JSONL → durable-consumer → broadcaster pipeline. It is genuinely strong work: the canonical write is a single all-or-nothing transaction (session row + <code class="in">change_log</code> + <code class="in">outbox</code>), the revision column is a real optimistic-concurrency CAS rather than a debug counter, escalation budgets are now durable across restart, and the design is honest about what it stubs (<code class="in">noopNotifier</code>, <code class="in">noopMessenger</code>, empty reaper registry) versus what it refuses to fake (Session Manager, HTTP routes).</p>
+  <p>The transactional-outbox pattern is the correct backbone and the happy-path is well-tested. My concerns are concentrated at the <strong>edges of failure</strong>: the in-process <code class="in">Broadcaster</code> calls subscriber callbacks synchronously with <strong>no panic recovery</strong>, so one bad subscriber can silently kill the entire delivery goroutine; a <strong>cross-store durability mismatch</strong> exists because the JSONL log is <code class="in">fsync</code>'d per write while SQLite runs <code class="in">synchronous=NORMAL</code>, so a power loss can leave the CDC log ahead of the recovered database; and the janitor's deletion watermark is unsafe for the multi-consumer future the schema already advertises. None of these block the merge of a foundational PR, but they should be tracked before live transports subscribe to the broadcaster.</p>
+  <p>Versus the existing AO, this is a deliberate architectural upgrade — ACID transactions and a durable change stream replace per-session JSON files and an in-memory reaction map — but the rewrite is still <strong>infrastructure without a product</strong>: no notifier, no SCM poller, no agent process management, no dashboard, no cross-platform process teardown. The storage substrate is arguably ahead of the mature AO; the surface area around it is far behind.</p>
+</section>
+
+<!-- 2 -->
+<section id="what">
+  <h2><span class="num">02</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg> What this PR does</h2>
+  <p>The write path is wired live end-to-end in <span class="fl">backend/main.go</span> alongside the Lifecycle Manager and reaper:</p>
+  <div class="flow">
+<span class="n">LCM.Upsert</span> ──▶ <span class="n">sqlite store</span>  <span class="c-com">(1 tx: sessions + change_log + outbox)</span>
+            ──▶ <span class="n">cdc publisher</span> <span class="a">─50ms─▶</span> <span class="n">session-events.jsonl</span>  <span class="c-com">(fsync per line)</span>
+            ──▶ <span class="n">cdc consumer</span> <span class="a">─100ms─▶</span> byte cursor, seq-idempotent
+            ──▶ <span class="n">Broadcaster</span> ──▶ [ FE transport — <span class="c-com">deferred</span> ]
+   <span class="n">janitor</span> <span class="a">─60s─▶</span> reclaims acked outbox rows below MIN(consumer offset)
+  </div>
+
+  <h3>Storage — <span class="fl">internal/storage/sqlite</span></h3>
+  <ul>
+    <li><strong>Driver &amp; migrations.</strong> <code class="in">modernc.org/sqlite</code> (pure-Go, no CGO) for clean 3-OS cross-compile; <code class="in">goose</code> embedded migrations in <span class="fl">migrations/0001_init.sql</span>; <code class="in">sqlc</code>-generated typed queries checked in under <span class="fl">gen/</span>.</li>
+    <li><strong>Atomic Upsert.</strong> <span class="fl">upsert.go:26</span> opens one <code class="in">*sql.Tx</code>, runs the revision-CAS persist, then appends the <code class="in">change_log</code> + <code class="in">outbox</code> rows, and commits — all-or-nothing (<span class="fl">upsert.go:43</span>).</li>
+    <li><strong>Revision CAS.</strong> <span class="fl">upsert.go:48</span> — insert requires incoming revision <code class="in">0</code> and persists <code class="in">1</code>; update requires the loaded revision to match and bumps <code class="in">+1</code>; zero rows affected ⇒ revision-mismatch error (<span class="fl">upsert.go:60,77</span>).</li>
+    <li><strong>Connection policy.</strong> WAL + <code class="in">busy_timeout(5000)</code> + <code class="in">foreign_keys(ON)</code> + <code class="in">synchronous(NORMAL)</code> (<span class="fl">db.go:24</span>), with <code class="in">SetMaxOpenConns(1)</code> (<span class="fl">db.go:44</span>) enforcing a single writer so WAL's single-writer rule cannot be violated by the pool.</li>
+    <li><strong>Metadata side-channel.</strong> <code class="in">branch</code>, <code class="in">workspacePath</code>, etc. live in <code class="in">session_metadata</code> written by <code class="in">PatchMetadata</code> (<span class="fl">store.go:98</span>) — deliberately off the CDC path: no revision bump, no event.</li>
+    <li><strong>Durable reaction trackers.</strong> escalation budgets persist in <code class="in">reaction_trackers</code> (<span class="fl">0001_init.sql:89</span>), fixing the in-memory-only behaviour that re-fired human pages after a daemon bounce.</li>
+  </ul>
+
+  <h3>CDC — <span class="fl">internal/cdc</span></h3>
+  <ul>
+    <li><strong>Publisher</strong> (<span class="fl">publisher.go:97</span>) drains the outbox to JSONL on a 50&nbsp;ms ticker; an append failure stops the pass (row marked failed, retried next tick) so ordering is never violated by skipping ahead.</li>
+    <li><strong>JSONL log</strong> (<span class="fl">jsonl.go:52</span>) appends + <code class="in">Sync()</code>s each line; at 1&nbsp;MiB it rotates by renaming aside (<span class="fl">jsonl.go:86</span>) and writing a reset marker as the new first line.</li>
+    <li><strong>Consumer</strong> (<span class="fl">consumer.go:114</span>) tails via a byte cursor, detects rotation with <code class="in">os.SameFile</code> / shrink (<span class="fl">consumer.go:130</span>), resyncs from a full-state DB snapshot on a gap, and persists its seq in <code class="in">consumer_offsets</code> (<span class="fl">consumer.go:157</span>).</li>
+    <li><strong>Janitor</strong> (<span class="fl">janitor.go:75</span>) reclaims acked outbox rows below the slowest consumer offset; <code class="in">change_log</code> is never touched.</li>
+    <li><strong>Broadcaster</strong> (<span class="fl">broadcast.go:38</span>) is the in-process fan-out the FE transport will subscribe to; WS/SSE wiring is intentionally deferred.</li>
+  </ul>
+
+  <h3>Composition root</h3>
+  <p><span class="fl">main.go</span>, <span class="fl">cdc_wiring.go</span>, and <span class="fl">lifecycle_wiring.go</span> stand up the publisher/consumer/janitor/broadcaster and construct the LCM with durable escalation (<code class="in">WithReactionStore</code>) and a session lister (<code class="in">WithSessionLister(store.ListAll)</code>). Three collaborators are honestly stubbed with <code class="in">TODO(daemon-lane)</code> markers: <code class="in">noopNotifier</code>, <code class="in">noopMessenger</code>, and an empty <code class="in">reaper.MapRegistry{}</code> — each safe only because a no-op there drops an outbound side-effect rather than faking success.</p>
+</section>
+
+<!-- 3 -->
+<section id="why">
+  <h2><span class="num">03</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z"/><path d="M9 21h6"/></svg> Motivation</h2>
+  <p>The PR body states the goal plainly:</p>
+  <div class="card" style="border-left:3px solid var(--blue)">
+    <p style="margin:0;color:var(--t1)">"Replaces the in-memory <code class="in">fakeStore</code> with the two real outbound adapters the Go backend needs to persist and deliver session state."</p>
+  </div>
+  <p>The deeper motive is inferable from the rewrite's shape. The existing AO keeps session state as one JSON file per session and holds reaction/escalation budgets in an in-memory map that resets on restart (<span class="fl">lifecycle-manager.ts:498</span>). The rewrite is betting that a single embedded database with a real change stream is a better substrate for the same supervisory loop. Two pain points are called out as fixed:</p>
+  <ul>
+    <li><strong>Durable escalation.</strong> The PR explicitly fixes "the in-memory-only behaviour that re-fired human pages after a daemon bounce" — escalation budgets now survive a restart (<code class="in">reaction_trackers</code>).</li>
+    <li><strong>A live delivery seam.</strong> The CDC stream + <code class="in">Broadcaster</code> is positioned as the single seam between persistence and live transports (WS/SSE), so the frontend can be built and swapped without touching the pipeline — a cleaner contract than the existing dashboard's 5&nbsp;s SSE poll of <code class="in">/api/sessions</code>.</li>
+  </ul>
+  <p>The author is also explicit about engineering discipline: "stub when the no-op is semantically honest; do not stub when the no-op would lie about success." That distinction (notifier vs. Session Manager) is the right one and worth crediting.</p>
+</section>
+
+<!-- 4 -->
+<section id="correctness">
+  <h2><span class="num">04</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg> Correctness assessment</h2>
+  <p>Findings are ranked by severity. Line anchors were verified against the PR head. <strong>None are merge-blockers for a foundational, transport-deferred PR</strong> — but H1–H3 should be resolved before any live subscriber attaches to the broadcaster.</p>
+
+  <div class="finding high">
+    <div class="fh"><span class="sev high">High</span><span class="fid">H1</span><span class="ft">Broadcaster has no panic recovery; one bad subscriber silently kills all delivery</span></div>
+    <p><code class="in">Publish</code> (<span class="fl">broadcast.go:38</span>) holds the read lock and calls each subscriber callback synchronously in a bare loop. A panic in any <code class="in">fn(e)</code> propagates up through <code class="in">Consumer.Poll</code> into the consumer goroutine and terminates it — after which <em>no further events are delivered to anyone</em>, with no supervisor to restart the loop. The doc comment asks subscribers to "not block," but nothing enforces it: a slow callback (a stalled WS write) stalls the poll loop, delays rotation detection, and backs up the whole pipeline. Wrap each callback in <code class="in">recover()</code>, and give subscribers a bounded buffer with a drop-or-disconnect policy.</p>
+  </div>
+
+  <div class="finding high">
+    <div class="fh"><span class="sev high">High</span><span class="fid">H2</span><span class="ft">Cross-store durability mismatch: fsync'd JSONL vs. synchronous=NORMAL SQLite</span></div>
+    <p>The JSONL log <code class="in">Sync()</code>s every line (<span class="fl">jsonl.go:75</span>), but the database runs <code class="in">synchronous(NORMAL)</code> in WAL mode (<span class="fl">db.go:27</span>), under which a committed transaction can be rolled back on power loss / OS crash (the DB stays consistent, but the last few commits may vanish). Because the publisher fsyncs the event to JSONL <em>and</em> the consumer persists its offset before that commit is guaranteed durable, a hard crash can leave the CDC log and consumer offset <strong>ahead of the recovered <code class="in">change_log</code></strong>. On restart the seq the consumer believes it delivered no longer exists in the DB. It is self-healing only via a rotation-triggered snapshot resync, which may not happen for a long time. Decide this explicitly: either <code class="in">synchronous(FULL)</code> for canonical writes, or treat all canonical state as fully re-derivable and document that the JSONL log is advisory.</p>
+  </div>
+
+  <div class="finding high">
+    <div class="fh"><span class="sev high">High</span><span class="fid">H3</span><span class="ft">Janitor watermark is unsafe for the multi-consumer model the schema advertises</span></div>
+    <p><code class="in">MinConsumerOffset</code> (<span class="fl">cdc_store.go:92</span>) computes <code class="in">MIN(last_seq)</code> only over rows that <em>exist</em> in <code class="in">consumer_offsets</code>. A consumer that has never acked has no row (<code class="in">GetOffset</code> returns 0 without inserting, <span class="fl">cdc_store.go:60</span>), so it is invisible to the MIN. The janitor (<span class="fl">janitor.go:75</span>) then deletes outbox rows below the <em>other</em> consumers' higher watermark — rows the new/restarted consumer never read. Since outbox rows that predate the current JSONL segment are gone from the log too, that consumer can permanently miss events (it only resyncs on rotation). Only one consumer is wired today, so this is latent — but <code class="in">consumer_offsets</code>, the per-consumer cursor, and the comment all promise multi-consumer support. Register each consumer's offset row at startup (seed at its snapshot seq) before it counts toward the watermark.</p>
+  </div>
+
+  <div class="finding med">
+    <div class="fh"><span class="sev med">Medium</span><span class="fid">M1</span><span class="ft">A corrupt JSONL line is permanently dropped, leaving the FE stale until next rotation</span></div>
+    <p><code class="in">processLines</code> (<span class="fl">consumer.go:181</span>) logs and <code class="in">continue</code>s on an unmarshalable line, advancing past it forever. A torn or truncated write (or a future schema mismatch) silently drops that session's update; downstream state stays stale until the next event for that session or a rotation-triggered snapshot. SQLite remains the source of truth so it is eventually consistent, but there is no targeted re-fetch. Consider: on parse failure, fall back to a snapshot resync rather than skip.</p>
+  </div>
+
+  <div class="finding med">
+    <div class="fh"><span class="sev med">Medium</span><span class="fid">M2</span><span class="ft">Metadata writes are invisible to the CDC stream</span></div>
+    <p><code class="in">PatchMetadata</code> (<span class="fl">store.go:98</span>) is intentionally off the canonical path — no revision bump, no <code class="in">change_log</code>/<code class="in">outbox</code> row. That is a defensible choice, but it means a frontend built purely on the CDC stream will <em>never</em> observe <code class="in">branch</code>, <code class="in">workspacePath</code>, or <code class="in">runtimeHandleId</code> changes; those require a separate read API. The snapshot resync also excludes metadata (<code class="in">payload.Metadata = nil</code>, <span class="fl">upsert.go:92</span>). Make sure the FE contract knows metadata is pull-only, or fold a coarse "metadata changed" event onto the stream.</p>
+  </div>
+
+  <div class="finding med">
+    <div class="fh"><span class="sev med">Medium</span><span class="fid">M3</span><span class="ft">Latent referential-integrity gaps (no delete path today, but the schema invites one)</span></div>
+    <p><code class="in">change_log.session_id</code> has no foreign key to <code class="in">sessions</code> (<span class="fl">0001_init.sql:56</span>), and <code class="in">outbox.change_log_seq</code> references <code class="in">change_log(seq)</code> with no <code class="in">ON DELETE</code> action (<span class="fl">0001_init.sql:67</span>). No code deletes sessions or change-log rows in this PR, so nothing is broken now — but a future retention/cleanup job (which this storage layer will eventually need: <code class="in">change_log</code> grows unbounded) would orphan audit rows or hit an FK <code class="in">RESTRICT</code>. Decide the retention story and encode it in constraints before writing the cleanup job.</p>
+  </div>
+
+  <div class="finding low">
+    <div class="fh"><span class="sev low">Low</span><span class="fid">L1</span><span class="ft">Publisher crash between append and MarkSent re-appends a duplicate line (benign)</span></div>
+    <p>If the process dies between <code class="in">log.Append</code> (<span class="fl">publisher.go:103</span>) and <code class="in">MarkSent</code> (<span class="fl">publisher.go:110</span>), the row stays unsent and is re-appended on restart — producing two JSONL lines with the same seq. The consumer's <code class="in">e.Seq &lt;= c.lastSeq</code> idempotency check (<span class="fl">consumer.go:185</span>) drops the duplicate, so this is harmless: correct at-least-once-with-idempotency, exactly as intended. Noting it only to pre-empt a "leak" misreading — the row is not lost, just re-emitted.</p>
+  </div>
+
+  <div class="finding low">
+    <div class="fh"><span class="sev low">Low</span><span class="fid">L2</span><span class="ft">Revision-CAS race is closed only by SetMaxOpenConns(1)</span></div>
+    <p>The check-then-write between <code class="in">GetSessionRevision</code> and <code class="in">InsertSession</code>/<code class="in">UpdateSessionCAS</code> (<span class="fl">upsert.go:48</span>) is a textbook TOCTOU, defused entirely by the single-connection pool (<span class="fl">db.go:44</span>) that serializes all access. The code comments acknowledge this. It is correct today, but the safety lives in one easily-forgotten <code class="in">SetMaxOpenConns(1)</code> line far from the CAS logic; a future pool-size bump for read concurrency would silently reintroduce the race. A conditional <code class="in">UPDATE ... WHERE revision = ?</code> / <code class="in">INSERT ... ON CONFLICT DO NOTHING</code> already makes the write itself atomic — lean on the row-count, not the prior read, as the sole arbiter.</p>
+  </div>
+
+  <div class="finding low">
+    <div class="fh"><span class="sev low">Low</span><span class="fid">L3</span><span class="ft">Byte cursor is in-memory; each restart rescans the whole current segment</span></div>
+    <p>Only <code class="in">lastSeq</code> is persisted; <code class="in">c.cursor</code> resets to 0 on restart (<span class="fl">consumer.go:45</span>), so the consumer re-reads the entire current segment from byte 0 and dedupes by seq. Correct, and bounded by the 1&nbsp;MiB rotation cap, so the cost is small — but worth a comment so a future reader doesn't mistake it for a bug.</p>
+  </div>
+
+  <div class="finding ok">
+    <div class="fh"><span class="sev ok">Solid</span><span class="ft">What's done right</span></div>
+    <p>The Upsert transaction is genuinely atomic and the <code class="in">defer tx.Rollback()</code>-then-return-<code class="in">Commit()</code> shape is idiomatic Go, not a bug. The revision CAS exactly mirrors the prior in-memory contract and is covered by three focused tests. Ordering is preserved by stopping the drain on first append failure rather than skipping ahead. Rotation-by-rename (not truncate-in-place) is the right call for reliable <code class="in">os.SameFile</code> detection. The stub/no-stub discipline is exemplary.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="integrity">
+  <h2><span class="num">05</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg> Data-integrity specifics — SQLite + CDC</h2>
+
+  <h3>Schema &amp; migrations</h3>
+  <p>One goose migration (<span class="fl">0001_init.sql</span>) with six tables: <code class="in">sessions</code> (typed canonical columns; status never stored), <code class="in">session_metadata</code> (KV, cascade-on-delete), <code class="in">change_log</code> (autoincrement seq — the CDC ordering/idempotency key), <code class="in">outbox</code> (one unsent row per write, partial index <code class="in">WHERE sent = 0</code>), <code class="in">consumer_offsets</code>, and <code class="in">reaction_trackers</code>. Migrations run embedded via <code class="in">goose.Up</code> at <code class="in">Open</code> (<span class="fl">db.go:59</span>). There is a clean <code class="in">+goose Down</code>. <strong>Gap:</strong> only one migration exists, so the forward-compatibility story (additive columns, never-rewrite-history) is unproven — the first schema change will exercise it.</p>
+
+  <h3>Write ordering &amp; transaction boundaries</h3>
+  <p>The canonical write is correctly a <em>single</em> transaction spanning session + change_log + outbox (<span class="fl">upsert.go:26–43</span>), so a reader can never see a session row without its outbox row, and the publisher can never see a half-written event. The outbox sequence is the <code class="in">change_log.seq</code> autoincrement, giving a total order. The publisher drains in seq order and refuses to advance past a failed append, preserving that order downstream.</p>
+
+  <h3>Durability &amp; WAL</h3>
+  <p>WAL + <code class="in">synchronous=NORMAL</code> is the standard high-throughput SQLite posture and is fine for re-derivable state — but see <strong>H2</strong>: it is in tension with the per-line-fsync'd JSONL log. There is no explicit checkpoint policy (relying on SQLite's automatic 1000-page WAL checkpoint); under a write-heavy supervisory loop the WAL can grow between checkpoints, and a crash mid-checkpoint is safe but the lost-commit window is real. <code class="in">busy_timeout(5000)</code> + <code class="in">SetMaxOpenConns(1)</code> means writers serialize cleanly and <code class="in">SQLITE_BUSY</code> is effectively impossible for the single writer; readers share the WAL.</p>
+
+  <h3>Idempotency</h3>
+  <p>Strong on the consumer side: every event carries its <code class="in">seq</code> and the consumer drops anything <code class="in">&lt;= lastSeq</code> (<span class="fl">consumer.go:185</span>), so duplicate JSONL lines (L1) and full-segment rescans (L3) are absorbed. The transactional outbox guarantees the DB write and the intent-to-publish commit together, so an event is never published without being persisted. The one asterisk is H2's cross-store ordering under power loss.</p>
+
+  <h3>Replay / recovery</h3>
+  <p>Recovery is snapshot-based: on a detected rotation gap the consumer rebuilds full current state from <code class="in">store.ListAll</code> (<span class="fl">consumer.go:195</span>) and resumes from <code class="in">MAX(change_log.seq)</code>. This is a clean, bounded recovery — but it is the <em>only</em> recovery, and it fires only on rotation. There is no mechanism to replay a specific missed seq range, so the corrupt-line case (M1) and the missed-consumer case (H3) wait for the next rotation to self-heal.</p>
+
+  <h3>Backpressure</h3>
+  <p>This is the weakest area. The <code class="in">Broadcaster</code> fan-out is synchronous and unbounded (<span class="fl">broadcast.go:38</span>): there is no per-subscriber queue, no buffer, no drop policy, and no timeout. A slow subscriber applies backpressure all the way to the consumer poll loop, and a panicking one stops it (H1). The publisher's 256-row batch (<span class="fl">publisher.go:13</span>) bounds outbox drain per tick, and the janitor bounds outbox growth — but only once a consumer is acking. Until a real transport exists with its own buffering, the backpressure contract is "subscribers must be instant and infallible," which is not a contract a network transport can keep.</p>
+</section>
+
+<!-- 6 -->
+<section id="tests">
+  <h2><span class="num">06</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg> Test coverage gaps</h2>
+  <p>Coverage of the happy path and the headline guarantees is good — 16 tests across storage, CDC, lifecycle parity, reaction durability, and the wiring adapters. What's tested well:</p>
+  <ul>
+    <li><strong>Storage:</strong> revision bump on insert→update, stale-revision mismatch, non-zero-insert rejection, outbox atomicity + ordering, get/list round-trip, metadata side-channel, detecting round-trip, missing-row handling (<span class="fl">store_test.go</span>, 8 tests).</li>
+    <li><strong>CDC:</strong> end-to-end publish→consume, consumer-restart-skips-delivered, rotation-triggers-resync (<span class="fl">cdc_integration_test.go</span>, 3 tests).</li>
+    <li><strong>Lifecycle:</strong> store parity vs. the old contract, reaction durability across restart + clear-on-incident-over (<span class="fl">manager_parity_test.go</span>, <span class="fl">reaction_durability_test.go</span>).</li>
+  </ul>
+  <p>The gaps cluster, predictably, around the failure edges the correctness findings name:</p>
+  <table>
+    <thead><tr><th>Untested behavior</th><th>Why it matters</th><th>Ref</th></tr></thead>
+    <tbody>
+      <tr><td>Janitor sweep</td><td>No test exists for <code class="in">MinConsumerOffset</code>/<code class="in">DeleteSentOutboxBelow</code> at all — including the "never delete an unacked row" invariant and the empty/new-consumer watermark (H3).</td><td><span class="fl">janitor.go</span></td></tr>
+      <tr><td>Broadcaster</td><td>No test for fan-out, unsubscribe, a <strong>panicking</strong> subscriber (H1), or a slow one. The most fragile component is the least tested.</td><td><span class="fl">broadcast.go</span></td></tr>
+      <tr><td>Multi-consumer</td><td>No test with two named consumers / a consumer joining late, despite <code class="in">consumer_offsets</code> being keyed for it.</td><td>H3</td></tr>
+      <tr><td>Corrupt / torn line</td><td>No test that a malformed JSONL line is handled without dropping subsequent state (M1).</td><td><span class="fl">consumer.go:181</span></td></tr>
+      <tr><td>Publisher crash window</td><td>No test for the append-then-crash duplicate (L1) — worth a test that asserts seq-idempotency absorbs it.</td><td><span class="fl">publisher.go:103</span></td></tr>
+      <tr><td>Durability / power loss</td><td>Hard to unit-test, but the NORMAL-vs-FULL decision (H2) deserves at least a documented rationale and a crash-injection integration test.</td><td>H2</td></tr>
+      <tr><td>PatchMetadata concurrency</td><td>Last-write-wins behavior of overlapping metadata patches is unverified.</td><td><span class="fl">store.go:98</span></td></tr>
+    </tbody>
+  </table>
+  <p>The PR's own test plan claims "CDC ordering + idempotency, rotation/resync, janitor vacuum" are covered — but I find <strong>no janitor test in the diff</strong>, so that line is aspirational. Worth reconciling before merge.</p>
+</section>
+
+<!-- 7 -->
+<section id="capability">
+  <h2><span class="num">07</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="13" y="6" width="3" height="12"/></svg> Capability comparison vs existing AO</h2>
+  <p>"Existing AO" = <span class="fl">AgentWrapper/agent-orchestrator</span> (TypeScript, in production). "Rewrite" = <span class="fl">aoagents/agent-orchestrator</span> main with PR&nbsp;#37 applied. These are independent projects, not forks — the comparison is of capability, not of a diff.</p>
+  <table class="cap">
+    <thead><tr><th style="width:18%">Capability</th><th style="width:30%">Existing AO</th><th style="width:30%">Rewrite (post-PR-37)</th><th style="width:22%">Gap notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Session metadata storage</td>
+        <td class="exist">Flat JSON, one file per session under <code class="in">~/.agent-orchestrator/projects/&lt;id&gt;/sessions/</code>; atomic temp-write + rename, per-session <code class="in">.lock</code> (<span class="fl">metadata.ts</span>, <span class="fl">atomic-write.ts</span>)</td>
+        <td>SQLite, typed columns + KV metadata table, ACID transactions, optimistic-concurrency revision CAS (<span class="fl">upsert.go</span>)</td>
+        <td><span class="tag yes">rewrite ahead</span> ACID + queryability beats N JSON files; rewrite lacks the project-dir sharding &amp; archive layout AO has.</td>
+      </tr>
+      <tr>
+        <td>Change / event stream</td>
+        <td>None as a durable log — dashboard polls <code class="in">/api/sessions</code> (SSE, 5&nbsp;s) and diffs in memory</td>
+        <td>Durable transactional-outbox → JSONL → seq-idempotent consumer → broadcaster (<span class="fl">internal/cdc</span>)</td>
+        <td><span class="tag yes">rewrite ahead</span> A real CDC stream is a genuinely better delivery substrate — but no transport consumes it yet.</td>
+      </tr>
+      <tr>
+        <td>Lifecycle state machine</td>
+        <td>8 canonical states + 17 reasons, 30&nbsp;s polling loop drives transitions, <code class="in">deriveLegacyStatus</code> mapping; probe pipeline is sole terminal authority (<span class="fl">lifecycle-manager.ts</span>)</td>
+        <td>Equivalent canonical model as pure deciders (session/PR/runtime/activity axes) + anti-flap "detecting" quarantine; LCM is a synchronous reducer fed by external observers</td>
+        <td><span class="tag partial">parity-ish</span> Rewrite's pure-decider + per-session-lock design is cleaner; but no SCM poller feeds it facts yet.</td>
+      </tr>
+      <tr>
+        <td>Escalation durability</td>
+        <td><strong>In-memory map</strong>, resets on restart (only <code class="in">ci-failed</code> persists across status flaps, in memory)</td>
+        <td><strong>Durable</strong> <code class="in">reaction_trackers</code> table — survives a daemon bounce</td>
+        <td><span class="tag yes">rewrite ahead</span> Directly fixes a real AO defect (re-paging after restart).</td>
+      </tr>
+      <tr>
+        <td>Plugin system</td>
+        <td>8 slots, ~22 built-in plugins, registry by <code class="in">slot:name</code>, external npm plugins (<span class="fl">plugin-registry.ts</span>, <span class="fl">types.ts</span>)</td>
+        <td>Hexagonal ports (inbound/outbound interfaces); adapters compiled in, not a runtime plugin registry</td>
+        <td><span class="tag no">AO ahead</span> AO's runtime-loadable plugin ecosystem is a major capability the rewrite has not reproduced.</td>
+      </tr>
+      <tr>
+        <td>Runtime / workspace isolation</td>
+        <td>tmux + process runtimes; worktree + clone workspaces; Windows pty-host registry (<span class="fl">runtime-process</span>)</td>
+        <td>tmux + zellij runtimes, git-worktree workspace adapters exist — but reaper registry is <strong>empty</strong> in this PR's wiring</td>
+        <td><span class="tag partial">parity-ish</span> Adapters exist on main; PR #37 leaves them unregistered (correct for a storage PR). No <code class="in">process</code> runtime / Windows pty path.</td>
+      </tr>
+      <tr>
+        <td>SCM slot</td>
+        <td>GitHub + GitLab: PR/CI/review/merge, batch GraphQL enrichment (<span class="fl">scm-github</span>)</td>
+        <td><code class="in">SCMFacts</code> DTO defined; <strong>no poller, no GitHub/GitLab adapter wired</strong></td>
+        <td><span class="tag no">AO ahead</span> The rewrite's LCM expects SCM facts pushed in; nothing produces them yet.</td>
+      </tr>
+      <tr>
+        <td>Tracker slot</td>
+        <td>GitHub Issues, Linear, GitLab (<span class="fl">tracker-*</span>)</td>
+        <td>Not present</td>
+        <td><span class="tag no">AO ahead</span> No issue-tracking integration in the rewrite.</td>
+      </tr>
+      <tr>
+        <td>Notifier slot</td>
+        <td>desktop, Slack, Discord, webhook, Composio, OpenClaw, dashboard; priority routing (<span class="fl">notifier-*</span>)</td>
+        <td><code class="in">noopNotifier{}</code> — events silently dropped (honestly stubbed)</td>
+        <td><span class="tag no">AO ahead</span> Zero notification delivery in the rewrite today.</td>
+      </tr>
+      <tr>
+        <td>Dashboard</td>
+        <td>Next.js 15 + React 19, xterm.js terminals over WS, SSE session feed, kanban + detail (<span class="fl">packages/web</span>)</td>
+        <td>Electron shell loads <code class="in">about:blank</code>; broadcaster ready, but no WS/SSE routes, no UI</td>
+        <td><span class="tag no">AO ahead</span> The entire product surface is absent in the rewrite.</td>
+      </tr>
+      <tr>
+        <td>Cross-platform support</td>
+        <td>First-class Win/macOS/Linux: centralized <code class="in">isWindows()</code> helpers, <code class="in">killProcessTree</code>, atomic-write retries, pty-host registry (<span class="fl">platform.ts</span>)</td>
+        <td>Unix/Windows process-detection split in <span class="fl">runfile/</span>; pure-Go SQLite cross-compiles cleanly; no process-teardown / shell-abstraction layer yet</td>
+        <td><span class="tag partial">parity-ish</span> Go + modernc gives clean cross-compile; but AO's hard-won Windows process/pty handling has no rewrite equivalent.</td>
+      </tr>
+      <tr>
+        <td>Observability</td>
+        <td>Structured traces, health surfaces, metric counters, per-session activity JSONL, notification-delivery records (<span class="fl">observability.ts</span>)</td>
+        <td><code class="in">slog</code> structured logs + request-id middleware; CDC stream is itself an audit log; no metrics/health surfaces</td>
+        <td><span class="tag partial">parity-ish</span> CDC <code class="in">change_log</code> is a strong audit primitive AO lacks; but no metrics/trace/health layer yet.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="disc">Net read: on the <em>storage substrate itself</em> the rewrite is ahead — ACID, durable escalation, a real change stream — and PR #37 is the reason. On everything that turns a substrate into a product (plugins, SCM, notifiers, dashboard, cross-platform process management), the existing AO is far ahead. This PR is a strong foundation stone, not a competitive product increment.</p>
+</section>
+
+<!-- 8 -->
+<section id="decisions">
+  <h2><span class="num">08</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3v6a3 3 0 003 3h6a3 3 0 003-3V3"/><path d="M12 12v9"/><circle cx="12" cy="3" r="0"/></svg> Major design decisions + alternatives</h2>
+
+  <div class="card">
+    <h3 style="margin-top:0">D1 · Transactional outbox + JSONL CDC, with the DB (not the log) as source of truth</h3>
+    <p><strong>The bet:</strong> persist intent-to-publish atomically with the state write, then drain asynchronously; treat the log as a disposable transport and rebuild from a DB snapshot on any gap.</p>
+    <p><strong>Alternatives:</strong> (a) <em>Poll the DB directly</em> from each transport — simpler, no log/janitor/rotation machinery, but loses the clean push seam and re-introduces polling latency. (b) <em>SQLite <code class="in">update_hook</code> / session extension</em> — native CDC, but CGO-only (kills the pure-Go cross-compile) and process-local. (c) <em>Tail the WAL</em> — zero extra writes, but couples you to SQLite internals. <strong>Trade-off:</strong> the chosen design buys a transport-agnostic seam and durable ordering at the cost of three moving parts (publisher/consumer/janitor) and the cross-store durability question (H2). Reasonable for a product that wants pluggable live transports; heavier than a single-consumer app needs.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">D2 · <code class="in">modernc.org/sqlite</code> (pure Go) over <code class="in">mattn/go-sqlite3</code> (CGO)</h3>
+    <p><strong>The bet:</strong> a 3-OS binary that cross-compiles with no C toolchain is worth a performance and maturity trade.</p>
+    <p><strong>Alternatives:</strong> CGO <code class="in">mattn</code> is faster and battle-tested but needs a cross-compile toolchain per target; an embedded server DB (Postgres-in-a-box, <code class="in">rqlite</code>) is overkill for a local sidecar; <code class="in">bbolt</code>/embedded-KV is simpler but loses SQL and migrations. <strong>Trade-off:</strong> right call for a distributable desktop daemon — but validate modernc's WAL + <code class="in">synchronous</code> semantics match the C library's (the durability story in H2 hinges on it behaving exactly like upstream SQLite).</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">D3 · Single writer (<code class="in">SetMaxOpenConns(1)</code>) + optimistic revision CAS</h3>
+    <p><strong>The bet:</strong> serialize all DB access through one connection and use the revision column as the concurrency arbiter — simple, and it sidesteps WAL's single-writer rule entirely.</p>
+    <p><strong>Alternatives:</strong> a small writer pool with retry-on-<code class="in">SQLITE_BUSY</code> (more read concurrency, but reintroduces the CAS race L2 unless the write is made self-arbitrating); pessimistic <code class="in">BEGIN IMMEDIATE</code> locks (clearer intent, more contention). <strong>Trade-off:</strong> the single-conn choice makes correctness easy to reason about now, but bottlenecks all reads behind the writer and hides the CAS race behind one config line. If read load ever grows, prefer a read-only second pool over relaxing the writer.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">D4 · Polling consumer (100 ms) rather than fs-notify</h3>
+    <p><strong>The bet:</strong> dependency-free, predictable, sub-human-perceptible latency.</p>
+    <p><strong>Alternatives:</strong> <code class="in">fsnotify</code> (lower latency, but adds a CGO-ish dep and cross-platform edge cases) or an in-process channel push from publisher to consumer (no file round-trip at all — but then the JSONL log is pure durability, not the transport). <strong>Trade-off:</strong> 100 ms polling is fine for a supervisory UI; the in-process-channel option is worth considering since publisher and consumer already share a process — it would also sidestep the torn-read (M1) and rescan (L3) concerns.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">D5 · Metadata off the canonical/CDC path</h3>
+    <p><strong>The bet:</strong> high-churn, low-stakes fields (branch, paths) shouldn't bump revision or generate events.</p>
+    <p><strong>Alternatives:</strong> fold metadata into the canonical record (uniform stream, but noisier CDC and revision churn) or emit a separate lightweight <code class="in">metadata_changed</code> event (FE sees changes without polluting the canonical seq). <strong>Trade-off:</strong> the current split keeps the canonical stream clean but creates a two-channel read model (M2) the FE must understand. Acceptable if documented; a foot-gun if not.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">D6 · In-process synchronous <code class="in">Broadcaster</code> fan-out</h3>
+    <p><strong>The bet:</strong> a minimal seam now; let each transport add its own buffering inside its callback.</p>
+    <p><strong>Alternatives:</strong> per-subscriber buffered channels with a drop/disconnect policy (bounded backpressure, slow-subscriber isolation) or a durable per-subscriber queue (survives transport reconnect). <strong>Trade-off:</strong> the current design is the smallest thing that compiles, but it pushes all backpressure and fault-isolation onto subscribers that don't exist yet — and as written, one panicking subscriber halts delivery (H1). Add <code class="in">recover()</code> + a bounded buffer before the first real transport lands.</p>
+  </div>
+</section>
+
+<!-- 9 -->
+<section id="recs">
+  <h2><span class="num">09</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2a7 7 0 014 12.7V17H8v-2.3A7 7 0 0112 2z"/><path d="M9 21h6M10 17v4M14 17v4"/></svg> Recommended improvements</h2>
+
+  <h3>PR-level (before this lands, or as immediate follow-ups)</h3>
+  <ul style="list-style:none;padding-left:0">
+    <li><span class="prio p0">P0</span> Wrap each broadcaster callback in <code class="in">recover()</code> and give subscribers a bounded buffer with an explicit drop/disconnect policy (H1, D6). This is the one defect that can silently stop the whole pipeline.</li>
+    <li><span class="prio p0">P0</span> Add a janitor test suite — watermark math, "never delete an unacked row," and the empty/late-consumer case (H3). The PR claims janitor coverage that the diff does not contain.</li>
+    <li><span class="prio p1">P1</span> Resolve the cross-store durability question (H2): either <code class="in">synchronous(FULL)</code> on the canonical path, or a written guarantee that all canonical state is re-derivable and the JSONL log is advisory. Add a crash-injection integration test.</li>
+    <li><span class="prio p1">P1</span> Seed each consumer's offset row at startup (at its snapshot seq) so it counts toward the janitor watermark before it can lose events (H3).</li>
+    <li><span class="prio p1">P1</span> On a corrupt/unparseable line, trigger a snapshot resync instead of skipping forever (M1); add a malformed-line test.</li>
+    <li><span class="prio p2">P2</span> Make the revision write self-arbitrating (rely on row-count from <code class="in">WHERE revision = ?</code>, not the prior read) so L2 doesn't depend on <code class="in">SetMaxOpenConns(1)</code>; add a comment binding the two.</li>
+    <li><span class="prio p2">P2</span> Document the two-channel read model (canonical CDC vs. pull-only metadata) in the ports doc (M2). Persist or comment the in-memory byte cursor (L3).</li>
+  </ul>
+
+  <h3>Rewrite-level (program-wide)</h3>
+  <ul style="list-style:none;padding-left:0">
+    <li><span class="prio p0">P0</span> Define and implement a <code class="in">change_log</code>/outbox <strong>retention policy</strong> before the table grows unbounded; encode it in FK constraints (M3) so the cleanup job can't orphan rows.</li>
+    <li><span class="prio p1">P1</span> Stand up the first real CDC consumer (a WS/SSE transport) — it is the only thing that will exercise backpressure, multi-consumer, and the broadcaster contract under real conditions. Much of this review is theoretical until a transport subscribes.</li>
+    <li><span class="prio p1">P1</span> Build the SCM-facts producer (poller) — the LCM is a reducer waiting for facts that nothing currently emits; without it the durable lifecycle never transitions in production.</li>
+    <li><span class="prio p2">P2</span> Decide whether the runtime-loadable plugin ecosystem (AO's biggest capability lead) is a goal; if so, the compiled-in adapter model needs a registry/discovery story.</li>
+    <li><span class="prio p2">P2</span> Port AO's Windows process-teardown / pty lessons before the <code class="in">process</code> runtime lands — it is the area AO paid the most to get right.</li>
+    <li><span class="prio p2">P2</span> Add a metrics/health surface; the <code class="in">change_log</code> already gives you a free audit trail to build dashboards on.</li>
+  </ul>
+</section>
+
+<!-- 10 -->
+<section id="questions">
+  <h2><span class="num">10</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 .2c0 1.7-2.5 2-2.5 3.8"/><path d="M12 17h.01"/></svg> Open questions for the rewrite author</h2>
+  <div class="qlist">
+    <div class="q"><p>Is <code class="in">synchronous=NORMAL</code> a deliberate choice with the understanding that the fsync'd JSONL log can outrun the recovered DB on power loss (H2)? What is the intended durability contract — re-derivable-everything, or no-lost-commits?</p></div>
+    <div class="q"><p>Is multi-consumer a real near-term goal, or is <code class="in">consumer_offsets</code> keyed defensively? The janitor watermark (H3) is only safe for the single-consumer case as written — which is it designed for?</p></div>
+    <div class="q"><p>What is the retention plan for <code class="in">change_log</code> and <code class="in">outbox</code>? Both grow unbounded today; the FK shape (M3) needs to know whether sessions/log rows are ever hard-deleted.</p></div>
+    <div class="q"><p>Will the first transport buffer inside its broadcaster callback, or should the broadcaster own per-subscriber queues? The "subscribers must not block" contract (D6) is unenforceable for a network transport.</p></div>
+    <div class="q"><p>How does the frontend learn about metadata changes (branch, workspacePath) given they never hit the CDC stream (M2)? Is there a planned read API, or should metadata move onto the stream?</p></div>
+    <div class="q"><p>The PR's test plan lists "janitor vacuum" as covered, but I find no janitor test in the diff. Was it dropped, or is it expected in a follow-up?</p></div>
+    <div class="q"><p>Is the compiled-in adapter model the intended end state, or a stepping stone toward something like AO's runtime plugin registry? It shapes how SCM/tracker/notifier slots get wired.</p></div>
+  </div>
+</section>
+
+<footer>
+  Review of aoagents/agent-orchestrator PR #37 (feat/sqlite-storage-cdc) · generated against PR head · line anchors verified · advisory only — not posted to the PR.
+</footer>
+</div>
+</body>
+</html>
