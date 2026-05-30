@@ -12,9 +12,40 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isWindows } from "@aoagents/ao-core";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scriptPath = join(packageRoot, "src", "assets", "scripts", "ao-update.sh");
+const buildOutputSentinels = [
+  "packages/core/dist/index.js",
+  "packages/cli/dist/index.js",
+  "packages/web/.next/BUILD_ID",
+  "packages/plugins/agent-aider/dist/index.js",
+  "packages/plugins/agent-claude-code/dist/index.js",
+  "packages/plugins/agent-codex/dist/index.js",
+  "packages/plugins/agent-cursor/dist/index.js",
+  "packages/plugins/agent-grok/dist/index.js",
+  "packages/plugins/agent-kimicode/dist/index.js",
+  "packages/plugins/agent-opencode/dist/index.js",
+  "packages/plugins/notifier-composio/dist/index.js",
+  "packages/plugins/notifier-dashboard/dist/index.js",
+  "packages/plugins/notifier-desktop/dist/index.js",
+  "packages/plugins/notifier-discord/dist/index.js",
+  "packages/plugins/notifier-openclaw/dist/index.js",
+  "packages/plugins/notifier-slack/dist/index.js",
+  "packages/plugins/notifier-webhook/dist/index.js",
+  "packages/plugins/runtime-process/dist/index.js",
+  "packages/plugins/runtime-tmux/dist/index.js",
+  "packages/plugins/scm-github/dist/index.js",
+  "packages/plugins/scm-gitlab/dist/index.js",
+  "packages/plugins/terminal-iterm2/dist/index.js",
+  "packages/plugins/terminal-web/dist/index.js",
+  "packages/plugins/tracker-github/dist/index.js",
+  "packages/plugins/tracker-gitlab/dist/index.js",
+  "packages/plugins/tracker-linear/dist/index.js",
+  "packages/plugins/workspace-clone/dist/index.js",
+  "packages/plugins/workspace-worktree/dist/index.js",
+];
 
 function writeExecutable(path: string, content: string): void {
   writeFileSync(path, content);
@@ -23,6 +54,14 @@ function writeExecutable(path: string, content: string): void {
 
 function createFakeBinary(binDir: string, name: string, body: string): void {
   writeExecutable(join(binDir, name), `#!/bin/bash\nset -e\n${body}\n`);
+}
+
+function createBuildOutputs(repoRoot: string): void {
+  for (const sentinel of buildOutputSentinels) {
+    const path = join(repoRoot, sentinel);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "");
+  }
 }
 
 describe("ao-update.sh", () => {
@@ -92,7 +131,7 @@ esac\nexit 0`,
   // Bash-script tests skipped on Windows: spawnSync("bash", ...) requires bash
   // which isn't guaranteed without Git for Windows. The Windows code path uses
   // detectWindowsBash() at runtime, exercised separately.
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "syncs the fork with upstream via gh and fast-forwards the local checkout from upstream",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-upstream-script-"));
@@ -162,20 +201,22 @@ esac\nexit 0`,
     },
   );
 
-  it.skipIf(process.platform === "win32")("uses forced npm link so stale global ao shims are overwritten", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
-    const fakeRepo = join(tempRoot, "repo");
-    mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
-    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
+  it.skipIf(isWindows())(
+    "uses forced npm link so stale global ao shims are overwritten",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-shim-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+      mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
 
-    const binDir = join(tempRoot, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const commandLog = join(tempRoot, "commands.log");
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
 
-    createFakeBinary(
-      binDir,
-      "git",
-      `case "$*" in
+      createFakeBinary(
+        binDir,
+        "git",
+        `case "$*" in
   "remote get-url upstream") exit 1 ;;
   "rev-parse --is-inside-work-tree") printf 'true\n' ;;
   "status --porcelain") ;;
@@ -186,90 +227,94 @@ esac\nexit 0`,
   "pull --ff-only origin main") ;;
 esac
 exit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "pnpm",
-      `if [ "$1" = "--version" ]; then printf '9.15.4\n'; fi
+      );
+      createFakeBinary(
+        binDir,
+        "pnpm",
+        `if [ "$1" = "--version" ]; then printf '9.15.4\n'; fi
 exit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "npm",
-      `printf 'npm %s\n' "$*" >> ${JSON.stringify(commandLog)}
+      );
+      createFakeBinary(
+        binDir,
+        "npm",
+        `printf 'npm %s\n' "$*" >> ${JSON.stringify(commandLog)}
 if [ "$*" = "link" ]; then
   printf 'npm error code EEXIST\n' >&2
   exit 1
 fi
 exit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "node",
-      `if [ "$1" = "--version" ]; then printf 'v20.11.1\n'; fi
+      );
+      createFakeBinary(
+        binDir,
+        "node",
+        `if [ "$1" = "--version" ]; then printf 'v20.11.1\n'; fi
 exit 0`,
-    );
+      );
 
-    const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
-        AO_REPO_ROOT: fakeRepo,
-      },
-      encoding: "utf8",
-    });
+      const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
 
-    const commands = existsSync(commandLog) ? readFileSync(commandLog, "utf8") : "";
-    rmSync(tempRoot, { recursive: true, force: true });
+      const commands = existsSync(commandLog) ? readFileSync(commandLog, "utf8") : "";
+      rmSync(tempRoot, { recursive: true, force: true });
 
-    expect(result.status).toBe(0);
-    expect(commands).toContain("npm link --force");
-    expect(commands).not.toContain("npm link\n");
-    expect(result.stdout).not.toContain("Permission denied");
-  });
+      expect(result.status).toBe(0);
+      expect(commands).toContain("npm link --force");
+      expect(commands).not.toContain("npm link\n");
+      expect(result.stdout).not.toContain("Permission denied");
+    },
+  );
 
-  it.skipIf(process.platform === "win32")("runs the built-in smoke commands in smoke-only mode", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
-    const fakeRepo = join(tempRoot, "repo");
-    mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
-    writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
+  it.skipIf(isWindows())(
+    "runs the built-in smoke commands in smoke-only mode",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
+      writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
 
-    const binDir = join(tempRoot, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const commandLog = join(tempRoot, "commands.log");
-    createFakeBinary(
-      binDir,
-      "node",
-      `if [ "$1" = "--version" ]; then printf 'v20.11.1\\n'; fi
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
+      createFakeBinary(
+        binDir,
+        "node",
+        `if [ "$1" = "--version" ]; then printf 'v20.11.1\\n'; fi
 printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}
 exit 0`,
-    );
+      );
 
-    const result = spawnSync("bash", [scriptPath, "--smoke-only"], {
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
-        AO_REPO_ROOT: fakeRepo,
-      },
-      encoding: "utf8",
-    });
+      const result = spawnSync("bash", [scriptPath, "--smoke-only"], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
 
-    const commands = readFileSync(commandLog, "utf8");
-    rmSync(tempRoot, { recursive: true, force: true });
+      const commands = readFileSync(commandLog, "utf8");
+      rmSync(tempRoot, { recursive: true, force: true });
 
-    expect(result.status).toBe(0);
-    expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} --version`,
-    );
-    expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} doctor --help`,
-    );
-    expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} update --help`,
-    );
-  });
+      expect(result.status).toBe(0);
+      expect(commands).toContain(
+        `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} --version`,
+      );
+      expect(commands).toContain(
+        `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} doctor --help`,
+      );
+      expect(commands).toContain(
+        `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} update --help`,
+      );
+    },
+  );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(isWindows())(
     "resolves the source checkout root when AO_REPO_ROOT is unset",
     () => {
       const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-root-detect-"));
@@ -352,23 +397,32 @@ exit 0`,
     expect(result.stderr).toContain("commit or stash");
   });
 
-  it.skipIf(process.platform === "win32")("skips rebuild but still runs smoke tests when local HEAD matches remote HEAD", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-already-latest-"));
-    const fakeRepo = join(tempRoot, "repo");
-    mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
-    mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
-    writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
+  it.skipIf(isWindows())(
+    "skips rebuild but still runs smoke tests when local HEAD matches remote HEAD and the build is fresh",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-already-latest-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+      mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
+      writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
 
-    const binDir = join(tempRoot, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const commandLog = join(tempRoot, "commands.log");
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
 
-    const sha = "abc123def456abc123def456abc123def456abc123";
+      const sha = "abc123def456abc123def456abc123def456abc123";
 
-    createFakeBinary(
-      binDir,
-      "git",
-      `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}
+      // Build is fresh: the output exists and the marker records the current HEAD,
+      // so the rebuild should be skipped even though the script no longer relies on
+      // the SHA having advanced.
+      createBuildOutputs(fakeRepo);
+      mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
+      writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), `${sha}\n`);
+
+      createFakeBinary(
+        binDir,
+        "git",
+        `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}
 case "$*" in
   "remote get-url upstream") exit 1 ;;
   "rev-parse --is-inside-work-tree") printf 'true\\n' ;;
@@ -380,51 +434,205 @@ case "$*" in
   *) ;;
 esac
 exit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "pnpm",
-      `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "npm",
-      `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
-    );
-    createFakeBinary(
-      binDir,
-      "node",
-      `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
-    );
+      );
+      createFakeBinary(
+        binDir,
+        "pnpm",
+        `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "npm",
+        `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "node",
+        `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
+      );
 
-    const result = spawnSync("bash", [scriptPath], {
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
-        AO_REPO_ROOT: fakeRepo,
-      },
-      encoding: "utf8",
-    });
+      const result = spawnSync("bash", [scriptPath], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
 
-    const commands = readFileSync(commandLog, "utf8");
-    rmSync(tempRoot, { recursive: true, force: true });
+      const commands = readFileSync(commandLog, "utf8");
+      rmSync(tempRoot, { recursive: true, force: true });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Already on latest version");
-    // Rebuild commands should NOT have run
-    expect(commands).not.toContain("pnpm install");
-    expect(commands).not.toContain("pnpm build");
-    expect(commands).not.toContain("pnpm --filter @aoagents/ao-core build");
-    expect(commands).not.toContain("npm link");
-    expect(commands).not.toContain("git pull --ff-only origin main");
-    // Smoke tests SHOULD still have run
-    expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} --version`,
-    );
-    expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} doctor --help`,
-    );
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Already on latest version");
+      // Rebuild commands should NOT have run
+      expect(commands).not.toContain("pnpm install");
+      expect(commands).not.toContain("pnpm build");
+      expect(commands).not.toContain("pnpm --filter @aoagents/ao-core build");
+      expect(commands).not.toContain("npm link");
+      expect(commands).not.toContain("git pull --ff-only origin main");
+      // Smoke tests SHOULD still have run
+      expect(commands).toContain(
+        `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} --version`,
+      );
+      expect(commands).toContain(
+        `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} doctor --help`,
+      );
+    },
+  );
+
+  it.skipIf(isWindows())(
+    "rebuilds when HEAD matches remote but the build is stale (marker mismatch)",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-stale-build-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+      mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
+      writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
+
+      const sha = "abc123def456abc123def456abc123def456abc123";
+
+      // Dist exists, but it was built from a different commit (e.g. the user ran a
+      // manual `git pull` so HEAD already matches remote, yet dist is from before).
+      createBuildOutputs(fakeRepo);
+      mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
+      writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), "stale000stale000\n");
+
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
+
+      createFakeBinary(
+        binDir,
+        "git",
+        `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}
+case "$*" in
+  "remote get-url upstream") exit 1 ;;
+  "rev-parse --is-inside-work-tree") printf 'true\\n' ;;
+  "status --porcelain") ;;
+  "branch --show-current") printf 'main\\n' ;;
+  "fetch origin main") ;;
+  "rev-parse HEAD") printf '${sha}\\n' ;;
+  "rev-parse origin/main") printf '${sha}\\n' ;;
+  *) ;;
+esac
+exit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "pnpm",
+        `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "npm",
+        `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "node",
+        `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
+      );
+
+      const result = spawnSync("bash", [scriptPath, "--skip-smoke"], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
+
+      try {
+        expect(result.status, result.stderr || result.stdout).toBe(0);
+        const commands = readFileSync(commandLog, "utf8");
+        const markerAfter = readFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), "utf8");
+
+        // No new commits, so no pull — but the stale build must be rebuilt.
+        expect(commands).not.toContain("git pull --ff-only origin main");
+        expect(result.stdout).toContain("Rebuilding");
+        expect(commands).toContain("pnpm install");
+        expect(commands).toContain("pnpm build");
+        expect(commands).toContain("npm link --force");
+        // Marker is updated to the freshly-built HEAD.
+        expect(markerAfter.trim()).toBe(sha);
+      } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows())(
+    "rebuilds on --force-rebuild even when HEAD matches remote and the build is fresh",
+    () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-force-rebuild-"));
+      const fakeRepo = join(tempRoot, "repo");
+      mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+      mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
+      writeFileSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), "#!/usr/bin/env node\n");
+
+      const sha = "abc123def456abc123def456abc123def456abc123";
+
+      // Build is fresh — without --force-rebuild this would be a no-op.
+      createBuildOutputs(fakeRepo);
+      mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
+      writeFileSync(join(fakeRepo, "node_modules", ".ao-build-sha"), `${sha}\n`);
+
+      const binDir = join(tempRoot, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const commandLog = join(tempRoot, "commands.log");
+
+      createFakeBinary(
+        binDir,
+        "git",
+        `printf 'git %s\\n' "$*" >> ${JSON.stringify(commandLog)}
+case "$*" in
+  "remote get-url upstream") exit 1 ;;
+  "rev-parse --is-inside-work-tree") printf 'true\\n' ;;
+  "status --porcelain") ;;
+  "branch --show-current") printf 'main\\n' ;;
+  "fetch origin main") ;;
+  "rev-parse HEAD") printf '${sha}\\n' ;;
+  "rev-parse origin/main") printf '${sha}\\n' ;;
+  *) ;;
+esac
+exit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "pnpm",
+        `printf 'pnpm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf '9.15.4\\n'\nfi\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "npm",
+        `printf 'npm %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0`,
+      );
+      createFakeBinary(
+        binDir,
+        "node",
+        `printf 'node %s\\n' "$*" >> ${JSON.stringify(commandLog)}\nif [ "$1" = "--version" ]; then\n  printf 'v20.11.1\\n'\nfi\nexit 0`,
+      );
+
+      const result = spawnSync("bash", [scriptPath, "--skip-smoke", "--force-rebuild"], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          AO_REPO_ROOT: fakeRepo,
+        },
+        encoding: "utf8",
+      });
+
+      const commands = readFileSync(commandLog, "utf8");
+      rmSync(tempRoot, { recursive: true, force: true });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("forced via --force-rebuild");
+      expect(commands).toContain("pnpm install");
+      expect(commands).toContain("pnpm build");
+      expect(commands).toContain("npm link --force");
+    },
+  );
 
   it("rejects conflicting smoke flags in the script", () => {
     const result = spawnSync("bash", [scriptPath, "--skip-smoke", "--smoke-only"], {

@@ -20,8 +20,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
@@ -33,8 +33,8 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
@@ -55,8 +55,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
@@ -80,8 +80,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20

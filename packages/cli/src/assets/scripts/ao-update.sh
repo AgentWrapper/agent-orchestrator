@@ -4,6 +4,7 @@ set -euo pipefail
 
 SKIP_SMOKE=false
 SMOKE_ONLY=false
+FORCE_REBUILD=false
 TARGET_BRANCH="${AO_UPDATE_BRANCH:-main}"
 
 while [ $# -gt 0 ]; do
@@ -14,16 +15,24 @@ while [ $# -gt 0 ]; do
     --smoke-only)
       SMOKE_ONLY=true
       ;;
+    --force-rebuild)
+      FORCE_REBUILD=true
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: ao update [--skip-smoke] [--smoke-only]
+Usage: ao update [--skip-smoke] [--smoke-only] [--force-rebuild]
 
 Fast-forwards the local Agent Orchestrator install repo to main, installs deps,
 clean-rebuilds all workspace packages, refreshes the ao launcher, and runs smoke tests.
 
+The rebuild runs whenever the compiled output is out of sync with the source at
+the current commit — not only when new commits are pulled. This catches a manual
+`git pull`, a branch switch, an interrupted earlier build, or a manual clean.
+
 Options:
-  --skip-smoke  Skip smoke tests after rebuild
-  --smoke-only  Run smoke tests without fetching or rebuilding
+  --skip-smoke    Skip smoke tests after rebuild
+  --smoke-only    Run smoke tests without fetching or rebuilding
+  --force-rebuild Rebuild even when the build is already up to date
 EOF
       exit 0
       ;;
@@ -72,6 +81,65 @@ if ! REPO_ROOT="$(resolve_repo_root)"; then
   printf 'Unable to find Agent Orchestrator repo root. Fix: run via ao update or set AO_REPO_ROOT.\n' >&2
   exit 1
 fi
+
+# Records the commit the compiled output was last built from. Lives under
+# node_modules (gitignored) so it never dirties the working tree, and is rewritten
+# only after a fully successful build + launcher refresh. Comparing it to HEAD is
+# how we tell "dist is in sync with src at this commit" without fragile mtime checks.
+BUILD_SHA_FILE="$REPO_ROOT/node_modules/.ao-build-sha"
+BUILD_OUTPUT_SENTINELS=(
+  "$REPO_ROOT/packages/core/dist/index.js"
+  "$REPO_ROOT/packages/cli/dist/index.js"
+  "$REPO_ROOT/packages/web/.next/BUILD_ID"
+  "$REPO_ROOT/packages/plugins/agent-aider/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-claude-code/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-codex/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-cursor/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-grok/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-kimicode/dist/index.js"
+  "$REPO_ROOT/packages/plugins/agent-opencode/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-composio/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-dashboard/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-desktop/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-discord/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-openclaw/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-slack/dist/index.js"
+  "$REPO_ROOT/packages/plugins/notifier-webhook/dist/index.js"
+  "$REPO_ROOT/packages/plugins/runtime-process/dist/index.js"
+  "$REPO_ROOT/packages/plugins/runtime-tmux/dist/index.js"
+  "$REPO_ROOT/packages/plugins/scm-github/dist/index.js"
+  "$REPO_ROOT/packages/plugins/scm-gitlab/dist/index.js"
+  "$REPO_ROOT/packages/plugins/terminal-iterm2/dist/index.js"
+  "$REPO_ROOT/packages/plugins/terminal-web/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-github/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-gitlab/dist/index.js"
+  "$REPO_ROOT/packages/plugins/tracker-linear/dist/index.js"
+  "$REPO_ROOT/packages/plugins/workspace-clone/dist/index.js"
+  "$REPO_ROOT/packages/plugins/workspace-worktree/dist/index.js"
+)
+
+read_built_sha() {
+  if [ -f "$BUILD_SHA_FILE" ]; then
+    cat "$BUILD_SHA_FILE" 2>/dev/null || true
+  fi
+}
+
+write_built_sha() {
+  mkdir -p "$(dirname "$BUILD_SHA_FILE")" 2>/dev/null || true
+  printf '%s\n' "$1" > "$BUILD_SHA_FILE" 2>/dev/null || true
+}
+
+all_build_outputs_present() {
+  local sentinel
+  for sentinel in "${BUILD_OUTPUT_SENTINELS[@]}"; do
+    if [ ! -f "$sentinel" ]; then
+      missing_build_output="$sentinel"
+      return 1
+    fi
+  done
+  missing_build_output=""
+  return 0
+}
 
 require_command() {
   local name="$1"
@@ -211,10 +279,32 @@ if [ "$SMOKE_ONLY" = false ]; then
 
   local_sha="$(git rev-parse HEAD)"
   remote_sha="$(git rev-parse "$UPDATE_REMOTE/$TARGET_BRANCH")"
-  if [ "$local_sha" = "$remote_sha" ]; then
-    printf '\nAlready on latest version.\n'
-  else
+  if [ "$local_sha" != "$remote_sha" ]; then
     run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
+    # HEAD moved; rebuild decision below must compare against the new commit.
+    local_sha="$(git rev-parse HEAD)"
+  fi
+
+  # Decide whether to rebuild. Gating purely on "did the SHA advance" misses the
+  # common case where dist is stale at the current commit — a manual git pull, a
+  # branch switch, an interrupted earlier build, or a manual clean. Rebuild when
+  # the user forces it, the output is missing, or it wasn't built from HEAD.
+  built_sha="$(read_built_sha)"
+  missing_build_output=""
+  all_build_outputs_present || true
+  rebuild_reason=""
+  if [ "$FORCE_REBUILD" = true ]; then
+    rebuild_reason="forced via --force-rebuild"
+  elif [ -n "$missing_build_output" ]; then
+    rebuild_reason="build output missing ($missing_build_output)"
+  elif [ "$built_sha" != "$local_sha" ]; then
+    rebuild_reason="build is stale (last built ${built_sha:-unknown}, HEAD is $local_sha)"
+  fi
+
+  if [ -z "$rebuild_reason" ]; then
+    printf '\nAlready on latest version; build is up to date.\n'
+  else
+    printf '\nRebuilding: %s\n' "$rebuild_reason"
     run_cmd pnpm install
 
     run_cmd pnpm -r --if-present clean
@@ -242,6 +332,10 @@ if [ "$SMOKE_ONLY" = false ]; then
     )
 
     ensure_repo_clean "Update modified tracked files. Inspect git status, review the changes, and rerun after restoring a clean checkout if needed."
+
+    # Only reached on a fully successful build + launcher refresh + clean tree.
+    # Recording HEAD here lets the next run skip the rebuild when nothing changed.
+    write_built_sha "$local_sha"
   fi
 fi
 

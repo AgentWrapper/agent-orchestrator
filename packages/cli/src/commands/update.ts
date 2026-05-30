@@ -67,12 +67,17 @@ export function registerUpdate(program: Command): void {
     .description("Check for updates and upgrade AO to the latest version")
     .option("--skip-smoke", "Skip smoke tests after rebuilding (git installs only)")
     .option("--smoke-only", "Run smoke tests without fetching or rebuilding (git installs only)")
+    .option(
+      "--force-rebuild",
+      "Rebuild even when the build is already up to date (git installs only)",
+    )
     .option("--check", "Print version info as JSON without upgrading")
     .option("--no-restore", "Restart AO after updating but do not restore stopped sessions")
     .action(
       async (opts: {
         skipSmoke?: boolean;
         smokeOnly?: boolean;
+        forceRebuild?: boolean;
         check?: boolean;
         restore?: boolean;
       }) => {
@@ -101,8 +106,12 @@ export function registerUpdate(program: Command): void {
         // docs would silently no-op on npm/pnpm/bun installs (the flag would be
         // accepted, ignored, and the user would never know why smoke tests
         // didn't run — because they never ran on these install methods anyway).
-        if ((opts.skipSmoke || opts.smokeOnly) && method !== "git") {
-          const flag = opts.skipSmoke ? "--skip-smoke" : "--smoke-only";
+        if ((opts.skipSmoke || opts.smokeOnly || opts.forceRebuild) && method !== "git") {
+          const flag = opts.skipSmoke
+            ? "--skip-smoke"
+            : opts.smokeOnly
+              ? "--smoke-only"
+              : "--force-rebuild";
           console.error(`${flag} only applies to git installs (current install: ${method}).`);
           process.exit(1);
         }
@@ -341,6 +350,7 @@ function runAoLifecycleCommand(
 async function handleGitUpdate(opts: {
   skipSmoke?: boolean;
   smokeOnly?: boolean;
+  forceRebuild?: boolean;
   restore?: boolean;
 }): Promise<void> {
   const lifecyclePlan = await getUpdateLifecyclePlan();
@@ -349,6 +359,7 @@ async function handleGitUpdate(opts: {
   const args: string[] = [];
   if (opts.skipSmoke) args.push("--skip-smoke");
   if (opts.smokeOnly) args.push("--smoke-only");
+  if (opts.forceRebuild) args.push("--force-rebuild");
 
   try {
     const exitCode = await runRepoScript("ao-update.sh", args);
