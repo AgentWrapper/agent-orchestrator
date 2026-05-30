@@ -24,6 +24,7 @@ vi.mock("../terminal/useFullscreenResize", () => ({
 
 class MockTerminal {
   static loadedAddons: unknown[] = [];
+  static lastOptions: Record<string, unknown> | null = null;
   options: Record<string, unknown>;
   parser = {
     registerCsiHandler: vi.fn(),
@@ -34,6 +35,7 @@ class MockTerminal {
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
+    MockTerminal.lastOptions = options;
   }
 
   loadAddon(addon: unknown) {
@@ -124,6 +126,7 @@ describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
     MockTerminal.loadedAddons = [];
+    MockTerminal.lastOptions = null;
     replaceMock.mockReset();
     useFullscreenResizeMock.mockReset();
     MockWebSocket.instances = [];
@@ -219,6 +222,17 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("enforces a dark-mode contrast floor so low-contrast agent output stays legible", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    // useTheme is mocked to "dark"; the terminal must enforce a contrast floor > 1
+    // so ANSI white-on-white blocks (Claude Code's expanded command) stay readable.
+    await waitFor(() => expect(MockTerminal.lastOptions).not.toBeNull());
+    expect(MockTerminal.lastOptions?.minimumContrastRatio).toBe(4.5);
   });
 
   it("loads the WebGL renderer addon for crisp box-drawing", async () => {

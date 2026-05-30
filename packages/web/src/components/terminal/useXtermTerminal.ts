@@ -102,9 +102,14 @@ export function useXtermTerminal(
           // tall x-height. 1.2 restores visual breathing room between lines.
           lineHeight: 1.2,
           theme: activeTheme,
-          // Light mode needs an explicit contrast floor because agent UIs often emit
-          // dim/faint ANSI sequences that become unreadable on a near-white background.
-          minimumContrastRatio: isDark ? 1 : 7,
+          // Enforce a contrast floor in BOTH themes. Agent TUIs (e.g. Claude
+          // Code's expanded "shell command" block) paint regions on an ANSI
+          // white background; our theme's `white` ≈ `foreground` (#c5ccd3), so
+          // with no floor the text is the same colour as its background and the
+          // block renders as an unreadable grey blob. A floor makes xterm adjust
+          // only the failing foregrounds. Light mode uses a higher floor because
+          // dim/faint sequences wash out on its near-white base. (#grey-blob)
+          minimumContrastRatio: isDark ? 4.5 : 7,
           // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
           // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
           // the available width, causing right-side clipping when the actual
