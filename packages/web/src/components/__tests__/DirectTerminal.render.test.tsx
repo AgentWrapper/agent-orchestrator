@@ -23,6 +23,7 @@ vi.mock("../terminal/useFullscreenResize", () => ({
 }));
 
 class MockTerminal {
+  static loadedAddons: unknown[] = [];
   options: Record<string, unknown>;
   parser = {
     registerCsiHandler: vi.fn(),
@@ -35,7 +36,9 @@ class MockTerminal {
     this.options = options;
   }
 
-  loadAddon() {}
+  loadAddon(addon: unknown) {
+    MockTerminal.loadedAddons.push(addon);
+  }
   open() {}
   write() {}
   refresh() {}
@@ -62,6 +65,11 @@ class MockFitAddon {
 
 function MockWebLinksAddon() {
   return undefined;
+}
+
+class MockWebglAddon {
+  onContextLoss() {}
+  dispose() {}
 }
 
 class MockWebSocket {
@@ -95,6 +103,10 @@ vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: MockWebLinksAddon,
 }));
 
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: MockWebglAddon,
+}));
+
 vi.mock("@/hooks/useMux", () => ({
   useMux: () => ({
     subscribeTerminal: vi.fn(() => vi.fn()),
@@ -111,6 +123,7 @@ vi.mock("@/hooks/useMux", () => ({
 describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
+    MockTerminal.loadedAddons = [];
     replaceMock.mockReset();
     useFullscreenResizeMock.mockReset();
     MockWebSocket.instances = [];
@@ -206,6 +219,19 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("loads the WebGL renderer addon for crisp box-drawing", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    // The addon is loaded rAF-deferred after open(), so wait for it to attach.
+    await waitFor(() =>
+      expect(
+        MockTerminal.loadedAddons.some((addon) => addon instanceof MockWebglAddon),
+      ).toBe(true),
+    );
   });
 
   it("passes projectId to fullscreen resize hook for scoped mux resize", () => {

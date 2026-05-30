@@ -81,9 +81,10 @@ export function useXtermTerminal(
       import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
+      import("@xterm/addon-webgl").then((mod) => mod.WebglAddon),
       document.fonts.ready,
     ])
-      .then(([Terminal, FitAddon, WebLinksAddon]) => {
+      .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
         const isDark = appearance === "dark" || resolvedTheme !== "light";
@@ -125,6 +126,30 @@ export function useXtermTerminal(
 
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+
+        // WebGL renderer. xterm's default DOM renderer cannot tile box-drawing /
+        // block glyphs cleanly across rows (each row is a separate DOM line), so
+        // agent TUIs like Claude Code's bordered panels render with broken edges
+        // regardless of font or lineHeight. The WebGL renderer custom-draws those
+        // glyphs into each cell, so frames connect and shaded regions stay solid.
+        // Loaded rAF-deferred (post-open viewport sync) with a DOM fallback if the
+        // GPU context is lost or WebGL is unavailable (headless, blocklisted GPU).
+        let webglAddon: InstanceType<typeof WebglAddon> | null = null;
+        const webglRaf = requestAnimationFrame(() => {
+          if (!mounted || !terminalInstance.current) return;
+          try {
+            const addon = new WebglAddon();
+            addon.onContextLoss(() => {
+              addon.dispose();
+              webglAddon = null;
+            });
+            terminal.loadAddon(addon);
+            webglAddon = addon;
+          } catch {
+            // WebGL unavailable — xterm keeps using the DOM renderer.
+            webglAddon = null;
+          }
+        });
 
         if (autoFocus) {
           terminal.focus();
@@ -333,6 +358,12 @@ export function useXtermTerminal(
 
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
+          cancelAnimationFrame(webglRaf);
+          try {
+            webglAddon?.dispose();
+          } catch {
+            // addon may already be disposed via context-loss handler
+          }
           resizeObserver?.disconnect();
           dprMedia?.removeEventListener?.("change", handleDprChange);
           cleanupTouchScroll();
