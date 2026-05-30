@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { recordActivityEvent } from "@aoagents/ao-core";
+import { IssueNotSpawnableError, recordActivityEvent } from "@aoagents/ao-core";
 import { validateIdentifier, validateString, validateConfiguredProject } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (err) {
     const { config } = await getServices().catch(() => ({ config: undefined }));
+    const statusCode = err instanceof IssueNotSpawnableError ? 409 : 500;
     if (config) {
       recordApiObservation({
         config,
@@ -111,15 +112,20 @@ export async function POST(request: NextRequest) {
         correlationId,
         startedAt,
         outcome: "failure",
-        statusCode: 500,
+        statusCode,
         projectId: typeof body.projectId === "string" ? body.projectId : undefined,
         reason: err instanceof Error ? err.message : "Failed to spawn session",
-        data: { issueId: body.issueId },
+        data: {
+          issueId: body.issueId,
+          ...(err instanceof IssueNotSpawnableError
+            ? { reason: "issue_not_spawnable", issueState: err.state }
+            : {}),
+        },
       });
     }
     return jsonWithCorrelation(
       { error: err instanceof Error ? err.message : "Failed to spawn session" },
-      { status: 500 },
+      { status: statusCode },
       correlationId,
     );
   }
