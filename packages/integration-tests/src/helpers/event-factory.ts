@@ -52,6 +52,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     branch: "feat/test",
     issueId: null,
     pr: null,
+    prs: [],
     workspacePath: "/tmp/workspace",
     runtimeHandle: null,
     agentInfo: null,

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionCard } from "../SessionCard";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -136,14 +136,11 @@ describe("SessionCard diff coverage", () => {
     );
   });
 
-  it("requests a review from active worker cards", async () => {
-    const onReview = vi.fn(async () => {});
-    render(<SessionCard session={makeSession({ id: "reviewable-1" })} onReview={onReview} />);
+  it("shows a hover-revealed terminal link on active worker cards", () => {
+    render(<SessionCard session={makeSession({ id: "reviewable-1" })} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
-
-    await waitFor(() => {
-      expect(onReview).toHaveBeenCalledWith("reviewable-1");
-    });
+    expect(screen.getByText("terminal").closest("a")).toHaveClass(
+      "session-card__terminal-link",
+    );
   });
 });

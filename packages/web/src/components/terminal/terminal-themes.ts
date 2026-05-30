@@ -3,38 +3,40 @@ import type { ITheme } from "@xterm/xterm";
 export type TerminalVariant = "agent" | "orchestrator";
 
 export function buildTerminalThemes(_variant: TerminalVariant): { dark: ITheme; light: ITheme } {
-  // Orchestrator and agent currently share the design-system accent; the
-  // variant parameter is preserved for API compatibility and future divergence.
+  // Mission-control terminal theme — the frame & xterm theme are ours; the PTY
+  // content is the agent's own ANSI. The 16-color palette is harmonized to the
+  // design tokens (xterm needs concrete hex, so these mirror globals.css). The
+  // cursor is orange — the "an agent is alive" signal — and selection is blue.
   const accent = {
-    cursor: "#5b7ef8",
-    selDark: "rgba(91, 126, 248, 0.30)",
-    selLight: "rgba(91, 126, 248, 0.25)",
+    cursor: "#f59f4c",
+    selDark: "rgba(77, 141, 255, 0.30)",
+    selLight: "rgba(77, 141, 255, 0.25)",
   };
 
   const dark: ITheme = {
-    background: "#0a0a0f",
-    foreground: "#d4d4d8",
+    background: "#0c0d10", // --term
+    foreground: "#c5ccd3",
     cursor: accent.cursor,
-    cursorAccent: "#0a0a0f",
+    cursorAccent: "#0c0d10",
     selectionBackground: accent.selDark,
     selectionInactiveBackground: "rgba(128, 128, 128, 0.2)",
-    // ANSI colors — slightly warmer than pure defaults
-    black: "#1a1a24",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#f59e0b",
-    blue: "#5b7ef8",
-    magenta: "#a371f7",
-    cyan: "#22d3ee",
-    white: "#d4d4d8",
-    brightBlack: "#50506a",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#7b9cfb",
-    brightMagenta: "#c084fc",
-    brightCyan: "#67e8f9",
-    brightWhite: "#eeeef5",
+    // ANSI palette tied to the mission-control tokens
+    black: "#15171b", // --card
+    red: "#ef6b6b", // --red
+    green: "#74b98a", // --green
+    yellow: "#e8c14a", // --amber
+    blue: "#4d8dff", // --blue
+    magenta: "#a78bfa",
+    cyan: "#6fb3c9",
+    white: "#c5ccd3",
+    brightBlack: "#444951", // --t4
+    brightRed: "#ff8a8a",
+    brightGreen: "#8fd6a6",
+    brightYellow: "#f0d06b",
+    brightBlue: "#7eaaff", // --blue-soft
+    brightMagenta: "#c4b0fc",
+    brightCyan: "#8fcfe0",
+    brightWhite: "#f4f5f7", // --t1
   };
 
   const light: ITheme = {

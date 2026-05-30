@@ -71,20 +71,24 @@ export function readUpdateCheckCacheRaw(): UpdateCheckCacheRaw | null {
  * The currently-installed `@aoagents/ao` version.
  *
  * Tries the wrapper package first (the canonical version users see). Falls
- * back to `@aoagents/ao-web` for dev mode where the wrapper isn't always in
- * `node_modules` — the dashboard ships in lockstep with `@aoagents/ao` (the
- * changeset linked group), so the web version is a safe proxy.
+ * back to the CLI package, then `@aoagents/ao-web` for dev mode where the
+ * wrapper isn't always in `node_modules` — these packages ship in lockstep
+ * with `@aoagents/ao` (the changeset linked group), so either is a safe proxy.
  *
  * Final fallback returns `"0.0.0"` so callers always have a string to
  * `isVersionOutdated` against.
  */
 export function getInstalledAoVersion(): string {
   const require = createRequire(fileURLToPath(import.meta.url));
-  const candidates = ["@aoagents/ao/package.json", "@aoagents/ao-web/package.json"];
+  const candidates = [
+    "@aoagents/ao/package.json",
+    "@aoagents/ao-cli/package.json",
+    "@aoagents/ao-web/package.json",
+  ];
   for (const candidate of candidates) {
     try {
       const pkg = require(candidate) as { version?: unknown };
-      if (typeof pkg.version === "string") return pkg.version;
+      if (typeof pkg.version === "string" && pkg.version !== "0.0.0") return pkg.version;
     } catch {
       // try next candidate
     }

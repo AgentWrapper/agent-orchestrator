@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AO — Refined</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    /* surfaces — neutral, faint cool tint, three quiet levels */
+    --bg:#0b0c0e;
+    --bg-side:#0a0b0d;
+    --bg-top:#0b0c0e;
+    --card:#121316;
+    --card-hover:#16171b;
+
+    /* type */
+    --ui:"Schibsted Grotesk",sans-serif;
+    --mono:"JetBrains Mono",monospace;
+    --t1:#f4f5f7;   /* primary */
+    --t2:#9ba1aa;   /* secondary */
+    --t3:#646a73;   /* dim */
+    --t4:#444951;   /* faint */
+
+    /* lines */
+    --line:rgba(255,255,255,0.06);
+    --line-2:rgba(255,255,255,0.10);
+
+    /* the ONLY accents */
+    --blue:#4d8dff;          /* orchestrator / you */
+    --blue-soft:#7eaaff;
+    --blue-dim:rgba(77,141,255,0.14);
+    --orange:#f59f4c;        /* a working agent — the one 'alive' color */
+    --amber:#e8c14a;         /* needs your input */
+    --red:#ef6b6b;           /* failing */
+    --hover:rgba(255,255,255,0.04);
+    --hover-2:rgba(255,255,255,0.07);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--t1);font-family:var(--ui);-webkit-font-smoothing:antialiased;overflow:hidden;font-size:14px}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+  .app{height:100%;display:grid;grid-template-columns:256px 1fr;grid-template-rows:56px 1fr;
+    grid-template-areas:"side top" "side main"}
+
+  /* ---------------- sidebar ---------------- */
+  .sidebar{grid-area:side;background:var(--bg-side);border-right:1px solid var(--line);overflow-y:auto;padding:16px 12px;display:flex;flex-direction:column}
+  .brand{display:flex;align-items:center;gap:10px;padding:2px 8px 20px}
+  .mark{width:24px;height:24px;border-radius:6px;background:linear-gradient(155deg,#5b97ff,#3b6bff);display:grid;place-items:center;font-size:13px;box-shadow:0 2px 10px rgba(77,141,255,0.3)}
+  .brand .name{font-weight:700;font-size:14px;letter-spacing:-0.015em}
+  .brand .name b{font-weight:400;color:var(--t3)}
+
+  .nav-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--t4);padding:0 8px 8px;display:flex;justify-content:space-between;align-items:center}
+  .nav-label button{color:var(--t4);font-size:13px}
+  .nav-label button:hover{color:var(--t2)}
+
+  .proj{margin-bottom:1px}
+  .prow{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:5px;cursor:pointer}
+  .prow:hover{background:var(--hover)}
+  .prow.sel{background:var(--hover-2)}
+  .prow .chev{font-size:8px;color:var(--t4);width:8px;transition:.15s}
+  .prow .pn{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t2)}
+  .prow.sel .pn{color:var(--t1);font-weight:600}
+  .prow .ct{font-size:11px;color:var(--t3);font-variant-numeric:tabular-nums;font-family:var(--mono)}
+  .prow .tools{display:none;gap:1px}
+  .prow:hover .tools{display:flex}
+  .prow:hover .ct{display:none}
+  .tools button{width:20px;height:20px;border-radius:5px;color:var(--t4);display:grid;place-items:center;font-size:11px}
+  .tools button:hover{background:var(--hover-2);color:var(--t1)}
+
+  .slist{padding:2px 0 8px 5px;margin-left:8px;border-left:1px solid var(--line)}
+  .ses{display:flex;align-items:center;gap:10px;padding:5px 8px 5px 10px;border-radius:6px;cursor:pointer}
+  .ses:hover{background:var(--hover)}
+  .ses .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--t4)}
+  .ses .sn{font-size:12px;color:var(--t2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono)}
+  .ses .si{font-size:10px;color:var(--t4);font-family:var(--mono)}
+  .ses.act .dot{background:var(--orange)}
+  .ses.act .dot{animation:breathe 2.4s ease-in-out infinite}
+
+  .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;gap:2px}
+  .side-foot button{width:30px;height:30px;border-radius:7px;color:var(--t3);display:grid;place-items:center;font-size:14px}
+  .side-foot button:hover{background:var(--hover);color:var(--t1)}
+
+  /* ---------------- topbar ---------------- */
+  .topbar{grid-area:top;background:var(--bg-top);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 20px}
+  .crumb{display:flex;align-items:center;gap:11px}
+  .crumb .h{font-weight:600;font-size:14.5px;letter-spacing:-0.01em}
+  .crumb .meta{font-size:12px;color:var(--t3)}
+  .spacer{flex:1}
+  .search{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--t3);background:transparent;box-shadow:inset 0 0 0 1px var(--line);padding:7px 12px;border-radius:6px;min-width:240px}
+  .search:hover{box-shadow:inset 0 0 0 1px var(--line-2)}
+  .search kbd{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--t4);background:var(--hover-2);padding:2px 6px;border-radius:5px}
+  .ibtn{width:34px;height:34px;border-radius:7px;display:grid;place-items:center;color:var(--t2);position:relative}
+  .ibtn:hover{background:var(--hover);color:var(--t1)}
+  .ibtn .bdg{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 2px var(--bg-top)}
+  .btn{padding:8px 15px;border-radius:7px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;letter-spacing:-0.005em}
+  .btn-primary{background:var(--blue);color:#fff}
+  .btn-primary:hover{background:#5b97ff}
+  .btn-ghost{color:var(--t2);box-shadow:inset 0 0 0 1px var(--line-2)}
+  .btn-ghost:hover{background:var(--hover);color:var(--t1)}
+
+  /* ---------------- main / fleet ---------------- */
+  .main{grid-area:main;overflow-y:auto;padding:28px 30px 60px}
+  .head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:26px}
+  .head h1{font-size:23px;font-weight:700;letter-spacing:-0.025em}
+  .head .sub{font-size:13px;color:var(--t3);margin-top:6px}
+  .head .sub b{color:var(--t2);font-weight:600}
+
+  /* quiet summary — grayscale, only attention counts get color */
+  .summary{display:flex;gap:24px;align-items:center}
+  .sm{display:flex;flex-direction:column;align-items:flex-end}
+  .sm .n{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:-0.02em}
+  .sm .l{font-size:11px;color:var(--t3);margin-top:5px}
+  .sm.attn .n{color:var(--amber)}
+  .sm.work .n{color:var(--orange)}
+  .sm-div{width:1px;height:30px;background:var(--line)}
+
+  .group-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--t4);margin:2px 0 13px}
+  .cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;margin-bottom:30px}
+
+  .card{background:var(--card);border-radius:8px;box-shadow:inset 0 0 0 1px var(--line);padding:16px 17px;cursor:pointer;transition:background .15s,box-shadow .15s}
+  .card:hover{background:var(--card-hover);box-shadow:inset 0 0 0 1px var(--line-2)}
+  .c-top{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+  .c-id{flex:1;min-width:0}
+  .c-id .br{font-family:var(--mono);font-size:12.5px;font-weight:500;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-0.01em}
+  .c-id .mt{font-size:11px;color:var(--t3);margin-top:3px;font-variant-numeric:tabular-nums}
+
+  /* status: a dot + label. neutral unless it needs attention. */
+  .stat{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;color:var(--t2);white-space:nowrap}
+  .stat .d{width:7px;height:7px;border-radius:50%;background:var(--t3)}
+  .stat.working{color:var(--orange)} .stat.working .d{background:var(--orange);animation:breathe 2.4s ease-in-out infinite}
+  .stat.input{color:var(--amber)}    .stat.input .d{background:var(--amber)}
+  .stat.fail{color:var(--red)}       .stat.fail .d{background:var(--red)}
+  @keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .c-line{font-size:12.5px;color:var(--t2);line-height:1.55;margin-bottom:14px;min-height:39px}
+  .c-foot{display:flex;align-items:center;gap:14px;font-size:11px;color:var(--t3);font-family:var(--mono)}
+  .c-foot .x{display:flex;align-items:center;gap:6px}
+  .c-foot .x b{color:var(--t2);font-weight:500}
+  .c-foot .sep{flex:1}
+  .c-foot .ok{color:#7fb88a}
+  .c-foot .bad{color:var(--red)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="mark">🪄</span><span class="name">Agent<b> / </b>Orchestrator</span></div>
+
+    <div class="nav-label">Projects <button>+</button></div>
+
+    <div class="proj">
+      <div class="prow"><span class="chev">▸</span><span class="pn">integrator</span><span class="ct">5</span>
+        <span class="tools"><button>▦</button><button>⋯</button></span></div>
+    </div>
+    <div class="proj">
+      <div class="prow sel"><span class="chev">▾</span><span class="pn">Agent Orchestrator</span><span class="ct">4</span>
+        <span class="tools"><button>▦</button><button>⋯</button></span></div>
+      <div class="slist">
+        <div class="ses act"><span class="dot"></span><span class="sn">session/ao-204</span><span class="si">ao-204</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">docs/architecture-doc</span><span class="si">ao-201</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">docs/architecture-doc-claude</span><span class="si">ao-202</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">test/onboarding-harness</span><span class="si">ao-203</span></div>
+      </div>
+    </div>
+    <div class="proj">
+      <div class="prow"><span class="chev">▸</span><span class="pn">mercury</span><span class="ct">2</span>
+        <span class="tools"><button>▦</button><button>⋯</button></span></div>
+    </div>
+    <div class="proj">
+      <div class="prow"><span class="chev">▸</span><span class="pn">WorkOS</span><span class="ct">0</span>
+        <span class="tools"><button>▦</button><button>⋯</button></span></div>
+    </div>
+    <div class="proj">
+      <div class="prow"><span class="chev">▸</span><span class="pn">Eng Hiring</span><span class="ct">0</span>
+        <span class="tools"><button>▦</button><button>⋯</button></span></div>
+    </div>
+
+    <div class="side-foot"><button>⌂</button><button>✓</button><button>⚙</button><button>◐</button></div>
+  </aside>
+
+  <header class="topbar">
+    <div class="crumb"><span class="h">Fleet</span><span class="meta">6 sessions · 3 projects</span></div>
+    <div class="spacer"></div>
+    <div class="search">⌕ <span>Search…</span><kbd>⌘K</kbd></div>
+    <button class="ibtn">🔔<span class="bdg"></span></button>
+    <button class="btn btn-ghost">Stop all</button>
+    <button class="btn btn-primary">New agent</button>
+  </header>
+
+  <main class="main">
+    <div class="head">
+      <div>
+        <h1>Fleet</h1>
+        <div class="sub"><b>1 agent working</b> · 1 needs your input · 1 ready to merge</div>
+      </div>
+      <div class="summary">
+        <div class="sm work"><div class="n">1</div><div class="l">Working</div></div>
+        <div class="sm attn"><div class="n">2</div><div class="l">Need you</div></div>
+        <div class="sm-div"></div>
+        <div class="sm"><div class="n">6</div><div class="l">Total</div></div>
+      </div>
+    </div>
+
+    <div class="group-label">Needs attention</div>
+    <div class="cols">
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">feat/int-6-api-key-auth</div><div class="mt">int-6 · Sonnet 4.6 · 2m ago</div></div>
+          <span class="stat input"><span class="d"></span>Needs input</span>
+        </div>
+        <div class="c-line">Awaiting your approval to run the database migration on staging before continuing.</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2044</b></span><span class="x">3 files</span><span class="sep"></span><span>$0.88</span></div>
+      </div>
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">security/cortex-sanitize</div><div class="mt">int-8 · Opus 4.7 · 6m ago</div></div>
+          <span class="stat fail"><span class="d"></span>CI failed</span>
+        </div>
+        <div class="c-line">typecheck failed — 2 errors in plugin-registry.ts. Agent is investigating the failure.</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2049</b></span><span class="x bad">2 checks failed</span><span class="sep"></span><span>$3.10</span></div>
+      </div>
+    </div>
+
+    <div class="group-label">Active</div>
+    <div class="cols">
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">session/ao-204</div><div class="mt">ao-204 · Opus 4.7 · now</div></div>
+          <span class="stat working"><span class="d"></span>Working</span>
+        </div>
+        <div class="c-line">Building the refined design direction for the dashboard fleet board…</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2051</b></span><span class="x">CI running</span><span class="sep"></span><span>$2.41</span></div>
+      </div>
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">docs/architecture-doc</div><div class="mt">ao-201 · Sonnet 4.6 · 4m ago</div></div>
+          <span class="stat"><span class="d"></span>In review</span>
+        </div>
+        <div class="c-line">2 review comments from @prateek — addressing nits in CROSS_PLATFORM.md.</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2038</b></span><span class="x ok">✓ CI passed</span><span class="sep"></span><span>$1.20</span></div>
+      </div>
+    </div>
+
+    <div class="group-label">Settled</div>
+    <div class="cols">
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">test/onboarding-harness</div><div class="mt">ao-203 · Sonnet 4.6 · 11m ago</div></div>
+          <span class="stat"><span class="d"></span>Mergeable</span>
+        </div>
+        <div class="c-line">All checks green, approved by 1 reviewer. Ready to merge.</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2042</b></span><span class="x ok">✓ approved</span><span class="sep"></span><span>$0.64</span></div>
+      </div>
+      <div class="card">
+        <div class="c-top">
+          <div class="c-id"><div class="br">docs/architecture-doc-claude</div><div class="mt">ao-202 · Opus 4.7 · 18m ago</div></div>
+          <span class="stat"><span class="d"></span>Idle</span>
+        </div>
+        <div class="c-line">No activity for 18m. Last action: pushed commit 2f9717f.</div>
+        <div class="c-foot"><span class="x">⎇ <b>PR #2040</b></span><span class="x ok">✓ CI passed</span><span class="sep"></span><span>$1.95</span></div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

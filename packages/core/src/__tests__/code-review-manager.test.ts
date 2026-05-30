@@ -78,6 +78,18 @@ function makeSession(overrides: Partial<Session> & { id?: string } = {}): Sessio
       baseBranch: "main",
       isDraft: false,
     },
+    prs: [
+      {
+        number: 7,
+        url: "https://github.com/acme/app/pull/7",
+        title: "feat: todos",
+        owner: "acme",
+        repo: "app",
+        branch: "feat/todos",
+        baseBranch: "main",
+        isDraft: false,
+      },
+    ],
     workspacePath: "/tmp/app-worktree",
     runtimeHandle: { id: "tmux-app-1", runtimeName: "tmux", data: {} },
     agentInfo: null,

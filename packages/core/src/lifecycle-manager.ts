@@ -320,26 +320,27 @@ function buildEventContext(
   session: Session | ReactionSessionContext,
   prEnrichmentCache: Map<string, PREnrichmentData>,
 ): EventContext {
-  let pr: EventContext["pr"] = null;
+  const sessionPRs = "prs" in session && Array.isArray(session.prs) ? session.prs : (session.pr ? [session.pr] : []);
 
-  if (session.pr) {
-    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-    const cached = prEnrichmentCache.get(prKey);
-
-    pr = {
-      url: session.pr.url,
+  const prs: EventContext["prs"] = sessionPRs.map((p) => {
+    const cached = prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`);
+    return {
+      url: p.url,
       title: cached?.title ?? null,
-      number: session.pr.number,
-      branch: session.pr.branch,
-      baseBranch: session.pr.baseBranch,
-      owner: session.pr.owner,
-      repo: session.pr.repo,
-      isDraft: session.pr.isDraft,
+      number: p.number,
+      branch: p.branch,
+      baseBranch: p.baseBranch,
+      owner: p.owner,
+      repo: p.repo,
+      isDraft: p.isDraft,
     };
-  }
+  });
+
+  const pr = prs[0] ?? null;
 
   return {
     pr,
+    prs,
     issueId: session.issueId,
     issueTitle: session.metadata["issueTitle"] ?? null,
     summary: session.agentInfo?.summary ?? null,
@@ -554,16 +555,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         reposByPlugin.set(pluginKey, new Set());
       }
       reposByPlugin.get(pluginKey)!.add(project.repo);
-
-      if (!session.pr) continue;
-
-      const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-      if (seenPRKeys.has(prKey)) continue;
-      seenPRKeys.add(prKey);
-
-      const pluginPRs = prsByPlugin.get(pluginKey);
-      if (pluginPRs) {
-        pluginPRs.push(session.pr);
+      if (session.prs.length === 0) continue;
+      // Loop over all PRs in the session — supports multi-repo sessions
+      // where an agent opened PRs on multiple repos.
+      for (const pr of session.prs) {
+        const actualPRRepo = `${pr.owner}/${pr.repo}`;
+        if (actualPRRepo !== project.repo) {
+          reposByPlugin.get(pluginKey)!.add(actualPRRepo);
+        }
+        const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+        if (seenPRKeys.has(prKey)) continue;
+        seenPRKeys.add(prKey);
+        const pluginPRs = prsByPlugin.get(pluginKey);
+        if (pluginPRs) {
+          pluginPRs.push(pr);
+        }
       }
     }
 
@@ -682,9 +688,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         continue;
       if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator"))
         continue;
+      // Skip detectPR only if we already have a PR on the configured project repo.
+      // This allows detecting additional PRs on different repos (multi-repo support).
+      const trackedRepos = new Set(session.prs.map((p) => `${p.owner}/${p.repo}`));
+      const projectRepoForDetect = config.projects[session.projectId]?.repo;
+      // primaryPR.branch is always the session branch (metadata doesn't store per-PR branches),
+      // so use the lifecycle closed-state alone to allow re-detection after a PR is rejected.
+      const primaryPRIsClosed = session.lifecycle.pr.state === "closed";
       if (
-        session.pr &&
-        !(session.lifecycle.pr.state === "closed" && session.pr.branch !== session.branch)
+        session.prs.length > 0 &&
+        projectRepoForDetect &&
+        trackedRepos.has(projectRepoForDetect) &&
+        !primaryPRIsClosed
       ) {
         continue;
       }
@@ -701,9 +716,39 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       try {
         const detectedPR = await scm.detectPR(session, project);
         if (detectedPR) {
-          session.pr = detectedPR;
+          // Track by owner/repo/number — allows multiple PRs on the same repo
+          // in the same session (e.g. agent opens PR #10 and PR #11 both on acme/main-app).
+          // Only skip if we already have this exact PR number on this exact repo.
+          // If the existing PR on the same repo is closed, replace it with the new one.
+          const alreadyTracked = session.prs.some(
+            (p) =>
+              p.owner === detectedPR.owner &&
+              p.repo === detectedPR.repo &&
+              p.number === detectedPR.number
+          );
+          if (!alreadyTracked) {
+            // Remove any closed PRs on the same repo before adding the new one.
+            // Open PRs on the same repo are kept — multiple open PRs per repo are valid.
+            session.prs = session.prs
+              .filter(
+                (p) =>
+                  !(
+                    p.owner === detectedPR.owner &&
+                    p.repo === detectedPR.repo &&
+                    p.number !== detectedPR.number &&
+                    prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`)?.state === "closed"
+                  )
+              )
+              .concat(detectedPR);
+          }
+          // pr is always the primary (first) PR
+          session.pr = session.prs[0] ?? detectedPR;
           const sessionsDir = getProjectSessionsDir(session.projectId);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          const allPrUrls = session.prs.map((p) => p.url).join(",");
+          updateMetadata(sessionsDir, session.id, {
+            pr: session.pr.url,
+            prs: allPrUrls,
+          });
           recordActivityEvent({
             projectId: session.projectId,
             sessionId: session.id,
@@ -756,36 +801,75 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!session.pr) continue;
       const project = config.projects[session.projectId];
       if (!project) continue;
+      const sessionsDir = getProjectSessionsDir(session.projectId);
 
       const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
       const cached = prEnrichmentCache.get(prKey);
-      if (!cached) continue;
+      if (cached) {
+        const blob = JSON.stringify({
+          state: cached.state,
+          ciStatus: cached.ciStatus,
+          reviewDecision: cached.reviewDecision,
+          mergeable: cached.mergeable,
+          title: cached.title,
+          additions: cached.additions,
+          deletions: cached.deletions,
+          isDraft: cached.isDraft,
+          hasConflicts: cached.hasConflicts,
+          isBehind: cached.isBehind,
+          blockers: cached.blockers,
+          ciChecks: cached.ciChecks?.map((c) => ({
+            name: c.name,
+            status: c.status,
+            url: c.url,
+          })),
+          enrichedAt: new Date().toISOString(),
+        });
+        if (session.metadata["prEnrichment"] !== blob) {
+          updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
+          session.metadata["prEnrichment"] = blob;
+        }
+        // Keep in-memory isDraft in sync with enrichment data
+        if (cached.isDraft !== undefined && session.pr) {
+          session.pr.isDraft = cached.isDraft;
+        }
+      }
 
-      const blob = JSON.stringify({
-        state: cached.state,
-        ciStatus: cached.ciStatus,
-        reviewDecision: cached.reviewDecision,
-        mergeable: cached.mergeable,
-        title: cached.title,
-        additions: cached.additions,
-        deletions: cached.deletions,
-        isDraft: cached.isDraft,
-        hasConflicts: cached.hasConflicts,
-        isBehind: cached.isBehind,
-        blockers: cached.blockers,
-        ciChecks: cached.ciChecks?.map((c) => ({
-          name: c.name,
-          status: c.status,
-          url: c.url,
-        })),
-        enrichedAt: new Date().toISOString(),
-      });
-
-      if (session.metadata["prEnrichment"] === blob) continue;
-
-      const sessionsDir = getProjectSessionsDir(session.projectId);
-      updateMetadata(sessionsDir, session.id, { prEnrichment: blob });
-      session.metadata["prEnrichment"] = blob;
+      for (let i = 1; i < session.prs.length; i++) {
+        const secondaryPR = session.prs[i];
+        if (!secondaryPR) continue;
+        const secondaryKey = `${secondaryPR.owner}/${secondaryPR.repo}#${secondaryPR.number}`;
+        const secondaryCached = prEnrichmentCache.get(secondaryKey);
+        if (!secondaryCached) continue;
+        const secondaryBlob = JSON.stringify({
+          state: secondaryCached.state,
+          ciStatus: secondaryCached.ciStatus,
+          reviewDecision: secondaryCached.reviewDecision,
+          mergeable: secondaryCached.mergeable,
+          title: secondaryCached.title,
+          additions: secondaryCached.additions,
+          deletions: secondaryCached.deletions,
+          isDraft: secondaryCached.isDraft,
+          hasConflicts: secondaryCached.hasConflicts,
+          isBehind: secondaryCached.isBehind,
+          blockers: secondaryCached.blockers,
+          ciChecks: secondaryCached.ciChecks?.map((c) => ({
+            name: c.name,
+            status: c.status,
+            url: c.url,
+          })),
+          enrichedAt: new Date().toISOString(),
+        });
+        const metaKey = `prEnrichment_${i}`;
+        if (session.metadata[metaKey] !== secondaryBlob) {
+          updateMetadata(sessionsDir, session.id, { [metaKey]: secondaryBlob });
+          session.metadata[metaKey] = secondaryBlob;
+        }
+        // Keep in-memory isDraft in sync with enrichment data
+        if (secondaryCached.isDraft !== undefined) {
+          secondaryPR.isDraft = secondaryCached.isDraft;
+        }
+      }
     }
   }
 
@@ -1236,13 +1320,64 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             : false;
 
         if (cachedData) {
-          return commit(
-            resolvePREnrichmentDecision(cachedData, {
-              shouldEscalateIdleToStuck,
-              idleWasBlocked,
-              activityEvidence,
-            }),
-          );
+          // When session has multiple PRs, aggregate enrichment across all of them.
+          // ci_failed if ANY fails; approved/merged only when ALL pass.
+          if (session.prs.length > 1) {
+            const allEnrichments = session.prs
+              .map((p) => prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`))
+              .filter((e): e is PREnrichmentData => e !== undefined);
+
+            if (allEnrichments.length === session.prs.length) {
+              const aggregated: PREnrichmentData = {
+                ciStatus: allEnrichments.some((e) => e.ciStatus === "failing")
+                  ? "failing"
+                  : allEnrichments.every((e) => e.ciStatus === "passing" || e.ciStatus === "none")
+                    ? "passing"
+                    : "pending",
+                reviewDecision: allEnrichments.some(
+                  (e) => e.reviewDecision === "changes_requested",
+                )
+                  ? "changes_requested"
+                  : allEnrichments.every((e) => e.reviewDecision === "approved")
+                    ? "approved"
+                    : allEnrichments.every((e) => e.reviewDecision === "none")
+                      ? "none"
+                      : "pending",
+                state: allEnrichments.every((e) => e.state === "merged")
+                  ? "merged"
+                  : allEnrichments.some((e) => e.state === "open")
+                    ? "open"
+                    : "closed",
+                mergeable: allEnrichments.every((e) => e.mergeable),
+                blockers: [...new Set(allEnrichments.flatMap((e) => e.blockers ?? []))],
+                title: cachedData.title,
+                additions: cachedData.additions,
+                deletions: cachedData.deletions,
+                isDraft: allEnrichments.some((e) => e.isDraft),
+                hasConflicts: allEnrichments.some((e) => e.hasConflicts),
+                isBehind: allEnrichments.some((e) => e.isBehind),
+              };
+              return commit(
+                resolvePREnrichmentDecision(aggregated, {
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
+          }
+          // Partial cache miss for multi-PR session: never decide on primary PR
+          // alone — fall through to the live-API check that verifies all PRs.
+          if (session.prs.length <= 1) {
+            return commit(
+              resolvePREnrichmentDecision(cachedData, {
+                shouldEscalateIdleToStuck,
+                idleWasBlocked,
+                activityEvidence,
+              }),
+            );
+          }
+          // intentional fall-through to live-API block below
         }
 
         // Batch enrichment cache miss — fall back to getPRState for terminal
@@ -1250,19 +1385,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // delayed cleanup. Non-terminal state updates wait for the next batch
         // cycle (30s) to avoid ~110 individual REST calls per 15-min window.
         try {
-          const prState = await scm.getPRState(session.pr);
-          if (prState === "merged" || prState === "closed") {
-            return commit(
-              resolvePRLiveDecision({
-                prState,
-                ciStatus: "none",
-                reviewDecision: "none",
-                mergeable: false,
-                shouldEscalateIdleToStuck,
-                idleWasBlocked,
-                activityEvidence,
-              }),
-            );
+          if (session.prs.length > 1) {
+            // Multi-PR: only terminate when ALL PRs are in a terminal state.
+            const states = await Promise.all(session.prs.map((p) => scm.getPRState(p)));
+            if (states.every((s) => s === "merged" || s === "closed")) {
+              const prState = states.every((s) => s === "merged") ? "merged" : "closed";
+              return commit(
+                resolvePRLiveDecision({
+                  prState,
+                  ciStatus: "none",
+                  reviewDecision: "none",
+                  mergeable: false,
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
+          } else {
+            const prState = await scm.getPRState(session.pr);
+            if (prState === "merged" || prState === "closed") {
+              return commit(
+                resolvePRLiveDecision({
+                  prState,
+                  ciStatus: "none",
+                  reviewDecision: "none",
+                  mergeable: false,
+                  shouldEscalateIdleToStuck,
+                  idleWasBlocked,
+                  activityEvidence,
+                }),
+              );
+            }
           }
         } catch (err) {
           // Best-effort — batch will retry next cycle. Record AE evidence so
@@ -1775,6 +1929,47 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
       if (session.metadata["prReviewComments"] !== reviewBlob) {
         updateSessionMetadata(session, { prReviewComments: reviewBlob });
+      }
+
+      // Persist per-PR review comment blobs for secondary PRs so the dashboard
+      // can enrich them independently (prReviewComments_1, prReviewComments_2, …).
+      for (let i = 1; i < session.prs.length; i++) {
+        const secondaryPR = session.prs[i];
+        if (!secondaryPR) continue;
+        let secondaryThreads: ReviewComment[];
+        let secondaryReviews: ReviewSummary[];
+        try {
+          if (scm.getReviewThreads) {
+            const result = await scm.getReviewThreads(secondaryPR);
+            secondaryThreads = result.threads;
+            secondaryReviews = result.reviews;
+          } else {
+            secondaryThreads = await scm.getPendingComments(secondaryPR);
+            secondaryReviews = [];
+          }
+        } catch {
+          continue;
+        }
+        const secondaryUnresolved = secondaryThreads.filter((c) => !c.isBot);
+        const secondaryBlob = JSON.stringify({
+          unresolvedThreads: secondaryUnresolved.length,
+          unresolvedComments: secondaryUnresolved.map((c) => ({
+            url: c.url,
+            path: c.path ?? "",
+            author: c.author,
+            body: c.body,
+          })),
+          reviews: secondaryReviews.map((r) => ({
+            author: r.author,
+            state: r.state,
+            body: r.body,
+          })),
+          commentsUpdatedAt: new Date().toISOString(),
+        });
+        const reviewMetaKey = `prReviewComments_${i}`;
+        if (session.metadata[reviewMetaKey] !== secondaryBlob) {
+          updateSessionMetadata(session, { [reviewMetaKey]: secondaryBlob });
+        }
       }
     }
 

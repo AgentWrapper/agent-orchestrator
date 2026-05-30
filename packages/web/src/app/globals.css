@@ -26,9 +26,10 @@
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
-  --font-geist-sans:
-    "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-jetbrains-mono: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  /* --font-schibsted-grotesk (UI / product voice) and --font-jetbrains-mono
+     (machine voice) are injected on <html> by next/font/local (src/fonts/fonts.ts).
+     Do NOT redeclare them here — a :root value would shadow next/font's. The
+     system fallbacks live in the --font-sans / --font-mono chains in @theme. */
 
   /* Base surfaces — design-system light palette */
   --color-bg-base: #f5f3f0;
@@ -181,150 +182,179 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Base surfaces — warm charcoal (brown-tinted, not blue/neutral) */
-  --color-bg-base: #121110;
-  --color-bg-surface: #1a1918;
-  --color-bg-elevated: #222120;
-  --color-bg-elevated-hover: #2a2928;
-  --color-bg-subtle: rgba(255, 240, 220, 0.05);
-  --color-bg-hover: rgba(255, 240, 220, 0.08);
-  --color-bg-inset: #161514;
-  --color-bg-sidebar: #0e0d0c;
-  --color-bg-card: #1c1b19;
+  /* ════════════════════════════════════════════════════════════════════
+     MISSION-CONTROL PALETTE (supersedes "Warm Terminal" — see DESIGN.md)
+     Cool, restrained control-room dark. Color = meaning; most states get
+     none. Blue = orchestrator/you; orange = a working agent; amber =
+     needs-input; red = failing/stuck; green = mergeable; else grayscale.
+     These literal tokens are the source; the --color-* semantic tokens
+     below alias them so the rest of the stylesheet keeps working. */
+  --bg: #0a0b0d; /* app base */
+  --bg-side: #08090b; /* sidebar */
+  --bg-top: #0a0b0d; /* topbar */
+  --col: #0e0f12; /* kanban column trough */
+  --card: #15171b; /* the only bordered surface */
+  --card-hover: #191b20;
+  --term: #0c0d10; /* terminal / xterm background */
 
-  /* Borders — warm-tinted transparency */
-  --color-border-subtle: rgba(255, 240, 220, 0.07);
-  --color-border-default: rgba(255, 240, 220, 0.13);
-  --color-border-strong: rgba(255, 240, 220, 0.24);
+  --t1: #f4f5f7; /* text: primary */
+  --t2: #9ba1aa; /* text: secondary */
+  --t3: #646a73; /* text: tertiary */
+  --t4: #444951; /* text: faint */
 
-  /* Text — cream, not blue-white */
-  --color-text-primary: #f0ece8;
-  --color-text-secondary: #a8a29e;
-  --color-text-tertiary: #78716c;
-  --color-text-muted: #57534e;
-  --color-text-inverse: #121110;
+  --line: rgba(255, 255, 255, 0.06);
+  --line-2: rgba(255, 255, 255, 0.1);
+  --hover: rgba(255, 255, 255, 0.04);
+  --hover-2: rgba(255, 255, 255, 0.07);
 
-  /* Interactive accent — warm periwinkle */
-  --color-accent: #8b9cf7;
-  --color-accent-hover: #a3b1fa;
-  --color-accent-subtle: rgba(139, 156, 247, 0.12);
+  --blue: #4d8dff; /* orchestrator / you */
+  --blue-soft: #7eaaff;
+  --orange: #f59f4c; /* a working agent */
+  --amber: #e8c14a; /* needs-your-input / attention */
+  --red: #ef6b6b; /* failing / stuck */
+  --green: #74b98a; /* mergeable / passed / resolved */
 
-  /* Amber accent — orchestrator / CTA */
-  --color-accent-amber: #f97316;
-  --color-accent-amber-dim: rgba(249, 115, 22, 0.12);
-  --color-accent-amber-border: rgba(249, 115, 22, 0.35);
+  /* Base surfaces */
+  --color-bg-base: var(--bg);
+  --color-bg-surface: var(--card);
+  --color-bg-elevated: var(--card-hover);
+  --color-bg-elevated-hover: var(--card-hover);
+  --color-bg-subtle: var(--hover);
+  --color-bg-hover: var(--hover-2);
+  --color-bg-inset: var(--col);
+  --color-bg-sidebar: var(--bg-side);
+  --color-bg-card: var(--card);
 
-  /* Status */
-  --color-status-working: #22c55e;
-  --color-status-ready: #8b9cf7;
-  --color-status-respond: #ea580c;
-  --color-status-review: #06b6d4;
-  --color-status-pending: #eab308;
-  --color-status-attention: #e2a336;
-  --color-status-idle: #44403c;
-  --color-status-done: #44403c;
-  --color-status-error: #ef4444;
-  --color-status-merge: #22c55e;
-  --color-ci-pass: #22c55e;
-  --color-ci-fail: #ef4444;
+  /* Borders / hairlines */
+  --color-border-subtle: var(--line);
+  --color-border-default: var(--line);
+  --color-border-strong: var(--line-2);
+
+  /* Text ramp — primary → faint */
+  --color-text-primary: var(--t1);
+  --color-text-secondary: var(--t2);
+  --color-text-tertiary: var(--t3);
+  --color-text-muted: var(--t4);
+  --color-text-inverse: #ffffff;
+
+  /* Interactive accent — blue = orchestrator / you (links, focus, selection) */
+  --color-accent: var(--blue);
+  --color-accent-hover: #5b97ff;
+  --color-accent-subtle: rgba(77, 141, 255, 0.12);
+
+  /* Amber accent — needs-input / attention (NOT the orchestrator CTA anymore) */
+  --color-accent-amber: var(--amber);
+  --color-accent-amber-dim: rgba(232, 193, 74, 0.12);
+  --color-accent-amber-border: rgba(232, 193, 74, 0.32);
+
+  /* Status — one semantic spectrum mapped to the canonical lifecycle */
+  --color-status-working: var(--orange); /* agent alive right now (breathing) */
+  --color-status-ready: var(--green); /* ready to merge */
+  --color-status-respond: var(--amber); /* needs your input */
+  --color-status-review: var(--t2); /* in review = neutral */
+  --color-status-pending: var(--t3); /* waiting on external = neutral */
+  --color-status-attention: var(--amber);
+  --color-status-idle: var(--t4);
+  --color-status-done: var(--t4);
+  --color-status-error: var(--red);
+  --color-status-merge: var(--green);
+  --color-ci-pass: var(--green);
+  --color-ci-fail: var(--red);
 
   /* Semantic aliases */
-  --color-accent-blue: #60a5fa;
-  --color-accent-green: #22c55e;
-  --color-accent-yellow: #eab308;
-  --color-accent-orange: #ff9d57;
-  --color-accent-red: #ef4444;
-  --color-accent-violet: #a78bfa;
-  --color-accent-purple: #a78bfa;
+  --color-accent-blue: var(--blue);
+  --color-accent-green: var(--green);
+  --color-accent-yellow: var(--amber);
+  --color-accent-orange: var(--orange);
+  --color-accent-red: var(--red);
+  --color-accent-violet: var(--blue-soft);
+  --color-accent-purple: var(--blue-soft);
 
-  /* Theme-adaptive tints */
-  --color-tint-blue: rgba(96, 165, 250, 0.12);
-  --color-tint-green: rgba(34, 197, 94, 0.12);
-  --color-tint-yellow: rgba(226, 163, 54, 0.12);
-  --color-tint-red: rgba(239, 68, 68, 0.12);
-  --color-tint-violet: rgba(139, 156, 247, 0.12);
-  --color-tint-orange: rgba(255, 157, 87, 0.12);
+  /* Theme-adaptive tints (bg behind status pills/badges) */
+  --color-tint-blue: rgba(77, 141, 255, 0.12);
+  --color-tint-green: rgba(116, 185, 138, 0.13);
+  --color-tint-yellow: rgba(232, 193, 74, 0.13);
+  --color-tint-red: rgba(239, 107, 107, 0.12);
+  --color-tint-violet: rgba(77, 141, 255, 0.1);
+  --color-tint-orange: rgba(245, 159, 76, 0.13);
   --color-tint-neutral: rgba(255, 255, 255, 0.05);
 
   /* Chip/badge background */
-  --color-chip-bg: rgba(255, 240, 220, 0.06);
+  --color-chip-bg: var(--hover-2);
 
   /* Hover overlay */
-  --color-hover-overlay: rgba(255, 240, 220, 0.05);
+  --color-hover-overlay: var(--hover);
 
   /* Scrollbar */
   --color-scrollbar: rgba(255, 255, 255, 0.08);
   --color-scrollbar-hover: rgba(255, 255, 255, 0.15);
   --color-scrollbar-active: rgba(255, 255, 255, 0.25);
 
-  /* Body — warm ambient glow, not blue radials */
-  --color-body-gradient-blue: rgba(139, 156, 247, 0.08);
-  --color-body-gradient-violet: rgba(139, 120, 100, 0.06);
+  /* Body — flat base, no ambient glow (the calm control room) */
+  --color-body-gradient-blue: transparent;
+  --color-body-gradient-violet: transparent;
 
   /* Nav glass */
-  --color-nav-bg: rgba(18, 17, 16, 0.82);
+  --color-nav-bg: rgba(10, 11, 13, 0.82);
 
-  /* Card surfaces — match cards.html dark reference */
-  --card-bg: var(--color-bg-card);
-  --card-merge-bg: rgba(20, 22, 18, 0.98);
-  --card-expanded-bg: linear-gradient(
-    180deg,
-    rgba(34, 33, 32, 0.98) 0%,
-    rgba(26, 25, 24, 0.98) 100%
-  );
-  --card-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
-  --card-shadow-hover: 0 24px 54px rgba(0, 0, 0, 0.34);
-  --card-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --card-border: var(--color-border-subtle);
+  /* Card surfaces — the card is the only bordered box; flat, hairline ring */
+  --card-bg: var(--card);
+  --card-merge-bg: var(--card);
+  --card-expanded-bg: var(--card-hover);
+  --card-shadow: none;
+  --card-shadow-hover: none;
+  --card-inset: none;
+  --card-border: var(--line);
 
   /* Done card surfaces */
-  --card-done-bg: linear-gradient(180deg, rgba(30, 29, 28, 0.8) 0%, rgba(24, 23, 22, 0.8) 100%);
-  --card-done-border: rgba(255, 240, 220, 0.12);
+  --card-done-bg: var(--card);
+  --card-done-border: var(--line);
 
-  --done-pill-exited-bg: rgba(255, 240, 220, 0.06);
-  --done-pill-exited-color: #a8a29e;
-  --done-pill-merged-bg: rgba(95, 211, 154, 0.14);
-  --done-pill-merged-color: #5fd39a;
-  --done-pill-killed-bg: rgba(255, 123, 114, 0.12);
-  --done-pill-killed-color: #ff7b72;
-  --done-meta-chip-bg: rgba(255, 240, 220, 0.04);
-  --done-meta-chip-border: rgba(255, 240, 220, 0.08);
-  --done-section-border: rgba(255, 240, 220, 0.06);
-  --done-title-color: #a8a29e;
-  --done-restore-bg: rgba(139, 156, 247, 0.1);
-  --done-restore-border: rgba(139, 156, 247, 0.24);
-  --done-restore-hover-bg: rgba(139, 156, 247, 0.18);
+  --done-pill-exited-bg: var(--hover-2);
+  --done-pill-exited-color: var(--t3);
+  --done-pill-merged-bg: rgba(116, 185, 138, 0.14);
+  --done-pill-merged-color: var(--green);
+  --done-pill-killed-bg: rgba(239, 107, 107, 0.12);
+  --done-pill-killed-color: var(--red);
+  --done-meta-chip-bg: var(--hover);
+  --done-meta-chip-border: var(--line);
+  --done-section-border: var(--line);
+  --done-title-color: var(--t2);
+  --done-restore-bg: rgba(77, 141, 255, 0.1);
+  --done-restore-border: rgba(77, 141, 255, 0.24);
+  --done-restore-hover-bg: rgba(77, 141, 255, 0.18);
 
   /* Detail card */
-  --detail-card-bg: linear-gradient(180deg, rgba(26, 25, 24, 0.98) 0%, rgba(18, 17, 16, 0.98) 100%);
-  --detail-card-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --detail-card-bg: var(--card);
+  --detail-card-shadow: none;
 
-  /* Orchestrator button */
-  --btn-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
-  --btn-shadow-hover: 0 16px 34px rgba(0, 0, 0, 0.22);
-  --btn-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  /* Buttons — flat in the control room */
+  --btn-shadow: none;
+  --btn-shadow-hover: none;
+  --btn-inset: none;
 
-  /* Kanban column */
-  --color-column-bg: var(--color-bg-subtle);
+  /* Kanban column trough */
+  --color-column-bg: var(--col);
   --color-column-header: transparent;
 
-  /* Alert colors — warm-tinted */
-  --color-alert-ci: #ef4444;
-  --color-alert-ci-bg: rgba(239, 68, 68, 0.08);
-  --color-alert-ci-unknown: #e2a336;
-  --color-alert-review: #60a5fa;
-  --color-alert-review-bg: rgba(96, 165, 250, 0.08);
-  --color-alert-changes: #f97316;
-  --color-alert-changes-bg: rgba(249, 115, 22, 0.08);
-  --color-alert-conflict: #eab308;
-  --color-alert-conflict-bg: rgba(234, 179, 8, 0.08);
-  --color-alert-comment: #a78bfa;
-  --color-alert-comment-bg: rgba(167, 139, 250, 0.08);
+  /* Alert colors */
+  --color-alert-ci: var(--red);
+  --color-alert-ci-bg: rgba(239, 107, 107, 0.08);
+  --color-alert-ci-unknown: var(--amber);
+  --color-alert-review: var(--blue);
+  --color-alert-review-bg: rgba(77, 141, 255, 0.08);
+  --color-alert-changes: var(--amber);
+  --color-alert-changes-bg: rgba(232, 193, 74, 0.08);
+  --color-alert-conflict: var(--red);
+  --color-alert-conflict-bg: rgba(239, 107, 107, 0.08);
+  --color-alert-comment: var(--amber);
+  --color-alert-comment-bg: rgba(232, 193, 74, 0.08);
 }
 
 @theme {
-  /* ── Typography ──────────────────────────────────────────────────── */
-  --font-sans: var(--font-geist-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
+  /* ── Typography — mission-control voices ─────────────────────────── */
+  /* UI = Schibsted Grotesk (product voice); machine/data = JetBrains Mono. */
+  --font-sans: var(--font-schibsted-grotesk), "SF Pro Text", -apple-system, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
   /* ── Border radius ───────────────────────────────────────────────── */
@@ -381,36 +411,17 @@
     0 4px 8px rgba(0, 0, 0, 0.85), 0 14px 36px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 
-  /* Gradient surfaces — warm tints */
-  --gradient-session-card: linear-gradient(
-    175deg,
-    rgba(30, 29, 28, 1) 0%,
-    rgba(23, 22, 21, 1) 100%
-  );
-  --gradient-session-card-expanded: linear-gradient(
-    175deg,
-    rgba(38, 37, 36, 1) 0%,
-    rgba(30, 29, 28, 1) 100%
-  );
-  --gradient-session-card-merge: linear-gradient(
-    175deg,
-    rgba(23, 25, 22, 1) 0%,
-    rgba(17, 18, 16, 1) 100%
-  );
-  --gradient-detail-card: linear-gradient(175deg, rgba(30, 29, 28, 1) 0%, rgba(23, 22, 21, 1) 100%);
-  --gradient-orchestrator-btn: linear-gradient(
-    175deg,
-    rgba(139, 156, 247, 0.12) 0%,
-    rgba(139, 156, 247, 0.06) 100%
-  );
-  --gradient-orchestrator-btn-hover: linear-gradient(
-    175deg,
-    rgba(139, 156, 247, 0.18) 0%,
-    rgba(139, 156, 247, 0.1) 100%
-  );
+  /* Gradient surfaces — flat cool fills in the mission-control language.
+     (Resolve to the card/accent tokens so they stay theme-correct.) */
+  --gradient-session-card: var(--color-bg-card);
+  --gradient-session-card-expanded: var(--color-bg-elevated-hover);
+  --gradient-session-card-merge: var(--color-bg-card);
+  --gradient-detail-card: var(--color-bg-card);
+  --gradient-orchestrator-btn: var(--color-accent);
+  --gradient-orchestrator-btn-hover: var(--color-accent-hover);
   --gradient-status-strip: linear-gradient(
     to bottom,
-    rgba(139, 156, 247, 0.04) 0%,
+    var(--color-accent-subtle) 0%,
     transparent 100%
   );
 }
@@ -1085,31 +1096,20 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
+/* The Orchestrator / primary CTA — the only solid-fill blue button. */
 .orchestrator-btn {
-  border-radius: 0;
-  color: var(--color-accent);
-  background: linear-gradient(
-    175deg,
-    color-mix(in srgb, var(--color-accent) 12%, transparent) 0%,
-    color-mix(in srgb, var(--color-accent) 6%, transparent) 100%
-  );
-  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-radius: 7px;
+  color: var(--color-text-inverse);
+  background: var(--color-accent);
+  border: 1px solid transparent;
   box-shadow: var(--btn-shadow);
   transition:
     transform 0.16s ease-out,
-    box-shadow 0.12s ease,
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 0.12s ease;
 }
 
 .orchestrator-btn:hover {
-  transform: translateY(-1px);
-  background: linear-gradient(
-    175deg,
-    color-mix(in srgb, var(--color-accent) 18%, transparent) 0%,
-    color-mix(in srgb, var(--color-accent) 10%, transparent) 100%
-  );
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: var(--color-accent-hover);
   box-shadow: var(--btn-shadow-hover);
 }
 
@@ -1308,15 +1308,28 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-accent-amber);
 }
 
+/* Secondary nav button (e.g. Open Kanban) — calm blue-tinted, not amber. */
 .dashboard-app-btn--amber {
-  border-color: var(--color-accent-amber-border);
-  background: var(--color-accent-amber-dim);
-  color: var(--color-accent-amber);
+  border-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
 }
 
 .dashboard-app-btn--amber:hover {
-  background: color-mix(in srgb, var(--color-accent-amber) 20%, transparent);
-  color: var(--color-accent-amber);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+
+/* The Orchestrator CTA — the one solid-fill blue primary button. */
+.dashboard-app-btn--primary {
+  border-color: transparent;
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.dashboard-app-btn--primary:hover {
+  background: var(--color-accent-hover);
+  color: var(--color-text-inverse);
 }
 
 /* Session headline in topbar */
@@ -1929,7 +1942,11 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   flex-direction: column;
   flex-shrink: 0;
   height: 100%;
-  width: 224px;
+  width: var(--ao-sidebar-w, 240px);
+}
+
+/* No width transition while actively dragging the resize handle. */
+body:not(.is-resizing-x) .sidebar-wrapper {
   transition: width 0.2s ease;
 }
 
@@ -2399,10 +2416,91 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: var(--color-accent-orange);
 }
 .kanban-column__dot[data-level="merge"] {
-  background: var(--color-status-ready);
+  background: var(--color-status-merge);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-status-merge) 60%, transparent);
+}
+.kanban-column__dot[data-level="pending"],
+.kanban-column__dot[data-level="review"] {
+  background: var(--color-status-review);
+}
+.kanban-column__dot[data-level="action"] {
+  background: var(--color-status-attention);
+}
+.kanban-column__dot[data-level="working"] {
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-status-working) 60%, transparent);
 }
 .kanban-column__dot[data-level="done"] {
   background: var(--color-text-tertiary);
+}
+
+/* ── Status system — one spectrum, used everywhere ───────────────────────
+   Kanban card badge, sidebar dot, and session topbar pill all render from
+   the same StatusSpec (lib/status-spec.ts via <StatusBadge>). Tone → color
+   uses the semantic --color-status-* tokens so it stays theme-correct. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--status-tone, var(--color-text-tertiary));
+}
+
+.status-badge__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--status-tone, var(--color-text-tertiary));
+}
+
+.status-badge[data-breathing] .status-badge__dot {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+.status-badge[data-tone="working"] {
+  --status-tone: var(--color-status-working);
+}
+.status-badge[data-tone="input"],
+.status-badge[data-tone="changes"] {
+  --status-tone: var(--color-status-respond);
+}
+.status-badge[data-tone="fail"] {
+  --status-tone: var(--color-status-error);
+}
+.status-badge[data-tone="ready"],
+.status-badge[data-tone="merged"] {
+  --status-tone: var(--color-status-merge);
+}
+.status-badge[data-tone="review"],
+.status-badge[data-tone="neutral"] {
+  --status-tone: var(--color-text-secondary);
+}
+
+.status-badge--dot {
+  gap: 0;
+}
+
+/* Pill variant — bordered tinted pill for the session topbar. */
+.status-badge--pill {
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-tone) 25%, transparent);
+  background: color-mix(in srgb, var(--status-tone) 7%, transparent);
 }
 
 /* ── Activity dot / pill colors ──────────────────────────────────────── */
@@ -2992,9 +3090,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-left-width: 3px;
-  border-left-style: solid;
-  border-radius: 6px;
+  border-radius: 7px;
   box-shadow: none;
   color: color-mix(in srgb, var(--color-text-primary) 96%, transparent);
   contain: layout style paint;
@@ -3004,47 +3100,24 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
     box-shadow 120ms ease-out;
 }
 
-.session-card--accent-working {
-  border-left-color: var(--color-status-working);
-}
-
-.session-card--accent-attention {
-  border-left-color: var(--color-status-attention);
-}
-
-.session-card--accent-respond {
-  border-left-color: var(--color-status-respond);
-}
-
-.session-card--accent-merge {
-  border-left-color: var(--color-status-ready);
-}
-
+/* Status now lives in the card's StatusBadge (one status system), not a
+   colored left rail — the card stays a uniform hairline-ringed surface. */
+.session-card--accent-working,
+.session-card--accent-attention,
+.session-card--accent-respond,
+.session-card--accent-merge,
 .session-card--accent-default {
-  border-left-color: var(--color-border-default);
+  border-color: var(--card-border);
 }
 
-.session-card--fixed {
-  display: flex;
-  min-height: 150px;
-  flex-direction: column;
-  overflow: hidden;
-}
-
+/* Compact, content-height cards (mockup) — no fixed min-height. */
+.session-card--fixed,
 .session-card--alert-frame,
 .session-card--merge-frame {
   display: flex;
   height: auto;
   flex-direction: column;
   overflow: hidden;
-}
-
-.session-card--alert-frame {
-  min-height: 174px;
-}
-
-.session-card--merge-frame {
-  min-height: 166px;
 }
 
 .dark .session-card {
@@ -3069,9 +3142,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .session-card:hover {
-  transform: translateY(-1px);
+  background: var(--card-hover);
   border-color: var(--color-border-strong);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .session-card:active {
@@ -3092,16 +3164,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .session-card__header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px 3px;
+  gap: 8px;
+  padding: 12px 13px 9px;
 }
 
 .card__id {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-  flex: 1;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
 }
 
 .card__adot {
@@ -3159,13 +3231,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .card__title-wrap {
-  padding: 0 10px 4px;
+  padding: 0 13px 10px;
 }
 
 .card__title {
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.45;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.42;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -3181,19 +3254,28 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .card__meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 10px 5px;
+  gap: 6px;
+  padding: 0 13px 10px;
+}
+
+.card__branch-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.card__branch-icon svg {
+  width: 11px;
+  height: 11px;
 }
 
 .card__branch {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--color-text-muted);
+  font-size: 11px;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 104px;
 }
 
 .card__meta-sep {
@@ -3203,25 +3285,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .card__pr {
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 10.5px;
   color: var(--color-text-secondary);
-  background: var(--color-bg-subtle);
-  border: 1px solid var(--color-border-default);
-  padding: 1px 5px;
-  border-radius: 3px;
   text-decoration: none;
   white-space: nowrap;
-  transition:
-    color 80ms,
-    border-color 80ms,
-    background 80ms;
+  flex-shrink: 0;
+  transition: color 80ms;
 }
 
 .card__pr:hover {
   color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-  background: var(--color-bg-elevated);
   text-decoration: none;
 }
 
@@ -3431,27 +3504,52 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   gap: 6px;
   border-top: 1px solid var(--color-border-subtle);
   background: transparent;
-  padding: 5px 10px 7px;
+  padding: 9px 13px 11px;
 }
 
+/* Thin info footer — mockup: `PR #N · CI/review detail` (mono, faint). */
+.session-card__footer-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.session-card__footer-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-card__footer-detail[data-tone="fail"] {
+  color: var(--color-status-error);
+}
+.session-card__footer-detail[data-tone="amber"] {
+  color: var(--color-status-respond);
+}
+.session-card__footer-detail[data-tone="green"] {
+  color: var(--color-status-merge);
+}
+
+/* Actions stay quiet until the card is hovered/focused — the footer reads as
+   information at rest (matching the mockup) and reveals controls on intent. */
 .session-card__footer-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.14s ease;
 }
 
-.card__status {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10.5px;
-  line-height: 1.2;
-  font-family: var(--font-mono);
-  font-weight: 400;
-  color: var(--color-text-muted);
+.session-card:hover .session-card__footer-actions,
+.session-card:focus-within .session-card__footer-actions,
+.session-card__footer-actions:focus-within {
+  opacity: 1;
 }
 
 .session-card__control {
@@ -5680,20 +5778,41 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-radius: 999px;
 }
 
+/* Frameless tinted trough — one fill, no stroke. Each column carries a
+   faint per-column semantic top-glow. The card is the only bordered box. */
 .kanban-column {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 7px;
-  background: var(--color-column-bg);
+  position: relative;
+  border: none;
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, var(--col-glow, transparent), transparent 130px),
+    rgba(255, 255, 255, 0.018);
   overflow: hidden;
+}
+
+.kanban-column[data-level="working"] {
+  --col-glow: color-mix(in srgb, var(--color-status-working) 7%, transparent);
+}
+.kanban-column[data-level="action"],
+.kanban-column[data-level="respond"] {
+  --col-glow: color-mix(in srgb, var(--color-status-attention) 6%, transparent);
+}
+.kanban-column[data-level="merge"] {
+  --col-glow: color-mix(in srgb, var(--color-status-merge) 7%, transparent);
+}
+.kanban-column[data-level="pending"],
+.kanban-column[data-level="review"],
+.kanban-column[data-level="done"] {
+  --col-glow: rgba(255, 255, 255, 0.02);
 }
 
 .kanban-column__header {
   flex-shrink: 0;
-  padding: 8px 10px 7px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 14px 15px 11px;
+  border-bottom: none;
 }
 
 .kanban-column__title-row {
@@ -8779,4 +8898,273 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .topbar-zone-pill--done {
   background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
   color: var(--color-text-tertiary);
+}
+
+/* ── Session detail: framed terminal + pluggable inspector rail ──────────
+   The terminal viewport is a live xterm.js PTY — we don't style its content;
+   only the frame + xterm theme object (see terminal-themes.ts). The inspector
+   is a registered-view slot: Summary · Changes · Browser. */
+.session-workspace {
+  display: flex;
+  min-width: 0;
+}
+
+.session-workspace__main {
+  min-width: 0;
+}
+
+.session-inspector {
+  position: relative;
+  display: flex;
+  width: var(--ao-inspector-w, 344px);
+  flex-shrink: 0;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-base);
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.session-inspector__tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 47px;
+  flex-shrink: 0;
+  padding: 0 11px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.session-inspector__tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.session-inspector__tab:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+.session-inspector__tab.is-active {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.session-inspector__tab-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.session-inspector__tab-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.session-inspector__tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-inspector__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 18px 40px;
+}
+
+.inspector-section {
+  margin-bottom: 22px;
+}
+
+.inspector-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 11px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--color-text-muted);
+}
+
+.inspector-section__link {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-accent);
+}
+
+.inspector-section__link:hover {
+  text-decoration: underline;
+}
+
+.inspector-empty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.inspector-empty--browser {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 48px 18px;
+  text-align: center;
+}
+
+.inspector-empty--browser svg {
+  width: 30px;
+  height: 30px;
+  color: var(--color-text-muted);
+}
+
+.inspector-empty--browser p {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.inspector-empty--browser span {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.inspector-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inspector-activity__summary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.inspector-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.inspector-kv__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  font-size: 12.5px;
+}
+
+.inspector-kv__k {
+  width: 74px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.inspector-kv__v {
+  min-width: 0;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-kv__v--mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.inspector-diff-sum {
+  display: flex;
+  gap: 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+}
+
+.inspector-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Brand mark — blue mascot tile (the conductor) ──────────────────────── */
+.app-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: #000;
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-subtle),
+    0 2px 10px rgba(77, 141, 255, 0.18);
+}
+
+.app-mark__img {
+  width: 23px;
+  height: 23px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+/* ── Resizable panel handles (sidebar + inspector) ──────────────────────── */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.resize-handle--right {
+  right: -3px;
+}
+
+.resize-handle--left {
+  left: -3px;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.resize-handle:hover::after,
+body.is-resizing-x .resize-handle::after {
+  background: var(--color-accent);
+}
+
+body.is-resizing-x {
+  cursor: col-resize;
+  user-select: none;
 }

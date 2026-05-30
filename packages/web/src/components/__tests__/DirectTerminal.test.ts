@@ -59,9 +59,9 @@ describe("buildTerminalThemes", () => {
     }
   });
 
-  it("dark theme background is #0a0a0f", () => {
+  it("dark theme background is the mission-control terminal surface", () => {
     const { dark } = buildTerminalThemes("agent");
-    expect(dark.background).toBe("#0a0a0f");
+    expect(dark.background).toBe("#0c0d10");
   });
 
   it("orchestrator variant reuses the shared design-system accent", () => {

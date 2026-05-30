@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { SessionDetail } from "../SessionDetail";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -82,8 +82,7 @@ describe("SessionDetail merge conflict actions", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "PR #99" }));
-
+    // PR card (with merge-conflict actions) is in the always-visible inspector rail.
     const compare = screen.getByRole("link", { name: /Compare with base branch/i });
     expect(compare).toHaveAttribute(
       "href",
@@ -114,7 +113,6 @@ describe("SessionDetail merge conflict actions", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "PR #100" }));
     expect(screen.queryByRole("link", { name: /Compare with base branch/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Copy head branch name/i })).not.toBeInTheDocument();
   });

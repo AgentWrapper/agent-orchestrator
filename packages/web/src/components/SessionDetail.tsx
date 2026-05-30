@@ -17,7 +17,7 @@ import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
-import { sessionActivityMeta } from "./session-detail-utils";
+import { SessionInspector } from "./SessionInspector";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -54,13 +54,12 @@ export function SessionDetail({
   const sidebarCtx = useSidebarContext();
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const [showTerminal, setShowTerminal] = useState(false);
-  const pr = session.pr;
+  const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  const prs = session.prs ?? [];
+  const safeSelectedPRIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const pr = prs[safeSelectedPRIndex] ?? session.pr;
   const terminalEnded = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
-  const activity = (session.activity && sessionActivityMeta[session.activity]) ?? {
-    label: session.activity ?? "unknown",
-    color: "var(--color-text-muted)",
-  };
   const headline = getSessionTitle(session);
 
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
@@ -114,6 +113,10 @@ export function SessionDetail({
   }, [isOrchestrator, projectOrchestratorId, session.projectId]);
 
   useEffect(() => {
+    setSelectedPRIndex(0);
+  }, [session.id]);
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));
     return () => {
       window.cancelAnimationFrame(frame);
@@ -129,17 +132,18 @@ export function SessionDetail({
         isMobile={isMobile}
         terminalEnded={terminalEnded}
         isRestorable={isRestorable}
-        activity={activity}
         headline={headline}
         projects={projects}
         orchestratorHref={orchestratorHref}
         orchestratorZones={orchestratorZones}
+        selectedPRIndex={safeSelectedPRIndex}
+        onSelectPR={setSelectedPRIndex}
         onToggleSidebar={sidebarCtx?.onToggleSidebar ?? (() => {})}
         onRestore={handleRestore}
         onKill={handleKill}
       />
-      <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
-        <div className="flex-1 min-h-0 flex flex-col">
+      <main className="session-detail-page session-workspace flex-1 min-h-0 flex bg-[var(--color-bg-base)]">
+        <div className="session-workspace__main flex-1 min-h-0 flex flex-col">
           {!showTerminal ? (
             <div className="session-detail-terminal-placeholder h-full" />
           ) : terminalEnded ? (
@@ -166,6 +170,11 @@ export function SessionDetail({
             />
           )}
         </div>
+        {/* The orchestrator session has no PR/changes/browser to inspect — give
+            it the full-width terminal (no inspector rail). */}
+        {!isMobile && !terminalEnded && !isOrchestrator ? (
+          <SessionInspector session={session} />
+        ) : null}
       </main>
       <MobileBottomNav
         ariaLabel="Session navigation"

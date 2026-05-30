@@ -55,6 +55,10 @@ const { mockGlobalConfig } = vi.hoisted(() => ({
   mockGlobalConfig: { value: null as null | { updateChannel?: string; installMethod?: string } },
 }));
 
+const { mockGetInstalledAoVersion } = vi.hoisted(() => ({
+  mockGetInstalledAoVersion: vi.fn(() => "0.0.0"),
+}));
+
 import type * as AoCoreType from "@aoagents/ao-core";
 
 vi.mock("@aoagents/ao-core", async () => {
@@ -62,6 +66,7 @@ vi.mock("@aoagents/ao-core", async () => {
   return {
     ...actual,
     loadGlobalConfig: () => mockGlobalConfig.value,
+    getInstalledAoVersion: () => mockGetInstalledAoVersion(),
   };
 });
 
@@ -109,6 +114,8 @@ describe("update-check", () => {
     // Default to nightly so checkForUpdate exercises the registry path.
     // Individual tests reset this when they need different channel behavior.
     mockGlobalConfig.value = { updateChannel: "nightly" };
+    mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+    mockGetCliVersion.mockReturnValue("0.2.2");
   });
 
   afterEach(() => {
@@ -333,6 +340,20 @@ describe("update-check", () => {
     it("returns a valid semver version string", () => {
       const version = getCurrentVersion();
       expect(version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it("uses the core-installed AO version when it is available", () => {
+      mockGetInstalledAoVersion.mockReturnValue("0.9.3");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+
+      expect(getCurrentVersion()).toBe("0.9.3");
+    });
+
+    it("falls back to the CLI package version when core only has the placeholder", () => {
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.9.3");
+
+      expect(getCurrentVersion()).toBe("0.9.3");
     });
   });
 
@@ -1034,6 +1055,52 @@ describe("update-check", () => {
       expect(output).toContain("Update available");
       expect(output).toContain("99.0.0");
       expect(output).toContain("npm install -g @aoagents/ao@latest");
+    });
+
+    it("does not print placeholder 0.0.0 when the current version is unknown", () => {
+      mockGlobalConfig.value = { updateChannel: "nightly" };
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.9.3-nightly-abc",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.0.0",
+          installMethod: "unknown",
+          channel: "nightly",
+        }),
+      );
+
+      maybeShowUpdateNotice();
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      const output = stderrSpy.mock.calls[0]![0] as string;
+      expect(output).toContain("Update available (nightly): update to latest version");
+      expect(output).toContain("npm install -g @aoagents/ao@nightly");
+      expect(output).not.toContain("0.0.0");
+    });
+
+    it("does not print placeholder 0.0.0 on the stable channel", () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.9.3",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.0.0",
+          installMethod: "unknown",
+          channel: "stable",
+        }),
+      );
+
+      maybeShowUpdateNotice();
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      const output = stderrSpy.mock.calls[0]![0] as string;
+      expect(output).toContain("Update available: update to latest version");
+      expect(output).toContain("npm install -g @aoagents/ao@latest");
+      expect(output).not.toContain("0.0.0");
     });
 
     it("prints git update notice from cached git state", () => {

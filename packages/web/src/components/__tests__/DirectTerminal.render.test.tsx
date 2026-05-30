@@ -151,9 +151,11 @@ describe("DirectTerminal render", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText("Connected")).toBeInTheDocument());
+    // The mockup term-head shows no connection-status text — the mono session
+    // id is the chrome's identity marker now.
+    await waitFor(() => expect(screen.getByText("ao-orchestrator")).toBeInTheDocument());
 
-    expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
+    expect(screen.queryByText("Connected")).toBeNull();
     expect(screen.queryByText("XDA")).toBeNull();
   });
 

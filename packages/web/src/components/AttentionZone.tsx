@@ -9,11 +9,9 @@ import { projectSessionPath } from "@/lib/routes";
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
-  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
-  onMerge?: (prNumber: number) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
-  onReview?: (sessionId: string) => Promise<void> | void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
   /** Accordion mode: called when the header is tapped to toggle */
@@ -34,15 +32,15 @@ const zoneConfig: Record<
   }
 > = {
   merge: {
-    label: "Ready",
+    label: "Ready to merge",
     emptyMessage: "Nothing cleared to land yet.",
   },
   action: {
-    label: "Action",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   respond: {
-    label: "Respond",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   review: {
@@ -50,7 +48,7 @@ const zoneConfig: Record<
     emptyMessage: "No code waiting for review.",
   },
   pending: {
-    label: "Pending",
+    label: "In review",
     emptyMessage: "Nothing blocked.",
   },
   working: {
@@ -75,11 +73,9 @@ const zoneConfig: Record<
 function AttentionZoneView({
   level,
   sessions,
-  onSend,
   onKill,
   onMerge,
   onRestore,
-  onReview,
   collapsed,
   onToggle,
   compactMobile,
@@ -139,11 +135,9 @@ function AttentionZoneView({
                   <SessionCard
                     key={session.id}
                     session={session}
-                    onSend={onSend}
                     onKill={onKill}
                     onMerge={onMerge}
                     onRestore={onRestore}
-                    onReview={onReview}
                   />
                 ),
               )}
@@ -184,11 +178,9 @@ function AttentionZoneView({
               <SessionCard
                 key={session.id}
                 session={session}
-                onSend={onSend}
                 onKill={onKill}
                 onMerge={onMerge}
                 onRestore={onRestore}
-                onReview={onReview}
               />
             ))}
           </div>
@@ -203,11 +195,9 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.level === next.level &&
     prev.collapsed === next.collapsed &&
     prev.onToggle === next.onToggle &&
-    prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
-    prev.onReview === next.onReview &&
     prev.compactMobile === next.compactMobile &&
     prev.onPreview === next.onPreview &&
     prev.resetKey === next.resetKey &&
@@ -299,10 +289,11 @@ export function getActionChipLabel(session: DashboardSession): string {
   // Review-class: status
   if (session.status === "ci_failed") return "ci failed";
   if (session.status === "changes_requested") return "changes";
-  // Review-class: PR signals
-  if (session.pr?.ciStatus === "failing") return "ci failed";
-  if (session.pr?.reviewDecision === "changes_requested") return "changes";
-  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  // Review-class: PR signals — aggregate across all PRs
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (prs.some((p) => p.ciStatus === "failing")) return "ci failed";
+  if (prs.some((p) => p.reviewDecision === "changes_requested")) return "changes";
+  if (prs.some((p) => !p.mergeability.noConflicts)) return "conflicts";
   return "action";
 }
 
@@ -315,16 +306,17 @@ function SessionStateChip({
 }) {
   let label = zoneConfig[level].label.toLowerCase();
 
-  if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (level === "merge" && prs.length > 0 && prs.every((p) => isPRMergeReady(p))) {
     label = "ready";
   } else if (level === "action") {
     label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {
-    label = session.pr?.reviewDecision === "changes_requested" ? "changes" : "review";
+    label = prs.some((p) => p.reviewDecision === "changes_requested") ? "changes" : "review";
   } else if (level === "pending") {
-    label = session.pr?.unresolvedThreads ? "threads" : "pending";
+    label = prs.some((p) => p.unresolvedThreads) ? "threads" : "pending";
   } else if (level === "working") {
     label = session.activity === "idle" ? "idle" : "active";
   }

@@ -305,6 +305,11 @@ export interface Session {
   /** PR info (once PR is created) */
   pr: PRInfo | null;
 
+  /** All PRs opened by this session (across multiple repos). Always in sync with pr —
+   *  single-PR sessions have prs = [pr], no-PR sessions have prs = [].
+   *  Populated from metadata field "prs" (comma-separated URLs) on load. */
+  prs: PRInfo[];
+
   /** Workspace path on disk */
   workspacePath: string | null;
 

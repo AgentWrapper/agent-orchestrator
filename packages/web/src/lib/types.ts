@@ -118,6 +118,10 @@ export interface DashboardSession {
   createdAt: string;
   lastActivityAt: string;
   pr: DashboardPR | null;
+  /** All PRs opened by this session across multiple repos.
+   *  Mirrors core Session.prs — array of DashboardPR objects.
+   *  Empty array when no PRs exist. */
+  prs: DashboardPR[];
   metadata: Record<string, string>;
   agentReportAudit?: DashboardAgentReportAuditEntry[];
   attentionLevel?: AttentionLevel;

@@ -105,6 +105,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     branch: "feat/test",
     issueId: null,
     pr: null,
+    prs: [],
     workspacePath: "/tmp/ws",
     runtimeHandle: { id: "rt-1", runtimeName: "mock", data: {} },
     agentInfo: null,
@@ -115,6 +116,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     ...base,
     ...overrides,
+    prs: overrides.prs ?? (overrides.pr ? [overrides.pr] : []),
     lifecycle: overrides.lifecycle ?? lifecycle,
   };
 }

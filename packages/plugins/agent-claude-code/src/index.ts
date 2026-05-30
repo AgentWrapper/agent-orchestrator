@@ -173,6 +173,33 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
+    # Append to prs field (comma-separated list of all PR URLs for this session).
+    # Supports multiple PRs per session — same repo or different repos.
+    existing_prs=""
+    if is_json_metadata; then
+      if command -v jq &>/dev/null; then
+        existing_prs=$(jq -r '.prs // empty' "$metadata_file" 2>/dev/null || echo "")
+      else
+        existing_prs=$(node -e "
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+          process.stdout.write(d.prs || '');
+        " "$metadata_file" 2>/dev/null || echo "")
+      fi
+    else
+      existing_prs=$(grep '^prs=' "$metadata_file" 2>/dev/null | cut -d'=' -f2- || echo "")
+    fi
+    if [[ -z "$existing_prs" ]]; then
+      new_prs="$pr_url"
+    else
+      # Only append if not already present (exact comma-delimited match to avoid /pull/1 matching /pull/10)
+      if ! echo ",$existing_prs," | grep -qF ",$pr_url,"; then
+        new_prs="$existing_prs,$pr_url"
+      else
+        new_prs="$existing_prs"
+      fi
+    fi
+    update_metadata_key "prs" "$new_prs"
     update_metadata_key "status" "pr_open"
     echo '{"systemMessage": "Updated metadata: PR created at '"$pr_url"'"}'
     exit 0
@@ -340,7 +367,23 @@ if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
   const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
   if (prMatch) {
     const prUrl = prMatch[0];
+    let existingPrs = "";
+    try {
+      const raw = readFileSync(metadataFile, "utf-8");
+      if (metadataFile.endsWith(".json")) {
+        existingPrs = JSON.parse(raw).prs || "";
+      } else {
+        const prsLine = raw.split("\\n").find((l) => l.startsWith("prs="));
+        existingPrs = prsLine ? prsLine.slice(4) : "";
+      }
+    } catch {}
+    const newPrs = !existingPrs
+      ? prUrl
+      : existingPrs.split(",").map((u) => u.trim()).includes(prUrl)
+        ? existingPrs
+        : existingPrs + "," + prUrl;
     updateMetadataKey("pr", prUrl);
+    updateMetadataKey("prs", newPrs);
     updateMetadataKey("status", "pr_open");
     process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: PR created at " + prUrl }) + "\\n");
     process.exit(0);

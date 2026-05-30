@@ -1484,6 +1484,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         branch,
         issueId: spawnConfig.issueId ?? null,
         pr: null,
+        prs: [],
         workspacePath,
         runtimeHandle: handle,
         agentInfo: null,
@@ -1971,6 +1972,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       branch,
       issueId: null,
       pr: null,
+      prs: [],
       workspacePath,
       runtimeHandle: handle,
       agentInfo: null,
@@ -2658,11 +2660,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         const plugins = resolvePlugins(project);
         let shouldKill = false;
 
-        // Check if PR was closed without merging.
-        if (session.pr && plugins.scm) {
+        // Check if all tracked PRs are closed without merging.
+        // For multi-PR sessions, keep alive as long as any PR is still open.
+        const prsToCheck = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
+        if (prsToCheck.length > 0 && plugins.scm) {
           try {
-            const prState = await plugins.scm.getPRState(session.pr);
-            if (prState === PR_STATE.CLOSED) {
+            const states = await Promise.all(
+              prsToCheck.map((pr) => plugins.scm!.getPRState(pr)),
+            );
+            if (states.every((state) => state === PR_STATE.CLOSED)) {
               shouldKill = true;
             }
           } catch {
@@ -3157,7 +3163,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
         continue;
 
-      const samePr = otherRaw["pr"] === pr.url;
+      const otherPrUrls = new Set<string>(
+        [
+          otherRaw["pr"],
+          ...(typeof otherRaw["prs"] === "string" ? otherRaw["prs"].split(",") : []),
+        ]
+          .map((u) => (typeof u === "string" ? u.trim() : ""))
+          .filter(Boolean),
+      );
+      const samePr = otherPrUrls.has(pr.url);
       const sameBranch =
         otherRaw["branch"] === pr.branch && (otherRaw["prAutoDetect"] ?? "on") !== "off" && otherRaw["prAutoDetect"] !== "false";
 
@@ -3182,11 +3196,33 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       next.pr.url = pr.url;
       next.pr.lastObservedAt = new Date().toISOString();
     });
+    // Stack: push claimed PR to front — it becomes primary (prs[0]) on next load.
+    // Filter out duplicates, keep all other tracked PRs at the back.
+    const existingPrs = raw["prs"] ?? raw["pr"] ?? "";
+    const otherPrs = existingPrs
+      .split(",")
+      .map((u) => u.trim())
+      .filter((u) => u && u !== pr.url)
+      .join(",");
+    const newPrs = otherPrs ? `${pr.url},${otherPrs}` : pr.url;
+    // Clear stale positional enrichment blobs — claimPR reorders prs[] so
+    // index-keyed blobs no longer match. Lifecycle poll rewrites them within ~30s.
+    const staleEnrichmentKeys: Record<string, string> = {
+      prEnrichment: "",
+      prReviewComments: "",
+    };
+    for (const key of Object.keys(raw)) {
+      if (/^prEnrichment_\d+$/.test(key) || /^prReviewComments_\d+$/.test(key)) {
+        staleEnrichmentKeys[key] = "";
+      }
+    }
     updateMetadata(sessionsDir, sessionId, {
       pr: pr.url,
+      prs: newPrs,
       status: deriveLegacyStatus(claimLifecycle),
       branch: pr.branch,
       prAutoDetect: "",
+      ...staleEnrichmentKeys,
       ...lifecycleMetadataUpdates(raw, claimLifecycle),
     });
     invalidateCache();
@@ -3208,6 +3244,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
       updateMetadata(sessionsDir, previousSessionId, {
         pr: "",
+        prs: "",
         prAutoDetect: "false",
         ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "")
           ? { status: "working" }

@@ -258,9 +258,6 @@ function SessionPageShell({
             </svg>
           )}
         </button>
-        <div className="dashboard-app-header__brand">
-          <span>Agent Orchestrator</span>
-        </div>
         <div className="dashboard-app-header__spacer" />
       </header>
 

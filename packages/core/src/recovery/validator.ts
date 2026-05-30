@@ -122,6 +122,7 @@ export async function validateSession(
         branch: normalizedMetadata["branch"] ?? null,
         issueId: normalizedMetadata["issue"] ?? null,
         pr: null,
+        prs: [],
         workspacePath,
         runtimeHandle,
         agentInfo: null,

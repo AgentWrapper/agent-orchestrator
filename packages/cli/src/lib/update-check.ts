@@ -597,10 +597,14 @@ export function maybeShowUpdateNotice(): void {
 
   const channelSuffix = channel === "nightly" ? " (nightly)" : "";
   const command = getUpdateCommand(installMethod, channel);
-  const message =
-    installMethod === "git"
-      ? `\nUpdate available${channelSuffix} from ${cached.latestVersion} — Run: ${command}\n\n`
-      : `\nUpdate available${channelSuffix}: ${currentVersion} → ${cached.latestVersion} — Run: ${command}\n\n`;
+  let message: string;
+  if (installMethod === "git") {
+    message = `\nUpdate available${channelSuffix} from ${cached.latestVersion} — Run: ${command}\n\n`;
+  } else if (currentVersion === "0.0.0") {
+    message = `\nUpdate available${channelSuffix}: update to latest version — Run: ${command}\n\n`;
+  } else {
+    message = `\nUpdate available${channelSuffix}: ${currentVersion} → ${cached.latestVersion} — Run: ${command}\n\n`;
+  }
   process.stderr.write(message);
 }
 

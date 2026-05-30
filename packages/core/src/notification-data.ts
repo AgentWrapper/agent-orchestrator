@@ -23,6 +23,8 @@ export interface NotificationPRContext {
 
 export interface NotificationEventContext {
   pr: NotificationPRContext | null;
+  /** All PRs for this session. Single-PR sessions have exactly one entry (same as pr). */
+  prs: NotificationPRContext[];
   issueId: string | null;
   issueTitle: string | null;
   summary: string | null;

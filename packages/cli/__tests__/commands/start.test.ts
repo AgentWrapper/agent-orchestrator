@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { EventEmitter } from "node:events";
 import {
+  generateExternalId,
   getDefaultRuntime,
   recordActivityEvent,
   type SessionManager,
@@ -2828,6 +2829,82 @@ describe("start command — already-running detection", () => {
     expect(newKey).toMatch(/^my-app-/);
   });
 
+  it("creates new orchestrator entry in the global registry when cwd config is flat", async () => {
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["agent-orchestrator_5dce9e3fe8"],
+    });
+
+    mockPromptSelect.mockResolvedValue("new");
+
+    const repoDir = join(tmpDir, "agent-orchestrator");
+    createFakeRepo(repoDir, "https://github.com/org/agent-orchestrator.git");
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const projectId = generateExternalId(
+      repoDir,
+      "https://github.com/org/agent-orchestrator.git",
+    );
+    const globalConfigPath = process.env["AO_GLOBAL_CONFIG"]!;
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            [projectId]: {
+              projectId,
+              path: repoDir,
+              defaultBranch: "main",
+              displayName: "Agent Orchestrator",
+              sessionPrefix: "app",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+
+    mockConfigRef.current = makeConfig({
+      [projectId]: makeProject({
+        name: "Agent Orchestrator",
+        path: repoDir,
+        sessionPrefix: "app",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = localConfigPath;
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } catch {
+      // Startup may throw after the config mutation; this test only covers
+      // the flat-config new-orchestrator mutation path.
+    }
+
+    const updatedGlobal = parseYaml(readFileSync(globalConfigPath, "utf-8")) as {
+      projects: Record<string, Record<string, unknown>>;
+    };
+    const projectKeys = Object.keys(updatedGlobal.projects);
+    expect(projectKeys).toHaveLength(2);
+    expect(projectKeys).toContain(projectId);
+    const newKey = projectKeys.find((key) => key !== projectId);
+    expect(newKey).toMatch(new RegExp(`^${projectId}-`));
+    expect(updatedGlobal.projects[newKey!].path).toBe(repoDir);
+
+    const localConfig = readFileSync(localConfigPath, "utf-8");
+    expect(localConfig).not.toContain("projects:");
+  });
+
   it("does not mutate YAML when non-TTY caller detects already running (path arg)", async () => {
     mockIsAlreadyRunning.mockResolvedValue({
       pid: 9999,
@@ -3206,6 +3283,62 @@ describe("start command — global registry mutations", () => {
       else process.env["AO_CONFIG_PATH"] = origEnv;
       if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
       else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+  });
+
+  it("writes interactive agent overrides to a flat repo-local config", async () => {
+    const repoDir = join(tmpDir, "current");
+    createFakeRepo(repoDir, "https://github.com/org/current.git");
+
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const projectId = generateExternalId(repoDir, "https://github.com/org/current.git");
+    mockConfigRef.current = makeConfig({
+      [projectId]: makeProject({
+        name: "Current",
+        path: repoDir,
+        sessionPrefix: "current",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = localConfigPath;
+
+    const detectAgent = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAgent.detectAvailableAgents).mockResolvedValue([
+      { name: "claude-code", displayName: "Claude Code" },
+      { name: "codex", displayName: "OpenAI Codex" },
+    ]);
+    mockPromptSelect.mockResolvedValueOnce("claude-code").mockResolvedValueOnce("codex");
+    const originalStdinTty = process.stdin.isTTY;
+    const originalStdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "--interactive",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const localConfig = readFileSync(localConfigPath, "utf-8");
+      expect(localConfig).toContain("agent: claude-code");
+      expect(localConfig).toContain("orchestrator:");
+      expect(localConfig).toContain("worker:");
+      expect(localConfig).toContain("agent: codex");
+      expect(localConfig).not.toContain("projects:");
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: originalStdinTty,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: originalStdoutTty,
+        configurable: true,
+      });
     }
   });
 });

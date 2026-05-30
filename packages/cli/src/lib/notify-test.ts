@@ -92,6 +92,18 @@ const DEMO_PR_CONTEXT: NotificationEventContext = {
     repo: "agent-orchestrator",
     isDraft: false,
   },
+  prs: [
+    {
+      number: 1579,
+      url: DEMO_PR_URL,
+      title: "Normalize AO notifier payloads",
+      branch: "ao/demo-notifier-harness",
+      baseBranch: "main",
+      owner: "ComposioHQ",
+      repo: "agent-orchestrator",
+      isDraft: false,
+    },
+  ],
   issueId: "AO-1579",
   issueTitle: "Make AO notification payloads API-grade",
   summary: "Normalize AO notifier payloads",
@@ -100,6 +112,7 @@ const DEMO_PR_CONTEXT: NotificationEventContext = {
 
 const DEMO_SYSTEM_CONTEXT: NotificationEventContext = {
   pr: null,
+  prs: [],
   issueId: null,
   issueTitle: null,
   summary: "AO notification delivery smoke test",

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AO — Org-chart icon refinement</title>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{--bg:#0a0b0d;--card:#15171b;--t1:#f4f5f7;--t2:#9ba1aa;--t3:#646a73;--t4:#444951;
+    --line:rgba(255,255,255,0.06);--line-2:rgba(255,255,255,0.10);--blue:#4d8dff;}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--t1);font-family:"Schibsted Grotesk",sans-serif;-webkit-font-smoothing:antialiased;padding:40px 46px 80px}
+  h1{font-size:21px;font-weight:700;letter-spacing:-.025em}
+  .lede{font-size:13px;color:var(--t3);margin:7px 0 30px;max-width:680px;line-height:1.55}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  .cell{background:var(--card);border-radius:11px;box-shadow:inset 0 0 0 1px var(--line);padding:20px 18px 16px;display:flex;flex-direction:column;align-items:center;gap:16px}
+  .cell.cur{box-shadow:inset 0 0 0 1px rgba(77,141,255,.45)}
+  .big{width:58px;height:58px;border-radius:13px;background:#101216;box-shadow:inset 0 0 0 1px var(--line);display:grid;place-items:center;color:var(--t1)}
+  .btn{padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:7px;background:var(--blue);color:#fff;cursor:pointer}
+  .btn:hover{background:#5b97ff}
+  .cap{text-align:center}
+  .cap .nm{font-size:12.5px;font-weight:600}
+  .cap .ds{font-size:11px;color:var(--t3);margin-top:3px;line-height:1.4}
+  .badge{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--blue);background:rgba(77,141,255,.14);padding:1px 6px;border-radius:4px;margin-top:8px;display:inline-block}
+</style>
+</head>
+<body>
+  <h1>Org-chart icon — refined variants</h1>
+  <p class="lede">One orchestrator conducting many agents. Tuned geometry, symmetric spacing, clean elbow/bus connectors, rounded joins. Shown large (detail) and at button size (truth).</p>
+  <div class="grid" id="g"></div>
+<script>
+const big = p => `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const sm  = p => `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+
+const V = [
+  {nm:"1→3 cards", cur:true, ds:"parent + 3 agent-cards on a bus — echoes the kanban cards",
+   ic:`<rect x="9" y="2.5" width="6" height="4.5" rx="1.4"/><rect x="2.5" y="17" width="6" height="4.5" rx="1.4"/><rect x="9" y="17" width="6" height="4.5" rx="1.4"/><rect x="15.5" y="17" width="6" height="4.5" rx="1.4"/><path d="M12 7v4.5M5.5 17v-5.5h13V17M12 11.5V17"/>`},
+  {nm:"1→2 cards", ds:"calmer, two children",
+   ic:`<rect x="9" y="2.5" width="6" height="4.5" rx="1.4"/><rect x="3" y="17" width="6" height="4.5" rx="1.4"/><rect x="15" y="17" width="6" height="4.5" rx="1.4"/><path d="M12 7v4.5M6 17v-5.5h12V17"/>`},
+  {nm:"1→3 dots", ds:"lighter — round nodes for the fleet",
+   ic:`<circle cx="12" cy="4.6" r="2.1"/><circle cx="5" cy="19.4" r="2.1"/><circle cx="12" cy="19.4" r="2.1"/><circle cx="19" cy="19.4" r="2.1"/><path d="M12 6.7v5.1M5 17.3v-5.5h14v5.5M12 11.8v5.5"/>`},
+  {nm:"1→2 dots", ds:"minimal",
+   ic:`<circle cx="12" cy="5" r="2.3"/><circle cx="6" cy="19" r="2.3"/><circle cx="18" cy="19" r="2.3"/><path d="M12 7.3v4.5M6 16.7v-4.9h12v4.9"/>`},
+  {nm:"1→3 radial", ds:"fans out from the conductor (no bus)",
+   ic:`<rect x="9.5" y="2.5" width="5" height="4.5" rx="1.3"/><rect x="2.5" y="17" width="5" height="4.5" rx="1.3"/><rect x="9.5" y="17" width="5" height="4.5" rx="1.3"/><rect x="16.5" y="17" width="5" height="4.5" rx="1.3"/><path d="M11 7 6 17M12 7.2V17M13 7 18 17"/>`},
+  {nm:"Parent dot → card row", ds:"conductor as a node, agents as cards",
+   ic:`<circle cx="12" cy="4.5" r="2.2"/><rect x="2.5" y="16.5" width="5.5" height="5" rx="1.3"/><rect x="9.25" y="16.5" width="5.5" height="5" rx="1.3"/><rect x="16" y="16.5" width="5.5" height="5" rx="1.3"/><path d="M12 6.7v4.8M5.25 16.5v-5h13.5v5M12 11.5v5"/>`},
+];
+
+document.getElementById('g').innerHTML = V.map((v,i)=>`
+  <div class="cell ${v.cur?'cur':''}">
+    <div class="big">${big(v.ic)}</div>
+    <button class="btn">${sm(v.ic)}Orchestrator</button>
+    <div class="cap"><div class="nm">${i+1}. ${v.nm}</div><div class="ds">${v.ds}</div>
+    ${v.cur?'<span class="badge">APPLIED TO SESSION PAGE</span>':''}</div>
+  </div>`).join('');
+</script>
+</body>
+</html>

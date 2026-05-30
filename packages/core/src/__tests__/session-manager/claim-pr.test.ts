@@ -7,6 +7,7 @@ import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
   readMetadataRaw,
+  updateMetadata,
 } from "../../metadata.js";
 import {
   type OrchestratorConfig,
@@ -479,5 +480,113 @@ describe("claimPR", () => {
 
     const oldOwner = readMetadataRaw(sessionsDir, "app-owner");
     expect(oldOwner!["pr"] ?? "").toBe("");
+  });
+
+  // -------------------------------------------------------------------------
+  // Multi-PR stack behavior (issue #1821)
+  // -------------------------------------------------------------------------
+
+  it("3.1 — claimed PR is pushed to front of prs stack, existing PRs move to back", async () => {
+    const mockSCM = makeSCM({
+      resolvePR: vi.fn().mockResolvedValue({
+        number: 20,
+        url: "https://github.com/org/my-app/pull/20",
+        title: "New PR",
+        owner: "org",
+        repo: "my-app",
+        branch: "feat/new-pr",
+        baseBranch: "main",
+        isDraft: false,
+      }),
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws-app-1",
+      branch: "feat/existing-pr",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/my-app/pull/10",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      prs: "https://github.com/org/my-app/pull/10",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await sm.claimPR("app-1", "20");
+
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    expect(raw!["pr"]).toBe("https://github.com/org/my-app/pull/20");
+    expect(raw!["prs"]).toBe(
+      "https://github.com/org/my-app/pull/20,https://github.com/org/my-app/pull/10",
+    );
+  });
+
+  it("3.2 — claimPR on session with no existing prs writes only the claimed PR", async () => {
+    const mockSCM = makeSCM({
+      resolvePR: vi.fn().mockResolvedValue({
+        number: 20,
+        url: "https://github.com/org/my-app/pull/20",
+        title: "First PR",
+        owner: "org",
+        repo: "my-app",
+        branch: "feat/new-pr",
+        baseBranch: "main",
+        isDraft: false,
+      }),
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws-app-1",
+      branch: "feat/new-pr",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await sm.claimPR("app-1", "20");
+
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    expect(raw!["pr"]).toBe("https://github.com/org/my-app/pull/20");
+    expect(raw!["prs"]).toBe("https://github.com/org/my-app/pull/20");
+  });
+
+  it("3.3 — re-claiming the same PR does not duplicate it in prs stack", async () => {
+    const mockSCM = makeSCM({
+      resolvePR: vi.fn().mockResolvedValue({
+        number: 20,
+        url: "https://github.com/org/my-app/pull/20",
+        title: "Already claimed PR",
+        owner: "org",
+        repo: "my-app",
+        branch: "feat/new-pr",
+        baseBranch: "main",
+        isDraft: false,
+      }),
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws-app-1",
+      branch: "feat/new-pr",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/my-app/pull/20",
+      runtimeHandle: makeHandle("rt-1"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      prs: "https://github.com/org/my-app/pull/20,https://github.com/org/my-app/pull/10",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    await sm.claimPR("app-1", "20");
+
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    expect(raw!["pr"]).toBe("https://github.com/org/my-app/pull/20");
+    // PR#20 must appear exactly once — still at the front, PR#10 still at the back
+    expect(raw!["prs"]).toBe(
+      "https://github.com/org/my-app/pull/20,https://github.com/org/my-app/pull/10",
+    );
+    expect(raw!["prs"]!.split(",")).toHaveLength(2);
   });
 });

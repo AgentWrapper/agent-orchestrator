@@ -54,6 +54,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
     lastActivityAt: new Date("2025-01-01T00:00:00Z"),
     metadata: {},
     ...overrides,
+    prs: overrides?.prs ?? (overrides?.pr ? [overrides.pr] : []),
   };
 }
 
