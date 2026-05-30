@@ -147,8 +147,11 @@
       <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> PR <b>#37</b></span>
       <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg> <b>feat/sqlite-storage-cdc</b> → main</span>
       <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></svg> Pritom14</span>
-      <span class="pill" style="color:var(--green)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg> +3849 / −11 · 40 files</span>
+      <span class="pill" style="color:var(--green)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg> +4521 / −11 · 49 files</span>
       <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Go · modernc/sqlite · goose · sqlc</span>
+    </div>
+    <div class="card" style="margin-top:22px;border-left:3px solid var(--amber);max-width:820px">
+      <p style="margin:0;font-size:13.5px"><strong>Revised review</strong> — re-run against PR head <code class="in">23b8fe4</code> after a second commit (<code class="in">feat(backend): add projects and pr_enrichment tables</code>). New since the first pass: migration <code class="in">0002_pr_projects.sql</code> adds the <code class="in">projects</code> registry (the SQLite twin of the YAML config) and a 1:1 <code class="in">pr_enrichment</code> cache, with their stores and 3 CRUD tests. Sections updated throughout; changes called out inline with an <span style="color:var(--amber)">amber</span> mark.</p>
     </div>
   </div>
 </header>
@@ -176,6 +179,7 @@
   <h2><span class="num">01</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg> Executive summary</h2>
   <p class="lead">PR&nbsp;#37 replaces the rewrite's in-memory <code class="in">fakeStore</code> with two real outbound adapters: a SQLite <span class="fl">internal/storage/sqlite</span> persistence layer satisfying <code class="in">ports.LifecycleStore</code>, and a <span class="fl">internal/cdc</span> transactional-outbox → JSONL → durable-consumer → broadcaster pipeline. It is genuinely strong work: the canonical write is a single all-or-nothing transaction (session row + <code class="in">change_log</code> + <code class="in">outbox</code>), the revision column is a real optimistic-concurrency CAS rather than a debug counter, escalation budgets are now durable across restart, and the design is honest about what it stubs (<code class="in">noopNotifier</code>, <code class="in">noopMessenger</code>, empty reaper registry) versus what it refuses to fake (Session Manager, HTTP routes).</p>
   <p>The transactional-outbox pattern is the correct backbone and the happy-path is well-tested. My concerns are concentrated at the <strong>edges of failure</strong>: the in-process <code class="in">Broadcaster</code> calls subscriber callbacks synchronously with <strong>no panic recovery</strong>, so one bad subscriber can silently kill the entire delivery goroutine; a <strong>cross-store durability mismatch</strong> exists because the JSONL log is <code class="in">fsync</code>'d per write while SQLite runs <code class="in">synchronous=NORMAL</code>, so a power loss can leave the CDC log ahead of the recovered database; and the janitor's deletion watermark is unsafe for the multi-consumer future the schema already advertises. None of these block the merge of a foundational PR, but they should be tracked before live transports subscribe to the broadcaster.</p>
+  <p>The second commit adds a <code class="in">projects</code> registry (a durable replacement for the YAML config) and a 1:1 <code class="in">pr_enrichment</code> cache for the rich PR facts the canonical lifecycle deliberately omits. Both are clean, well-commented, and tested — and they exercise the first <strong>forward migration</strong> (<code class="in">0002</code>), retiring my earlier "migration story unproven" note. They also sharpen one theme: the read model is now <strong>four channels</strong> — the canonical CDC stream plus three pull-only side tables (<code class="in">session_metadata</code>, <code class="in">pr_enrichment</code>, <code class="in">projects</code>) — and the new stores are <strong>dormant</strong>: nothing wires them yet, and they are not part of the <code class="in">ports.LifecycleStore</code> interface (concrete <code class="in">*Store</code> methods only).</p>
   <p>Versus the existing AO, this is a deliberate architectural upgrade — ACID transactions and a durable change stream replace per-session JSON files and an in-memory reaction map — but the rewrite is still <strong>infrastructure without a product</strong>: no notifier, no SCM poller, no agent process management, no dashboard, no cross-platform process teardown. The storage substrate is arguably ahead of the mature AO; the surface area around it is far behind.</p>
 </section>
 
@@ -193,12 +197,14 @@
 
   <h3>Storage — <span class="fl">internal/storage/sqlite</span></h3>
   <ul>
-    <li><strong>Driver &amp; migrations.</strong> <code class="in">modernc.org/sqlite</code> (pure-Go, no CGO) for clean 3-OS cross-compile; <code class="in">goose</code> embedded migrations in <span class="fl">migrations/0001_init.sql</span>; <code class="in">sqlc</code>-generated typed queries checked in under <span class="fl">gen/</span>.</li>
+    <li><strong>Driver &amp; migrations.</strong> <code class="in">modernc.org/sqlite</code> (pure-Go, no CGO) for clean 3-OS cross-compile; <code class="in">goose</code> embedded migrations (<span class="fl">migrations/0001_init.sql</span>, <span class="fl">0002_pr_projects.sql</span>); <code class="in">sqlc</code>-generated typed queries checked in under <span class="fl">gen/</span>.</li>
     <li><strong>Atomic Upsert.</strong> <span class="fl">upsert.go:26</span> opens one <code class="in">*sql.Tx</code>, runs the revision-CAS persist, then appends the <code class="in">change_log</code> + <code class="in">outbox</code> rows, and commits — all-or-nothing (<span class="fl">upsert.go:43</span>).</li>
     <li><strong>Revision CAS.</strong> <span class="fl">upsert.go:48</span> — insert requires incoming revision <code class="in">0</code> and persists <code class="in">1</code>; update requires the loaded revision to match and bumps <code class="in">+1</code>; zero rows affected ⇒ revision-mismatch error (<span class="fl">upsert.go:60,77</span>).</li>
     <li><strong>Connection policy.</strong> WAL + <code class="in">busy_timeout(5000)</code> + <code class="in">foreign_keys(ON)</code> + <code class="in">synchronous(NORMAL)</code> (<span class="fl">db.go:24</span>), with <code class="in">SetMaxOpenConns(1)</code> (<span class="fl">db.go:44</span>) enforcing a single writer so WAL's single-writer rule cannot be violated by the pool.</li>
     <li><strong>Metadata side-channel.</strong> <code class="in">branch</code>, <code class="in">workspacePath</code>, etc. live in <code class="in">session_metadata</code> written by <code class="in">PatchMetadata</code> (<span class="fl">store.go:98</span>) — deliberately off the CDC path: no revision bump, no event.</li>
     <li><strong>Durable reaction trackers.</strong> escalation budgets persist in <code class="in">reaction_trackers</code> (<span class="fl">0001_init.sql:89</span>), fixing the in-memory-only behaviour that re-fired human pages after a daemon bounce.</li>
+    <li style="border-left:2px solid var(--amber);padding-left:12px;list-style:none;margin-left:-14px"><strong>Projects registry <span style="color:var(--amber);font-size:11px;font-family:var(--mono)">[NEW]</span></strong> — <code class="in">projects</code> (<span class="fl">0002_pr_projects.sql:10</span>) is the durable twin of the old global <code class="in">config.yaml</code> + per-repo <code class="in">agent-orchestrator.yaml</code>: <code class="in">id</code>, repo identity, default branch, <code class="in">session_prefix</code>, <code class="in">source</code>, and a <code class="in">archived_at</code> soft-delete. The <code class="in">sessions.project_id</code> link is <strong>app-enforced, not a hard FK</strong> — documented because SQLite can't <code class="in">ALTER ADD</code> a FK without a table rebuild and a backfill may insert sessions before their project row. Full CRUD in <span class="fl">project_store.go</span>.</li>
+    <li style="border-left:2px solid var(--amber);padding-left:12px;list-style:none;margin-left:-14px"><strong>PR-enrichment cache <span style="color:var(--amber);font-size:11px;font-family:var(--mono)">[NEW]</span></strong> — <code class="in">pr_enrichment</code> (<span class="fl">0002_pr_projects.sql:34</span>) is the SCM observer's 1:1-per-session cache of rich PR facts the canonical lifecycle omits (<code class="in">ci_summary</code>, <code class="in">review_decision</code>, <code class="in">mergeability</code>, <code class="in">pending_comments</code>, <code class="in">ci_log_tail</code>). Off the CDC path, but unlike metadata it has a proper <code class="in">REFERENCES sessions(id) ON DELETE CASCADE</code> FK. <span class="fl">pr_store.go</span>.</li>
   </ul>
 
   <h3>CDC — <span class="fl">internal/cdc</span></h3>
@@ -255,13 +261,13 @@
   </div>
 
   <div class="finding med">
-    <div class="fh"><span class="sev med">Medium</span><span class="fid">M2</span><span class="ft">Metadata writes are invisible to the CDC stream</span></div>
-    <p><code class="in">PatchMetadata</code> (<span class="fl">store.go:98</span>) is intentionally off the canonical path — no revision bump, no <code class="in">change_log</code>/<code class="in">outbox</code> row. That is a defensible choice, but it means a frontend built purely on the CDC stream will <em>never</em> observe <code class="in">branch</code>, <code class="in">workspacePath</code>, or <code class="in">runtimeHandleId</code> changes; those require a separate read API. The snapshot resync also excludes metadata (<code class="in">payload.Metadata = nil</code>, <span class="fl">upsert.go:92</span>). Make sure the FE contract knows metadata is pull-only, or fold a coarse "metadata changed" event onto the stream.</p>
+    <div class="fh"><span class="sev med">Medium</span><span class="fid">M2</span><span class="ft">The off-CDC read model is now four channels — a real FE-contract burden</span></div>
+    <p><code class="in">PatchMetadata</code> (<span class="fl">store.go:98</span>) is intentionally off the canonical path — no revision bump, no <code class="in">change_log</code>/<code class="in">outbox</code> row — and the snapshot resync excludes it too (<code class="in">payload.Metadata = nil</code>, <span class="fl">upsert.go:92</span>). The second commit <strong>compounds this</strong>: <code class="in">pr_enrichment</code> and <code class="in">projects</code> are also off the CDC stream by design. A frontend built purely on CDC now sees <em>only</em> the canonical lifecycle and must separately pull <strong>three side tables</strong> — <code class="in">session_metadata</code> (branch, paths), <code class="in">pr_enrichment</code> (CI/review/mergeability — exactly the fields a PR card needs), and <code class="in">projects</code> — none of which emit a change signal. That is a defensible normalization, but it means "what changed?" can no longer be answered by the stream alone. Either publish coarse <code class="in">*_changed</code> markers for the side tables, or make the FE contract explicit that they are poll-only and define the poll cadence.</p>
   </div>
 
   <div class="finding med">
-    <div class="fh"><span class="sev med">Medium</span><span class="fid">M3</span><span class="ft">Latent referential-integrity gaps (no delete path today, but the schema invites one)</span></div>
-    <p><code class="in">change_log.session_id</code> has no foreign key to <code class="in">sessions</code> (<span class="fl">0001_init.sql:56</span>), and <code class="in">outbox.change_log_seq</code> references <code class="in">change_log(seq)</code> with no <code class="in">ON DELETE</code> action (<span class="fl">0001_init.sql:67</span>). No code deletes sessions or change-log rows in this PR, so nothing is broken now — but a future retention/cleanup job (which this storage layer will eventually need: <code class="in">change_log</code> grows unbounded) would orphan audit rows or hit an FK <code class="in">RESTRICT</code>. Decide the retention story and encode it in constraints before writing the cleanup job.</p>
+    <div class="fh"><span class="sev med">Medium</span><span class="fid">M3</span><span class="ft">Referential-integrity is now deliberately mixed — partly tightened, partly waived</span></div>
+    <p><code class="in">change_log.session_id</code> still has no foreign key to <code class="in">sessions</code> (<span class="fl">0001_init.sql:56</span>), and <code class="in">outbox.change_log_seq</code> references <code class="in">change_log(seq)</code> with no <code class="in">ON DELETE</code> action (<span class="fl">0001_init.sql:67</span>). No code deletes sessions or change-log rows yet, so nothing is broken now — but a future retention job (<code class="in">change_log</code> grows unbounded) would orphan audit rows or hit an FK <code class="in">RESTRICT</code>. <span style="color:var(--amber)">The second commit makes the integrity story deliberately heterogeneous:</span> <code class="in">pr_enrichment</code> <em>adds</em> a proper <code class="in">ON DELETE CASCADE</code> FK to <code class="in">sessions</code> (good — it self-cleans), while <code class="in">projects</code> <em>waives</em> the FK from <code class="in">sessions.project_id</code> entirely, relying on app code + a soft-delete (<code class="in">archived_at</code>) so an archived project still resolves. The reasoning is sound and documented, but the net effect is four tables referencing <code class="in">sessions</code>/each other under three different integrity regimes (cascade FK, no-action FK, app-enforced). That is a lot of invariant to hold in your head; worth a single doc table mapping each relationship to its enforcement and cleanup owner. Also note: nothing prevents inserting a session whose <code class="in">project_id</code> has no <code class="in">projects</code> row at all (not just an archived one).</p>
   </div>
 
   <div class="finding low">
@@ -290,7 +296,7 @@
   <h2><span class="num">05</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg> Data-integrity specifics — SQLite + CDC</h2>
 
   <h3>Schema &amp; migrations</h3>
-  <p>One goose migration (<span class="fl">0001_init.sql</span>) with six tables: <code class="in">sessions</code> (typed canonical columns; status never stored), <code class="in">session_metadata</code> (KV, cascade-on-delete), <code class="in">change_log</code> (autoincrement seq — the CDC ordering/idempotency key), <code class="in">outbox</code> (one unsent row per write, partial index <code class="in">WHERE sent = 0</code>), <code class="in">consumer_offsets</code>, and <code class="in">reaction_trackers</code>. Migrations run embedded via <code class="in">goose.Up</code> at <code class="in">Open</code> (<span class="fl">db.go:59</span>). There is a clean <code class="in">+goose Down</code>. <strong>Gap:</strong> only one migration exists, so the forward-compatibility story (additive columns, never-rewrite-history) is unproven — the first schema change will exercise it.</p>
+  <p>Two goose migrations now exist. <span class="fl">0001_init.sql</span> defines six tables: <code class="in">sessions</code> (typed canonical columns; status never stored), <code class="in">session_metadata</code> (KV, cascade-on-delete), <code class="in">change_log</code> (autoincrement seq — the CDC ordering/idempotency key), <code class="in">outbox</code> (one unsent row per write, partial index <code class="in">WHERE sent = 0</code>), <code class="in">consumer_offsets</code>, and <code class="in">reaction_trackers</code>. <span style="color:var(--amber)"><span class="fl">0002_pr_projects.sql</span> adds <code class="in">projects</code> and <code class="in">pr_enrichment</code></span> — purely additive new tables (no column alters, no history rewrite), the textbook safe migration shape. Migrations run embedded via <code class="in">goose.Up</code> at <code class="in">Open</code> (<span class="fl">db.go:59</span>) with clean <code class="in">+goose Down</code> blocks. <strong>Resolved from the prior review:</strong> the forward-migration path is now exercised. The harder cases — a non-additive change (column rename / type change, which SQLite forces through a table-rebuild) and an existing-data backfill — remain unproven, but the additive-table precedent is encouraging.</p>
 
   <h3>Write ordering &amp; transaction boundaries</h3>
   <p>The canonical write is correctly a <em>single</em> transaction spanning session + change_log + outbox (<span class="fl">upsert.go:26–43</span>), so a reader can never see a session row without its outbox row, and the publisher can never see a half-written event. The outbox sequence is the <code class="in">change_log.seq</code> autoincrement, giving a total order. The publisher drains in seq order and refuses to advance past a failed append, preserving that order downstream.</p>
@@ -316,6 +322,7 @@
     <li><strong>Storage:</strong> revision bump on insert→update, stale-revision mismatch, non-zero-insert rejection, outbox atomicity + ordering, get/list round-trip, metadata side-channel, detecting round-trip, missing-row handling (<span class="fl">store_test.go</span>, 8 tests).</li>
     <li><strong>CDC:</strong> end-to-end publish→consume, consumer-restart-skips-delivered, rotation-triggers-resync (<span class="fl">cdc_integration_test.go</span>, 3 tests).</li>
     <li><strong>Lifecycle:</strong> store parity vs. the old contract, reaction durability across restart + clear-on-incident-over (<span class="fl">manager_parity_test.go</span>, <span class="fl">reaction_durability_test.go</span>).</li>
+    <li style="color:var(--amber)"><strong>New tables:</strong> the second commit adds 3 focused tests (<span class="fl">pr_projects_test.go</span>) — project upsert/get/list/delete, archive-hides-from-list-but-get-still-resolves (the soft-delete invariant), and pr_enrichment upsert/get/delete. Good CRUD coverage; the new code is the best-tested part of this revision.</li>
   </ul>
   <p>The gaps cluster, predictably, around the failure edges the correctness findings name:</p>
   <table>
@@ -328,6 +335,8 @@
       <tr><td>Publisher crash window</td><td>No test for the append-then-crash duplicate (L1) — worth a test that asserts seq-idempotency absorbs it.</td><td><span class="fl">publisher.go:103</span></td></tr>
       <tr><td>Durability / power loss</td><td>Hard to unit-test, but the NORMAL-vs-FULL decision (H2) deserves at least a documented rationale and a crash-injection integration test.</td><td>H2</td></tr>
       <tr><td>PatchMetadata concurrency</td><td>Last-write-wins behavior of overlapping metadata patches is unverified.</td><td><span class="fl">store.go:98</span></td></tr>
+      <tr><td>Migration 0001→0002 upgrade</td><td>The new tests open a freshly-migrated DB. No test runs <code class="in">0002</code> against a DB already populated under <code class="in">0001</code> — the real upgrade path.</td><td><span class="fl">0002_pr_projects.sql</span></td></tr>
+      <tr><td>Dangling project_id</td><td>No test that a session referencing a missing/archived <code class="in">projects</code> row behaves (M3) — the app-enforced relationship has no negative test.</td><td><span class="fl">project_store.go</span></td></tr>
     </tbody>
   </table>
   <p>The PR's own test plan claims "CDC ordering + idempotency, rotation/resync, janitor vacuum" are covered — but I find <strong>no janitor test in the diff</strong>, so that line is aspirational. Worth reconciling before merge.</p>
@@ -343,8 +352,8 @@
       <tr>
         <td>Session metadata storage</td>
         <td class="exist">Flat JSON, one file per session under <code class="in">~/.agent-orchestrator/projects/&lt;id&gt;/sessions/</code>; atomic temp-write + rename, per-session <code class="in">.lock</code> (<span class="fl">metadata.ts</span>, <span class="fl">atomic-write.ts</span>)</td>
-        <td>SQLite, typed columns + KV metadata table, ACID transactions, optimistic-concurrency revision CAS (<span class="fl">upsert.go</span>)</td>
-        <td><span class="tag yes">rewrite ahead</span> ACID + queryability beats N JSON files; rewrite lacks the project-dir sharding &amp; archive layout AO has.</td>
+        <td>SQLite: typed canonical columns + KV metadata + (new) <code class="in">pr_enrichment</code> cache, ACID transactions, optimistic-concurrency revision CAS (<span class="fl">upsert.go</span>)</td>
+        <td><span class="tag yes">rewrite ahead</span> ACID + queryability beats N JSON files. Rewrite splits state across canonical + 3 side tables (M2); AO keeps one file per session.</td>
       </tr>
       <tr>
         <td>Change / event stream</td>
@@ -363,6 +372,18 @@
         <td><strong>In-memory map</strong>, resets on restart (only <code class="in">ci-failed</code> persists across status flaps, in memory)</td>
         <td><strong>Durable</strong> <code class="in">reaction_trackers</code> table — survives a daemon bounce</td>
         <td><span class="tag yes">rewrite ahead</span> Directly fixes a real AO defect (re-paging after restart).</td>
+      </tr>
+      <tr>
+        <td>Project / config registry <span style="color:var(--amber);font-size:10px;font-family:var(--mono)">[NEW]</span></td>
+        <td class="exist">YAML: global <code class="in">~/.agent-orchestrator/config.yaml</code> + per-repo <code class="in">agent-orchestrator.yaml</code>, Zod-validated, read up from cwd</td>
+        <td>Durable <code class="in">projects</code> table (<span class="fl">0002:10</span>) — repo identity, default branch, session prefix, soft-delete; app-enforced link to sessions</td>
+        <td><span class="tag partial">parity-ish</span> Moves config from files to DB (queryable, archivable). But nothing writes/reads it yet, and the YAML loader still exists; migration path between the two is undefined.</td>
+      </tr>
+      <tr>
+        <td>PR enrichment cache <span style="color:var(--amber);font-size:10px;font-family:var(--mono)">[NEW]</span></td>
+        <td class="exist">In-memory per-poll cache; batch GraphQL enrichment written back to session JSON (<span class="fl">lifecycle-manager.ts</span>, <span class="fl">scm-github</span>)</td>
+        <td>Durable <code class="in">pr_enrichment</code> table (<span class="fl">0002:34</span>) — CI summary, review decision, mergeability, comments, log tail; 1:1, cascade-on-delete</td>
+        <td><span class="tag partial">parity-ish</span> Durable cache survives restart (AO's is rebuilt each poll). But no SCM observer writes it yet — it's an empty cache with no producer.</td>
       </tr>
       <tr>
         <td>Plugin system</td>
@@ -446,9 +467,9 @@
   </div>
 
   <div class="card">
-    <h3 style="margin-top:0">D5 · Metadata off the canonical/CDC path</h3>
-    <p><strong>The bet:</strong> high-churn, low-stakes fields (branch, paths) shouldn't bump revision or generate events.</p>
-    <p><strong>Alternatives:</strong> fold metadata into the canonical record (uniform stream, but noisier CDC and revision churn) or emit a separate lightweight <code class="in">metadata_changed</code> event (FE sees changes without polluting the canonical seq). <strong>Trade-off:</strong> the current split keeps the canonical stream clean but creates a two-channel read model (M2) the FE must understand. Acceptable if documented; a foot-gun if not.</p>
+    <h3 style="margin-top:0">D5 · Side tables off the canonical/CDC path (metadata, pr_enrichment, projects)</h3>
+    <p><strong>The bet:</strong> high-churn or non-canonical facts (branch, paths, CI/review enrichment, project config) shouldn't bump the session revision or generate CDC events. The second commit doubles down on this: <code class="in">pr_enrichment</code> and <code class="in">projects</code> follow the same off-stream pattern metadata established.</p>
+    <p><strong>Alternatives:</strong> fold the high-value subset (PR enrichment is exactly what a review card renders) into the canonical record (uniform stream, but noisier CDC and revision churn) or emit lightweight <code class="in">*_changed</code> markers per side table (FE sees <em>that</em> something changed without polluting the canonical seq). <strong>Trade-off:</strong> the current split keeps the canonical stream clean and normalized, but pushes a four-channel read model (M2) onto an FE that doesn't exist yet — and <code class="in">pr_enrichment</code> in particular is high-value, frequently-changing data that the stream now stays silent about. Decide per-table whether "silent + poll" is acceptable; for PR enrichment it probably isn't.</p>
   </div>
 
   <div class="card">
@@ -470,7 +491,8 @@
     <li><span class="prio p1">P1</span> Seed each consumer's offset row at startup (at its snapshot seq) so it counts toward the janitor watermark before it can lose events (H3).</li>
     <li><span class="prio p1">P1</span> On a corrupt/unparseable line, trigger a snapshot resync instead of skipping forever (M1); add a malformed-line test.</li>
     <li><span class="prio p2">P2</span> Make the revision write self-arbitrating (rely on row-count from <code class="in">WHERE revision = ?</code>, not the prior read) so L2 doesn't depend on <code class="in">SetMaxOpenConns(1)</code>; add a comment binding the two.</li>
-    <li><span class="prio p2">P2</span> Document the two-channel read model (canonical CDC vs. pull-only metadata) in the ports doc (M2). Persist or comment the in-memory byte cursor (L3).</li>
+    <li><span class="prio p1">P1</span> Document the four-channel read model (canonical CDC vs. three pull-only side tables: <code class="in">session_metadata</code>, <code class="in">pr_enrichment</code>, <code class="in">projects</code>) in the ports doc, and decide per table whether it needs a <code class="in">*_changed</code> stream marker — <code class="in">pr_enrichment</code> especially (M2). Persist or comment the in-memory byte cursor (L3).</li>
+    <li><span class="prio p2">P2</span> Add a single doc table mapping each <code class="in">sessions</code>-related relationship to its integrity regime (cascade FK / no-action FK / app-enforced) and cleanup owner (M3), plus a 0001→0002 upgrade test and a dangling-<code class="in">project_id</code> negative test.</li>
   </ul>
 
   <h3>Rewrite-level (program-wide)</h3>
@@ -492,14 +514,16 @@
     <div class="q"><p>Is multi-consumer a real near-term goal, or is <code class="in">consumer_offsets</code> keyed defensively? The janitor watermark (H3) is only safe for the single-consumer case as written — which is it designed for?</p></div>
     <div class="q"><p>What is the retention plan for <code class="in">change_log</code> and <code class="in">outbox</code>? Both grow unbounded today; the FK shape (M3) needs to know whether sessions/log rows are ever hard-deleted.</p></div>
     <div class="q"><p>Will the first transport buffer inside its broadcaster callback, or should the broadcaster own per-subscriber queues? The "subscribers must not block" contract (D6) is unenforceable for a network transport.</p></div>
-    <div class="q"><p>How does the frontend learn about metadata changes (branch, workspacePath) given they never hit the CDC stream (M2)? Is there a planned read API, or should metadata move onto the stream?</p></div>
+    <div class="q"><p>How does the frontend learn about changes to the three off-stream side tables — <code class="in">session_metadata</code>, <code class="in">pr_enrichment</code>, <code class="in">projects</code> (M2)? <code class="in">pr_enrichment</code> is high-value PR data; is "silent + poll" really the intended contract for it, or should it emit a change marker?</p></div>
+    <div class="q"><p>The <code class="in">projects</code> table is "the SQLite twin of the YAML config," but the YAML loader still exists in the rewrite. What is the migration path — does one become source of truth, do they sync, and who writes the <code class="in">projects</code> rows (nothing does today)?</p></div>
+    <div class="q"><p>Why does <code class="in">pr_enrichment</code> get a real cascade FK while <code class="in">projects</code> waives the FK from <code class="in">sessions.project_id</code> entirely? Is the app-enforced project relationship a permanent choice, and what guards against a session with a <code class="in">project_id</code> that has no row at all (not just an archived one)?</p></div>
     <div class="q"><p>The PR's test plan lists "janitor vacuum" as covered, but I find no janitor test in the diff. Was it dropped, or is it expected in a follow-up?</p></div>
     <div class="q"><p>Is the compiled-in adapter model the intended end state, or a stepping stone toward something like AO's runtime plugin registry? It shapes how SCM/tracker/notifier slots get wired.</p></div>
   </div>
 </section>
 
 <footer>
-  Review of aoagents/agent-orchestrator PR #37 (feat/sqlite-storage-cdc) · generated against PR head · line anchors verified · advisory only — not posted to the PR.
+  Review of aoagents/agent-orchestrator PR #37 (feat/sqlite-storage-cdc) · revised against PR head <code class="in">23b8fe4</code> (commit 2 of 2) · line anchors verified · advisory only — not posted to the PR.
 </footer>
 </div>
 </body>
