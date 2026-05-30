@@ -61,6 +61,7 @@ afterEach(() => {
 describe("status decision helpers", () => {
   it("promotes conflicting runtime evidence into detecting instead of terminating", () => {
     const decision = resolveProbeDecision({
+      currentSessionState: "working",
       currentAttempts: 1,
       runtimeProbe: { state: "dead", failed: false },
       processProbe: { state: "alive", failed: false },
@@ -81,6 +82,62 @@ describe("status decision helpers", () => {
         sessionState: "detecting",
         sessionReason: "runtime_lost",
         detecting: expect.objectContaining({ attempts: 2 }),
+      }),
+    );
+  });
+
+
+  it("recovers stuck sessions to working when probes and recent liveness agree", () => {
+    const decision = resolveProbeDecision({
+      currentSessionState: "stuck",
+      currentAttempts: 4,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "alive", failed: false },
+      canProbeRuntimeIdentity: true,
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date(),
+        source: "native",
+      },
+      activityEvidence: "activity_signal=valid via_native activity=active",
+      idleWasBlocked: false,
+      detectingStartedAt: new Date(Date.now() - 60_000).toISOString(),
+      previousEvidenceHash: "abc123",
+    });
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "working",
+        sessionState: "working",
+        sessionReason: "task_in_progress",
+        detecting: { attempts: 0 },
+      }),
+    );
+  });
+
+  it("keeps stuck sessions stuck when probe signals still disagree", () => {
+    const decision = resolveProbeDecision({
+      currentSessionState: "stuck",
+      currentAttempts: 4,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "dead", failed: false },
+      canProbeRuntimeIdentity: true,
+      activitySignal: {
+        state: "valid",
+        activity: "active",
+        timestamp: new Date(),
+        source: "native",
+      },
+      activityEvidence: "activity_signal=valid via_native activity=active",
+      idleWasBlocked: false,
+    });
+
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "stuck",
+        sessionState: "stuck",
+        sessionReason: "probe_failure",
       }),
     );
   });
@@ -781,6 +838,34 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("detecting");
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["lifecycleEvidence"]).toContain("activity_signal=probe_failure");
+  });
+
+
+  it("auto-heals stuck sessions to working and clears detecting metadata when probes recover", async () => {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "active",
+      timestamp: new Date(),
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "stuck" }),
+      metaOverrides: {
+        detectingAttempts: "4",
+        detectingStartedAt: new Date(Date.now() - 60_000).toISOString(),
+        detectingEvidenceHash: "previous",
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["detectingAttempts"]).toBeUndefined();
+    expect(meta?.["detectingStartedAt"]).toBeUndefined();
+    expect(meta?.["detectingEvidenceHash"]).toBeUndefined();
+    expect(meta?.["lifecycleEvidence"]).toContain("stuck_recovered");
   });
 
   it("degrades stuck probe-failure sessions to detecting when runtime is alive but activity is unavailable", async () => {

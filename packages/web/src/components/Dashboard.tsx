@@ -29,6 +29,7 @@ import { SidebarContext, useSidebarContext } from "./workspace/SidebarContext";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { projectDashboardPath, projectReviewPath, projectSessionPath } from "@/lib/routes";
+import { readApiErrorMessage } from "@/lib/api-error";
 import { BottomSheet } from "./BottomSheet";
 
 interface DashboardProps {
@@ -423,9 +424,9 @@ function DashboardInner({
           method: "POST",
         });
         if (!res.ok) {
-          const text = await res.text();
-          console.error(`Failed to restore ${sessionId}:`, text);
-          showToast(`Restore failed: ${text}`, "error");
+          const message = await readApiErrorMessage(res);
+          console.error(`Failed to restore ${sessionId}:`, message);
+          showToast(`Restore failed: ${message}`, "error");
         } else {
           showToast("Session restored", "success");
           routerRef.current.refresh();

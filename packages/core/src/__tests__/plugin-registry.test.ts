@@ -9,13 +9,18 @@ import type { PluginModule, PluginManifest, OrchestratorConfig } from "../types.
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makePlugin(slot: PluginManifest["slot"], name: string): PluginModule {
+function makePlugin(
+  slot: PluginManifest["slot"],
+  name: string,
+  options: { legacyNames?: string[] } = {},
+): PluginModule {
   return {
     manifest: {
       name,
       slot,
       description: `Test ${slot} plugin: ${name}`,
       version: "0.0.1",
+      ...(options.legacyNames ? { legacyNames: options.legacyNames } : {}),
     },
     create: vi.fn((config?: Record<string, unknown>) => ({
       name,
@@ -60,6 +65,29 @@ describe("register + get", () => {
     const instance = registry.get<{ name: string }>("runtime", "tmux");
     expect(instance).not.toBeNull();
     expect(instance!.name).toBe("tmux");
+  });
+
+
+  it("retrieves a plugin by canonical name when legacy names are present", () => {
+    const registry = createPluginRegistry();
+    const plugin = makePlugin("agent", "claude-code", { legacyNames: ["claude"] });
+
+    registry.register(plugin);
+
+    const instance = registry.get<{ name: string }>("agent", "claude-code");
+    expect(instance).not.toBeNull();
+    expect(instance!.name).toBe("claude-code");
+  });
+
+  it("retrieves a plugin by legacy name", () => {
+    const registry = createPluginRegistry();
+    const plugin = makePlugin("agent", "claude-code", { legacyNames: ["claude"] });
+
+    registry.register(plugin);
+
+    const instance = registry.get<{ name: string }>("agent", "claude");
+    expect(instance).not.toBeNull();
+    expect(instance!.name).toBe("claude-code");
   });
 
   it("returns null for unregistered plugin", () => {

@@ -524,6 +524,37 @@ describe("SessionDetail desktop layout", () => {
     expect(routerRefreshMock).not.toHaveBeenCalled();
   });
 
+
+
+  it("shows restore API errors in a toast", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve(JSON.stringify({ error: "Agent plugin 'claude' not found" })),
+      } as Response),
+    );
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-restore-error",
+          projectId: "my-app",
+          status: "terminated",
+          activity: "exited",
+          pr: null,
+        })}
+        projects={[{ id: "my-app", name: "My App", path: "/tmp/my-app" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText("Restore failed: Agent plugin 'claude' not found"),
+    ).toBeInTheDocument();
+  });
+
   it("hides the desktop orchestrator button on orchestrator session pages", () => {
     render(
       <SessionDetail

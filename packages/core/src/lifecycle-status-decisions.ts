@@ -74,6 +74,7 @@ interface ProbeResult {
 }
 
 interface ProbeDecisionInput {
+  currentSessionState: LifecycleSessionState;
   currentAttempts: number;
   runtimeProbe: ProbeResult;
   processProbe: ProbeResult;
@@ -289,6 +290,25 @@ export function parseAttemptCount(raw: string | undefined): number {
 
 export function resolveProbeDecision(input: ProbeDecisionInput): LifecycleDecision | null {
   const recentActivitySupportsLiveness = supportsRecentLiveness(input.activitySignal);
+
+  if (
+    input.currentSessionState === "stuck" &&
+    input.runtimeProbe.state === "alive" &&
+    !input.runtimeProbe.failed &&
+    input.processProbe.state === "alive" &&
+    !input.processProbe.failed &&
+    recentActivitySupportsLiveness
+  ) {
+    const recoveredToIdle = input.activitySignal.activity === "ready";
+    return createLifecycleDecision({
+      status: recoveredToIdle ? SESSION_STATUS.IDLE : SESSION_STATUS.WORKING,
+      evidence: `stuck_recovered runtime=alive process=alive ${input.activityEvidence}`,
+      detecting: { attempts: 0 },
+      sessionState: recoveredToIdle ? "idle" : "working",
+      sessionReason: recoveredToIdle ? "awaiting_external_review" : "task_in_progress",
+    });
+  }
+
 
   if (input.runtimeProbe.failed || input.processProbe.failed) {
     return createDetectingDecision({

@@ -13,6 +13,8 @@ import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
 import { useSidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
+import { readApiErrorMessage } from "@/lib/api-error";
+import { ToastProvider, useToast } from "./Toast";
 
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
@@ -41,7 +43,7 @@ interface SessionDetailProps {
   projects?: ProjectInfo[];
 }
 
-export function SessionDetail({
+function SessionDetailInner({
   session,
   isOrchestrator = false,
   orchestratorZones,
@@ -49,6 +51,7 @@ export function SessionDetail({
   projects = [],
 }: SessionDetailProps) {
   const router = useRouter();
+  const { showToast } = useToast();
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const sidebarCtx = useSidebarContext();
@@ -97,14 +100,17 @@ export function SessionDetail({
         method: "POST",
       });
       if (!res.ok) {
-        const message = await res.text().catch(() => "");
-        throw new Error(message || `HTTP ${res.status}`);
+        const message = await readApiErrorMessage(res);
+        showToast(`Restore failed: ${message}`, "error");
+        return;
       }
+      showToast("Session restored", "success");
       window.location.reload();
     } catch (err) {
       console.error("Failed to restore session:", err);
+      showToast("Network error while restoring session", "error");
     }
-  }, [session.id]);
+  }, [session.id, showToast]);
 
   const orchestratorHref = useMemo(() => {
     if (isOrchestrator) return null;
@@ -187,5 +193,13 @@ export function SessionDetail({
         orchestratorHref={orchestratorHref}
       />
     </div>
+  );
+}
+
+export function SessionDetail(props: SessionDetailProps) {
+  return (
+    <ToastProvider>
+      <SessionDetailInner {...props} />
+    </ToastProvider>
   );
 }

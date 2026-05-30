@@ -1284,6 +1284,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     const probeDecision = resolveProbeDecision({
+      currentSessionState: lifecycle.session.state,
       currentAttempts: currentDetectingAttempts,
       runtimeProbe,
       processProbe,

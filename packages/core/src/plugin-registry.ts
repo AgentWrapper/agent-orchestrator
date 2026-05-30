@@ -35,6 +35,10 @@ function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
 }
 
+function manifestMatchesName(manifest: PluginManifest, name: string): boolean {
+  return manifest.name === name || (manifest.legacyNames ?? []).includes(name);
+}
+
 /** Built-in plugin package names, mapped to their npm package */
 const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = [
   // Runtimes
@@ -462,7 +466,15 @@ export function createPluginRegistry(): PluginRegistry {
 
     get<T>(slot: PluginSlot, name: string): T | null {
       const entry = plugins.get(makeKey(slot, name));
-      return entry ? (entry.instance as T) : null;
+      if (entry) return entry.instance as T;
+
+      for (const [key, candidate] of plugins) {
+        if (key.startsWith(`${slot}:`) && manifestMatchesName(candidate.manifest, name)) {
+          return candidate.instance as T;
+        }
+      }
+
+      return null;
     },
 
     list(slot: PluginSlot): PluginManifest[] {

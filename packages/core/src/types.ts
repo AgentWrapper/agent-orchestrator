@@ -1746,6 +1746,9 @@ export interface PluginManifest {
 
   /** Human-readable display name (e.g. "Claude Code") */
   displayName?: string;
+
+  /** Previous manifest names accepted for persisted legacy sessions/config. */
+  legacyNames?: string[];
 }
 
 /** What a plugin module must export */
