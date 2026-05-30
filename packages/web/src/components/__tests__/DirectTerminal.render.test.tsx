@@ -32,6 +32,7 @@ class MockTerminal {
   };
   cols = 80;
   rows = 24;
+  unicode = { activeVersion: "" };
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
@@ -74,6 +75,10 @@ class MockWebglAddon {
   dispose() {}
 }
 
+class MockUnicode11Addon {
+  dispose() {}
+}
+
 class MockWebSocket {
   static OPEN = 1;
   static instances: MockWebSocket[] = [];
@@ -107,6 +112,10 @@ vi.mock("@xterm/addon-web-links", () => ({
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: MockWebglAddon,
+}));
+
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: MockUnicode11Addon,
 }));
 
 vi.mock("@/hooks/useMux", () => ({
@@ -233,6 +242,18 @@ describe("DirectTerminal render", () => {
     // so ANSI white-on-white blocks (Claude Code's expanded command) stay readable.
     await waitFor(() => expect(MockTerminal.lastOptions).not.toBeNull());
     expect(MockTerminal.lastOptions?.minimumContrastRatio).toBe(4.5);
+  });
+
+  it("loads the Unicode 11 addon so emoji widths match modern terminals", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    await waitFor(() =>
+      expect(
+        MockTerminal.loadedAddons.some((addon) => addon instanceof MockUnicode11Addon),
+      ).toBe(true),
+    );
   });
 
   it("loads the WebGL renderer addon for crisp box-drawing", async () => {

@@ -743,6 +743,9 @@ importers:
       '@xterm/addon-fit':
         specifier: 0.12.0-beta.256
         version: 0.12.0-beta.256(@xterm/xterm@6.1.0-beta.256)
+      '@xterm/addon-unicode11':
+        specifier: 0.10.0-beta.256
+        version: 0.10.0-beta.256(@xterm/xterm@6.1.0-beta.256)
       '@xterm/addon-web-links':
         specifier: 0.13.0-beta.256
         version: 0.13.0-beta.256(@xterm/xterm@6.1.0-beta.256)
@@ -2155,6 +2158,11 @@ packages:
 
   '@xterm/addon-fit@0.12.0-beta.256':
     resolution: {integrity: sha512-8YLd6VcKIfU48VZS4/n9K6GqANJbpBY5e6879ZOnsM4S4LaCtQzjyVzsG85fxO2q1cl9ciwE6hPiGc2e/WVJ3g==}
+    peerDependencies:
+      '@xterm/xterm': ^6.1.0-beta.256
+
+  '@xterm/addon-unicode11@0.10.0-beta.256':
+    resolution: {integrity: sha512-nvneRKL06TkZFfazcKPaA/Yr+7AQwiSzh0cCi3EdOva5GQ99LXB13Ahe7SlDIIgSv6pJLu03LScu01tPFKTNqw==}
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.256
 
@@ -5346,6 +5354,10 @@ snapshots:
       tinyrainbow: 3.1.0
 
   '@xterm/addon-fit@0.12.0-beta.256(@xterm/xterm@6.1.0-beta.256)':
+    dependencies:
+      '@xterm/xterm': 6.1.0-beta.256
+
+  '@xterm/addon-unicode11@0.10.0-beta.256(@xterm/xterm@6.1.0-beta.256)':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.256
 

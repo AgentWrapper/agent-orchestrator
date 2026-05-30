@@ -82,9 +82,10 @@ export function useXtermTerminal(
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
       import("@xterm/addon-webgl").then((mod) => mod.WebglAddon),
+      import("@xterm/addon-unicode11").then((mod) => mod.Unicode11Addon),
       document.fonts.ready,
     ])
-      .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon]) => {
+      .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon, Unicode11Addon]) => {
         if (!mounted || !terminalRef.current) return;
 
         const isDark = appearance === "dark" || resolvedTheme !== "light";
@@ -131,6 +132,17 @@ export function useXtermTerminal(
 
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+
+        // Match modern terminals' character-width tables (Unicode 11). xterm
+        // defaults to Unicode 6, where emoji such as ✅/❌ are 1 cell wide; tmux
+        // and agent TUIs lay tables out treating them as 2, so without this the
+        // grid shifts a column after every emoji (broken borders, stray text).
+        try {
+          terminal.loadAddon(new Unicode11Addon());
+          terminal.unicode.activeVersion = "11";
+        } catch {
+          // Addon optional — fall back to xterm's built-in width tables.
+        }
 
         // WebGL renderer. xterm's default DOM renderer cannot tile box-drawing /
         // block glyphs cleanly across rows (each row is a separate DOM line), so
