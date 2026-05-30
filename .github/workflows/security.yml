@@ -86,6 +86,7 @@ jobs:
         uses: actions/dependency-review-action@56339e523c0409420f6c2c9a2f4292bbb3c07dd3
         with:
           fail-on-severity: moderate
+        continue-on-error: true # Requires Dependency graph + GitHub Advanced Security, not enabled on this repo — the action errors out unconditionally on every PR. Non-blocking (mirrors the npm/pnpm audit jobs below) until GHAS is enabled in repo settings.
 
   npm-audit:
     name: NPM Audit
