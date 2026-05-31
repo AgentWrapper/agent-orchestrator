@@ -72,22 +72,24 @@ func run() error {
 
 	// Bring up the Lifecycle Manager (sole store writer) and the reaper (OBSERVE
 	// timer). This makes the write path live end-to-end: LCM write -> store -> DB
-	// trigger -> change_log -> poller -> broadcaster. The collaborators it needs
-	// that don't yet have production implementations (Notifier, AgentMessenger,
-	// runtime registry) are stubbed in lifecycle_wiring.go with TODO markers.
-	//
-	// NOT wired here yet — both await collaborators the daemon lane owns:
-	//   - Session Manager: session.New needs Runtime/Agent/Workspace plugins to
-	//     construct. Stubbing them would make Spawn a silent no-op (a footgun),
-	//     so it's deferred rather than faked. The LCM already exposes the read
-	//     surface (RunningSessions) the SM would wrap.
-	//   - HTTP API routes: httpd.New takes no SM/LCM today; surfacing the store
-	//     over HTTP needs a constructor signature change + handlers, tracked with
-	//     the SM work since the routes call into it.
+	// trigger -> change_log -> poller -> broadcaster.
 	lcStack, err := startLifecycle(ctx, store, log)
 	if err != nil {
 		return err
 	}
+
+	// Bring up the Session Manager. Runtime (tmux) and Workspace (gitworktree)
+	// are real on main; ports.Agent has no production adapter yet, so a loud
+	// stub returns a sentinel command that makes any Spawn fail at the runtime
+	// layer rather than start a broken session quietly. Notifier and
+	// AgentMessenger remain stubbed alongside the LCM until their multiplexers
+	// land. No HTTP routes wire to this yet — the daemon lane (#10) owns API
+	// surfacing — so we hold the SM in a local until it does.
+	sStack, err := startSession(ctx, cfg, lcStack, log)
+	if err != nil {
+		return err
+	}
+	_ = sStack
 
 	runErr := srv.Run(ctx)
 
