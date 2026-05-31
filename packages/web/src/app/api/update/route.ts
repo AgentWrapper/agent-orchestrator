@@ -13,7 +13,7 @@
 
 import { spawn } from "node:child_process";
 import { NextResponse, type NextRequest } from "next/server";
-import { isWindows } from "@aoagents/ao-core";
+import { isOrchestratorSession, isWindows } from "@aoagents/ao-core";
 import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,11 @@ export async function POST(_req: NextRequest) {
   try {
     const { sessionManager } = await getServices();
     const sessions = await sessionManager.list();
-    activeCount = sessions.filter((s) => ACTIVE_STATUSES.has(s.status)).length;
+    activeCount = sessions.filter(
+      (s) =>
+        ACTIVE_STATUSES.has(s.status) &&
+        !isOrchestratorSession(s),
+    ).length;
   } catch (err) {
     return NextResponse.json<UpdateResponse>(
       {
