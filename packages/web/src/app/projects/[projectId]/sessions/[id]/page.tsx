@@ -269,7 +269,7 @@ export default function ProjectSessionPage() {
     }
   }, [id]);
 
-  const fetchProjectSessions = useCallback(async () => {
+  const fetchProjectSessions = useCallback(async (fresh?: boolean) => {
     if (fetchingProjectSessionsRef.current) return;
     const projectId = sessionProjectIdRef.current;
     if (!projectId) return;
@@ -281,8 +281,8 @@ export default function ProjectSessionPage() {
     projectSessionsFetchControllerRef.current = controller;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}${fresh ? "&fresh=true" : ""}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true${fresh ? "&fresh=true" : ""}`;
       const body = await fetchJsonWithTimeout<ProjectSessionsBody>(query, {
         signal: controller.signal,
         timeoutMs: PROJECT_SESSIONS_FETCH_TIMEOUT_MS,
@@ -335,7 +335,7 @@ export default function ProjectSessionPage() {
 
   useEffect(() => {
     if (!sessionProjectId) return;
-    void fetchProjectSessions();
+    void fetchProjectSessions(true);
   }, [fetchProjectSessions, sessionIsOrchestrator, sessionProjectId]);
 
   useEffect(() => {
