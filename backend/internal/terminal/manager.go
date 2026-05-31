@@ -242,13 +242,15 @@ func (c *connState) openTerminal(_ context.Context, id string) {
 			})
 		},
 		func() {
-			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
-			// Drop the connection's entry for this id when the pane exits so a
-			// later open is served instead of being dropped by the open guard.
-			// markExited fires this without s.mu held, so taking c.mu is safe.
+			// Clear the connection's entry for this id before sending exited so
+			// a client that reopens the moment it sees exited finds no stale
+			// entry and is served instead of dropped by the open guard. Ordering
+			// the delete after the frame would race that reopen. markExited fires
+			// this without s.mu held, so taking c.mu is safe.
 			c.mu.Lock()
 			delete(c.terms, id)
 			c.mu.Unlock()
+			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 	)
 	// An already-exited session sent its exited frame from subscribe and has
