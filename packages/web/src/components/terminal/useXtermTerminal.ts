@@ -117,6 +117,12 @@ export function useXtermTerminal(
           // scrollbar is narrower or wider than assumed. Fixes #1677.
           scrollback: 0,
           allowProposedApi: true,
+          // JetBrains Mono is subset to Latin glyphs, so anything it lacks
+          // (arrows like → ←, CJK, emoji, powerline) is drawn from a fallback
+          // font whose advance can exceed our monospace cell — the glyph then
+          // bleeds into the next cell and overlaps the following text. This
+          // tells xterm to shrink any glyph wider than its cell back to fit.
+          rescaleOverlappingGlyphs: true,
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });

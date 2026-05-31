@@ -242,6 +242,9 @@ describe("DirectTerminal render", () => {
     // so ANSI white-on-white blocks (Claude Code's expanded command) stay readable.
     await waitFor(() => expect(MockTerminal.lastOptions).not.toBeNull());
     expect(MockTerminal.lastOptions?.minimumContrastRatio).toBe(4.5);
+    // out-of-font glyphs (arrows, CJK, emoji) must be rescaled to their cell so
+    // a wide fallback glyph can't overlap the following character
+    expect(MockTerminal.lastOptions?.rescaleOverlappingGlyphs).toBe(true);
   });
 
   it("loads the Unicode 11 addon so emoji widths match modern terminals", async () => {
