@@ -7,6 +7,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/pressly/goose/v3 v3.27.1
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.51.0
 )
 

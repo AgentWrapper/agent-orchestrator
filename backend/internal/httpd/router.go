@@ -31,6 +31,13 @@ import (
 // probes. It is therefore applied per-surface when those subrouters are mounted
 // in Phase 1b; cfg.RequestTimeout carries the value through to that point.
 func NewRouter(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) chi.Router {
+	return NewRouterWithAPI(cfg, log, termMgr, APIDeps{})
+}
+
+// NewRouterWithAPI is the dependency-injected variant. main.go calls it with
+// real Managers when they exist; tests/dev wiring inject mocks explicitly.
+// Missing Managers intentionally keep the route-shell 501 behavior.
+func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
@@ -38,8 +45,15 @@ func NewRouter(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) c
 	r.Use(requestLogger(log))
 	r.Use(middleware.RealIP)
 
+	// JSON envelopes for unmatched routes / methods — chi's defaults are
+	// text/plain, which would break consumers that parse every response as
+	// the locked APIError shape.
+	r.NotFound(notFoundJSON)
+	r.MethodNotAllowed(methodNotAllowedJSON)
+
 	mountHealth(r)
 	mountMux(r, termMgr, log)
+	NewAPI(cfg, deps).Register(r)
 
 	return r
 }

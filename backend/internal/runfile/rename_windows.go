@@ -2,12 +2,17 @@
 
 package runfile
 
-import "syscall"
+import (
+	"syscall"
+	"unsafe"
+)
 
 // movefileReplaceExisting tells MoveFileEx to overwrite dst if it already
 // exists. Mirrors MOVEFILE_REPLACE_EXISTING from the Win32 API; declared
 // locally so we don't pull in golang.org/x/sys for a single constant.
 const movefileReplaceExisting = 0x1
+
+var moveFileExW = syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 
 // atomicReplace renames src to dst, replacing dst if it exists. Go's
 // os.Rename on Windows happens to do the same MoveFileEx call internally,
@@ -24,5 +29,13 @@ func atomicReplace(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return syscall.MoveFileEx(srcPtr, dstPtr, movefileReplaceExisting)
+	ret, _, err := moveFileExW.Call(
+		uintptr(unsafe.Pointer(srcPtr)),
+		uintptr(unsafe.Pointer(dstPtr)),
+		uintptr(movefileReplaceExisting),
+	)
+	if ret == 0 {
+		return err
+	}
+	return nil
 }

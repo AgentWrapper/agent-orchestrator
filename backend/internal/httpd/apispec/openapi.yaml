@@ -1,0 +1,446 @@
+openapi: 3.1.0
+info:
+  title: Agent Orchestrator HTTP daemon
+  version: 0.1.0-route-shell
+  description: |
+    Loopback-only HTTP surface served by the Go daemon. This spec is the
+    source of truth for every route's contract — the 501 stubs in the
+    route-shell phase return the matching Operation slice as a `spec`
+    field, so consumers discover the contract by calling the endpoint
+    they care about. Real handlers in later PRs satisfy this same spec.
+
+servers:
+  - url: http://127.0.0.1:3001
+    description: Local daemon (loopback only)
+
+tags:
+  - name: projects
+    description: Project registry, configuration, and lifecycle administration
+
+paths:
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List active registered projects
+      responses:
+        "200":
+          description: Projects listed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectSummary" }
+        "500":
+          description: Failed to load projects
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: internal, code: PROJECTS_LIST_FAILED, message: "Failed to load projects" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+    post:
+      operationId: addProject
+      tags: [projects]
+      summary: Register a new project from a git repository path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddProjectRequest" }
+      responses:
+        "201":
+          description: Project registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                invalidJson: { value: { error: bad_request, code: INVALID_JSON, message: "Invalid JSON body" } }
+                pathRequired: { value: { error: bad_request, code: PATH_REQUIRED, message: "Repository path is required" } }
+                notAGitRepo: { value: { error: bad_request, code: NOT_A_GIT_REPO, message: "Repository path must point to a git repository" } }
+        "409":
+          description: Conflict with an already-registered project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                pathAlready:
+                  value:
+                    error: conflict
+                    code: PATH_ALREADY_REGISTERED
+                    message: "A project at this path is already registered"
+                    details:
+                      existingProjectId: existing-project-id
+                      suggestedProjectId: suggested-project-id
+                idAlready:
+                  value:
+                    error: conflict
+                    code: ID_ALREADY_REGISTERED
+                    message: "A project with this id is already registered for a different path"
+                    details:
+                      existingProjectId: existing-project-id
+                      suggestedProjectId: suggested-project-id
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/projects/reload:
+    post:
+      operationId: reloadProjects
+      tags: [projects]
+      summary: Invalidate cached config and re-scan the global registry
+      responses:
+        "200":
+          description: Reload complete
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReloadResult" }
+        "500":
+          description: Reload failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: internal, code: RELOAD_FAILED, message: "Failed to reload projects" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Fetch one project; discriminates ok vs degraded
+      responses:
+        "200":
+          description: Project resolved (status discriminates ok vs degraded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectGetResponse" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "500":
+          description: Failed to load project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: internal, code: PROJECT_LOAD_FAILED, message: "Failed to load project" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+      x-rest-audit-notes: |
+        R5: degraded projects return 200 with a `status` discriminator
+        instead of 200 with an `error` field (as the legacy TS surface did).
+        Archived projects are hidden from list responses but still resolve by
+        id so historical sessions can keep their project_id reference.
+
+    patch:
+      operationId: updateProjectConfig
+      tags: [projects]
+      summary: Patch behaviour-only fields (not implemented until config persistence lands)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProjectConfigRequest" }
+      responses:
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                invalidJson: { value: { error: bad_request, code: INVALID_JSON, message: "Invalid JSON body" } }
+                identityFrozen:
+                  value:
+                    error: bad_request
+                    code: IDENTITY_FROZEN
+                    message: "Identity fields cannot be patched"
+                    details: { fields: [projectId, path, repo, defaultBranch] }
+                invalidConfig: { value: { error: bad_request, code: INVALID_LOCAL_CONFIG, message: "Local project config failed validation" } }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "409":
+          description: Project not in a patchable state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                degraded: { value: { error: conflict, code: PROJECT_DEGRADED, message: "Project config is degraded; repair before patching" } }
+                missingPath: { value: { error: conflict, code: PROJECT_MISSING_PATH, message: "Project registry entry is missing a path" } }
+        "501":
+          description: Behaviour config persistence is not wired yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: not_implemented, code: PROJECT_CONFIG_NOT_IMPLEMENTED, message: "Project config patching is not available until config persistence is wired" }
+      x-rest-audit-notes: |
+        R3: legacy `PUT /projects/{id}` (a TS alias of PATCH) is NOT
+        registered. PUT returns 405 Method Not Allowed.
+        R6: when config persistence lands this route returns { project }, not
+        { ok: true }. Until then, config patches return 501 instead of
+        pretending to persist fields the current project store cannot store.
+
+    delete:
+      operationId: removeProject
+      tags: [projects]
+      summary: Archive a project; hides it from active lists while preserving id references
+      responses:
+        "200":
+          description: Project archived
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoveProjectResult" }
+        "400":
+          description: Invalid project id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: bad_request, code: INVALID_PROJECT_ID, message: "Project id failed storage-path validation" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "500":
+          description: Removal failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: internal, code: PROJECT_REMOVE_FAILED, message: "Failed to remove project" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/projects/{id}/repair:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+    post:
+      operationId: repairProject
+      tags: [projects]
+      summary: Repair a degraded project where automatic recovery is available
+      x-replaces:
+        - "POST /api/v1/projects/{id}"
+      x-rest-audit-notes: |
+        R4: this canonical path replaces the overloaded
+        `POST /api/v1/projects/{id}` from the legacy TS surface.
+        The legacy path is NOT registered; consumers must use /repair.
+      responses:
+        "200":
+          description: Project repaired
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                notDegraded: { value: { error: bad_request, code: PROJECT_NOT_DEGRADED, message: "Project does not need repair" } }
+                notAvailable: { value: { error: bad_request, code: REPAIR_NOT_AVAILABLE, message: "Automatic repair is not available for this degraded config" } }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+components:
+  parameters:
+    ProjectIDPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Project identifier (registry key).
+
+  responses:
+    NotImplemented:
+      description: |
+        Route is registered but the handler has not been implemented yet.
+        The body carries the locked APIError envelope plus a `spec` field
+        containing this operation's slice of the OpenAPI document so
+        callers can discover the contract from the endpoint itself.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotImplementedResponse" }
+
+    ProjectNotFound:
+      description: Project not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+          example: { error: not_found, code: PROJECT_NOT_FOUND, message: "Unknown project" }
+
+  schemas:
+    APIError:
+      type: object
+      required: [error, code, message]
+      properties:
+        error: { type: string, description: "Short kind, e.g. not_found" }
+        code: { type: string, description: "SCREAMING_SNAKE machine code" }
+        message: { type: string, description: "Human-readable detail" }
+        requestId: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    NotImplementedResponse:
+      allOf:
+        - $ref: "#/components/schemas/APIError"
+        - type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              description: |
+                The OpenAPI Operation object for this method+path, served
+                inline so consumers discover the contract from the 501
+                response without fetching the full spec. Mirrors the YAML
+                shape — see /api/v1/openapi.yaml for the full document.
+
+    ProjectSummary:
+      type: object
+      required: [id, name, sessionPrefix]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        sessionPrefix: { type: string }
+        resolveError:
+          type: string
+          description: Present iff the project is degraded.
+
+    Project:
+      type: object
+      required: [id, name, path, repo, defaultBranch]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        path: { type: string }
+        repo:
+          type: string
+          description: "\"owner/name\" or empty string when unset"
+        defaultBranch: { type: string, default: main }
+        agent: { type: string }
+        runtime: { type: string }
+        tracker: { $ref: "#/components/schemas/TrackerConfig" }
+        scm: { $ref: "#/components/schemas/SCMConfig" }
+        reactions:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/ReactionConfig" }
+
+    DegradedProject:
+      type: object
+      required: [id, name, path, resolveError]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        path: { type: string }
+        resolveError: { type: string }
+
+    ProjectGetResponse:
+      type: object
+      required: [status, project]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        project:
+          oneOf:
+            - $ref: "#/components/schemas/Project"
+            - $ref: "#/components/schemas/DegradedProject"
+    AddProjectRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Repository path; supports ~ home-expansion. Must be a git repo.
+        projectId:
+          type: string
+          description: Optional override; defaults to basename(path).
+        name:
+          type: string
+          description: Optional display name; defaults to projectId.
+
+    UpdateProjectConfigRequest:
+      type: object
+      description: |
+        Behaviour-only patch. Identity fields (projectId, path, repo,
+        defaultBranch) are rejected with 400 IDENTITY_FROZEN. The current Go
+        handler returns 501 PROJECT_CONFIG_NOT_IMPLEMENTED until config
+        persistence exists.
+      properties:
+        agent: { type: string }
+        runtime: { type: string }
+        tracker: { $ref: "#/components/schemas/TrackerConfig" }
+        scm: { $ref: "#/components/schemas/SCMConfig" }
+        reactions:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/ReactionConfig" }
+
+    RemoveProjectResult:
+      type: object
+      required: [projectId, removedStorageDir]
+      properties:
+        projectId: { type: string }
+        removedStorageDir: { type: boolean }
+
+    ReloadResult:
+      type: object
+      required: [reloaded, projectCount, degradedCount]
+      properties:
+        reloaded: { type: boolean }
+        projectCount: { type: integer }
+        degradedCount: { type: integer }
+
+    # ---- Behaviour config blobs (ported from the TS Zod schemas) ----
+    # These are the known config shapes only. The current Go handler does not
+    # preserve unknown passthrough keys until config persistence is implemented.
+
+    TrackerConfig:
+      type: object
+      additionalProperties: true
+      properties:
+        plugin: { type: string }
+        package: { type: string }
+        path: { type: string }
+
+    SCMConfig:
+      type: object
+      additionalProperties: true
+      properties:
+        plugin: { type: string }
+        package: { type: string }
+        path: { type: string }
+        webhook:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            path: { type: string }
+            secretEnvVar: { type: string }
+            signatureHeader: { type: string }
+            eventHeader: { type: string }
+            deliveryHeader: { type: string }
+            maxBodyBytes: { type: integer }
+
+    ReactionConfig:
+      type: object
+      properties:
+        auto: { type: boolean }
+        action:
+          type: string
+          enum: [send-to-agent, notify, auto-merge]
+        message: { type: string }
+        priority:
+          type: string
+          enum: [urgent, action, warning, info]
+        retries: { type: integer }
+        escalateAfter:
+          oneOf:
+            - { type: number }
+            - { type: string }
+          description: Either ms (number) or duration string ("30m").
+        threshold: { type: string }
+        includeSummary: { type: boolean }
