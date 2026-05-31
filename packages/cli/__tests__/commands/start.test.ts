@@ -3208,4 +3208,98 @@ describe("start command — global registry mutations", () => {
       else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
     }
   });
+
+  it("writes interactive agent overrides to a config that started as flat local format", async () => {
+    const repoDir = join(tmpDir, "current");
+    createFakeRepo(repoDir, "https://github.com/org/current.git");
+    const flatConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(
+      flatConfigPath,
+      [
+        "agent: claude-code",
+        "runtime: process",
+        "workspace: worktree",
+      ].join("\n"),
+    );
+    const globalConfigPath = join(tmpDir, "global-agent-orchestrator.yaml");
+    writeFileSync(
+      globalConfigPath,
+      [
+        "defaults:",
+        "  runtime: process",
+        "  workspace: worktree",
+        "  agent: claude-code",
+        "  notifiers: []",
+        "projects:",
+        "  agent-orchestrator_48321dec7a:",
+        `    path: ${repoDir}`,
+        "    sessionPrefix: current",
+        "    defaultBranch: main",
+      ].join("\n"),
+    );
+
+    mockConfigRef.current = makeConfig({
+      "agent-orchestrator_48321dec7a": makeProject({
+        name: "Current",
+        path: repoDir,
+        sessionPrefix: "current",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = flatConfigPath;
+
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    const origGlobalEnv = process.env["AO_GLOBAL_CONFIG"];
+    process.env["AO_CONFIG_PATH"] = flatConfigPath;
+    process.env["AO_GLOBAL_CONFIG"] = globalConfigPath;
+
+    const detectAgent = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAgent.detectAvailableAgents).mockResolvedValue([
+      { name: "codex", displayName: "Codex" },
+      { name: "opencode", displayName: "OpenCode" },
+    ]);
+    mockPromptSelect.mockResolvedValueOnce("codex").mockResolvedValueOnce("opencode");
+    const originalStdinTty = process.stdin.isTTY;
+    const originalStdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "--interactive",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const flatAfter = parseYaml(readFileSync(flatConfigPath, "utf-8")) as {
+        projects?: unknown;
+        orchestrator?: { agent?: string };
+        worker?: { agent?: string };
+        path?: string;
+      };
+      expect(flatAfter.projects).toBeUndefined();
+      expect(flatAfter.path).toBeUndefined();
+      expect(flatAfter.orchestrator).toMatchObject({
+        agent: "codex",
+      });
+      expect(flatAfter.worker).toMatchObject({
+        agent: "opencode",
+      });
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: originalStdinTty,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: originalStdoutTty,
+        configurable: true,
+      });
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+      if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
+      else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+  });
 });

@@ -137,8 +137,39 @@ function readProjectBehaviorConfig(projectPath: string): LocalProjectConfig {
   return {};
 }
 
-function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectConfig): void {
-  writeLocalProjectConfig(projectPath, config);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function ensureRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function ensureWrappedProjectConfigContainer(
+  rawConfig: Record<string, unknown>,
+): Record<string, Record<string, unknown>> {
+  if (!isRecord(rawConfig.projects)) {
+    rawConfig.projects = {};
+  }
+  return rawConfig.projects as Record<string, Record<string, unknown>>;
+}
+
+function getProjectConfig(
+  projects: Record<string, Record<string, unknown>>,
+  projectId: string,
+  fallback: ProjectConfig,
+): Record<string, unknown> {
+  const projectConfig = projects[projectId];
+  if (isRecord(projectConfig)) return projectConfig;
+  return { ...(fallback as unknown as Record<string, unknown>) };
+}
+
+function writeProjectBehaviorConfig(
+  projectPath: string,
+  config: LocalProjectConfig,
+  configPath?: string,
+): void {
+  writeLocalProjectConfig(projectPath, config, configPath);
 }
 
 /**
@@ -1631,11 +1662,13 @@ export function registerStart(program: Command): void {
           // ── Handle "new orchestrator" choice (deferred from already-running check) ──
           if (startNewOrchestrator) {
             const rawYaml = readFileSync(config.configPath, "utf-8");
-            const rawConfig = yamlParse(rawYaml);
+            const rawConfig = ensureRecord(yamlParse(rawYaml));
+            const projects = ensureWrappedProjectConfigContainer(rawConfig);
+            const projectForNewOrchestrator = getProjectConfig(projects, projectId, project);
 
             // Collect existing prefixes to avoid collisions
             const existingPrefixes = new Set(
-              Object.values(rawConfig.projects as Record<string, Record<string, unknown>>)
+              Object.values(projects)
                 .map((p) => p.sessionPrefix as string)
                 .filter(Boolean),
             );
@@ -1646,10 +1679,10 @@ export function registerStart(program: Command): void {
               const suffix = Math.random().toString(36).slice(2, 6);
               newId = `${projectId}-${suffix}`;
               newPrefix = generateSessionPrefix(newId);
-            } while (rawConfig.projects[newId] || existingPrefixes.has(newPrefix));
+            } while (projects[newId] || existingPrefixes.has(newPrefix));
 
-            rawConfig.projects[newId] = {
-              ...rawConfig.projects[projectId],
+            projects[newId] = {
+              ...(projectForNewOrchestrator as Record<string, unknown>),
               sessionPrefix: newPrefix,
             };
             const nextYaml = isCanonicalGlobalConfigPath(config.configPath)
@@ -1713,11 +1746,29 @@ export function registerStart(program: Command): void {
               console.log(chalk.dim(`  ✓ Saved to ${project.path}/agent-orchestrator.yaml\n`));
             } else {
               const rawYaml = readFileSync(config.configPath, "utf-8");
-              const rawConfig = yamlParse(rawYaml);
-              const proj = rawConfig.projects[projectId];
-              proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-              proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-              writeFileSync(config.configPath, configToYaml(rawConfig as Record<string, unknown>));
+              const rawConfig = ensureRecord(yamlParse(rawYaml));
+              if ("projects" in rawConfig) {
+                const projects = ensureWrappedProjectConfigContainer(rawConfig);
+                const proj = getProjectConfig(projects, projectId, project);
+                proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
+                proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
+                projects[projectId] = proj;
+                writeFileSync(
+                  config.configPath,
+                  configToYaml(rawConfig as Record<string, unknown>),
+                );
+              } else {
+                const nextLocalConfig = rawConfig as LocalProjectConfig;
+                nextLocalConfig.orchestrator = {
+                  ...(nextLocalConfig.orchestrator ?? {}),
+                  agent: orchestratorAgent,
+                };
+                nextLocalConfig.worker = {
+                  ...(nextLocalConfig.worker ?? {}),
+                  agent: workerAgent,
+                };
+                writeProjectBehaviorConfig(project.path, nextLocalConfig, config.configPath);
+              }
               console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
             }
             config = loadConfig(config.configPath);
