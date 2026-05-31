@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { isWindows } from "@aoagents/ao-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { GET as browseGET } from "@/app/api/filesystem/browse/route";
@@ -49,7 +50,14 @@ describe("/api/filesystem/browse", () => {
     const response = await browseGET(makeRequest("/api/filesystem/browse?path=~"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ entries: [] });
+    const body = (await response.json()) as {
+      entries: unknown[];
+      current: { isGitRepo: boolean; hasLocalConfig: boolean };
+      roots: Array<{ label: string; path: string }>;
+    };
+    expect(body.entries).toEqual([]);
+    expect(body.current).toEqual({ isGitRepo: false, hasLocalConfig: false });
+    expect(Array.isArray(body.roots)).toBe(true);
   });
 
   it("returns 400 when the requested path contains ..", async () => {
@@ -61,13 +69,11 @@ describe("/api/filesystem/browse", () => {
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
-  it("returns 400 for an absolute path outside HOME", async () => {
+  it.skipIf(isWindows())("returns 400 for an absolute path outside HOME", async () => {
     // Pick an absolute path outside HOME that actually exists on the platform —
-    // `/etc` exists on POSIX; on Windows we use `C:\\Windows`. The route's
-    // realpath() resolves first, so a non-existent path returns 404 (not 400)
-    // before the outside-root check fires.
-    const outsidePath =
-      process.platform === "win32" ? encodeURIComponent("C:\\Windows") : "/etc";
+    // `/etc` exists on POSIX. The route's realpath() resolves first, so a
+    // non-existent path returns 404 (not 400) before the outside-root check fires.
+    const outsidePath = "/etc";
     const response = await browseGET(
       makeRequest(`/api/filesystem/browse?path=${outsidePath}`),
     );
@@ -76,9 +82,25 @@ describe("/api/filesystem/browse", () => {
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
   });
 
+  it.runIf(isWindows())("allows an absolute path outside HOME on Windows", async () => {
+    const response = await browseGET(
+      makeRequest(`/api/filesystem/browse?path=${encodeURIComponent(outsideDir)}`),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      entries: unknown[];
+      current: { isGitRepo: boolean; hasLocalConfig: boolean };
+      roots: Array<{ label: string; path: string }>;
+    };
+    expect(body.entries).toEqual([]);
+    expect(body.current).toEqual({ isGitRepo: false, hasLocalConfig: false });
+    expect(body.roots.some((root) => /^[A-Z]:$/.test(root.label) && root.path.endsWith("\\"))).toBe(true);
+  });
+
   // Skipped on Windows: symlinkSync requires admin or Developer Mode on win32
   // and is not portable in CI. The Linux/macOS path covers the symlink check.
-  it.skipIf(process.platform === "win32")("returns 400 for a symlink inside HOME that points outside", async () => {
+  it.skipIf(isWindows())("returns 400 for a symlink inside HOME that points outside", async () => {
     const outsideRepo = path.join(outsideDir, "external-repo");
     mkdirSync(outsideRepo);
     symlinkSync(outsideRepo, path.join(homeDir, "external-link"));
@@ -121,6 +143,8 @@ describe("/api/filesystem/browse", () => {
     };
 
     expect(body).toEqual({
+      current: { isGitRepo: false, hasLocalConfig: false },
+      roots: expect.any(Array),
       entries: [
         {
           name: "notes",
@@ -159,6 +183,18 @@ describe("/api/filesystem/browse", () => {
 
     expect(body.entries.map((entry) => entry.name)).not.toContain(".agents");
     expect(body.entries.map((entry) => entry.name)).not.toContain(".env");
+  });
+
+  it("detects git repo and local config for subdirectories", async () => {
+    const repo = path.join(homeDir, "repo");
+    mkdirSync(path.join(repo, ".git"), { recursive: true });
+    writeFileSync(path.join(repo, "agent-orchestrator.yaml"), "version: 1\n");
+
+    const response = await browseGET(makeRequest("http://localhost:3000/api/filesystem/browse?path=~"));
+    const body = await response.json();
+    const entry = body.entries.find((e: { name: string }) => e.name === "repo");
+
+    expect(entry).toMatchObject({ isDirectory: true, isGitRepo: true, hasLocalConfig: true });
   });
 
   it("redirects the legacy browse endpoint to the new route", async () => {

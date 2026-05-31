@@ -5403,9 +5403,39 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   color: var(--color-text-secondary);
 }
 
+.add-project-modal__location:focus {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+  color: var(--color-text-primary);
+}
+
 .add-project-modal__toolbtn {
   width: 28px;
   height: 28px;
+}
+
+.add-project-modal__drive-select {
+  height: 28px;
+  min-width: 76px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 28px 0 8px;
+  cursor: pointer;
+  transition:
+    background 120ms ease-out,
+    color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.add-project-modal__drive-select:focus {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+  color: var(--color-text-primary);
 }
 
 .add-project-modal__toolicon {
@@ -5444,12 +5474,28 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   font-family: var(--font-sans);
 }
 
-.add-project-browser__current-path {
-  margin-top: 4px;
+.add-project-browser__breadcrumb {
+  min-width: 0;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.add-project-browser__crumb {
+  min-width: 0;
+  max-width: 180px;
+  height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  padding: 0 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-text-primary);
-  word-break: break-all;
+  font-size: 11px;
+  color: var(--color-text-secondary);
 }
 
 .add-project-browser__rows {
@@ -5482,6 +5528,74 @@ body:not(.is-resizing-x) .sidebar-wrapper {
 
 .add-project-browser__row--parent {
   color: var(--color-text-secondary);
+}
+
+.add-project-browser__row-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin-right: 8px;
+  color: var(--color-text-secondary);
+}
+
+.add-project-browser__row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-project-browser__row-tag {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.add-project-browser__row-chevron {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.add-project-browser__row:hover .add-project-browser__row-chevron,
+.add-project-browser__row.is-selected .add-project-browser__row-chevron {
+  opacity: 1;
+}
+
+.add-project-browser__row--current {
+  background: var(--color-bg-elevated);
+}
+
+.add-project-browser__empty-row {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.add-project-browser__badge {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
 .add-project-browser__state {
@@ -5524,6 +5638,25 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.add-project-modal__formrow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.add-project-modal__field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-project-modal__field .add-project-modal__selection-path {
+  flex: 1;
 }
 
 .add-project-modal__selection-label {
@@ -5637,6 +5770,7 @@ body:not(.is-resizing-x) .sidebar-wrapper {
 
 .add-project-modal__iconbtn:hover:not(:disabled),
 .add-project-modal__toolbtn:hover:not(:disabled),
+.add-project-modal__drive-select:hover:not(:disabled),
 .add-project-modal__ghostbtn:hover:not(:disabled),
 .add-project-browser__crumb:hover,
 .add-project-browser__row:hover {
@@ -5690,6 +5824,12 @@ body:not(.is-resizing-x) .sidebar-wrapper {
 
   .add-project-modal__content {
     display: block;
+  }
+
+  .add-project-modal__formrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
 
   .add-project-modal__footer {
