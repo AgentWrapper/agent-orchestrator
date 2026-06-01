@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Canvas-renderer plugin slot · v0.4 plan · Agent Orchestrator</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --surface: #fff;
+    --elevated: #f4f4f5;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #6b6b73;
+    --accent: #ff6a00;
+    --accent-soft: #ff6a0022;
+    --good: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --info: #2563eb;
+    --code-bg: #0f172a;
+    --code-text: #e2e8f0;
+    --code-key: #f472b6;
+    --code-str: #fde68a;
+    --code-cmt: #94a3b8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0a0a0a;--surface:#111;--elevated:#1a1a1a;--border:#262626;--text:#e8e8e8;--muted:#9a9a9a;--good:#4ade80;--bad:#f87171;--warn:#fbbf24;--info:#60a5fa;--accent-soft:#ff6a0033 }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif; -webkit-font-smoothing:antialiased; }
+  body { padding: 48px 20px 96px; }
+  main { max-width: 920px; margin: 0 auto; }
+  .eyebrow { color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 12px; font-weight: 700; letter-spacing: -0.015em; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 0 0 24px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 32px; }
+  .pill { display: inline-block; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  h2 { font-size: 22px; margin: 48px 0 14px; font-weight: 700; letter-spacing: -0.01em; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 24px 0 8px; font-weight: 600; }
+  h4 { font-size: 13px; margin: 16px 0 4px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { font-weight: 600; }
+  code { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 13px; background: var(--elevated); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 12.5px; line-height: 1.6; margin: 12px 0; font-variant-numeric: tabular-nums; }
+  pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
+  .key { color: var(--code-key); }
+  .str { color: var(--code-str); }
+  .cmt { color: var(--code-cmt); }
+  .tldr { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 16px 22px; margin: 0 0 36px; }
+  .tldr-row { display: flex; gap: 16px; align-items: baseline; padding: 6px 0; }
+  .tldr-row + .tldr-row { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+  .tldr-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); width: 96px; flex-shrink: 0; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; background: var(--surface); }
+  td:first-child { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 12.5px; white-space: nowrap; vertical-align: top; }
+  .decision { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; margin: 10px 0; }
+  .decision-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+  .dnum { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; background: var(--accent-soft); color: var(--accent); padding: 3px 9px; border-radius: 4px; font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .decision h3 { margin: 0; flex: 1; min-width: 240px; font-size: 15px; }
+  .verdict { font-size: 11px; color: var(--good); font-weight: 600; letter-spacing: 0.08em; }
+  .callout { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 0 6px 6px 0; padding: 14px 18px; margin: 18px 0; font-size: 14px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--border); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<div class="eyebrow">Agent Orchestrator · v0.4 plan · post plan-eng-review</div>
+<h1>Canvas-renderer plugin slot — v0.4 plan</h1>
+<p class="subtitle">The locked design for v0.4 after a full plan-eng-review (4 sections, 7 architecture forks, 1 codex outside-voice consult, 3 cross-model tensions resolved). v0.4 ships AFTER v0.2 and v0.3, with the full Maximalist scope.</p>
+
+<div class="pills">
+  <span class="pill">Reviewed 2026-05-10</span>
+  <span class="pill">7 forks resolved</span>
+  <span class="pill">Maximalist scope</span>
+  <span class="pill">Ships after v0.2 + v0.3</span>
+  <span class="pill">2.5–4 eng-weeks</span>
+</div>
+
+<section class="tldr">
+  <div class="tldr-row"><div class="tldr-label">Goal</div><div>Let community contributors ship new canvas types as <code>@aoagents/ao-plugin-canvas-{name}</code> npm packages without core PRs.</div></div>
+  <div class="tldr-row"><div class="tldr-label">Scope</div><div><strong>Maximalist:</strong> core machinery + example tiny plugin + real-npm-pack CI fixture + <code>ao plugin install</code> CLI auto-rebuild + install-warning UI.</div></div>
+  <div class="tldr-row"><div class="tldr-label">Sequence</div><div>Ship v0.2 (CanvasProducer wiring) and v0.3 (mux push) <em>first</em>. v0.4 lands when those are stable.</div></div>
+  <div class="tldr-row"><div class="tldr-label">Trust</div><div>Installing a renderer plugin grants <strong>full dashboard code execution</strong>. The install-time warning UI says so explicitly.</div></div>
+  <div class="tldr-row"><div class="tldr-label">Tests</div><div>29 new tests across 6 files, all mandatory at land — no test deferral.</div></div>
+</section>
+
+<h2 id="why-deferred">Why v0.4 ships after v0.2 + v0.3</h2>
+<p>The plan-eng-review consulted codex (the outside-voice / second opinion step). Codex's verdict on v0.4-as-next-step was direct: <em>"v0.4 should not be next. Ship v0.2 or v0.3 first. Renderer plugins are high-infrastructure, low-immediate-user-value."</em></p>
+<ul>
+  <li><strong>v0.2 (CanvasProducer wiring)</strong> ships PR-status, linked-issues, cost canvases the moment it lands — every existing AO user benefits with no install. Highest leverage per engineer-day.</li>
+  <li><strong>v0.3 (mux push)</strong> fixes the felt-slowness of 5s polling. Real UX gap that v0.4 would otherwise inherit.</li>
+  <li><strong>v0.4 (renderer plugins)</strong> is platform infrastructure that benefits zero existing users on day 1 and only kicks in when someone publishes a plugin. Ships best with a clear UX story (CLI auto-rebuild, install warning, real-npm-pack tested), which is what the Maximalist scope provides.</li>
+</ul>
+
+<h2 id="locked-decisions">Locked decisions</h2>
+<p>Each row is the outcome of an interactive plan-eng-review fork. Defaults are not editable in the plan — to change one, re-open the review.</p>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D1 → A</span><h3>Strategic — defer v0.4 until v0.2 and v0.3 are live</h3><span class="verdict">LOCKED</span></div>
+  <p>v0.2 (CanvasProducer wiring) and v0.3 (mux push) ship first. v0.4 starts after v0.3 is stable. Codex outside-voice was decisive: the OSS-extensibility story needs the rebuild UX it can only justify shipping with the Maximalist scope, and meanwhile v0.2 + v0.3 deliver immediate user value.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D2 → A</span><h3>Scope — Maximalist when v0.4 ships</h3><span class="verdict">LOCKED</span></div>
+  <p>Selective scope (defer CLI + warning UI to v0.4.1) was rejected after codex pointed out that build-time discovery makes "install + rebuild" the marquee user experience and deferring the CLI ships an intentionally confusing path. v0.4 ships with: core machinery + example plugin + CI fixture + <code>ao plugin install</code> CLI auto-rebuild + install-time trust warning UI. ~2.5–4 engineer-weeks of core work.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D3 → A</span><h3>Discovery — single build-time walk, JSON + barrel are siblings</h3><span class="verdict">LOCKED</span></div>
+  <p>One discovery moment (build-time) produces both <code>packages/web/src/generated/canvas-plugins.json</code> (manifest + plugin paths) and <code>packages/web/src/generated/canvas-renderers.ts</code> (renderer barrel). AO startup reads the JSON and dynamically imports each plugin to hydrate Zod schemas — no <code>node_modules</code> walk in the hot path. Eliminates the two-moment-drift class of bug where startup and build-time disagree on which plugins exist.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D4 → A</span><h3>Built-in canvasType reservation</h3><span class="verdict">LOCKED</span></div>
+  <p>Discovery refuses to load any plugin whose <code>canvasType</code> is in <code>{markdown, diff, table, stats}</code>. Plus reserve the <code>core-*</code> type prefix (per codex finding) for future built-in expansion. Refused with named error before AO starts. Closes the trojan-plugin-shadow attack surface.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D5 → A</span><h3>Per-canvas error boundaries</h3><span class="verdict">LOCKED</span></div>
+  <p>Each rendered canvas wraps in its own React <code>&lt;ErrorBoundary&gt;</code>. A buggy plugin canvas blanks only that canvas with a stub showing the canvas type + plugin name + a link to the plugin's repo. Sibling canvases keep rendering. Per-rail boundary was rejected (one bad canvas would blank trusted <code>core-git-diff</code> + table results + PR status).</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D6 → A</span><h3>Plugin package contract — strict, validated at discovery</h3><span class="verdict">LOCKED (re-framed)</span></div>
+  <p>Build-time validation enforces:</p>
+  <ol>
+    <li><code>package.json exports</code> map has both <code>"."</code> (Node-safe schema) and <code>"./renderer"</code> (browser-safe component).</li>
+    <li><code>peerDependencies.react</code> is set; <code>dependencies.react</code> is <strong>not</strong> set (avoids two-React hooks errors).</li>
+    <li><code>./renderer</code> entrypoint is compiled JS (not raw TSX).</li>
+    <li>AST-level static check that renderer has no <code>node:*</code> imports and schema has no <code>window</code>/<code>document</code> references.</li>
+  </ol>
+  <p>Refuses non-conforming plugins with named errors. <strong>Codex re-frame applied:</strong> the AST scanner is a <em>compatibility lint</em>, not a security mechanism. It catches honest plugin-author footguns (Node API in browser bundle, DOM API in Node-side schema) but cannot reduce blast radius — transitive imports, dynamic <code>import()</code>, <code>globalThis.window</code>, malicious deps all bypass it. The trust statement does the security work; the AST scanner just keeps plugins shaped right.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D7 → A</span><h3>Validate-once, narrow-in-dispatcher payload typing</h3><span class="verdict">LOCKED (scope clarified)</span></div>
+  <p>Core validates plugin payload via the registered Zod schema during ingest. Dispatcher narrows the type via <code>z.infer&lt;schema&gt;</code> and passes typed payload to the plugin renderer. Plugin authors get <code>payload.samples</code> directly, not <code>payload: unknown</code>.</p>
+  <p><strong>Codex scope clarification:</strong> end-to-end static typing across community plugins is <em>not</em> possible — <code>CanvasArtifact</code> at AO's type system level is <code>BuiltIn | { payload: unknown }</code>. Type narrowing works <em>within</em> a plugin's own component (we pass <code>z.infer&lt;theirSchema&gt;</code> locally via the generated barrel) but the dispatcher itself only knows <code>unknown</code>. Plan language updated to say "typed locally, not end-to-end."</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D8 → A</span><h3>Plugin load failure policy — named-error-and-skip</h3><span class="verdict">LOCKED</span></div>
+  <p>Per-plugin try/catch in discovery. Failures are logged with plugin name + reason, and the plugin is omitted from the registry. AO continues to start with reduced functionality. <strong>Type-id collisions remain fatal</strong> (refuse to start, names both plugins). <strong>Codex addition:</strong> schema imports are arbitrary startup code (plugins can do I/O, mutate globals, hang). Per-plugin try/catch + a per-plugin import timeout (5s) to handle abuse + latency.</p>
+</div>
+
+<div class="decision">
+  <div class="decision-head"><span class="dnum">D9 → A</span><h3>Lazy renderer imports + per-canvas Suspense</h3><span class="verdict">LOCKED</span></div>
+  <p>Generated barrel emits <code>React.lazy(() =&gt; import("..."))</code> per plugin renderer, with a per-canvas <code>&lt;Suspense&gt;</code> boundary in the rail. Each plugin loads as its own Next.js code-split chunk only when a canvas of that type appears. Bundle size scales with usage, not with installed plugin count. Eager imports were rejected — they would force a v0.5 generator-script rewrite the moment the ecosystem grew past ~5 plugins.</p>
+</div>
+
+<h2 id="design-constraints">Design constraints from codex outside-voice (folded in)</h2>
+<p>Twelve additional codex findings were not big enough to be cross-model tensions but reshape the implementation. All accepted as default constraints:</p>
+<table>
+  <thead><tr><th>Constraint</th><th>What changes</th></tr></thead>
+  <tbody>
+    <tr><td>Plugin install location</td><td>v0.4 must specify: plugins live in <code>packages/web/package.json</code> dependencies (the bundler's build context). The <code>ao plugin install</code> CLI adds them there, not at the monorepo root.</td></tr>
+    <tr><td>Schema import timeout</td><td>Per-plugin import wrapped in a 5s timeout. Slow / hanging plugins are skipped with a named error rather than blocking AO startup.</td></tr>
+    <tr><td>Zod peer-dependency</td><td>Plugins declare <code>zod</code> as <code>peerDependency</code> alongside React. Standardize on the Zod major core ships. Use <code>safeParse</code> only — no <code>instanceof ZodError</code> across version boundary.</td></tr>
+    <tr><td>ZodEffects / transforms / async refinements</td><td>Forbidden in plugin schemas at v0.4. Validated at discovery. Reduces validate-once semantics to "no transforms, no async."</td></tr>
+    <tr><td>Real npm-pack CI fixture</td><td>Replace the original "workspace fixture" plan with: <code>npm pack</code> the example plugin, install the tarball into a temp AO/web app, run discovery, build Next, start dashboard, render canvas. Proves the published-to-npm path, not just monorepo imports.</td></tr>
+    <tr><td>Unsupported-state disambiguation</td><td>The "Unsupported canvas type" placeholder must distinguish "plugin missing" / "stale build artifact" / "plugin failed discovery" / "AO version mismatch." Stub UI shows the state + remediation hint.</td></tr>
+    <tr><td>Stale-canvas cleanup tooling</td><td>Add <code>ao canvas prune --type X</code> CLI to remove orphaned canvas JSON files in workspaces after plugin uninstall.</td></tr>
+    <tr><td>Reserve <code>core-*</code> canvasType prefix</td><td>D4 was for the four specific built-in names. Also reserve the <code>core-*</code> prefix at canvasType level (mirroring the existing id-level reservation) for future built-in expansion.</td></tr>
+    <tr><td>Fixture choice — not flamegraph</td><td>Flamegraphs have heavy payload + virtualization concerns. The first contract fixture should be a tiny renderer (e.g. <code>canvas-counter</code>: a single-metric tile with one prop). Keep flamegraph as a perf demo, not the slot-proves-it-works fixture.</td></tr>
+    <tr><td>Plan language — type narrowing scope</td><td>Plan + docs say "typed locally" instead of "typed end-to-end" so plugin authors don't expect AO core to know their payload shape.</td></tr>
+    <tr><td>Test count tied to failure modes</td><td>The 29-test count was process theater. Tests are organized by failure mode: stale artifact, missing rebuild, npm-packed plugin, Zod peer mismatch, renderer chunk failure, schema import throw, collision, uninstall, unsupported type, Next production build.</td></tr>
+    <tr><td>Next.js production-build coverage</td><td>The CI fixture must run <code>next build</code> (production) not just dev mode — file tracing in production output omits dynamic imports unless they were known at build time, which is the failure mode the architecture has to survive.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="ship-cost">Ship cost</h2>
+<p>2.5–4 engineer-weeks of core work for the full Maximalist scope, including:</p>
+<ul>
+  <li>Discovery generator script (~3 days)</li>
+  <li>Schema registry + canvas-log integration (~2 days)</li>
+  <li>Web renderer dispatch + Suspense + error boundaries (~2 days)</li>
+  <li>AST compatibility lint (~3 days, given dynamic import + transitive scan complexity)</li>
+  <li><code>ao plugin install</code> CLI + auto-rebuild (~3 days)</li>
+  <li>Install-time trust warning UI (~2 days)</li>
+  <li>Example tiny plugin + real-npm-pack CI fixture (~3 days)</li>
+  <li><code>ao canvas prune</code> CLI (~1 day)</li>
+  <li>29 tests across 6 files (~3 days)</li>
+  <li>Docs + migration guide for plugin authors (~2 days)</li>
+</ul>
+<p>Sequenced: any of CLI, AST lint, generator can run in parallel after the schema registry is in place.</p>
+
+<h2 id="not-in-scope">NOT in scope (deferred)</h2>
+<ul>
+  <li><strong>Iframe sandboxing.</strong> Credible v0.5+ option for genuinely-untrusted renderers. Half-baked iframe is worse than no sandbox.</li>
+  <li><strong>Hot-reload of plugin renderers.</strong> Plugin authors restart AO; the dev loop is documented but not optimized for v0.4.</li>
+  <li><strong>Plugin marketplace UI.</strong> v0.4 plugins are discovered via npm — no AO-hosted catalog, no in-app browsing.</li>
+  <li><strong>Write-back from plugin canvases.</strong> Read-only at the canvas level. v0.5+ explores consent-gated action buttons.</li>
+  <li><strong>Image rendering in built-in markdown.</strong> Separate v0.5 question with its own allowlist policy.</li>
+</ul>
+
+<footer>
+  Locked: 2026-05-10 plan-eng-review · 4 sections, 7 forks (all A), 1 outside-voice consult (codex), 3 cross-model tensions (1A + 2A + 3A).
+  Companion: <a href="canvases-feature.html">canvases-feature.html</a> (full feature writeup), <a href="canvases-launch.html">canvases-launch.html</a> (launch / showcase), <a href="canvases-codex-review-2026-05-06.html">canvases-codex-review-2026-05-06.html</a> (pass-13 review).
+</footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Canvases — what shipped, why it matters · Agent Orchestrator</title>
+<style>
+  :root {
+    --bg-base: #0a0a0a;
+    --bg-surface: #111;
+    --bg-elevated: #1a1a1a;
+    --border-subtle: #262626;
+    --text-primary: #e8e8e8;
+    --text-secondary: #9a9a9a;
+    --text-muted: #666;
+    --accent: #ff6a00;
+    --accent-soft: #ff6a0033;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 48px 24px 96px; }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  header.eyebrow {
+    color: var(--accent);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 36px;
+    line-height: 1.15;
+    margin: 0 0 16px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 48px 0 12px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 24px 0 8px;
+    font-weight: 600;
+  }
+  p, li { color: var(--text-primary); }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+  blockquote {
+    margin: 0 0 28px;
+    padding: 12px 16px;
+    border-left: 3px solid var(--accent);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+  blockquote em { font-style: italic; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--bg-elevated);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 18px;
+  }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 18px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  figure {
+    margin: 24px 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-surface);
+  }
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  figcaption {
+    padding: 10px 14px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .tag-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-right: 6px;
+  }
+  .pill-row { margin: 0 0 32px; }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--border-subtle);
+    margin: 48px 0;
+  }
+  footer {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 56px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  strong { color: var(--text-primary); font-weight: 600; }
+  em { color: var(--text-primary); }
+  .toc {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 0 0 32px;
+    font-size: 14px;
+  }
+  .toc strong { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+  .toc ul { padding-left: 16px; margin: 0; }
+  .toc li { margin: 2px 0; }
+  .toc a { border-bottom: none; }
+  .toc a:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<main>
+  <header class="eyebrow">Agent Orchestrator · v0.1 launch</header>
+  <h1>Canvases — what shipped, why it matters</h1>
+  <div class="pill-row">
+    <span class="tag-pill">PR #1653</span>
+    <span class="tag-pill">v0.1 — file-based + synthesized git-diff</span>
+    <span class="tag-pill">12 codex review passes</span>
+  </div>
+
+  <blockquote><em>Cursor-style interactive artifacts in the AO session detail view.</em> Implementation: <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/1653">PR #1653</a></blockquote>
+
+  <nav class="toc" aria-label="Table of contents">
+    <strong>On this page</strong>
+    <ul>
+      <li><a href="#pitch">The pitch</a></li>
+      <li><a href="#try">Try it locally in 30 seconds</a></li>
+      <li><a href="#renders">What renders</a></li>
+      <li><a href="#empty">Empty state and discoverability</a></li>
+      <li><a href="#mobile">Mobile: not supported in v0.1</a></li>
+      <li><a href="#extensible">How extensible is this?</a></li>
+      <li><a href="#deferred">What's deliberately not in v0.1</a></li>
+      <li><a href="#paranoia">Built with paranoia</a></li>
+      <li><a href="#more">Where to read more</a></li>
+    </ul>
+  </nav>
+
+  <h2 id="pitch">The pitch</h2>
+  <p>When an agent emits a diff, a test summary, a cost breakdown, or any other structured output, today it scrolls past in the terminal and you lose it. Canvases give every session a right-hand rail where structured output <strong>stays visible, stays interactive, and stays readable</strong>.</p>
+  <p>Two ways to fill the rail:</p>
+  <ol>
+    <li><strong>Free of charge</strong> — AO synthesizes a <code>core-git-diff</code> canvas from the session's worktree against <code>origin/&lt;default&gt;</code>. Every session gets this without any agent integration.</li>
+    <li><strong>Agents opt in</strong> — drop a JSON file at <code>{workspacePath}/.ao/canvases/{id}.json</code>. The dashboard picks it up within 5 seconds. No new SDK, no new APIs to call.</li>
+  </ol>
+
+  <figure>
+    <img src="assets/canvases/canvases-hero.png" alt="Canvas rail expanded next to the session detail view, showing a markdown summary and a stats grid with green/red/amber tone colors" />
+    <figcaption>The session detail page with the canvas rail expanded. Two file-emitted canvases — a markdown notes block and a 4-metric stats grid — render alongside the session content.</figcaption>
+  </figure>
+
+  <h2 id="try">Try it locally in 30 seconds</h2>
+  <pre><code># 1. Start the dashboard
+pnpm dev
+
+# 2. Open any session detail page in your browser
+
+# 3. From a terminal, drop a JSON file in the session's worktree
+WS=$(jq -r .worktree ~/.agent-orchestrator/projects/&lt;your-project&gt;/sessions/&lt;session-id&gt;.json)
+mkdir -p "$WS/.ao/canvases"
+cat &gt; "$WS/.ao/canvases/hello.json" &lt;&lt;'EOF'
+{
+  "version": 1,
+  "id": "hello",
+  "type": "stats",
+  "title": "Demo",
+  "createdAt": "2026-05-05T00:00:00Z",
+  "updatedAt": "2026-05-05T00:00:00Z",
+  "payload": {
+    "metrics": [
+      { "label": "Tests", "value": 42, "tone": "good" },
+      { "label": "Failures", "value": 0, "tone": "neutral" }
+    ]
+  }
+}
+EOF
+</code></pre>
+  <p>Within 5 seconds the canvas appears. Edit the file, save, watch it update.</p>
+
+  <h2 id="renders">What renders</h2>
+  <p>Four built-in types, no plugins required:</p>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>What it's for</th><th>Payload shape</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>markdown</code></td>
+        <td>Notes, summaries, READMEs</td>
+        <td><code>{ markdown: string }</code> — supports headings, <strong>bold</strong>, <em>italic</em>, <code>code</code>, fenced code blocks, lists</td>
+      </tr>
+      <tr>
+        <td><code>diff</code></td>
+        <td>File changes, patches</td>
+        <td><code>{ files: [{ path, status, hunks }] }</code></td>
+      </tr>
+      <tr>
+        <td><code>table</code></td>
+        <td>Test results, dependency lists</td>
+        <td><code>{ columns, rows }</code></td>
+      </tr>
+      <tr>
+        <td><code>stats</code></td>
+        <td>Cost, durations, pass/fail counts</td>
+        <td><code>{ metrics: [{ label, value, tone, delta }] }</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The <code>tone</code> field on <code>stats</code> maps to AO's existing status tokens — <span style="color: var(--good)">good</span> is green, <span style="color: var(--bad)">bad</span> is red, <span style="color: var(--warn)">warn</span> is amber, <code>neutral</code> matches the surrounding text. No new design tokens.</p>
+
+  <h2 id="empty">Empty state and discoverability</h2>
+  <p>The rail starts collapsed when a session has no canvases. A thin tab on the right edge expands it on click.</p>
+
+  <figure>
+    <img src="assets/canvases/canvases-empty.png" alt="Canvas rail expanded with empty-state copy: 'No canvases yet. Agents can write artifacts to .ao/canvases/&lt;id&gt;.json'" />
+    <figcaption>Empty state when a session has no canvas files and no synthesized diff.</figcaption>
+  </figure>
+
+  <h2 id="mobile">Mobile: not supported in v0.1</h2>
+  <p>Canvases are a desktop-only feature for now. On viewports below the mobile breakpoint the rail isn't rendered at all — the session detail page falls back to its existing single-column layout. We'll revisit a proper mobile experience (likely a bottom sheet or full-screen takeover) once the desktop surface settles.</p>
+
+  <h2 id="extensible">How to extend it</h2>
+  <p>Three tiers of effort, smallest first.</p>
+
+  <h3>Tier 1 — Zero code: emit JSON</h3>
+  <p>Write a file matching one of the 4 schemas to <code>{workspacePath}/.ao/canvases/{id}.json</code>. The dashboard polls every 5s and renders it. This is what 90% of agents will do.</p>
+  <p>Examples that fit today with no extra work:</p>
+  <ul>
+    <li><strong>Test runner agent</strong> → <code>table</code> with name / status / duration columns</li>
+    <li><strong>Codex review agent</strong> → <code>markdown</code> with the structured findings</li>
+    <li><strong>Cost tracker</strong> → <code>stats</code> with token counts, request count, dollar estimates</li>
+    <li><strong>Lint runner</strong> → <code>table</code> with file / rule / message columns</li>
+    <li><strong>Security scanner</strong> → <code>markdown</code> with severity-grouped findings</li>
+    <li><strong>Build dashboard</strong> → <code>stats</code> with build time, bundle size, asset count</li>
+  </ul>
+
+  <h3>Tier 2 — A producer plugin (v0.2, queued)</h3>
+  <p>If you want to <em>synthesize</em> canvases from session data instead of having an agent emit them, implement <code>CanvasProducer</code> on an existing plugin. The interface already exists in core:</p>
+  <pre><code>interface CanvasProducer {
+  listCanvases(session: Session, project: ProjectConfig): Promise&lt;CanvasArtifact[]&gt;;
+}</code></pre>
+  <p>This is what a future <code>scm-github</code> plugin would do to surface a "PR status" stats canvas, or what a <code>tracker-linear</code> plugin would do for "linked issues" tables. v0.1 declares the interface but doesn't invoke it yet — once v0.2 lands, every plugin slot (agent / SCM / tracker) gets called automatically when the API loads canvases.</p>
+  <p>Effort: ~30 lines per producer. No dashboard changes, no schema changes, no PR review of UI code.</p>
+
+  <h3>Tier 3 — Renderer plugin (v0.4, ~half a day for plugin author / 1.5–3 engineer-weeks of core platform work)</h3>
+  <p>Ship a new canvas type as <code>@aoagents/ao-plugin-canvas-{name}</code>. The plugin author publishes a compiled package with two entrypoints — a Node-safe schema and a browser-safe React renderer. AO discovers plugins at startup, validates payloads through the plugin's Zod schema, and bundles the renderer into the dashboard at web build time.</p>
+  <p><strong>No core PR needed</strong> — the bar to publish a plugin is <code>npm install</code>-able.</p>
+  <p>Sketch:</p>
+  <pre><code>@aoagents/ao-plugin-canvas-flamegraph/
+├── package.json          # exports: { ".": "./dist/index.js", "./renderer": "./dist/renderer.js" }
+├── dist/
+│   ├── index.js          # manifest + Zod payload schema (Node)
+│   └── renderer.js       # React component, default export (browser)</code></pre>
+  <p>The pipeline:</p>
+  <pre><code>plugin discovery (at AO startup)
+  → Node schema registry        (core uses to validate canvas JSON)
+  → generated web renderer map  (next bundles statically — packages/web/src/generated/canvas-renderers.ts)
+  → optional generated TS union (web/internal ergonomics only)</code></pre>
+  <p>The <code>CanvasArtifact</code> discriminated union for built-in types stays closed. Plugin canvases land in a separate <code>PluginCanvasArtifact { type: string; payload: unknown }</code> branch. Runtime registries are the architecture; types are convenience.</p>
+  <p>v0.1 ships the 4 built-in types. v0.4 (queued — 1.5–3 engineer-weeks of core work) ships the plugin slot. Until then, if you genuinely need a new type, either reshape your data into an existing renderer or contribute the type to core.</p>
+
+  <h3>Tier 4 — Promote into core (rare)</h3>
+  <p>Once a renderer plugin has multiple production callers and the type is genuinely general, propose promoting it into core's built-in set via PR. The bar here is "this is standard infrastructure now", not "this is a new idea worth trying".</p>
+
+  <h3>The contract — and the honest trust statement</h3>
+  <p>Three rules that hold across all four tiers:</p>
+  <ul>
+    <li><strong>Anyone supplies any data, in any supported type</strong> — no permission needed.</li>
+    <li><strong>Anyone ships a new type via plugin</strong> — <code>npm install</code> is the trust gate.</li>
+    <li><strong>No remote-loaded JS at runtime</strong> — plugins discovered at startup from <code>node_modules</code>, renderers bundled at web build time. No URL-fetched code, no agent-emitted React.</li>
+  </ul>
+  <p><strong>Be honest about what <code>npm install</code> trust means here.</strong> A canvas renderer plugin is arbitrary dashboard code: it can read same-origin auth tokens, call same-origin APIs, keylog within the app, alter UI state. Build-time bundling removes the <em>remote-loading</em> risk; it does not reduce blast radius. <strong>Installing a canvas renderer plugin grants full dashboard code execution</strong> — the install path will surface this as a warning. Iframe sandboxing is a deferred future option for community / untrusted renderers.</p>
+
+  <h2 id="deferred">What's deliberately not in v0.1</h2>
+  <ul>
+    <li>Custom React renderers from third-party plugins (security boundary; never planned)</li>
+    <li>Plugin-invoked <code>CanvasProducer.listCanvases</code> calls (queued for v0.2)</li>
+    <li>Mux WebSocket push (queued for v0.3 — currently 5s REST poll)</li>
+    <li>Write APIs from the dashboard back into canvases</li>
+    <li>Action buttons that mutate session state</li>
+  </ul>
+
+  <h2 id="paranoia">Built with paranoia</h2>
+  <p>The feature went through 12 codex review passes that surfaced 18 distinct corner-case bugs before merge:</p>
+  <ul>
+    <li>Polynomial-backtracking regex (CodeQL <code>js/redos</code>) replaced with <code>lastIndexOf</code></li>
+    <li><code>lstat</code> instead of <code>stat</code> so a symlink to <code>/dev/zero</code> can't bypass the size cap</li>
+    <li>Reserved <code>core-</code> id prefix so an agent can't shadow the trusted synthesized canvas</li>
+    <li>Per-effect cancellation + sequence-guarded poll responses so an old response can't overwrite a newer one</li>
+    <li><code>.ao/</code> filtered out of synthesized diffs so AO's own metadata doesn't leak into agent diffs</li>
+    <li>Untracked-file synthesis with file count + byte budget caps so a workspace with thousands of build artifacts can't make every poll slow</li>
+    <li><code>origin/&lt;base&gt;</code> preferred over stale local refs for merge-base</li>
+    <li>Partial-stdout recovery so oversized diffs truncate instead of disappearing</li>
+  </ul>
+  <p>End-to-end QA verified all paths in a real browser (full report in <code>.gstack/qa-reports/qa-report-canvases-2026-05-05.md</code> if you want to see the screenshots and per-test evidence).</p>
+
+  <h2 id="more">Where to read more</h2>
+  <ul>
+    <li><a href="canvases-feature.html">canvases-feature.html</a> — full feature writeup, architecture diagram, extension model, file map, roadmap</li>
+    <li><a href="https://github.com/ComposioHQ/agent-orchestrator/pull/1653">PR #1653</a> — implementation</li>
+    <li><a href="../packages/core/src/types.ts"><code>packages/core/src/types.ts</code></a> — <code>CanvasArtifact</code>, <code>CanvasProducer</code>, supporting types</li>
+    <li><a href="../packages/core/src/canvas-log.ts"><code>packages/core/src/canvas-log.ts</code></a> — file reader plus git-diff synthesizer</li>
+    <li><a href="../packages/web/src/components/CanvasRail.tsx"><code>packages/web/src/components/CanvasRail.tsx</code></a> — the right-rail component</li>
+  </ul>
+
+  <footer>
+    Agent Orchestrator · canvases v0.1 · <a href="https://github.com/ComposioHQ/agent-orchestrator">github.com/ComposioHQ/agent-orchestrator</a>
+  </footer>
+</main>
+</body>
+</html>

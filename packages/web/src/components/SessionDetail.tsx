@@ -18,6 +18,7 @@ import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
 import { sessionActivityMeta } from "./session-detail-utils";
+import { CanvasRail } from "./CanvasRail";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -138,7 +139,8 @@ export function SessionDetail({
         onRestore={handleRestore}
         onKill={handleKill}
       />
-      <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
+      <div className="flex-1 min-h-0 flex">
+        <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
         <div className="flex-1 min-h-0 flex flex-col">
           {!showTerminal ? (
             <div className="session-detail-terminal-placeholder h-full" />
@@ -166,7 +168,9 @@ export function SessionDetail({
             />
           )}
         </div>
-      </main>
+        </main>
+        {!isMobile && <CanvasRail sessionId={session.id} />}
+      </div>
       <MobileBottomNav
         ariaLabel="Session navigation"
         activeTab={isOrchestrator ? "orchestrator" : undefined}

@@ -8,6 +8,17 @@
 // Types — everything plugins and consumers need
 export * from "./types.js";
 
+// Canvases — interactive artifacts rendered next to the terminal in SessionDetail
+export {
+  readCanvases,
+  synthesizeGitDiffCanvas,
+  parseUnifiedDiff,
+  getCanvasDir,
+  CANVAS_MAX_FILE_BYTES,
+  CANVAS_MAX_PER_SESSION,
+} from "./canvas-log.js";
+export { CanvasArtifactSchema } from "./canvas-schema.js";
+
 // Config — YAML loader + validation
 export {
   loadConfig,

@@ -1779,6 +1779,80 @@ export interface PreflightContext {
 }
 
 // =============================================================================
+// CANVASES
+// =============================================================================
+
+/**
+ * Interactive artifacts rendered next to the terminal in SessionDetail.
+ *
+ * Two production paths:
+ *   1. Agents write `{workspacePath}/.ao/canvases/{id}.json` directly.
+ *   2. Plugins (agent, scm, tracker) implement `CanvasProducer.listCanvases`
+ *      and return synthesized artifacts (e.g. PR status, CI summary).
+ *
+ * Renderer types are fixed in core. Third parties pick a type and supply data;
+ * they do not ship React components. New renderer types require a core PR.
+ */
+export type CanvasType = "markdown" | "diff" | "table" | "stats";
+
+export interface CanvasDiffFile {
+  path: string;
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  hunks: Array<{
+    header: string;
+    lines: Array<{ kind: "context" | "add" | "del"; text: string }>;
+  }>;
+}
+
+export interface CanvasTableColumn {
+  key: string;
+  label: string;
+  align?: "left" | "right" | "center";
+}
+
+export interface CanvasStatMetric {
+  label: string;
+  value: string | number;
+  delta?: string;
+  tone?: "neutral" | "good" | "warn" | "bad";
+}
+
+interface CanvasBase {
+  version: 1;
+  id: string;
+  type: CanvasType;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Optional source identifier (plugin name, "agent", "core"). Display only. */
+  source?: string;
+}
+
+export type CanvasArtifact =
+  | (CanvasBase & { type: "markdown"; payload: { markdown: string } })
+  | (CanvasBase & { type: "diff"; payload: { files: CanvasDiffFile[] } })
+  | (CanvasBase & {
+      type: "table";
+      payload: {
+        columns: CanvasTableColumn[];
+        rows: Record<string, string | number | boolean | null>[];
+      };
+    })
+  | (CanvasBase & { type: "stats"; payload: { metrics: CanvasStatMetric[] } });
+
+/**
+ * Optional capability for plugins that can synthesize canvases from session data.
+ * Implemented by agent / scm / tracker plugins as needed — not a new plugin slot.
+ *
+ * Return value is treated as untrusted: core validates and size-caps before exposing
+ * via the dashboard API.
+ */
+export interface CanvasProducer {
+  listCanvases(session: Session, project: ProjectConfig): Promise<CanvasArtifact[]>;
+}
+
+// =============================================================================
 // SESSION METADATA
 // =============================================================================
 

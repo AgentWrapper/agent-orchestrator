@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Codex review · canvases v0.1 · post-merge pass</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --surface: #fff;
+    --elevated: #f4f4f5;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #ff6a00;
+    --p1: #dc2626;
+    --p2: #d97706;
+    --p3: #2563eb;
+    --good: #16a34a;
+    --code-bg: #0f172a;
+    --code-text: #e2e8f0;
+    --add: #16a34a;
+    --del: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111;
+      --elevated: #1a1a1a;
+      --border: #262626;
+      --text: #e8e8e8;
+      --muted: #9a9a9a;
+      --p1: #f87171;
+      --p2: #fbbf24;
+      --p3: #60a5fa;
+      --good: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 40px 20px 80px; }
+  main { max-width: 880px; margin: 0 auto; }
+  .eyebrow {
+    color: var(--accent);
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; font-weight: 700; letter-spacing: -0.01em; }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 0 0 24px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 28px; }
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  h2 { font-size: 18px; margin: 36px 0 12px; font-weight: 600; letter-spacing: -0.005em; }
+  h3 { font-size: 14px; margin: 18px 0 6px; font-weight: 600; }
+
+  /* TL;DR card */
+  .tldr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 0 0 32px;
+  }
+  .tldr strong { font-weight: 600; }
+  .tldr-row { display: flex; gap: 14px; align-items: baseline; padding: 4px 0; }
+  .tldr-row + .tldr-row { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+  .tldr-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); width: 88px; flex-shrink: 0; }
+
+  /* Stats grid */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 28px; }
+  @media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .stat-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .stat-value { font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  /* Findings */
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 0 0 16px;
+  }
+  .finding-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .severity {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    padding: 3px 8px; border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .sev-p1 { background: color-mix(in srgb, var(--p1) 15%, transparent); color: var(--p1); }
+  .sev-p2 { background: color-mix(in srgb, var(--p2) 15%, transparent); color: var(--p2); }
+  .sev-p3 { background: color-mix(in srgb, var(--p3) 15%, transparent); color: var(--p3); }
+  .finding h3 { margin: 0; font-size: 15px; flex: 1; min-width: 200px; }
+  .file-ref {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; color: var(--muted);
+    margin: 4px 0 12px;
+  }
+  .file-ref a { color: var(--accent); text-decoration: none; }
+  .file-ref a:hover { text-decoration: underline; }
+  .finding p { margin: 8px 0; }
+
+  /* Code blocks */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin: 10px 0;
+    font-variant-numeric: tabular-nums;
+  }
+  pre code { background: transparent; padding: 0; color: inherit; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--elevated);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre .add { color: #4ade80; }
+  pre .del { color: #f87171; }
+  pre .ctx { color: var(--code-text); }
+  pre .cmt { color: #94a3b8; }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+  .recommendation {
+    border-left: 3px solid var(--good);
+    background: color-mix(in srgb, var(--good) 8%, var(--surface));
+    border-radius: 0 6px 6px 0;
+    padding: 14px 18px;
+    margin: 24px 0;
+  }
+  .recommendation strong { color: var(--good); }
+
+  footer { color: var(--muted); font-size: 12px; margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--border); }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+
+<div class="eyebrow">Codex review · post-merge readiness pass</div>
+<h1>Two findings, both real, neither blocking</h1>
+<p class="subtitle">An independent code review of canvases v0.1 after the Windows-NUL fix and the docs-extension expansion. Two issues surfaced — one P2 (production-of-DOM hazard), one P3 (corner-case parser misrender).</p>
+
+<div class="pills">
+  <span class="pill">PR #1653</span>
+  <span class="pill">commit 68952859e</span>
+  <span class="pill">codex pass 13 (post-merge)</span>
+  <span class="pill">model_reasoning_effort=high</span>
+</div>
+
+<section class="tldr">
+  <div class="tldr-row"><div class="tldr-label">Verdict</div><div><strong>GATE: PASS</strong> — no [P1] findings, both items are bounded-impact follow-ups.</div></div>
+  <div class="tldr-row"><div class="tldr-label">Severity</div><div>1 × <span class="severity sev-p2">P2</span> · 1 × <span class="severity sev-p3">P3</span> · 0 × <span class="severity sev-p1">P1</span></div></div>
+  <div class="tldr-row"><div class="tldr-label">Recommendation</div><div>Fix the P2 in this PR (10-line schema cap, prevents agent-driven DOM blowup); land the P3 as a follow-up since it only mis-labels a path containing literal <code>" b/"</code>.</div></div>
+</section>
+
+<div class="stats">
+  <div class="stat"><div class="stat-label">Codex passes</div><div class="stat-value">13</div></div>
+  <div class="stat"><div class="stat-label">Total findings</div><div class="stat-value">20</div></div>
+  <div class="stat"><div class="stat-label">Fixed pre-merge</div><div class="stat-value">19</div></div>
+  <div class="stat"><div class="stat-label">Open</div><div class="stat-value">2</div></div>
+</div>
+
+<h2>Finding 1 — file-based diff canvases lack a line cap</h2>
+
+<div class="finding">
+  <div class="finding-head">
+    <span class="severity sev-p2">P2</span>
+    <h3>Cap file-based diff canvas lines</h3>
+  </div>
+  <div class="file-ref"><a href="../packages/core/src/canvas-schema.ts#L30">packages/core/src/canvas-schema.ts:30</a></div>
+
+  <p><strong>What.</strong> The Zod schema for <code>type: "diff"</code> canvases accepts an unlimited number of hunk lines per file. <code>CanvasDiff.tsx</code> renders one DOM row per line, and the dashboard polls every 5s.</p>
+
+  <p><strong>Why it matters.</strong> <code>readCanvases</code> already permits 32 files of 256 KB each per session — that's <strong>8 MB of canvas data</strong>. A well-meaning agent emitting a giant compacted diff (e.g. <code>git log -p</code> dumped into a canvas) creates hundreds of thousands of DOM nodes on every poll. The synthesized git-diff path mitigates this with explicit caps:</p>
+
+  <pre><code><span class="cmt">// canvas-log.ts (synthesized path — already protected)</span>
+const DIFF_MAX_FILES = 200;
+const DIFF_MAX_LINES = 5000;</code></pre>
+
+  <p>File-emitted diff canvases bypass this. The 256 KB byte cap doesn't protect us — a tiny-line diff can pack tens of thousands of one-character add/del lines into 256 KB.</p>
+
+  <h3>Recommended fix</h3>
+
+  <pre><code><span class="cmt">// canvas-schema.ts</span>
+<span class="ctx">const DiffHunkSchema = z.object({</span>
+<span class="ctx">  header: z.string(),</span>
+<span class="del">- lines: z.array(DiffLineSchema),</span>
+<span class="add">+ lines: z.array(DiffLineSchema).max(DIFF_MAX_LINES_PER_HUNK),</span>
+<span class="ctx">});</span>
+<span class="ctx">const DiffFileSchema = z.object({</span>
+<span class="ctx">  path: z.string().min(1),</span>
+<span class="ctx">  status: z.enum(["added", "modified", "deleted", "renamed"]),</span>
+<span class="del">- hunks: z.array(DiffHunkSchema),</span>
+<span class="add">+ hunks: z.array(DiffHunkSchema).max(DIFF_MAX_HUNKS_PER_FILE),</span>
+<span class="ctx">});</span></code></pre>
+
+  <p>Plus a top-level <code>files.max(DIFF_MAX_FILES)</code> on the diff payload. Reuse the constants from <code>canvas-log.ts</code>, or copy them — the cap values can match the synthesized path (200 files × 5000 lines).</p>
+
+  <p><strong>Effort:</strong> ~10 lines including 1 test. <strong>Risk if not fixed:</strong> a single buggy agent freezes any session detail page that loads its workspace.</p>
+</div>
+
+<h2>Finding 2 — diff parser mis-handles paths containing <code>" b/"</code></h2>
+
+<div class="finding">
+  <div class="finding-head">
+    <span class="severity sev-p3">P3</span>
+    <h3>Handle ambiguous Git diff paths</h3>
+  </div>
+  <div class="file-ref"><a href="../packages/core/src/canvas-log.ts#L256">packages/core/src/canvas-log.ts:256-259</a></div>
+
+  <p><strong>What.</strong> The <code>diff --git</code> line parser uses <code>lastIndexOf(" b/")</code> to split <code>oldPath</code> and <code>newPath</code>. For a file whose <em>actual repository path</em> contains the substring <code>" b/"</code> — e.g. <code>x b/y.txt</code> — git emits:</p>
+
+  <pre><code><span class="ctx">diff --git a/x b/y.txt b/x b/y.txt</span>
+<span class="del">--- a/x b/y.txt</span>
+<span class="add">+++ b/x b/y.txt</span></code></pre>
+
+  <p><code>lastIndexOf(" b/")</code> picks the wrong split, so the canvas reports <code>oldPath="x b/y.txt b/x"</code> and <code>path="y.txt"</code>. Both are bogus.</p>
+
+  <p><strong>Context.</strong> This is a regression from the ReDoS fix in pass 11. The original regex <code>/(.+) b\/(.+)/</code> had the same ambiguity but was vulnerable to <code>js/redos</code>. Switching to <code>lastIndexOf</code> killed the security issue but kept the correctness one.</p>
+
+  <h3>Recommended fix — parse the <code>---</code>/<code>+++</code> headers instead</h3>
+
+  <p>Git emits the unambiguous old/new paths on the next two lines after <code>diff --git</code>. Each line has exactly one path (no separator ambiguity). Use those instead:</p>
+
+  <pre><code><span class="cmt">// In parseUnifiedDiff(), buffer the next two header lines after</span>
+<span class="cmt">// `diff --git` and read paths from them rather than the diff line itself.</span>
+
+<span class="ctx">if (line.startsWith("--- a/")) {</span>
+<span class="ctx">  if (current) current.oldPath = line.slice(6);</span>
+<span class="ctx">  continue;</span>
+<span class="ctx">}</span>
+<span class="ctx">if (line.startsWith("+++ b/")) {</span>
+<span class="ctx">  if (current) current.path = line.slice(6);</span>
+<span class="ctx">  continue;</span>
+<span class="ctx">}</span></code></pre>
+
+  <p>Keep the <code>diff --git</code> line as the "open a new file" trigger but stop parsing paths from it. The <code>---</code>/<code>+++</code> lines are also where added/deleted-file markers (<code>--- /dev/null</code>) appear, so this gives us correct status detection too.</p>
+
+  <p><strong>Effort:</strong> ~15 lines. <strong>Risk if not fixed:</strong> file labels mis-render for any repo path containing literal <code>" b/"</code> — uncommon but legal. No security or DoS impact.</p>
+</div>
+
+<h2>Why this isn't blocking</h2>
+
+<table>
+  <thead><tr><th>Dimension</th><th>P2 cap</th><th>P3 path</th></tr></thead>
+  <tbody>
+    <tr><td>User-visible impact</td><td>Page freeze on bad input</td><td>Wrong filename in canvas header</td></tr>
+    <tr><td>Trigger probability</td><td>Any agent emitting large diff</td><td>Repo path contains <code>" b/"</code></td></tr>
+    <tr><td>Workaround</td><td>Don't open the session</td><td>None needed (renders, just labelled wrong)</td></tr>
+    <tr><td>Existing protection</td><td>256 KB byte cap (insufficient)</td><td>None</td></tr>
+    <tr><td>Fix complexity</td><td>~10 lines schema</td><td>~15 lines parser</td></tr>
+  </tbody>
+</table>
+
+<div class="recommendation">
+  <strong>Recommendation</strong> — fix the P2 in this PR because it's a live DOS-the-dashboard vector that any well-meaning agent could trip with a single large diff JSON; defer the P3 to a follow-up since it only mis-renders a label for repository paths that include literal <code>" b/"</code> substrings, and gating ship on a hand-tweaked corner case is the wrong trade. The P2 fix is bounded (schema + 1 test), reviewable in 5 minutes, and prevents a real failure mode.
+</div>
+
+<h2>Convergence signal</h2>
+
+<p>The codex review gauntlet for this PR is now 13 passes deep:</p>
+<ul>
+  <li>Passes 1–10 surfaced 18 distinct bugs, all fixed pre-merge.</li>
+  <li>Pass 11 (post-PR) surfaced the deferred-v0.2 scope question (rejected with documented reasoning).</li>
+  <li>Pass 12 (post-fixes commit) returned <em>zero findings</em> — the convergence point we acted on for the original ship decision.</li>
+  <li>Pass 13 (today, post-Windows fix + docs expansion) surfaces 2 new items, both narrow.</li>
+</ul>
+
+<p>The new findings aren't regressions — they're <em>new analysis paths</em> codex took with more context. Pass 12 didn't look hard at the file-based diff schema; pass 13 did. This is normal for adversarial review and stops being useful once we hit the same "no findings" outcome twice in a row.</p>
+
+<h2>Action items</h2>
+
+<table>
+  <thead><tr><th>Action</th><th>Owner</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td>Add <code>DIFF_MAX_LINES_PER_HUNK</code> + <code>DIFF_MAX_HUNKS_PER_FILE</code> + <code>DIFF_MAX_FILES</code> caps to <code>canvas-schema.ts</code></td><td>Claude</td><td>Now (pre-merge)</td></tr>
+    <tr><td>Add 1 test that proves an over-cap diff canvas is rejected</td><td>Claude</td><td>Now (pre-merge)</td></tr>
+    <tr><td>Switch parser to <code>---</code>/<code>+++</code> header reading for <code>oldPath</code>/<code>newPath</code></td><td>Follow-up PR</td><td>Post-merge — file an issue, not in this PR</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Source: <code>codex review --base main -c 'model_reasoning_effort="high"' --enable web_search_cached</code> ·
+  PR <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/1653">#1653</a> ·
+  Generated 2026-05-06
+</footer>
+
+</main>
+</body>
+</html>
