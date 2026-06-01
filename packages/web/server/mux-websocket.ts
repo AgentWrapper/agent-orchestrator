@@ -88,9 +88,14 @@ export class SessionBroadcaster {
   // the healthy → failing transition (not every 3s during an outage).
   private lastFetchOk = true;
   private readonly baseUrl: string;
+  private readonly authHeader: string | null;
 
   constructor(nextPort: string) {
     this.baseUrl = `http://localhost:${nextPort}`;
+    const password = process.env.AO_REMOTE_AUTH_PASSWORD;
+    this.authHeader = password
+      ? `Basic ${Buffer.from(`${process.env.AO_REMOTE_AUTH_USER || "ao"}:${password}`).toString("base64")}`
+      : null;
   }
 
   /**
@@ -177,6 +182,7 @@ export class SessionBroadcaster {
     try {
       const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
         signal: controller.signal,
+        ...(this.authHeader ? { headers: { Authorization: this.authHeader } } : {}),
       });
       clearTimeout(timeoutId);
       if (!res.ok) {

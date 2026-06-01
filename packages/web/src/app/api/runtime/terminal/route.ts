@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { activeRemoteAuth, createRemoteWsToken } from "../../../../../server/remote-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +24,11 @@ export async function GET() {
   const proxyWsPath = normalizeProxyPath(
     process.env.TERMINAL_WS_PATH ?? process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
   );
+  const remoteAuth = activeRemoteAuth();
+  const remoteWsToken = remoteAuth.password ? createRemoteWsToken(remoteAuth) : undefined;
 
   return NextResponse.json(
-    { terminalPort, directTerminalPort, proxyWsPath },
+    { terminalPort, directTerminalPort, proxyWsPath, remoteWsToken },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

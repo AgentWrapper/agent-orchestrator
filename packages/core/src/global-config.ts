@@ -206,6 +206,13 @@ export const GlobalConfigSchema = z
     updateChannel: UpdateChannelSchema.optional().catch(undefined),
     /** Override path-based install detection. Optional. */
     installMethod: InstallMethodOverrideSchema.optional().catch(undefined),
+    /** Remote dashboard access credentials. */
+    remoteAccess: z
+      .object({
+        username: z.string().optional(),
+        password: z.string().optional(),
+      })
+      .optional(),
     /** Structured observability defaults. Env vars still override at runtime. */
     observability: z
       .object({
@@ -1177,6 +1184,9 @@ export function createDefaultGlobalConfig(): GlobalConfig {
   return {
     port: 3000,
     readyThresholdMs: 300_000,
+    remoteAccess: {
+      username: "ao",
+    },
     observability: {
       logLevel: "warn",
       stderr: false,

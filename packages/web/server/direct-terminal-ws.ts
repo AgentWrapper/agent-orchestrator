@@ -5,12 +5,29 @@
 
 import { createServer, type Server } from "node:http";
 import type { WebSocketServer } from "ws";
+import { isWindows } from "@aoagents/ao-core";
 import { findTmux } from "./tmux-utils.js";
 import { createMuxWebSocket } from "./mux-websocket.js";
+import {
+  activeRemoteAuth,
+  readConfiguredRemoteAuth,
+  verifyRemoteWsToken,
+  type RemoteAuthCredentials,
+} from "./remote-auth.js";
 
 export interface DirectTerminalServer {
   server: Server;
-  shutdown: () => void;
+  shutdown: (onClosed?: () => void) => void;
+}
+
+function isRemoteAuthAllowed(url: URL, initialConfiguredAuth: RemoteAuthCredentials): boolean {
+  const { username, password: expectedPassword } = activeRemoteAuth(initialConfiguredAuth);
+  if (!expectedPassword) return true;
+
+  return verifyRemoteWsToken(url.searchParams.get("auth_token"), {
+    username,
+    password: expectedPassword,
+  });
 }
 
 /**
@@ -19,6 +36,7 @@ export interface DirectTerminalServer {
  */
 export function createDirectTerminalServer(tmuxPath?: string | null): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
+  const initialConfiguredAuth = readConfiguredRemoteAuth();
 
   let muxWss: WebSocketServer | null = null;
 
@@ -67,9 +85,14 @@ export function createDirectTerminalServer(tmuxPath?: string | null): DirectTerm
   // path-rewrite rule. The dashboard's MuxProvider already constructs that
   // path when accessed on a standard HTTPS port; see `packages/web/src/providers/MuxProvider.tsx`.
   server.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url ?? "/", "ws://localhost").pathname;
+    const url = new URL(request.url ?? "/", "ws://localhost");
+    const pathname = url.pathname;
 
-    if ((pathname === "/mux" || pathname === "/ao-terminal-mux") && muxWss) {
+    if (
+      (pathname === "/mux" || pathname === "/ao-terminal-mux") &&
+      muxWss &&
+      isRemoteAuthAllowed(url, initialConfiguredAuth)
+    ) {
       muxWss.handleUpgrade(request, socket, head, (ws) => {
         muxWss!.emit("connection", ws, request);
       });
@@ -78,7 +101,12 @@ export function createDirectTerminalServer(tmuxPath?: string | null): DirectTerm
     }
   });
 
-  function shutdown() {
+  let shuttingDown = false;
+
+  function shutdown(onClosed?: () => void) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     // Terminate all connected mux clients — this triggers their 'close' events
     // which unsubscribe terminal callbacks and kill PTY processes.
     if (muxWss) {
@@ -87,7 +115,12 @@ export function createDirectTerminalServer(tmuxPath?: string | null): DirectTerm
       }
       muxWss.close();
     }
-    server.close();
+    server.close((err?: Error & { code?: string }) => {
+      if (err && err.code !== "ERR_SERVER_NOT_RUNNING") {
+        console.error("[DirectTerminal] Error during shutdown:", err);
+      }
+      onClosed?.();
+    });
   }
 
   return { server, shutdown };
@@ -107,26 +140,34 @@ if (isMainModule) {
   const TMUX = findTmux();
   if (TMUX) {
     console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
-  } else if (process.platform === "win32") {
+  } else if (isWindows()) {
     console.log(`[DirectTerminal] Windows mode — using named pipe relay to PTY hosts`);
   } else {
     console.log(`[DirectTerminal] No tmux available — terminal relay may be limited`);
   }
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
+  let shuttingDown = false;
 
   server.listen(PORT, () => {
     console.log(`[DirectTerminal] WebSocket server listening on port ${PORT}`);
   });
 
   function handleShutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     console.log(`[DirectTerminal] Received ${signal}, shutting down...`);
-    shutdown();
     const forceExitTimer = setTimeout(() => {
       console.error("[DirectTerminal] Forced shutdown after timeout");
       process.exit(1);
     }, 5000);
     forceExitTimer.unref();
+
+    shutdown(() => {
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    });
   }
 
   process.on("SIGINT", () => handleShutdown("SIGINT"));

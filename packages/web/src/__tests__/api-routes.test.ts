@@ -957,6 +957,24 @@ describe("API Routes", () => {
       });
     });
 
+    it("returns an opaque websocket token instead of Basic credentials", async () => {
+      await withEnv(
+        {
+          AO_REMOTE_AUTH_USER: "ao",
+          AO_REMOTE_AUTH_PASSWORD: "secret",
+          AO_REMOTE_WS_TOKEN_SECRET: "test-ws-token-secret",
+        },
+        async () => {
+          const res = await runtimeTerminalGET();
+          expect(res.status).toBe(200);
+          const data = await res.json();
+          expect(data.remoteWsToken).toMatch(/^v1\./);
+          expect(data.remoteWsToken).not.toBe(Buffer.from("ao:secret").toString("base64"));
+          expect(data.remoteAuthToken).toBeUndefined();
+        },
+      );
+    });
+
     it("sets Cache-Control: no-store header", async () => {
       const res = await runtimeTerminalGET();
       expect(res.headers.get("Cache-Control")).toBe("no-store");

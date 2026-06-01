@@ -65,6 +65,7 @@ export function useMuxOptional(): MuxContextValue | undefined {
 interface RuntimeTerminalConfig {
   directTerminalPort?: unknown;
   proxyWsPath?: unknown;
+  remoteWsToken?: unknown;
 }
 
 function normalizePortValue(value: unknown): string | undefined {
@@ -84,26 +85,30 @@ function normalizePathValue(value: unknown): string | undefined {
 function buildMuxWsUrl(runtimeConfig: {
   directTerminalPort?: string;
   proxyWsPath?: string;
+  remoteWsToken?: string;
 }): string {
   const loc = window.location;
   const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+  const authQuery = runtimeConfig.remoteWsToken
+    ? `?auth_token=${encodeURIComponent(runtimeConfig.remoteWsToken)}`
+    : "";
 
   // Runtime proxy path takes priority (set by `ao start` via TERMINAL_WS_PATH env var)
   const proxyWsPath = runtimeConfig.proxyWsPath ?? process.env.NEXT_PUBLIC_TERMINAL_WS_PATH;
   if (proxyWsPath) {
     const basePath = proxyWsPath.replace(/\/ws\/?$/, "");
-    return `${protocol}//${loc.host}${basePath}/mux`;
+    return `${protocol}//${loc.host}${basePath}/mux${authQuery}`;
   }
 
   // Port-less or standard ports: use path-based routing (reverse proxy expected)
   if (loc.port === "" || loc.port === "443" || loc.port === "80") {
-    return `${protocol}//${loc.hostname}/ao-terminal-mux`;
+    return `${protocol}//${loc.hostname}/ao-terminal-mux${authQuery}`;
   }
 
   // Direct port connection — prefer runtime-configured port, fall back to env/default
   const port =
     runtimeConfig.directTerminalPort ?? process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-  return `${protocol}//${loc.hostname}:${port}/mux`;
+  return `${protocol}//${loc.hostname}:${port}/mux${authQuery}`;
 }
 
 function terminalKey(id: string, projectId?: string): string {
@@ -126,7 +131,11 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
+  const runtimeConfigRef = useRef<{
+    directTerminalPort?: string;
+    proxyWsPath?: string;
+    remoteWsToken?: string;
+  }>({});
   const isDestroyedRef = useRef(false);
 
   const connect = useCallback(() => {
@@ -138,7 +147,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
     try {
       const url = buildMuxWsUrl(runtimeConfigRef.current);
-      console.log("[MuxProvider] Connecting to", url);
+      const safeUrl = new URL(url);
+      safeUrl.search = "";
+      console.log("[MuxProvider] Connecting to", safeUrl.toString());
       const ws = new WebSocket(url);
       // Assign immediately so cleanup can close it even during CONNECTING state
       wsRef.current = ws;
@@ -279,6 +290,8 @@ export function MuxProvider({ children }: { children: ReactNode }) {
           runtimeConfigRef.current = {
             directTerminalPort: normalizePortValue(data.directTerminalPort),
             proxyWsPath: normalizePathValue(data.proxyWsPath),
+            remoteWsToken:
+              typeof data.remoteWsToken === "string" ? data.remoteWsToken : undefined,
           };
         }
       } catch {

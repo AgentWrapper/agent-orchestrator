@@ -8920,3 +8920,215 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: color-mix(in srgb, var(--color-text-tertiary) 14%, transparent);
   color: var(--color-text-tertiary);
 }
+
+/* ── Remote Access QR Modal ───────────────────────────────────────── */
+.remote-qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: remoteFadeIn 0.15s ease-out;
+}
+
+@keyframes remoteFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.remote-qr-modal {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  animation: remoteSlideUp 0.2s ease-out;
+}
+
+@keyframes remoteSlideUp {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.remote-qr-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.remote-qr-modal__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.remote-qr-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.remote-qr-modal__close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.remote-qr-modal__body {
+  padding: 24px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.remote-qr-modal__qr {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.remote-qr-modal__url {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-inset);
+  padding: 8px 12px;
+  border-radius: 6px;
+  word-break: break-all;
+  text-align: center;
+  width: 100%;
+  margin: 0;
+  user-select: all;
+}
+
+.remote-qr-modal__hosts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.remote-qr-modal__host-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-family: var(--font-jetbrains-mono);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.remote-qr-modal__host-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.remote-qr-modal__host-btn--active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.remote-qr-modal__hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  margin: 0;
+}
+
+.remote-qr-error {
+  max-width: 240px;
+  color: var(--color-status-attention);
+  font-size: 11px;
+}
+
+.remote-qr-modal__credentials {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-inset);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  display: grid;
+  gap: 8px;
+}
+
+.remote-qr-modal__credential-field {
+  display: grid;
+  gap: 4px;
+}
+
+.remote-qr-modal__credential-field span {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.remote-qr-modal__input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-jetbrains-mono);
+  font-size: 11px;
+  padding: 7px 8px;
+}
+
+.remote-qr-modal__save {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.remote-qr-modal__save:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border-subtle));
+}
+
+.remote-qr-modal__save:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.remote-qr-modal__disable {
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.remote-qr-modal__disable:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}

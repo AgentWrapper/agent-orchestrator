@@ -109,7 +109,7 @@ describe("Dashboard render cadence", () => {
       .mocked(fetch)
       .mock.calls.filter(([input]) => {
         const url = typeof input === "string" ? input : (input as URL).toString();
-        return !url.includes("/api/version");
+        return !url.includes("/api/version") && !url.includes("/api/remote-info");
       });
     expect(otherCalls).toHaveLength(0);
   });

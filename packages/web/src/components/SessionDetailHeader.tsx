@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import { DashboardNotificationButton } from "./DashboardNotificationButton";
+import { RemoteAccessQR } from "./RemoteAccessQR";
 import { SessionDetailPRCard } from "./SessionDetailPRCard";
 import { askAgentToFix } from "./session-detail-agent-actions";
 import { buildGitHubBranchUrl } from "./session-detail-utils";
@@ -235,6 +236,7 @@ export function SessionDetailHeader({
       <div className="dashboard-app-header__spacer" />
       <div className="dashboard-app-header__actions">
         <DashboardNotificationButton />
+        <RemoteAccessQR />
         {!isOrchestrator && pr ? (
           <div className="topbar-pr-btn-wrap" ref={prPopoverRef}>
             <a

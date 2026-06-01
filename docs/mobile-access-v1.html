@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AO Mobile Access V1 Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --surface-2: #eef2f6;
+        --ink: #17202a;
+        --muted: #5f6b7a;
+        --line: #d9e0e8;
+        --good: #157f4f;
+        --good-bg: #e8f6ef;
+        --warn: #a16207;
+        --warn-bg: #fff6db;
+        --risk: #b42318;
+        --risk-bg: #fdecea;
+        --info: #2563a8;
+        --info-bg: #eaf2ff;
+        --code: #111827;
+        --shadow: 0 18px 42px rgba(23, 32, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      a {
+        color: var(--info);
+      }
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px 56px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: 1.4fr 0.8fr;
+        gap: 22px;
+        align-items: stretch;
+        margin-bottom: 22px;
+      }
+
+      .hero,
+      .panel,
+      .summary-card,
+      .flow-card,
+      .finding {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero {
+        padding: 28px;
+      }
+
+      .eyebrow {
+        color: var(--info);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        letter-spacing: 0;
+        line-height: 1.15;
+      }
+
+      h1 {
+        margin: 10px 0 14px;
+        font-size: 38px;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 22px;
+      }
+
+      h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .lead {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 17px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      .metric {
+        min-height: 92px;
+        padding: 14px;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 18px;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .summary-card {
+        padding: 22px;
+      }
+
+      .verdict {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        margin-bottom: 16px;
+        color: var(--good);
+        background: var(--good-bg);
+        border: 1px solid rgba(21, 127, 79, 0.22);
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .toc {
+        display: grid;
+        gap: 9px;
+        margin-top: 18px;
+      }
+
+      .toc a {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        color: var(--ink);
+        text-decoration: none;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+
+      .section {
+        margin-top: 22px;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .panel {
+        padding: 20px;
+      }
+
+      .panel p,
+      .panel li {
+        color: var(--muted);
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .tag.good {
+        color: var(--good);
+        background: var(--good-bg);
+      }
+
+      .tag.warn {
+        color: var(--warn);
+        background: var(--warn-bg);
+      }
+
+      .tag.risk {
+        color: var(--risk);
+        background: var(--risk-bg);
+      }
+
+      .tag.info {
+        color: var(--info);
+        background: var(--info-bg);
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .flow-card {
+        position: relative;
+        min-height: 136px;
+        padding: 14px;
+      }
+
+      .flow-card:not(:last-child)::after {
+        content: ">";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        width: 20px;
+        height: 20px;
+        transform: translateY(-50%);
+        color: var(--muted);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        text-align: center;
+        line-height: 18px;
+        font-weight: 700;
+      }
+
+      .flow-card span {
+        display: block;
+        margin-bottom: 9px;
+        color: var(--info);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      th,
+      td {
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        background: #f8fafc;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .finding-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .finding {
+        display: grid;
+        grid-template-columns: 150px 1fr 190px;
+        gap: 14px;
+        padding: 16px;
+        align-items: start;
+      }
+
+      .finding .status {
+        display: grid;
+        gap: 8px;
+      }
+
+      .code-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      pre {
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        color: #f8fafc;
+        background: var(--code);
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      ul {
+        margin: 10px 0 0;
+        padding-left: 20px;
+      }
+
+      .note {
+        padding: 14px;
+        color: var(--muted);
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .footer {
+        margin-top: 28px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 920px) {
+        header,
+        .grid-2,
+        .grid-3,
+        .code-grid,
+        .flow,
+        .finding {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-card:not(:last-child)::after {
+          display: none;
+        }
+
+        h1 {
+          font-size: 31px;
+        }
+
+        .hero-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <section class="hero">
+          <div class="eyebrow">Agent Orchestrator Remote Access</div>
+          <h1>Mobile Access V1 Review</h1>
+          <p class="lead">
+            A practical review artifact for the current branch: what V1 ships, why it is enough
+            for first release, which security concerns are real, and what should move to V2.
+          </p>
+          <div class="hero-grid" aria-label="V1 summary">
+            <div class="metric">
+              <strong>V1 scope</strong>
+              <span>Cloudflare quick tunnel plus Basic Auth and QR entry point.</span>
+            </div>
+            <div class="metric">
+              <strong>Current status</strong>
+              <span>Good for a pragmatic V1 after proxy-auth and shutdown fixes.</span>
+            </div>
+            <div class="metric">
+              <strong>Deferred scope</strong>
+              <span>Session cookies, token TTLs, lockouts, and rate limits.</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="summary-card">
+          <div class="verdict">V1 verdict: shippable with known tradeoffs</div>
+          <h2>Review Map</h2>
+          <p>
+            Use this page to answer reviewer questions without reopening the full proposal or
+            branch diff.
+          </p>
+          <nav class="toc" aria-label="Page sections">
+            <a href="#scope"><span>1. Scope</span><strong>What ships</strong></a>
+            <a href="#flow"><span>2. Flow</span><strong>Runtime path</strong></a>
+            <a href="#security"><span>3. Security</span><strong>Threat model</strong></a>
+            <a href="#review"><span>4. Review</span><strong>Findings</strong></a>
+            <a href="#v2"><span>5. V2</span><strong>Deferrals</strong></a>
+          </nav>
+        </aside>
+      </header>
+
+      <section class="section grid-3" id="scope">
+        <article class="panel">
+          <span class="tag good">Included</span>
+          <h2>Remote Dashboard</h2>
+          <p>
+            The dashboard exposes a desktop Remote button. The tunnel is created only when the
+            user enables it at runtime; normal <code>ao start</code> remains local-first.
+          </p>
+        </article>
+        <article class="panel">
+          <span class="tag good">Included</span>
+          <h2>Basic Auth</h2>
+          <p>
+            Public access requires configured credentials. Local loopback dashboard access remains
+            frictionless unless the request carries a real external proxy address.
+          </p>
+        </article>
+        <article class="panel">
+          <span class="tag good">Included</span>
+          <h2>Terminal Proxy</h2>
+          <p>
+            Terminal WebSocket traffic routes through the dashboard origin and direct terminal
+            connections validate the active remote credentials.
+          </p>
+        </article>
+      </section>
+
+      <section class="section panel" id="flow">
+        <h2>Runtime Flow</h2>
+        <p>
+          Remote access is a runtime toggle, not a new startup mode. The happy path is intentionally
+          short so it works for quick mobile access without VPN setup.
+        </p>
+        <div class="flow">
+          <div class="flow-card">
+            <span>Step 1</span>
+            <h3>Start AO</h3>
+            <p>Run AO normally. Dashboard starts local and local access stays easy.</p>
+          </div>
+          <div class="flow-card">
+            <span>Step 2</span>
+            <h3>Click Remote</h3>
+            <p>The dashboard calls <code>/api/remote-info</code> to enable remote access.</p>
+          </div>
+          <div class="flow-card">
+            <span>Step 3</span>
+            <h3>Start Tunnel</h3>
+            <p><code>cloudflared</code> is downloaded if needed and starts a quick tunnel.</p>
+          </div>
+          <div class="flow-card">
+            <span>Step 4</span>
+            <h3>Scan QR</h3>
+            <p>The modal shows public URL, QR code, username, and password.</p>
+          </div>
+          <div class="flow-card">
+            <span>Step 5</span>
+            <h3>Authenticate</h3>
+            <p>Mobile browser opens the public URL and signs in with Basic Auth.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section grid-2" id="security">
+        <article class="panel">
+          <h2>V1 Threat Model</h2>
+          <p>
+            V1 is for a user-controlled development machine and a temporary public tunnel. It is
+            not a hosted multi-user remote-control service.
+          </p>
+          <ul>
+            <li>Public URL is protected with Basic Auth.</li>
+            <li>Loopback bypass is allowed only for local dashboard use.</li>
+            <li>External proxy headers with non-loopback addresses require authentication.</li>
+            <li>Credentials are simple and user-editable for V1.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h2>Credential Storage</h2>
+          <p>
+            Credentials are stored in the AO global config. This is a deliberate V1 tradeoff for a
+            local developer tool, and should be surfaced plainly in the UI.
+          </p>
+          <pre><code>~/.agent-orchestrator/config.yaml
+
+remoteAccess:
+  username: ao
+  password: example-password</code></pre>
+        </article>
+      </section>
+
+      <section class="section panel" id="review">
+        <h2>Review Findings Triage</h2>
+        <div class="finding-list">
+          <article class="finding">
+            <div class="status">
+              <span class="tag good">Fixed</span>
+              <span class="tag risk">V1 blocker</span>
+            </div>
+            <div>
+              <h3>Cloudflare tunnel auth bypass</h3>
+              <p>
+                Public tunnel traffic can reach Next through a loopback socket. V1 now avoids
+                loopback bypass when proxy headers contain an external client address.
+              </p>
+            </div>
+            <div class="note">Keep covered by middleware tests.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag good">Fixed</span>
+              <span class="tag warn">Stability</span>
+            </div>
+            <div>
+              <h3>Direct terminal shutdown</h3>
+              <p>
+                Shutdown is now guarded against repeated signal handling and exits cleanly after
+                the server close callback.
+              </p>
+            </div>
+            <div class="note">Prevents noisy stop behavior.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag good">Fixed</span>
+              <span class="tag warn">Compliance</span>
+            </div>
+            <div>
+              <h3>Inline platform checks</h3>
+              <p>
+                <code>web-dir.ts</code> now uses shared platform helpers instead of direct
+                <code>process.platform</code> checks.
+              </p>
+            </div>
+            <div class="note">Matches AO cross-platform rules.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag warn">Valid</span>
+              <span class="tag info">Deferred</span>
+            </div>
+            <div>
+              <h3>Plaintext credentials</h3>
+              <p>
+                Real tradeoff: credentials are stored in local plaintext config. Acceptable for V1,
+                but the UI should warn users that this is local config storage.
+              </p>
+            </div>
+            <div class="note">Track as V1 UX disclosure or V2 hardening.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag warn">Valid</span>
+              <span class="tag info">V2</span>
+            </div>
+            <div>
+              <h3>No rate limiting</h3>
+              <p>
+                Basic Auth attempts are not rate limited. Generated passwords reduce practical
+                V1 risk, but V2 should add throttling or lockout behavior.
+              </p>
+            </div>
+            <div class="note">Not a V1 release blocker.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag good">Accepted</span>
+              <span class="tag info">Low</span>
+            </div>
+            <div>
+              <h3>Token secret in process env</h3>
+              <p>
+                <code>AO_REMOTE_WS_TOKEN_SECRET</code> lives in the process environment. That is
+                acceptable for an ephemeral local process.
+              </p>
+            </div>
+            <div class="note">No V1 action needed.</div>
+          </article>
+
+          <article class="finding">
+            <div class="status">
+              <span class="tag good">Non-issue</span>
+              <span class="tag info">Verified</span>
+            </div>
+            <div>
+              <h3><code>atob</code> in middleware</h3>
+              <p>
+                Next middleware can use <code>atob</code>. Server code uses <code>Buffer</code>
+                where Node APIs are available. Existing tests cover Basic Auth decoding.
+              </p>
+            </div>
+            <div class="note">No change recommended.</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section grid-2" id="v2">
+        <article class="panel">
+          <h2>V1 vs Stronger Proposal</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>V1</th>
+                <th>Hardened V2</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Login model</td>
+                <td>Basic Auth</td>
+                <td>Token login plus HttpOnly session cookie</td>
+              </tr>
+              <tr>
+                <td>Credential store</td>
+                <td>Plaintext local config</td>
+                <td>Hashed/tokenized credential store</td>
+              </tr>
+              <tr>
+                <td>Session lifetime</td>
+                <td>Browser-managed Basic Auth lifetime</td>
+                <td>Explicit token TTL and session TTL</td>
+              </tr>
+              <tr>
+                <td>Abuse controls</td>
+                <td>No rate limit</td>
+                <td>Rate limit, lockout, revoke sessions</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <article class="panel">
+          <h2>Decision Summary</h2>
+          <p>
+            V1 is enough if the product goal is temporary mobile access for a local developer:
+            click Remote, scan QR, authenticate, and control AO from mobile.
+          </p>
+          <ul>
+            <li>Do ship as "remote dashboard access through Cloudflare quick tunnel plus Basic Auth."</li>
+            <li>Do warn that credentials are stored in local plaintext config.</li>
+            <li>Do not describe V1 as a full mobile-auth platform.</li>
+            <li>Do move token sessions, lockouts, rate limits, and revocation to V2.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="section panel">
+        <h2>Source Files</h2>
+        <div class="code-grid">
+          <pre><code>packages/web/src/middleware.ts
+packages/web/src/middleware.test.ts
+packages/web/server/direct-terminal-ws.ts
+packages/web/server/remote-auth.ts</code></pre>
+          <pre><code>packages/web/src/lib/remote-access-manager.ts
+packages/web/src/components/RemoteAccessQR.tsx
+packages/cli/src/lib/web-dir.ts
+docs/mobile-access-v1.md</code></pre>
+        </div>
+      </section>
+
+      <p class="footer">
+        Generated as a self-contained review artifact for PR 1901 / Mobile Access V1.
+      </p>
+    </main>
+  </body>
+</html>

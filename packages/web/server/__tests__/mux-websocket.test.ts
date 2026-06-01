@@ -117,6 +117,7 @@ describe("SessionBroadcaster", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.unstubAllEnvs();
     mockFetch.mockReset();
     recordActivityEvent.mockClear();
     resetPtyMock();
@@ -287,6 +288,27 @@ describe("SessionBroadcaster", () => {
   });
 
   describe("fetchSnapshot", () => {
+    it("uses remote Basic Auth for internal polling when configured", async () => {
+      vi.stubEnv("AO_REMOTE_AUTH_USER", "ao");
+      vi.stubEnv("AO_REMOTE_AUTH_PASSWORD", "secret");
+      broadcaster = new SessionBroadcaster("3000");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions: [] }),
+      });
+
+      broadcaster.subscribe(vi.fn());
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/sessions/patches",
+        expect.objectContaining({
+          headers: { Authorization: `Basic ${Buffer.from("ao:secret").toString("base64")}` },
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
     it("returns null on fetch failure", async () => {
       mockFetch.mockRejectedValueOnce(new Error("network error"));
 

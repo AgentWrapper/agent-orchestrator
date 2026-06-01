@@ -4,11 +4,13 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { Socket } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
+import { isLinux, isWindows } from "@aoagents/ao-core";
 import { formatCommandError } from "./cli-errors.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,9 +33,18 @@ export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const s = new Socket();
     s.setTimeout(300);
-    s.once("connect", () => { s.destroy(); resolve(false); }); // something listening → in use
-    s.once("error", () => { s.destroy(); resolve(true); });    // ECONNREFUSED → free
-    s.once("timeout", () => { s.destroy(); resolve(true); });  // no response → free
+    s.once("connect", () => {
+      s.destroy();
+      resolve(false);
+    }); // something listening → in use
+    s.once("error", () => {
+      s.destroy();
+      resolve(true);
+    }); // ECONNREFUSED → free
+    s.once("timeout", () => {
+      s.destroy();
+      resolve(true);
+    }); // no response → free
     s.connect(port, "127.0.0.1");
   });
 }
@@ -56,10 +67,9 @@ export async function findFreePort(start: number, maxScan = MAX_PORT_SCAN): Prom
  * Open a URL in the user's browser without throwing back into the caller.
  */
 export function openUrl(url: string): void {
-  const [cmd, args]: [string, string[]] =
-    process.platform === "win32"
-      ? ["cmd.exe", ["/c", "start", "", url]]
-      : [process.platform === "linux" ? "xdg-open" : "open", [url]];
+  const [cmd, args]: [string, string[]] = isWindows()
+    ? ["cmd.exe", ["/c", "start", "", url]]
+    : [isLinux() ? "xdg-open" : "open", [url]];
   const browser = spawn(cmd, args, { stdio: "ignore" });
   browser.on("error", (err) => {
     console.warn(
@@ -67,12 +77,11 @@ export function openUrl(url: string): void {
         cmd,
         args,
         action: `open ${url} in a browser`,
-        installHints:
-          process.platform === "linux"
-            ? ["Install xdg-utils so `xdg-open` is available on PATH."]
-            : process.platform === "win32"
-              ? []
-              : [],
+        installHints: isLinux()
+          ? ["Install xdg-utils so `xdg-open` is available on PATH."]
+          : isWindows()
+            ? []
+            : [],
       }).message,
     );
   });
@@ -144,8 +153,11 @@ export async function buildDashboardEnv(
 
   // If explicit ports provided (config or env var), use them directly.
   // Otherwise, auto-detect an available pair starting from the default.
-  const explicitTerminal = terminalPort ?? (env["TERMINAL_PORT"] ? parseInt(env["TERMINAL_PORT"], 10) : undefined);
-  const explicitDirect = directTerminalPort ?? (env["DIRECT_TERMINAL_PORT"] ? parseInt(env["DIRECT_TERMINAL_PORT"], 10) : undefined);
+  const explicitTerminal =
+    terminalPort ?? (env["TERMINAL_PORT"] ? parseInt(env["TERMINAL_PORT"], 10) : undefined);
+  const explicitDirect =
+    directTerminalPort ??
+    (env["DIRECT_TERMINAL_PORT"] ? parseInt(env["DIRECT_TERMINAL_PORT"], 10) : undefined);
 
   let resolvedTerminal: number;
   let resolvedDirect: number;
@@ -171,6 +183,7 @@ export async function buildDashboardEnv(
   env["DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
   env["NEXT_PUBLIC_TERMINAL_PORT"] = String(resolvedTerminal);
   env["NEXT_PUBLIC_DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
+  env["AO_REMOTE_WS_TOKEN_SECRET"] ||= randomBytes(32).toString("base64url");
 
   return env;
 }
@@ -200,8 +213,8 @@ export function findWebDir(): string {
     }
     throw new Error(
       "Could not find @aoagents/ao-web package.\n" +
-      "  If installed via npm:    npm install -g @aoagents/ao\n" +
-      "  If cloned from source:   pnpm install && pnpm build",
+        "  If installed via npm:    npm install -g @aoagents/ao\n" +
+        "  If cloned from source:   pnpm install && pnpm build",
     );
   }
 }

@@ -5,8 +5,8 @@
  */
 
 import { type ChildProcess } from "node:child_process";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
@@ -15,15 +15,35 @@ import {
   markDaemonShutdownHandlerInstalled,
   spawnManagedDaemonChild,
 } from "@aoagents/ao-core";
+import { ensureRemoteAuthCredentials, ensureRemoteWsTokenSecret } from "./remote-auth.js";
+import { proxyTerminalUpgrade } from "./terminal-proxy.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
+
+type NextApp = {
+  prepare: () => Promise<void>;
+  getRequestHandler: () => (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
+};
+
+const next = require("next") as (options: {
+  dev: boolean;
+  dir: string;
+  hostname: string;
+  port: number;
+}) => NextApp;
 
 // Resolve paths relative to the package root (one level up from dist-server/)
 const pkgRoot = resolve(__dirname, "..");
 
 const children: ChildProcess[] = [];
 markDaemonShutdownHandlerInstalled();
+let nextServer: Server | null = null;
+let shuttingDown = false;
+
+ensureRemoteAuthCredentials();
+ensureRemoteWsTokenSecret();
 
 function log(label: string, msg: string): void {
   process.stdout.write(`[${label}] ${msg}\n`);
@@ -82,31 +102,9 @@ function spawnProcess(
   return launch();
 }
 
-/**
- * Resolve the `next` CLI binary path.
- * Tries the local .bin shim first (fast), then falls back to require.resolve (hoisted deps).
- */
-function resolveNextBin(): string {
-  // On Windows, .bin/next is a POSIX shell shim that spawn() cannot execute.
-  // Skip it and go straight to the JS entry point.
-  if (!isWindows()) {
-    const localBin = resolve(pkgRoot, "node_modules", ".bin", "next");
-    if (existsSync(localBin)) return localBin;
-  }
-
-  // Resolve the actual Next.js CLI JS entry point
-  const require = createRequire(resolve(pkgRoot, "package.json"));
-  try {
-    const nextPkg = require.resolve("next/package.json");
-    return resolve(dirname(nextPkg), "dist", "bin", "next");
-  } catch {
-    // Last resort — rely on PATH
-    return "next";
-  }
-}
-
-// Start Next.js production server
 const port = process.env["PORT"] || "3000";
+const hostname = process.env["HOST"] || "0.0.0.0";
+process.env["AO_TRUST_REMOTE_ADDRESS_HEADER"] = "1";
 const pathBasedMux = process.env["AO_PATH_BASED_MUX"] === "1";
 
 // When AO_PATH_BASED_MUX=1, single-port-server.js owns PORT and Next.js is
@@ -117,16 +115,6 @@ const NEXT_INTERNAL_OFFSET = 1000;
 const nextPort = pathBasedMux
   ? (process.env["NEXT_INTERNAL_PORT"] ?? String(parseInt(port, 10) + NEXT_INTERNAL_OFFSET))
   : port;
-
-const nextBin = resolveNextBin();
-
-if (isWindows() && nextBin !== "next") {
-  // On Windows, run the JS entry point via the current node binary.
-  // spawn() can't execute .js files directly on Windows.
-  spawnProcess("next", process.execPath, [nextBin, "start", "-p", nextPort]);
-} else {
-  spawnProcess("next", nextBin, ["start", "-p", nextPort]);
-}
 
 if (pathBasedMux) {
   // Surface the internal port to the child so it doesn't have to re-derive
@@ -140,8 +128,31 @@ spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.
   restart: true,
 });
 
-// Graceful shutdown — send SIGTERM to children and wait for them to exit
-let shuttingDown = false;
+async function startNextServer(): Promise<void> {
+  const app = next({ dev: false, dir: pkgRoot, hostname, port: Number.parseInt(nextPort, 10) });
+  const handle = app.getRequestHandler();
+  await app.prepare();
+
+  nextServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    req.headers["x-ao-remote-address"] = req.socket.remoteAddress ?? "";
+    void handle(req, res);
+  });
+
+  nextServer.on("upgrade", (request, socket, head) => {
+    if (!proxyTerminalUpgrade(request, socket, head)) {
+      socket.destroy();
+    }
+  });
+
+  nextServer.listen(Number.parseInt(nextPort, 10), hostname, () => {
+    log("next", `ready on http://${hostname}:${nextPort}`);
+  });
+}
+
+startNextServer().catch((err: unknown) => {
+  log("next", `failed to start: ${err instanceof Error ? err.message : String(err)}`);
+  cleanup();
+});
 
 function cleanup(): void {
   if (shuttingDown) return;
@@ -149,9 +160,12 @@ function cleanup(): void {
 
   let alive = children.length;
   if (alive === 0) {
+    nextServer?.close();
     process.exit(0);
     return;
   }
+
+  nextServer?.close();
 
   // Force exit after 5s if children don't exit cleanly
   const forceTimer = setTimeout(() => {

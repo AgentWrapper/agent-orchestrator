@@ -826,4 +826,30 @@ describe("buildMuxWsUrl", () => {
     await flushInit();
     expect(MockWebSocket.instances[0].url).toMatch(/\/ao-terminal-mux$/);
   });
+
+  it("appends opaque auth token without logging the query string", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ directTerminalPort: 14802, remoteWsToken: "opaque-token" }),
+      })),
+    );
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: { protocol: "https:", host: "remote.example", hostname: "remote.example", port: "" },
+    });
+
+    renderHook(() => useMux(), { wrapper });
+    await flushInit();
+
+    expect(MockWebSocket.instances[0].url).toBe(
+      "wss://remote.example/ao-terminal-mux?auth_token=opaque-token",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "[MuxProvider] Connecting to",
+      "wss://remote.example/ao-terminal-mux",
+    );
+  });
 });
