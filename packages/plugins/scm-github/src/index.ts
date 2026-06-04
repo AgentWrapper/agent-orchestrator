@@ -839,9 +839,33 @@ function createGitHubSCM(): SCM {
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
-      const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
-
-      await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      if (method === "ff-only") {
+        try {
+          await gh([
+            "pr",
+            "merge",
+            String(pr.number),
+            "--repo",
+            repoFlag(pr),
+            "--ff-only",
+            "--delete-branch",
+          ]);
+        } catch {
+          await gh([
+            "pr",
+            "merge",
+            String(pr.number),
+            "--repo",
+            repoFlag(pr),
+            "--merge",
+            "--delete-branch",
+          ]);
+        }
+      } else {
+        const flag =
+          method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
+        await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      }
       invalidatePRCache(pr);
     },
 

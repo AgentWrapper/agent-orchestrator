@@ -981,7 +981,7 @@ export const PR_STATE = {
   CLOSED: "closed" as const,
 } satisfies Record<string, PRState>;
 
-export type MergeMethod = "merge" | "squash" | "rebase";
+export type MergeMethod = "merge" | "squash" | "rebase" | "ff-only";
 
 export interface SCMWebhookRequest {
   method: string;
@@ -1578,6 +1578,9 @@ export interface ProjectConfig {
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
+
+  /** Merge strategy for auto-merge and dashboard merge. Default: "squash". */
+  mergeMethod?: MergeMethod;
 
   /** Inline rules/instructions passed to every agent prompt */
   agentRules?: string;
