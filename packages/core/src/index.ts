@@ -70,14 +70,18 @@ export {
   CodeReviewNoOpenFindingsError,
   CodeReviewRunNotExecutableError,
   CodeReviewRunNotFoundError,
+  buildClaudeCodeReviewArgs,
   createShellCodeReviewRunner,
   executeCodeReviewRun,
   formatCodeReviewFindingsForAgent,
   markOutdatedCodeReviewRunsForSession,
   parseReviewerOutput,
   prepareGitReviewerWorkspace,
+  resolveCodeReviewRunner,
+  runClaudeCodeReview,
   runCodexCodeReview,
   sendCodeReviewFindingsToAgent,
+  SUPPORTED_REVIEW_AGENTS,
   triggerCodeReviewForSession,
 } from "./code-review-manager.js";
 export type {

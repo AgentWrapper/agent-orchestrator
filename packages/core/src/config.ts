@@ -244,6 +244,16 @@ const RoleAgentConfigSchema = z
   })
   .optional();
 
+const ReviewConfigSchema = z
+  .object({
+    agent: z.string().optional(),
+    command: z.string().optional(),
+  })
+  .strict()
+  .refine((value) => !(value.agent && value.command), {
+    message: "review.agent and review.command are mutually exclusive",
+  });
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string().optional(),
@@ -266,6 +276,7 @@ const ProjectConfigSchema = z.object({
   agentConfig: AgentSpecificConfigSchema.default({}),
   orchestrator: RoleAgentConfigSchema,
   worker: RoleAgentConfigSchema,
+  review: ReviewConfigSchema.optional(),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
@@ -366,6 +377,7 @@ const OrchestratorConfigSchema = z.object({
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   dashboard: DashboardConfigSchema.optional(),
+  review: ReviewConfigSchema.optional(),
   projects: z.record(
     z
       .string()

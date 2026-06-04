@@ -57,6 +57,9 @@
     "dashboard": {
       "$ref": "#/$defs/dashboardConfig"
     },
+    "review": {
+      "$ref": "#/$defs/reviewConfig"
+    },
     "projects": {
       "type": "object",
       "description": "Project configs keyed by project ID.",
@@ -287,6 +290,25 @@
         }
       }
     },
+    "reviewConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AO-local reviewer backend. `agent` and `command` are mutually exclusive.",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "enum": ["claude-code", "codex"],
+          "description": "Registered agent plugin with a reviewer adapter."
+        },
+        "command": {
+          "type": "string",
+          "description": "Explicit shell command run in the reviewer workspace; its stdout is parsed for findings."
+        }
+      },
+      "not": {
+        "required": ["agent", "command"]
+      }
+    },
     "projectConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -354,6 +376,9 @@
         },
         "worker": {
           "$ref": "#/$defs/roleAgentConfig"
+        },
+        "review": {
+          "$ref": "#/$defs/reviewConfig"
         },
         "reactions": {
           "type": "object",

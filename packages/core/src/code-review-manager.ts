@@ -27,9 +27,11 @@ import {
   SessionNotFoundError,
   type OrchestratorConfig,
   type ProjectConfig,
+  type ReviewConfig,
   type Session,
   type SessionManager,
 } from "./types.js";
+import { resolveAgentSelection } from "./agent-selection.js";
 import { getShell, isWindows, killProcessTree } from "./platform.js";
 
 const REVIEW_COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -207,7 +209,14 @@ export interface ExecuteCodeReviewRunOptions {
   sessionManager: SessionManager;
   storeFactory?: (projectId: string) => CodeReviewStore;
   prepareWorkspace?: PrepareCodeReviewWorkspace;
+  /**
+   * Explicit reviewer override. When provided it wins over all configuration
+   * (used by tests and any caller that fully controls the runner). When
+   * omitted, the backend is resolved via {@link resolveCodeReviewRunner}.
+   */
   runReviewer?: CodeReviewRunner;
+  /** Shell command from the `--command` flag (highest configuration precedence). */
+  reviewCommand?: string;
   now?: () => Date;
   force?: boolean;
 }
@@ -761,6 +770,102 @@ export async function runCodexCodeReview(
   }
 }
 
+export function buildClaudeCodeReviewArgs(prompt: string): string[] {
+  return ["-p", prompt, "--permission-mode", "bypassPermissions", "--output-format", "text"];
+}
+
+export async function runClaudeCodeReview(
+  context: CodeReviewRunnerContext,
+): Promise<CodeReviewRunnerResult> {
+  const prompt = buildDefaultReviewPrompt(context);
+  const args = buildClaudeCodeReviewArgs(prompt);
+
+  try {
+    const { stdout, stderr } = await execFileWithClosedStdin("claude", args, {
+      cwd: context.workspacePath,
+      timeout: REVIEW_COMMAND_TIMEOUT_MS,
+      maxBuffer: REVIEW_COMMAND_MAX_BUFFER,
+      env: process.env,
+      shell: isWindows(),
+    });
+    return { rawOutput: stdout.trim() || stderr.trim() };
+  } catch (error) {
+    const details =
+      error instanceof Error && "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr.trim()
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(`Claude Code review failed: ${details}`, { cause: error });
+  }
+}
+
+/**
+ * Agent plugins that ship a built-in reviewer adapter. Keyed by the plugin's
+ * manifest name (matches `defaults.agent` / `review.agent` values).
+ */
+const REVIEWER_ADAPTERS: Readonly<Record<string, CodeReviewRunner>> = {
+  "claude-code": runClaudeCodeReview,
+  codex: runCodexCodeReview,
+};
+
+export const SUPPORTED_REVIEW_AGENTS: readonly string[] = Object.keys(REVIEWER_ADAPTERS);
+
+function reviewerFromConfig(review: ReviewConfig | undefined): CodeReviewRunner | undefined {
+  if (!review) return undefined;
+  if (review.command) return createShellCodeReviewRunner(review.command);
+  if (review.agent) {
+    const adapter = REVIEWER_ADAPTERS[review.agent];
+    if (!adapter) {
+      throw new Error(
+        `Unsupported review.agent "${review.agent}". Valid values: ${SUPPORTED_REVIEW_AGENTS.join(", ")}.`,
+      );
+    }
+    return adapter;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the reviewer backend for a run using the documented precedence:
+ *
+ *   1. explicit `command` (the `--command` CLI flag)
+ *   2. per-project `project.review` (command or agent)
+ *   3. global `config.review` (command or agent)
+ *   4. the project's worker agent, when it has a known reviewer adapter
+ *   5. Codex (final fallback, preserving the original behavior)
+ *
+ * Throws when a configured `review.agent` names an agent without an adapter,
+ * so misconfiguration fails fast before any review run state is mutated.
+ */
+export function resolveCodeReviewRunner({
+  config,
+  project,
+  command,
+}: {
+  config: OrchestratorConfig;
+  project: ProjectConfig;
+  command?: string;
+}): CodeReviewRunner {
+  if (command) return createShellCodeReviewRunner(command);
+
+  const projectReviewer = reviewerFromConfig(project.review);
+  if (projectReviewer) return projectReviewer;
+
+  const globalReviewer = reviewerFromConfig(config.review);
+  if (globalReviewer) return globalReviewer;
+
+  const workerAgent = resolveAgentSelection({
+    role: "worker",
+    project,
+    defaults: config.defaults,
+  }).agentName;
+  const workerAdapter = workerAgent ? REVIEWER_ADAPTERS[workerAgent] : undefined;
+  if (workerAdapter) return workerAdapter;
+
+  return runCodexCodeReview;
+}
+
 function defaultReviewSummary(session: Session, source: CodeReviewRequestSource): string {
   const sourceLabel = source === "cli" ? "CLI" : source === "web" ? "dashboard" : "automation";
   return `Review requested from ${sourceLabel} for ${session.id}.`;
@@ -902,7 +1007,8 @@ export async function executeCodeReviewRun(
     sessionManager,
     storeFactory = createCodeReviewStore,
     prepareWorkspace = prepareGitReviewerWorkspace,
-    runReviewer = runCodexCodeReview,
+    runReviewer,
+    reviewCommand,
     now = () => new Date(),
     force = false,
   }: ExecuteCodeReviewRunOptions,
@@ -912,6 +1018,11 @@ export async function executeCodeReviewRun(
   if (!project) {
     throw new Error(`Unknown project: ${projectId}`);
   }
+
+  // Resolve the backend up front so a misconfigured `review.agent` fails fast,
+  // before any run is claimed or marked `preparing`.
+  const reviewer =
+    runReviewer ?? resolveCodeReviewRunner({ config, project, command: reviewCommand });
 
   const store = storeFactory(projectId);
   const claimed = await withReviewRunExecutionLock(store, runId, async () => {
@@ -946,7 +1057,7 @@ export async function executeCodeReviewRun(
       now(),
     );
     const baseRef = session.pr?.baseBranch?.trim() || project.defaultBranch;
-    const result = await runReviewer({ config, project, session, run, workspacePath, baseRef });
+    const result = await reviewer({ config, project, session, run, workspacePath, baseRef });
     const findings = result.findings ?? parseReviewerOutput(result.rawOutput ?? "");
 
     for (const finding of findings) {

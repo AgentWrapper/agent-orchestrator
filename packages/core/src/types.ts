@@ -1359,6 +1359,20 @@ export interface ObservabilityConfig {
 }
 
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
+/**
+ * Configuration for the AO-local code reviewer backend.
+ *
+ * `agent` and `command` are mutually exclusive:
+ * - `agent`: name of a registered agent plugin with a reviewer adapter
+ *   (currently "claude-code" or "codex").
+ * - `command`: an explicit shell command run in the reviewer workspace whose
+ *   stdout is parsed for findings (same contract as `ao review run --command`).
+ */
+export interface ReviewConfig {
+  agent?: string;
+  command?: string;
+}
+
 export interface OrchestratorConfig {
   /** Optional JSON Schema hint for editor autocomplete/validation. */
   "$schema"?: string;
@@ -1410,6 +1424,9 @@ export interface OrchestratorConfig {
 
   /** Dashboard UI configuration */
   dashboard?: DashboardConfig;
+
+  /** Global AO-local reviewer backend configuration */
+  review?: ReviewConfig;
 
   /** Notification channel configs */
   notifiers: Record<string, NotifierConfig>;
@@ -1575,6 +1592,9 @@ export interface ProjectConfig {
   orchestrator?: RoleAgentConfig;
 
   worker?: RoleAgentConfig;
+
+  /** Per-project AO-local reviewer backend override */
+  review?: ReviewConfig;
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
