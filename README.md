@@ -145,6 +145,11 @@ defaults:
   workspace: worktree
   notifiers: [desktop]
 
+# AO-local code reviewer backend (`ao review run`). Optional — defaults to the
+# worker agent when it has a reviewer adapter, otherwise codex.
+review:
+  agent: claude-code  # claude-code | codex (or `command:` for a custom shell reviewer)
+
 projects:
   my-app:
     repo: owner/my-app
@@ -167,6 +172,8 @@ reactions:
 ```
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
+
+The AO-local reviewer (`ao review run`) picks its backend in this order: a `--command` flag, then `projects.<id>.review`, then the global `review` block, then your worker agent (`defaults.agent`) if it ships a reviewer adapter, and finally codex. Set `review.agent: claude-code` to review with Claude Code on hosts without Codex/OpenAI credentials.
 
 Keep the `$schema` line so editors can autocomplete and validate against [`schema/config.schema.json`](schema/config.schema.json).
 
