@@ -526,6 +526,38 @@ function repoFlag(pr: PRInfo): string {
   return `${pr.owner}/${pr.repo}`;
 }
 
+/**
+ * Compare the PR head branch against its base. Returns GitHub's comparison
+ * status: `"ahead"` means head is strictly ahead of base (fast-forwardable),
+ * `"diverged"` means both sides have unique commits, etc.
+ */
+async function getCompareStatus(pr: PRInfo): Promise<string> {
+  const raw = await gh(["api", `repos/${repoFlag(pr)}/compare/${pr.baseBranch}...${pr.branch}`]);
+  const data: { status: string } = JSON.parse(raw);
+  return data.status;
+}
+
+/**
+ * Fast-forward the base branch ref to the PR head, server-side, via the Git
+ * Refs API. `force=false` makes GitHub reject anything that isn't a true
+ * fast-forward. The head branch is then deleted to match `--delete-branch`.
+ */
+async function fastForwardBase(pr: PRInfo): Promise<void> {
+  const refRaw = await gh(["api", `repos/${repoFlag(pr)}/git/ref/heads/${pr.branch}`]);
+  const headSha = (JSON.parse(refRaw) as { object: { sha: string } }).object.sha;
+  await gh([
+    "api",
+    "-X",
+    "PATCH",
+    `repos/${repoFlag(pr)}/git/refs/heads/${pr.baseBranch}`,
+    "-f",
+    `sha=${headSha}`,
+    "-F",
+    "force=false",
+  ]);
+  await gh(["api", "-X", "DELETE", `repos/${repoFlag(pr)}/git/refs/heads/${pr.branch}`]);
+}
+
 function prEventKey(pr: PRInfo): string {
   return `${repoFlag(pr)}#${pr.number}`;
 }
@@ -839,9 +871,37 @@ function createGitHubSCM(): SCM {
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
-      const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
-
-      await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      if (method === "merge-with-ff") {
+        // Fast-forward only when the branch is strictly ahead of base (no
+        // divergence); otherwise fall back to a merge commit. GitHub has no
+        // fast-forward merge button, so the FF path goes through the Git Refs
+        // API rather than `gh pr merge`.
+        const status = await getCompareStatus(pr);
+        if (status === "ahead") {
+          await fastForwardBase(pr);
+        } else {
+          await gh([
+            "pr",
+            "merge",
+            String(pr.number),
+            "--repo",
+            repoFlag(pr),
+            "--merge",
+            "--delete-branch",
+          ]);
+        }
+      } else {
+        const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
+        await gh([
+          "pr",
+          "merge",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          flag,
+          "--delete-branch",
+        ]);
+      }
       invalidatePRCache(pr);
     },
 

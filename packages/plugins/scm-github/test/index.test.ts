@@ -576,6 +576,55 @@ describe("scm-github plugin", () => {
         expect.any(Object),
       );
     });
+
+    it("merge-with-ff fast-forwards the base ref when the branch is ahead", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "ahead" }) }); // compare
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ object: { sha: "abc123" } }) }); // ref
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // PATCH update-ref
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // DELETE head ref
+      await scm.mergePR(pr, "merge-with-ff");
+
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["api", "repos/acme/repo/compare/main...feat/my-feature"],
+        expect.any(Object),
+      );
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        [
+          "api",
+          "-X",
+          "PATCH",
+          "repos/acme/repo/git/refs/heads/main",
+          "-f",
+          "sha=abc123",
+          "-F",
+          "force=false",
+        ],
+        expect.any(Object),
+      );
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["api", "-X", "DELETE", "repos/acme/repo/git/refs/heads/feat/my-feature"],
+        expect.any(Object),
+      );
+      // The fast-forward path must not touch the gh pr merge button.
+      const usedPrMerge = ghMock.mock.calls.some(
+        (c) => Array.isArray(c[1]) && c[1][0] === "pr" && c[1][1] === "merge",
+      );
+      expect(usedPrMerge).toBe(false);
+    });
+
+    it("merge-with-ff falls back to a merge commit when the branch has diverged", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "diverged" }) }); // compare
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
+      await scm.mergePR(pr, "merge-with-ff");
+      expect(ghMock).toHaveBeenLastCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["pr", "merge", "42", "--repo", "acme/repo", "--merge", "--delete-branch"],
+        expect.any(Object),
+      );
+    });
   });
 
   // ---- closePR -----------------------------------------------------------

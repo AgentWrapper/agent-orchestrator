@@ -528,6 +528,15 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
+      if (method === "merge-with-ff") {
+        // "merge-with-ff" is a GitHub-only composite strategy (server-side
+        // fast-forward via the Git Refs API). GitLab has no equivalent
+        // per-merge flag, so fail loudly instead of silently ignoring it.
+        throw new Error(
+          'mergeMethod "merge-with-ff" is not supported by the GitLab SCM; ' +
+            'use "merge", "squash", or "rebase".',
+        );
+      }
       const args = ["mr", "merge", String(pr.number), "--repo", repoFlag(pr)];
       if (method === "squash") args.push("--squash");
       else if (method === "rebase") args.push("--rebase");

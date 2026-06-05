@@ -981,7 +981,15 @@ export const PR_STATE = {
   CLOSED: "closed" as const,
 } satisfies Record<string, PRState>;
 
-export type MergeMethod = "merge" | "squash" | "rebase";
+/**
+ * PR merge strategy. `merge` / `squash` / `rebase` map directly to GitHub's
+ * native merge-button methods. `merge-with-ff` is an AO composite strategy
+ * (not a native API value): when the PR branch is strictly ahead of the base
+ * (no divergence) it fast-forwards the base ref server-side via the Git Refs
+ * API (`force=false`); when the branches have diverged it falls back to a
+ * `merge` commit. Only the GitHub SCM implements `merge-with-ff`.
+ */
+export type MergeMethod = "merge" | "squash" | "rebase" | "merge-with-ff";
 
 export interface SCMWebhookRequest {
   method: string;
@@ -1578,6 +1586,9 @@ export interface ProjectConfig {
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
+
+  /** Merge strategy for the dashboard merge action. Default: "squash". */
+  mergeMethod?: MergeMethod;
 
   /** Inline rules/instructions passed to every agent prompt */
   agentRules?: string;
