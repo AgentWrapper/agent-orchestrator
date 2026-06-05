@@ -124,7 +124,7 @@ function createAnthropicClient(): LLMClient {
 
 /**
  * Strip MiniMax thinking tags from response text.
- * MiniMax M2.5/M2.7 models may include <think>...</think> blocks in output.
+ * MiniMax M3/M2.7 models may include <think>...</think> blocks in output.
  */
 export function stripThinkingTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();

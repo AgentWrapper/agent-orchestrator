@@ -161,7 +161,7 @@ describe("MiniMax LLM client", () => {
 
     const client = createLLMClient("minimax");
     const result = await client.chatCompletion({
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       maxTokens: 10,
       system: "You are a classifier.",
       userMessage: "Classify this task.",
@@ -179,7 +179,7 @@ describe("MiniMax LLM client", () => {
     expect(headers["Content-Type"]).toBe("application/json");
 
     const body = JSON.parse(options.body as string);
-    expect(body.model).toBe("MiniMax-M2.7");
+    expect(body.model).toBe("MiniMax-M3");
     expect(body.max_tokens).toBe(10);
     expect(body.temperature).toBeGreaterThanOrEqual(0);
     expect(body.temperature).toBeLessThanOrEqual(1);
@@ -208,7 +208,7 @@ describe("MiniMax LLM client", () => {
 
     const client = createLLMClient("minimax");
     const result = await client.chatCompletion({
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       maxTokens: 10,
       system: "Classify.",
       userMessage: "Task.",
@@ -230,7 +230,7 @@ describe("MiniMax LLM client", () => {
     const client = createLLMClient("minimax");
     await expect(
       client.chatCompletion({
-        model: "MiniMax-M2.7",
+        model: "MiniMax-M3",
         maxTokens: 10,
         system: "Classify.",
         userMessage: "Task.",
@@ -252,7 +252,7 @@ describe("MiniMax LLM client", () => {
 
     const client = createLLMClient("minimax");
     await client.chatCompletion({
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       maxTokens: 10,
       system: "Classify.",
       userMessage: "Task.",
@@ -283,7 +283,7 @@ describe("MiniMax LLM client", () => {
 
     const client = createLLMClient("minimax");
     const result = await client.chatCompletion({
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       maxTokens: 1024,
       system: "Decompose.",
       userMessage: "Build a full-stack app.",
@@ -307,7 +307,7 @@ describe("MiniMax LLM client", () => {
 
     const client = createLLMClient("minimax");
     const result = await client.chatCompletion({
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       maxTokens: 10,
       system: "Classify.",
       userMessage: "Task.",
@@ -369,14 +369,14 @@ describe("DecomposerConfig provider field", () => {
           decomposer: {
             enabled: true,
             provider: "minimax",
-            model: "MiniMax-M2.7",
+            model: "MiniMax-M3",
           },
         },
       },
     });
 
     expect(config.projects.proj1.decomposer?.provider).toBe("minimax");
-    expect(config.projects.proj1.decomposer?.model).toBe("MiniMax-M2.7");
+    expect(config.projects.proj1.decomposer?.model).toBe("MiniMax-M3");
   });
 
   it("defaults provider to anthropic", async () => {

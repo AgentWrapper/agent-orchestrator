@@ -113,7 +113,7 @@ describe("decompose() — MiniMax provider", () => {
     const config: DecomposerConfig = {
       enabled: true,
       maxDepth: 3,
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       requireApproval: false,
       provider: "minimax",
     };
@@ -142,7 +142,7 @@ describe("decompose() — MiniMax provider", () => {
     const config: DecomposerConfig = {
       enabled: true,
       maxDepth: 3,
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       requireApproval: true,
       provider: "minimax",
     };
@@ -166,7 +166,7 @@ describe("Config integration — decomposer provider", () => {
           decomposer: {
             enabled: true,
             maxDepth: 2,
-            model: "MiniMax-M2.7",
+            model: "MiniMax-M3",
             provider: "minimax",
             requireApproval: false,
           },
@@ -178,7 +178,7 @@ describe("Config integration — decomposer provider", () => {
     expect(decomposer).toBeDefined();
     expect(decomposer!.enabled).toBe(true);
     expect(decomposer!.maxDepth).toBe(2);
-    expect(decomposer!.model).toBe("MiniMax-M2.7");
+    expect(decomposer!.model).toBe("MiniMax-M3");
     expect(decomposer!.provider).toBe("minimax");
     expect(decomposer!.requireApproval).toBe(false);
   });
@@ -220,7 +220,7 @@ describe("Config integration — decomposer provider", () => {
           decomposer: {
             enabled: true,
             provider: "minimax",
-            model: "MiniMax-M2.7",
+            model: "MiniMax-M3",
           },
         },
       },
@@ -232,6 +232,6 @@ describe("Config integration — decomposer provider", () => {
 
     // Decomposer uses MiniMax
     expect(config.projects["my-app"].decomposer?.provider).toBe("minimax");
-    expect(config.projects["my-app"].decomposer?.model).toBe("MiniMax-M2.7");
+    expect(config.projects["my-app"].decomposer?.model).toBe("MiniMax-M3");
   });
 });

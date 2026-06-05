@@ -92,7 +92,7 @@ projects:
     # decomposer:
     #   enabled: false
     #   maxDepth: 3
-    #   model: claude-sonnet-4-20250514     # or MiniMax-M2.7 for MiniMax
+    #   model: claude-sonnet-4-20250514     # or MiniMax-M3 for MiniMax
     #   provider: anthropic                  # anthropic | minimax
     #   requireApproval: true
 

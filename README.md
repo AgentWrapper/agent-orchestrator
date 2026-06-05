@@ -140,10 +140,10 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 The task decomposer supports multiple LLM providers for breaking complex issues into subtasks:
 
-| Provider  | Model Examples                        | Env Variable       |
-| --------- | ------------------------------------- | ------------------ |
-| Anthropic | `claude-sonnet-4-20250514` (default)  | `ANTHROPIC_API_KEY` |
-| [MiniMax](https://www.minimaxi.com)   | `MiniMax-M2.7`, `MiniMax-M2.5`       | `MINIMAX_API_KEY`  |
+| Provider  | Model Examples                                       | Env Variable        |
+| --------- | ---------------------------------------------------- | ------------------- |
+| Anthropic | `claude-sonnet-4-20250514` (default)                 | `ANTHROPIC_API_KEY` |
+| [MiniMax](https://www.minimaxi.com)   | `MiniMax-M3` (default), `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | `MINIMAX_API_KEY`   |
 
 ```yaml
 # Use MiniMax for task decomposition
@@ -154,7 +154,7 @@ projects:
     decomposer:
       enabled: true
       provider: minimax          # anthropic (default) | minimax
-      model: MiniMax-M2.7        # MiniMax model to use
+      model: MiniMax-M3          # MiniMax model to use (512K context, 128K output)
 ```
 
 MiniMax models are accessed via their [OpenAI-compatible API](https://platform.minimaxi.com/document/OpenAI%20compatibility), so no additional SDK is needed.
