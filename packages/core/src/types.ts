@@ -981,6 +981,12 @@ export const PR_STATE = {
   CLOSED: "closed" as const,
 } satisfies Record<string, PRState>;
 
+/**
+ * PR merge strategy. `merge` / `squash` / `rebase` map directly to native
+ * GitHub/GitLab merge methods. `ff-only` is an AO-specific composite strategy
+ * (not a native API value): attempt a fast-forward and fall back to a merge
+ * commit when the branch has diverged. Only the GitHub SCM implements it.
+ */
 export type MergeMethod = "merge" | "squash" | "rebase" | "ff-only";
 
 export interface SCMWebhookRequest {

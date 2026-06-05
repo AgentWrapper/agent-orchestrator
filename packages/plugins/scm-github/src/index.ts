@@ -103,6 +103,21 @@ async function git(args: string[], cwd: string): Promise<string> {
   return execCli("git", args, cwd);
 }
 
+/**
+ * True when a `gh pr merge --ff-only` failure is due to the branch not being
+ * fast-forwardable (so a merge-commit fallback is appropriate). Returns false
+ * for auth / network / not-found errors, which must propagate.
+ */
+function isFastForwardFailure(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    message.includes("fast-forward") ||
+    message.includes("fast forward") ||
+    message.includes("not possible to merge") ||
+    message.includes("diverged")
+  );
+}
+
 function parseProjectRepo(projectRepo: string): [string, string] {
   const parts = projectRepo.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -850,7 +865,11 @@ function createGitHubSCM(): SCM {
             "--ff-only",
             "--delete-branch",
           ]);
-        } catch {
+        } catch (err) {
+          // Only fall back to a merge commit when the branch genuinely can't
+          // be fast-forwarded. Auth / network / not-found errors must surface
+          // as-is rather than be masked by a second failing merge attempt.
+          if (!isFastForwardFailure(err)) throw err;
           await gh([
             "pr",
             "merge",
@@ -862,9 +881,16 @@ function createGitHubSCM(): SCM {
           ]);
         }
       } else {
-        const flag =
-          method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
-        await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+        const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
+        await gh([
+          "pr",
+          "merge",
+          String(pr.number),
+          "--repo",
+          repoFlag(pr),
+          flag,
+          "--delete-branch",
+        ]);
       }
       invalidatePRCache(pr);
     },

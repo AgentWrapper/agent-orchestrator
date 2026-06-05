@@ -576,6 +576,35 @@ describe("scm-github plugin", () => {
         expect.any(Object),
       );
     });
+
+    it("uses --ff-only when method is ff-only and the branch fast-forwards", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.mergePR(pr, "ff-only");
+      expect(ghMock).toHaveBeenCalledTimes(1);
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["pr", "merge", "42", "--repo", "acme/repo", "--ff-only", "--delete-branch"],
+        expect.any(Object),
+      );
+    });
+
+    it("falls back to --merge when ff-only fails because the branch diverged", async () => {
+      ghMock.mockRejectedValueOnce(new Error("gh pr merge failed: not possible to fast-forward"));
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.mergePR(pr, "ff-only");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(ghMock).toHaveBeenLastCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        ["pr", "merge", "42", "--repo", "acme/repo", "--merge", "--delete-branch"],
+        expect.any(Object),
+      );
+    });
+
+    it("propagates non-fast-forward errors (e.g. auth) without retrying", async () => {
+      ghMock.mockRejectedValueOnce(new Error("gh pr merge failed: HTTP 401: Bad credentials"));
+      await expect(scm.mergePR(pr, "ff-only")).rejects.toThrow(/Bad credentials/);
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ---- closePR -----------------------------------------------------------

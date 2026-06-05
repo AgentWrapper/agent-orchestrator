@@ -514,6 +514,11 @@ describe("scm-gitlab plugin", () => {
       expect(args).not.toContain("--squash");
       expect(args).not.toContain("--rebase");
     });
+
+    it("throws for the unsupported ff-only method instead of silently ignoring it", async () => {
+      await expect(scm.mergePR(pr, "ff-only")).rejects.toThrow(/ff-only.*not supported/i);
+      expect(glabMock).not.toHaveBeenCalled();
+    });
   });
 
   // ---- closePR -----------------------------------------------------------

@@ -528,6 +528,16 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
+      if (method === "ff-only") {
+        // "ff-only" is an AO composite strategy (try fast-forward, fall back to
+        // a merge commit) that only the GitHub SCM implements. GitLab's
+        // fast-forward behavior is a project-level merge-method setting with no
+        // per-merge `glab` flag, so fail loudly instead of silently ignoring it.
+        throw new Error(
+          'mergeMethod "ff-only" is not supported by the GitLab SCM; ' +
+            'use "merge", "squash", or "rebase".',
+        );
+      }
       const args = ["mr", "merge", String(pr.number), "--repo", repoFlag(pr)];
       if (method === "squash") args.push("--squash");
       else if (method === "rebase") args.push("--rebase");
