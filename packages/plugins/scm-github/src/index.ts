@@ -526,14 +526,18 @@ function repoFlag(pr: PRInfo): string {
   return `${pr.owner}/${pr.repo}`;
 }
 
+/** GitHub's `compare` endpoint status for base...head. */
+type CompareStatus = "ahead" | "behind" | "diverged" | "identical";
+
 /**
  * Compare the PR head branch against its base. Returns GitHub's comparison
  * status: `"ahead"` means head is strictly ahead of base (fast-forwardable),
- * `"diverged"` means both sides have unique commits, etc.
+ * `"identical"` means both refs point at the same commit, `"diverged"` means
+ * both sides have unique commits, `"behind"` means base is ahead of head.
  */
-async function getCompareStatus(pr: PRInfo): Promise<string> {
+async function getCompareStatus(pr: PRInfo): Promise<CompareStatus> {
   const raw = await gh(["api", `repos/${repoFlag(pr)}/compare/${pr.baseBranch}...${pr.branch}`]);
-  const data: { status: string } = JSON.parse(raw);
+  const data: { status: CompareStatus } = JSON.parse(raw);
   return data.status;
 }
 
@@ -541,20 +545,34 @@ async function getCompareStatus(pr: PRInfo): Promise<string> {
  * Fast-forward the base branch ref to the PR head, server-side, via the Git
  * Refs API. `force=false` makes GitHub reject anything that isn't a true
  * fast-forward. The head branch is then deleted to match `--delete-branch`.
+ *
+ * Note: the base ref must not be protected against direct updates. Protected
+ * branches reject Refs API writes by design, so `merge-with-ff` cannot
+ * fast-forward into them — use `merge`/`squash`/`rebase` for protected bases.
  */
 async function fastForwardBase(pr: PRInfo): Promise<void> {
   const refRaw = await gh(["api", `repos/${repoFlag(pr)}/git/ref/heads/${pr.branch}`]);
   const headSha = (JSON.parse(refRaw) as { object: { sha: string } }).object.sha;
-  await gh([
-    "api",
-    "-X",
-    "PATCH",
-    `repos/${repoFlag(pr)}/git/refs/heads/${pr.baseBranch}`,
-    "-f",
-    `sha=${headSha}`,
-    "-F",
-    "force=false",
-  ]);
+  try {
+    await gh([
+      "api",
+      "-X",
+      "PATCH",
+      `repos/${repoFlag(pr)}/git/refs/heads/${pr.baseBranch}`,
+      "-f",
+      `sha=${headSha}`,
+      "-F",
+      "force=false",
+    ]);
+  } catch (err) {
+    throw new Error(
+      `Failed to fast-forward ${pr.baseBranch} to ${pr.branch} via the Git Refs API. ` +
+        `This typically means ${pr.baseBranch} is a protected branch (direct ref updates are ` +
+        `blocked) or it advanced since the comparison. Use mergeMethod "merge", "squash", or ` +
+        `"rebase" for protected branches.`,
+      { cause: err },
+    );
+  }
   await gh(["api", "-X", "DELETE", `repos/${repoFlag(pr)}/git/refs/heads/${pr.branch}`]);
 }
 
@@ -872,12 +890,12 @@ function createGitHubSCM(): SCM {
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
       if (method === "merge-with-ff") {
-        // Fast-forward only when the branch is strictly ahead of base (no
-        // divergence); otherwise fall back to a merge commit. GitHub has no
-        // fast-forward merge button, so the FF path goes through the Git Refs
-        // API rather than `gh pr merge`.
+        // Fast-forward when the branch is ahead of (or identical to) base; on
+        // divergence fall back to a merge commit. GitHub has no fast-forward
+        // merge button, so the FF path goes through the Git Refs API rather
+        // than `gh pr merge`.
         const status = await getCompareStatus(pr);
-        if (status === "ahead") {
+        if (status === "ahead" || status === "identical") {
           await fastForwardBase(pr);
         } else {
           await gh([

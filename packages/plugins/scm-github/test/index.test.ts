@@ -615,6 +615,41 @@ describe("scm-github plugin", () => {
       expect(usedPrMerge).toBe(false);
     });
 
+    it("merge-with-ff fast-forwards (no merge commit) when the branch is identical to base", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "identical" }) }); // compare
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ object: { sha: "abc123" } }) }); // ref
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // PATCH update-ref
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // DELETE head ref
+      await scm.mergePR(pr, "merge-with-ff");
+
+      expect(ghMock).toHaveBeenCalledWith(
+        expect.stringMatching(/(?:^|[\\/])gh(?:\.(?:exe|cmd|bat))?$/i),
+        [
+          "api",
+          "-X",
+          "PATCH",
+          "repos/acme/repo/git/refs/heads/main",
+          "-f",
+          "sha=abc123",
+          "-F",
+          "force=false",
+        ],
+        expect.any(Object),
+      );
+      // Identical branches must not produce a merge commit.
+      const usedPrMerge = ghMock.mock.calls.some(
+        (c) => Array.isArray(c[1]) && c[1][0] === "pr" && c[1][1] === "merge",
+      );
+      expect(usedPrMerge).toBe(false);
+    });
+
+    it("merge-with-ff surfaces a clear error when the base ref update is rejected", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "ahead" }) }); // compare
+      ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ object: { sha: "abc123" } }) }); // ref
+      ghMock.mockRejectedValueOnce(new Error("HTTP 403: Protected branch")); // PATCH update-ref
+      await expect(scm.mergePR(pr, "merge-with-ff")).rejects.toThrow(/protected branch/i);
+    });
+
     it("merge-with-ff falls back to a merge commit when the branch has diverged", async () => {
       ghMock.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "diverged" }) }); // compare
       ghMock.mockResolvedValueOnce({ stdout: "" }); // gh pr merge
