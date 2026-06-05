@@ -1009,8 +1009,8 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT_NODE, "utf-8");
     // .cjs forces CJS regardless of workspace package.json "type"; node
     // invocation is required on Windows because shebangs aren't honoured.
-    metadataCommand = "node .claude/metadata-updater.cjs";
-    activityCommand = "node .claude/activity-updater.cjs";
+    metadataCommand = 'node "$CLAUDE_PROJECT_DIR"/.claude/metadata-updater.cjs';
+    activityCommand = 'node "$CLAUDE_PROJECT_DIR"/.claude/activity-updater.cjs';
   } else {
     const metadataPath = join(claudeDir, "metadata-updater.sh");
     const activityPath = join(claudeDir, "activity-updater.sh");
@@ -1018,8 +1018,8 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT, "utf-8");
     await chmod(metadataPath, 0o755);
     await chmod(activityPath, 0o755);
-    metadataCommand = ".claude/metadata-updater.sh";
-    activityCommand = ".claude/activity-updater.sh";
+    metadataCommand = '"$CLAUDE_PROJECT_DIR"/.claude/metadata-updater.sh';
+    activityCommand = '"$CLAUDE_PROJECT_DIR"/.claude/activity-updater.sh';
   }
 
   let existingSettings: Record<string, unknown> = {};
