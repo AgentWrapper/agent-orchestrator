@@ -2430,6 +2430,43 @@ describe("start command — autoCreateConfig", () => {
     expect(config.projects[projectIds[0]!]!.path).toBe(realpathSync(tmpDir));
   });
 
+  it("sanitizes auto-created project IDs from directory names", async () => {
+    const { detectEnvironment } = await import("../../src/lib/detect-env.js");
+    vi.mocked(detectEnvironment).mockResolvedValue({
+      isGitRepo: true,
+      gitRemote: "https://github.com/ggerganov/llama.cpp.git",
+      ownerRepo: "ggerganov/llama.cpp",
+      currentBranch: "master",
+      defaultBranch: "master",
+      hasTmux: true,
+      hasGh: false,
+      ghAuthed: false,
+      hasLinearKey: false,
+      hasSlackWebhook: false,
+    });
+
+    const { detectAvailableAgents, detectAgentRuntime } =
+      await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAvailableAgents).mockResolvedValue([]);
+    vi.mocked(detectAgentRuntime).mockResolvedValue("claude-code");
+
+    const repoDir = join(tmpDir, "llama.cpp");
+    mkdirSync(repoDir);
+    mockProcessCwd.mockReturnValue(repoDir);
+
+    const callerContext = await import("../../src/lib/caller-context.js");
+    vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
+
+    const config = await autoCreateConfig(repoDir);
+
+    const projectIds = Object.keys(config.projects);
+    expect(projectIds).toHaveLength(1);
+    expect(projectIds[0]).toMatch(/^llama-cpp_[0-9a-f]{10}$/);
+    const projectId = projectIds[0]!;
+    expect(config.projects[projectId]?.name).toBe("llama.cpp");
+    expect(config.projects[projectId]?.path).toBe(realpathSync(repoDir));
+  });
+
   it("removes the flat local config when global registration fails", async () => {
     const { detectEnvironment } = await import("../../src/lib/detect-env.js");
     vi.mocked(detectEnvironment).mockResolvedValue({
@@ -2458,11 +2495,12 @@ describe("start command — autoCreateConfig", () => {
     const callerContext = await import("../../src/lib/caller-context.js");
     vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
 
+    const registeredProjectId = generateExternalId(realpathSync(tmpDir), null);
     writeFileSync(
       process.env["AO_GLOBAL_CONFIG"]!,
       [
         "projects:",
-        `  ${basename(tmpDir)}:`,
+        `  ${registeredProjectId}:`,
         `    path: ${join(tmpDir, "other-repo")}`,
         "",
       ].join("\n"),
