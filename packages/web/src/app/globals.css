@@ -3022,6 +3022,172 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
 }
 
+.session-timeline {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
+}
+
+.session-timeline__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.session-timeline__title {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.session-timeline__status {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+}
+
+.session-timeline__filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.session-timeline__filter {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-weight: 550;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.session-timeline__filter:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+.session-timeline__filter--active {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border-default));
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.session-timeline__body {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 16px 12px;
+}
+
+.session-timeline__empty {
+  padding: 14px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.session-timeline__list {
+  display: grid;
+  gap: 8px;
+}
+
+.session-timeline__item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.session-timeline__marker {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+}
+
+.session-timeline__item--lifecycle .session-timeline__marker {
+  background: var(--color-status-ready);
+}
+
+.session-timeline__item--agent_report .session-timeline__marker {
+  background: var(--color-status-working);
+}
+
+.session-timeline__item--pr .session-timeline__marker {
+  background: var(--color-status-review);
+}
+
+.session-timeline__item--reaction .session-timeline__marker {
+  background: var(--color-status-respond);
+}
+
+.session-timeline__item--runtime .session-timeline__marker,
+.session-timeline__item--error .session-timeline__marker {
+  background: var(--color-status-error);
+}
+
+.session-timeline__item--user_action .session-timeline__marker {
+  background: var(--color-status-pending);
+}
+
+.session-timeline__item--other .session-timeline__marker {
+  background: var(--color-status-idle);
+}
+
+.session-timeline__content {
+  min-width: 0;
+}
+
+.session-timeline__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-timeline__event-title {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-timeline__time {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.session-timeline__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.session-timeline__detail {
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .session-detail-height--worker {
   height: clamp(380px, 48vh, 560px);
 }

@@ -17,6 +17,7 @@ import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
+import { SessionTimeline } from "./SessionTimeline";
 import { SessionInspector } from "./SessionInspector";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
@@ -169,6 +170,7 @@ export function SessionDetail({
               autoFocus
             />
           )}
+          <SessionTimeline session={session} />
         </div>
         {/* The orchestrator session has no PR/changes/browser to inspect — give
             it the full-width terminal (no inspector rail). */}

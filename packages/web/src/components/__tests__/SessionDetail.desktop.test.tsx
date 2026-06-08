@@ -58,13 +58,17 @@ describe("SessionDetail desktop layout", () => {
       return 1;
     });
     window.cancelAnimationFrame = vi.fn();
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/events")) {
+        return new Promise<Response>(() => {});
+      }
+      return Promise.resolve({
         ok: true,
         status: 200,
         text: () => Promise.resolve(""),
-      } as Response),
-    );
+      } as Response);
+    });
   });
 
   afterEach(() => {
@@ -151,6 +155,126 @@ describe("SessionDetail desktop layout", () => {
     expect(screen.getByText(/Unresolved Comments/i)).toBeInTheDocument();
     expect(screen.getByText("Tighten the copy")).toBeInTheDocument();
     expect(screen.getByText("The empty state text needs to be shorter.")).toBeInTheDocument();
+  });
+
+  it("renders the session timeline with activity events and agent reports", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            events: [
+              {
+                id: 1,
+                ts: new Date(Date.now() - 60_000).toISOString(),
+                tsEpoch: Date.now() - 60_000,
+                projectId: "my-app",
+                sessionId: "worker-timeline",
+                source: "lifecycle",
+                kind: "lifecycle.transition",
+                level: "info",
+                summary: "Session moved to working",
+                data: { fromStatus: "spawning", toStatus: "working" },
+              },
+            ],
+          }),
+        text: () => Promise.resolve(""),
+      } as Response),
+    );
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-timeline",
+          projectId: "my-app",
+          agentReportAudit: [
+            {
+              timestamp: new Date().toISOString(),
+              actor: "alice",
+              source: "report",
+              reportState: "fixing_ci",
+              note: "Investigating failed tests",
+              accepted: true,
+              before: {
+                legacyStatus: "ci_failed",
+                sessionState: "idle",
+                sessionReason: "awaiting_external_review",
+                lastTransitionAt: null,
+              },
+              after: {
+                legacyStatus: "working",
+                sessionState: "working",
+                sessionReason: "fixing_ci",
+                lastTransitionAt: null,
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole("region", { name: "Session timeline" })).toBeInTheDocument();
+    expect(await screen.findByText("Session moved to working")).toBeInTheDocument();
+    expect(screen.getByText("Agent reported fixing ci")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reports" }));
+
+    expect(screen.getByText("Agent reported fixing ci")).toBeInTheDocument();
+    expect(screen.queryByText("Session moved to working")).not.toBeInTheDocument();
+  });
+
+  it("timeline Actions filter keeps user_action events visible", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            events: [
+              {
+                id: 1,
+                ts: new Date().toISOString(),
+                tsEpoch: Date.now(),
+                projectId: "my-app",
+                sessionId: "worker-actions",
+                source: "ui",
+                kind: "session.killed",
+                level: "info",
+                summary: "Session killed by operator",
+                data: null,
+              },
+              {
+                id: 2,
+                ts: new Date(Date.now() - 60_000).toISOString(),
+                tsEpoch: Date.now() - 60_000,
+                projectId: "my-app",
+                sessionId: "worker-actions",
+                source: "lifecycle",
+                kind: "lifecycle.transition",
+                level: "info",
+                summary: "Session moved to working",
+                data: { fromStatus: "spawning", toStatus: "working" },
+              },
+            ],
+          }),
+        text: () => Promise.resolve(""),
+      } as Response),
+    );
+
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-actions",
+          projectId: "my-app",
+        })}
+      />,
+    );
+
+    expect(await screen.findByText("Session killed by operator")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByText("Session killed by operator")).toBeInTheDocument();
+    expect(screen.queryByText("Session moved to working")).not.toBeInTheDocument();
   });
 
   it("sends unresolved comments back to the agent and shows sent state", async () => {
