@@ -103,6 +103,7 @@ function makeAssessment(overrides: Partial<RecoveryAssessment> = {}): RecoveryAs
     metadataStatus: "working",
     rawMetadata: {
       project: "app",
+      agent: "claude-code",
       branch: "feat/test",
       issue: "123",
       pr: "https://github.com/org/repo/pull/42",
@@ -169,6 +170,7 @@ describe("recoverSession", () => {
     expect(result.session?.restoredAt).toBeInstanceOf(Date);
     expect(metadata?.["restoredAt"]).toBeDefined();
     expect(metadata?.["recoveredAt"]).toBeUndefined();
+    expect(metadata?.["agent"]).toBe("claude-code");
   });
 
   it("preserves project ownership when legacy metadata omits the project field", async () => {

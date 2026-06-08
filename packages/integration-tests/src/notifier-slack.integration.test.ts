@@ -16,6 +16,29 @@ function mockFetchOk() {
   });
 }
 
+function makeV3Data(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 3,
+    subject: { session: { id: "app-1", projectId: "my-project" } },
+    ...overrides,
+  };
+}
+
+function getAttachment(body: Record<string, any>): Record<string, any> {
+  return body.attachments[0];
+}
+
+function getBlocks(body: Record<string, any>): Array<Record<string, any>> {
+  return getAttachment(body).blocks;
+}
+
+function expectDefined<T>(value: T | undefined): asserts value is T {
+  expect(value).toBeDefined();
+  if (value === undefined) {
+    throw new Error("Expected value to be defined");
+  }
+}
+
 describe("notifier-slack integration", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -43,61 +66,62 @@ describe("notifier-slack integration", () => {
           sessionId: "backend-3",
           projectId: "integrator",
           message: "CI is failing on backend-3",
-          data: {
-            prUrl: "https://github.com/org/repo/pull/42",
-            ciStatus: "failing",
-          },
+          data: makeV3Data({
+            subject: {
+              session: { id: "backend-3", projectId: "integrator" },
+              pr: { number: 42, url: "https://github.com/org/repo/pull/42" },
+            },
+            ci: { status: "failing" },
+          }),
         }),
       );
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const blocks = getBlocks(body);
 
       // Verify full structure
       expect(body.username).toBe("TestBot");
       expect(body.channel).toBe("#deploys");
 
       // Block 0: header
-      expect(body.blocks[0].type).toBe("header");
-      expect(body.blocks[0].text.type).toBe("plain_text");
-      expect(body.blocks[0].text.text).toContain(":rotating_light:");
-      expect(body.blocks[0].text.text).toContain("session.spawned");
-      expect(body.blocks[0].text.text).toContain("backend-3");
-      expect(body.blocks[0].text.emoji).toBe(true);
+      expect(blocks[0].type).toBe("header");
+      expect(blocks[0].text.type).toBe("plain_text");
+      expect(blocks[0].text.text).toContain(":rotating_light:");
+      expect(blocks[0].text.text).toContain("Session Spawned");
+      expect(blocks[0].text.emoji).toBe(true);
 
       // Block 1: message section
-      expect(body.blocks[1].type).toBe("section");
-      expect(body.blocks[1].text.type).toBe("mrkdwn");
-      expect(body.blocks[1].text.text).toBe("CI is failing on backend-3");
+      expect(blocks[1].type).toBe("section");
+      expect(blocks[1].text.type).toBe("mrkdwn");
+      expect(blocks[1].text.text).toBe("CI is failing on backend-3");
 
-      // Block 2: context with project/priority/time
-      expect(body.blocks[2].type).toBe("context");
-      expect(body.blocks[2].elements[0].text).toContain("*Project:* integrator");
-      expect(body.blocks[2].elements[0].text).toContain("*Priority:* urgent");
+      // Field block includes project/session/priority metadata
+      expect(blocks[2].type).toBe("section");
+      expect(blocks[2].fields[0].text).toContain("*Project*");
+      expect(blocks[2].fields[0].text).toContain("integrator");
+      expect(blocks[2].fields[2].text).toContain("*Priority*");
+      expect(blocks[2].fields[2].text).toContain("Urgent");
 
-      // Block 3: PR link
-      const prBlock = body.blocks.find(
-        (b: Record<string, unknown>) =>
-          b.type === "section" &&
-          typeof (b as { text?: { text?: string } }).text?.text === "string" &&
-          (b as { text: { text: string } }).text.text.includes("View Pull Request"),
-      );
-      expect(prBlock).toBeDefined();
-      expect(prBlock.text.text).toContain("https://github.com/org/repo/pull/42");
+      // PR link is rendered as an action button
+      const actionsBlock = blocks.find((b: Record<string, unknown>) => b.type === "actions");
+      expectDefined(actionsBlock);
+      expect(actionsBlock.elements[0].text.text).toBe("View PR");
+      expect(actionsBlock.elements[0].url).toBe("https://github.com/org/repo/pull/42");
 
       // CI status block
-      const ciBlock = body.blocks.find(
+      const ciBlock = blocks.find(
         (b: Record<string, unknown>) =>
           b.type === "context" &&
           Array.isArray((b as { elements?: unknown[] }).elements) &&
           typeof (b as { elements: Array<{ text?: string }> }).elements[0]?.text === "string" &&
           (b as { elements: Array<{ text: string }> }).elements[0].text.includes("CI:"),
       );
-      expect(ciBlock).toBeDefined();
+      expectDefined(ciBlock);
       expect(ciBlock.elements[0].text).toContain(":x:");
       expect(ciBlock.elements[0].text).toContain("failing");
 
       // Last block: divider
-      expect(body.blocks[body.blocks.length - 1].type).toBe("divider");
+      expect(blocks[blocks.length - 1].type).toBe("divider");
     });
 
     it("passing CI uses check mark emoji", async () => {
@@ -105,16 +129,17 @@ describe("notifier-slack integration", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const notifier = slackPlugin.create({ webhookUrl: "https://hooks.slack.com/test" });
-      await notifier.notify(makeEvent({ data: { ciStatus: "passing" } }));
+      await notifier.notify(makeEvent({ data: makeV3Data({ ci: { status: "passing" } }) }));
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const ciBlock = body.blocks.find(
+      const ciBlock = getBlocks(body).find(
         (b: Record<string, unknown>) =>
           b.type === "context" &&
           Array.isArray((b as { elements?: unknown[] }).elements) &&
           typeof (b as { elements: Array<{ text?: string }> }).elements[0]?.text === "string" &&
           (b as { elements: Array<{ text: string }> }).elements[0].text.includes("CI:"),
       );
+      expectDefined(ciBlock);
       expect(ciBlock.elements[0].text).toContain(":white_check_mark:");
     });
 
@@ -126,8 +151,8 @@ describe("notifier-slack integration", () => {
       await notifier.notify(makeEvent({ data: {} }));
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      // Should have: header, section, context, divider = 4 blocks
-      expect(body.blocks).toHaveLength(4);
+      // Should have: header, message, fields, timestamp context, divider.
+      expect(getBlocks(body)).toHaveLength(5);
     });
   });
 
@@ -147,7 +172,7 @@ describe("notifier-slack integration", () => {
         await notifier.notify(makeEvent({ priority }));
 
         const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-        expect(body.blocks[0].text.text).toContain(expectedEmoji);
+        expect(getBlocks(body)[0].text.text).toContain(expectedEmoji);
       },
     );
   });
@@ -166,8 +191,10 @@ describe("notifier-slack integration", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
-      expect(actionsBlock).toBeDefined();
+      const actionsBlock = getBlocks(body).find(
+        (b: Record<string, unknown>) => b.type === "actions",
+      );
+      expectDefined(actionsBlock);
       expect(actionsBlock.elements).toHaveLength(2);
 
       // URL button
@@ -194,7 +221,10 @@ describe("notifier-slack integration", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
+      const actionsBlock = getBlocks(body).find(
+        (b: Record<string, unknown>) => b.type === "actions",
+      );
+      expectDefined(actionsBlock);
       expect(actionsBlock.elements).toHaveLength(1);
       expect(actionsBlock.elements[0].text.text).toBe("Has Link");
     });
@@ -207,7 +237,9 @@ describe("notifier-slack integration", () => {
       await notifier.notifyWithActions!(makeEvent(), [{ label: "No Link" }]);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
+      const actionsBlock = getBlocks(body).find(
+        (b: Record<string, unknown>) => b.type === "actions",
+      );
       expect(actionsBlock).toBeUndefined();
     });
   });
@@ -287,7 +319,12 @@ describe("notifier-slack integration", () => {
       await notifier.notify(makeEvent({ timestamp: ts }));
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const contextText = body.blocks[2].elements[0].text;
+      const contextBlock = getBlocks(body).find(
+        (block) =>
+          block.type === "context" &&
+          block.elements?.[0]?.text?.includes("Sent by Agent Orchestrator"),
+      );
+      const contextText = contextBlock!.elements[0].text;
       const unixTs = Math.floor(ts.getTime() / 1000);
       expect(contextText).toContain(`<!date^${unixTs}^`);
     });

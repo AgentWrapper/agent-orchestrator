@@ -77,5 +77,7 @@ describe("ProjectSettingsPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Local config failed validation")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to dashboard" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "Edit settings" })).not.toBeInTheDocument();
   });
 });

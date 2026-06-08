@@ -107,14 +107,32 @@ function resolveNextBin(): string {
 
 // Start Next.js production server
 const port = process.env["PORT"] || "3000";
+const pathBasedMux = process.env["AO_PATH_BASED_MUX"] === "1";
+
+// When AO_PATH_BASED_MUX=1, single-port-server.js owns PORT and Next.js is
+// shifted to PORT + 1000 (overridable via NEXT_INTERNAL_PORT). The proxy
+// forwards HTTP to Next.js and tunnels `/ao-terminal-mux` WS upgrades to
+// direct-terminal-ws. Default off — Next.js stays on PORT directly.
+const NEXT_INTERNAL_OFFSET = 1000;
+const nextPort = pathBasedMux
+  ? (process.env["NEXT_INTERNAL_PORT"] ?? String(parseInt(port, 10) + NEXT_INTERNAL_OFFSET))
+  : port;
+
 const nextBin = resolveNextBin();
 
 if (isWindows() && nextBin !== "next") {
   // On Windows, run the JS entry point via the current node binary.
   // spawn() can't execute .js files directly on Windows.
-  spawnProcess("next", process.execPath, [nextBin, "start", "-p", port]);
+  spawnProcess("next", process.execPath, [nextBin, "start", "-p", nextPort]);
 } else {
-  spawnProcess("next", nextBin, ["start", "-p", port]);
+  spawnProcess("next", nextBin, ["start", "-p", nextPort]);
+}
+
+if (pathBasedMux) {
+  // Surface the internal port to the child so it doesn't have to re-derive
+  // the offset; pin it explicitly.
+  process.env["NEXT_INTERNAL_PORT"] = nextPort;
+  spawnProcess("single-port", process.execPath, [resolve(__dirname, "single-port-server.js")]);
 }
 
 // Start direct terminal WebSocket server (auto-restart on crash)

@@ -59,6 +59,13 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
   - Create incoming webhook: https://api.slack.com/messaging/webhooks
   - Set environment variable: `export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."`
 
+- **Public dashboard URL** - If running AO behind a reverse proxy (e.g. inside a remote dev container, on a VPS fronted by Caddy/nginx/Traefik)
+  - Set `AO_PUBLIC_URL` to the externally-reachable URL of the dashboard
+  - All console output, `ao open` browser launches, and orchestrator-prompt session links use this URL instead of `http://localhost:<port>`
+  - Example: `export AO_PUBLIC_URL="https://ao.example.com"`
+  - When the dashboard is served on a standard port (HTTPS 443 / HTTP 80) the dashboard JS connects the mux WebSocket to `/ao-terminal-mux` on the same hostname. Your proxy needs to forward that path to the direct terminal server (`DIRECT_TERMINAL_PORT`, default 14801) — its upgrade handler accepts both `/mux` and `/ao-terminal-mux`. For custom paths set `TERMINAL_WS_PATH=/your/path`.
+  - **`AO_PATH_BASED_MUX=1`** (opt-in) — if your proxy can only forward one hostname:port pair (e.g. Cloudflare Tunnel pointed at a single `service:` URL with no path-based ingress), set this and `ao start` will run a small bundled HTTP/WS proxy on `PORT` that demultiplexes: HTTP forwards to Next.js (shifted to `PORT + 1000`, override with `NEXT_INTERNAL_PORT`), and `wss://hostname/ao-terminal-mux` is tunneled to `DIRECT_TERMINAL_PORT/mux`. Tradeoff: an extra Node process and one extra hop per HTTP request, in exchange for a one-line proxy config on the operator side.
+
 ## Installation
 
 ### Install via npm (recommended)

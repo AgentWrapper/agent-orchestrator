@@ -23,6 +23,8 @@ vi.mock("../terminal/useFullscreenResize", () => ({
 }));
 
 class MockTerminal {
+  static loadedAddons: unknown[] = [];
+  static lastOptions: Record<string, unknown> | null = null;
   options: Record<string, unknown>;
   parser = {
     registerCsiHandler: vi.fn(),
@@ -30,12 +32,16 @@ class MockTerminal {
   };
   cols = 80;
   rows = 24;
+  unicode = { activeVersion: "" };
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
+    MockTerminal.lastOptions = options;
   }
 
-  loadAddon() {}
+  loadAddon(addon: unknown) {
+    MockTerminal.loadedAddons.push(addon);
+  }
   open() {}
   write() {}
   refresh() {}
@@ -62,6 +68,15 @@ class MockFitAddon {
 
 function MockWebLinksAddon() {
   return undefined;
+}
+
+class MockWebglAddon {
+  onContextLoss() {}
+  dispose() {}
+}
+
+class MockUnicode11Addon {
+  dispose() {}
 }
 
 class MockWebSocket {
@@ -95,6 +110,14 @@ vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: MockWebLinksAddon,
 }));
 
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: MockWebglAddon,
+}));
+
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: MockUnicode11Addon,
+}));
+
 vi.mock("@/hooks/useMux", () => ({
   useMux: () => ({
     subscribeTerminal: vi.fn(() => vi.fn()),
@@ -111,6 +134,8 @@ vi.mock("@/hooks/useMux", () => ({
 describe("DirectTerminal render", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
+    MockTerminal.loadedAddons = [];
+    MockTerminal.lastOptions = null;
     replaceMock.mockReset();
     useFullscreenResizeMock.mockReset();
     MockWebSocket.instances = [];
@@ -151,10 +176,12 @@ describe("DirectTerminal render", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText("Connected")).toBeInTheDocument());
+    // The mockup term-head shows no connection-status text — the mono session
+    // id is the chrome's identity marker now.
+    await waitFor(() => expect(screen.getByText("ao-orchestrator")).toBeInTheDocument());
 
-    expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
-    expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
+    expect(screen.queryByText("Connected")).toBeNull();
+    expect(screen.queryByText("XDA")).toBeNull();
   });
 
   it("keeps restart and fullscreen actions available in chromeless mode", async () => {
@@ -204,6 +231,45 @@ describe("DirectTerminal render", () => {
     expect(screen.getByRole("button", { name: "fullscreen" })).toBeInTheDocument();
     expect(terminalShell).toHaveClass("relative");
     expect(terminalShell).not.toHaveClass("fixed");
+  });
+
+  it("enforces a dark-mode contrast floor so low-contrast agent output stays legible", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    // useTheme is mocked to "dark"; the terminal must enforce a contrast floor > 1
+    // so ANSI white-on-white blocks (Claude Code's expanded command) stay readable.
+    await waitFor(() => expect(MockTerminal.lastOptions).not.toBeNull());
+    expect(MockTerminal.lastOptions?.minimumContrastRatio).toBe(4.5);
+    // out-of-font glyphs (arrows, CJK, emoji) must be rescaled to their cell so
+    // a wide fallback glyph can't overlap the following character
+    expect(MockTerminal.lastOptions?.rescaleOverlappingGlyphs).toBe(true);
+  });
+
+  it("loads the Unicode 11 addon so emoji widths match modern terminals", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    await waitFor(() =>
+      expect(
+        MockTerminal.loadedAddons.some((addon) => addon instanceof MockUnicode11Addon),
+      ).toBe(true),
+    );
+  });
+
+  it("loads the WebGL renderer addon for crisp box-drawing", async () => {
+    render(
+      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+    );
+
+    // The addon is loaded rAF-deferred after open(), so wait for it to attach.
+    await waitFor(() =>
+      expect(
+        MockTerminal.loadedAddons.some((addon) => addon instanceof MockWebglAddon),
+      ).toBe(true),
+    );
   });
 
   it("passes projectId to fullscreen resize hook for scoped mux resize", () => {

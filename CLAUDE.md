@@ -210,6 +210,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ### ao start
 - Registers in `running.json` (PID, port, projects)
 - Offers to restore sessions from `last-stop.json` — includes cross-project sessions via `otherProjects` field
+- `ao start --restore` restores `last-stop.json` without prompting; `ao start --no-restore` skips restore
 - **Ctrl+C performs full graceful shutdown** (same as ao stop): kills all sessions, writes last-stop state, unregisters from running.json. 10s hard timeout guarantees exit.
 
 ### ao stop
@@ -217,6 +218,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - `ao stop <project>`: kills only that project's sessions, does NOT kill parent process or dashboard (they serve all projects)
 - Always loads global config (`~/.agent-orchestrator/config.yaml`) to see all projects — local config only has the cwd project
 - Records `LastStopState` with `otherProjects` field for cross-project session restore
+
+### ao update
+- For package-manager installs, `ao update` pauses a running AO via `ao stop --yes`, runs the global package update, verifies `ao --version`, then restarts with `ao start --restore` (or `--no-restore` if requested)
+- Failed package-manager updates must report that AO was not updated, include actionable remediation, and restart the previous installation if AO was paused
 
 ### Dashboard sidebar
 - Sidebar always shows sessions from ALL projects regardless of which project page is active
@@ -450,8 +455,8 @@ import {
   validateUrl,                  // Webhook URL validation
   readLastJsonlEntry,           // Efficient JSONL log tail (native agent JSONL)
   readLastActivityEntry,        // Read last AO activity JSONL entry
-  checkActivityLogState,        // Extract waiting_input/blocked from AO JSONL (with staleness cap)
-  getActivityFallbackState,     // Last-resort fallback: entry state + age-based decay
+  checkActivityLogState,        // Extract sticky waiting_input/blocked from AO JSONL
+  getActivityFallbackState,     // Last-resort fallback: actionable states + liveness age decay
   recordTerminalActivity,       // Shared recordActivity impl (classify + dedup + append)
   classifyTerminalActivity,     // Classify terminal output via detectActivity
   appendActivityEntry,          // Low-level JSONL append
@@ -460,7 +465,7 @@ import {
   normalizeAgentPermissionMode, // Normalize permission mode strings
   DEFAULT_READY_THRESHOLD_MS,   // 5 min — ready→idle threshold
   DEFAULT_ACTIVE_WINDOW_MS,     // 30s — active→ready window
-  ACTIVITY_INPUT_STALENESS_MS,  // 5 min — waiting_input/blocked expiry
+  ACTIVITY_INPUT_STALENESS_MS,  // Deprecated compatibility export; actionable states no longer expire by wallclock
   PREFERRED_GH_PATH,            // /usr/local/bin/gh
   CI_STATUS, ACTIVITY_STATE, SESSION_STATUS,  // Constants
   type Session, type ProjectConfig, type RuntimeHandle,

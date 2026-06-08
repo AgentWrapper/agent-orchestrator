@@ -1,11 +1,12 @@
 ---
 title: Notifiers overview
-description: Who gets pinged when an agent needs you. Six notifiers ship; pick one or stack several.
+description: Who gets pinged when an agent needs you. Seven notifiers ship; pick one or stack several.
 ---
 
 Notifiers deliver AO events — session stuck, PR opened, review requested, CI failed — to wherever you actually pay attention.
 
 <PluginGrid>
+  <PluginCard name="Dashboard" logo="web" href="/docs/plugins/notifiers/dashboard" description="Retained notifications inside the AO dashboard." />
   <PluginCard name="Desktop" logo="apple" href="/docs/plugins/notifiers/desktop" description="Native macOS/Linux notifications. No-op on Windows." />
   <PluginCard name="Discord" logo="discord" href="/docs/plugins/notifiers/discord" description="Discord webhook with rich embeds." />
   <PluginCard name="Slack" logo="slack" href="/docs/plugins/notifiers/slack" description="Slack incoming webhook." />
@@ -16,27 +17,42 @@ Notifiers deliver AO events — session stuck, PR opened, review requested, CI f
 
 ## Stacking notifiers
 
-Notifier config is a list — pass as many as you want:
+Notifier config is a map. Add as many named notifiers as you want, then route
+priorities with `notificationRouting`:
 
 ```yaml
-notifier:
-  - type: desktop
-  - type: discord
+notifiers:
+  desktop:
+    plugin: desktop
+  discord:
+    plugin: discord
     webhookUrl: ${DISCORD_URL}
-  - type: slack
+  slack:
+    plugin: slack
     webhookUrl: ${SLACK_URL}
-    channel: "#agents"
+
+notificationRouting:
+  urgent: [desktop, discord, slack]
+  action: [discord, slack]
+  warning: [slack]
+  info: []
 ```
 
-Each notifier gets every event. AO doesn't try to dedupe across channels — that's your channel-configuration problem, not ours.
+Setup commands can write this routing for you with `--routing-preset
+urgent-only`, `urgent-action`, or `all`. AO does not dedupe across channels, so
+route only the priorities each destination should receive.
 
 ## Testing
 
 ```bash
-ao doctor --test-notify
+ao notify test --to slack --template basic
+ao notify test --route urgent
+ao notify test --all --dry-run
 ```
 
-Sends a dummy notification through each configured notifier. Good way to verify your webhooks work before an agent needs to wake you at 3 AM.
+Use `--to` for one target, `--route` for a priority route, or `--all` for every
+configured/default/routed notifier. Without `--dry-run`, real providers receive
+a real test message.
 
 ## What gets notified
 

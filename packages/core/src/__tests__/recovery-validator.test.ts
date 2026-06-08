@@ -119,6 +119,7 @@ describe("recovery validator", () => {
     const assessment = await validateSession(scanned, config, registry);
 
     expect(assessment.agentProcessRunning).toBe(true);
+    expect(assessment.rawMetadata["agent"]).toBe("codex");
     expect(mockOrchestratorAgent.isProcessRunning).toHaveBeenCalled();
     expect(mockWorkerAgent.isProcessRunning).not.toHaveBeenCalled();
   });
