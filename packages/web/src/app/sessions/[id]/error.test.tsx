@@ -21,6 +21,7 @@ import SessionError from "./error";
 describe("Session error boundary", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
+    refresh.mockClear();
   });
 
   it("retries with reset and router refresh", () => {
@@ -35,6 +36,16 @@ describe("Session error boundary", () => {
   });
 
   it("shows a session-specific message", () => {
+    render(<SessionError error={new Error("HTTP 500")} reset={vi.fn()} />);
+
+    expect(
+      screen.getByText(
+        "The server returned an internal error while loading this session. Try re-fetching the session data.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a network-specific message", () => {
     render(<SessionError error={new Error("Network request failed")} reset={vi.fn()} />);
 
     expect(
