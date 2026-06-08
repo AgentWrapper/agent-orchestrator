@@ -1,0 +1,432 @@
+/* Mission-control: mc-sidebar screen styles. Loaded after globals.css (layout.tsx) so
+   these rules win on equal specificity. Tokens: var(--bg/--card/--t1..--t4/
+   --blue/--orange/--amber/--red/--green/--line/--line-2/--hover/--hover-2). */
+
+/* ── Root: force the cool near-black sidebar surface ─────────────────────
+   globals.css gives .project-sidebar a warm tint (#0e0d0c + warm border).
+   Override it here to the cool mockup value and a neutral hairline. */
+.project-sidebar {
+  --sidebar-bg: var(--color-bg-sidebar, #08090b);
+  --sidebar-border: var(--line, rgba(255, 255, 255, 0.06));
+  --sidebar-row-hover: var(--hover, rgba(255, 255, 255, 0.04));
+  --sidebar-row-active: var(--hover-2, rgba(255, 255, 255, 0.07));
+  background: var(--bg-side, #08090b);
+  border-right: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+  width: 100%;
+  padding: 14px 7px;
+}
+
+.dark .project-sidebar {
+  --sidebar-bg: var(--color-bg-sidebar, #08090b);
+  --sidebar-border: var(--line, rgba(255, 255, 255, 0.06));
+  --sidebar-row-hover: var(--hover, rgba(255, 255, 255, 0.04));
+  --sidebar-row-active: var(--hover-2, rgba(255, 255, 255, 0.07));
+  background: var(--bg-side, #08090b);
+}
+
+.project-sidebar--collapsed {
+  padding: 10px 0;
+}
+
+/* ── Brand row ───────────────────────────────────────────────────────── */
+.project-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 8px 18px;
+  flex-shrink: 0;
+}
+
+.project-sidebar__brand-name {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.015em;
+  color: var(--t1, #f4f5f7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-sidebar__brand-sep {
+  font-weight: 400;
+  color: var(--t3, #646a73);
+}
+
+.project-sidebar__collapse-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--t3, #646a73);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.project-sidebar__collapse-btn:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+  color: var(--t1, #f4f5f7);
+}
+
+/* ── Section label ("Projects" + add) ────────────────────────────────── */
+.project-sidebar__nav-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--t4, #444951);
+  padding: 0 8px 8px;
+  flex-shrink: 0;
+}
+
+.project-sidebar__add-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: var(--t4, #444951);
+  background: transparent;
+}
+
+.project-sidebar__add-btn:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+  color: var(--t2, #9ba1aa);
+}
+
+.project-sidebar__add-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── Tree / project rows ─────────────────────────────────────────────── */
+.project-sidebar__tree {
+  padding: 0;
+}
+
+.project-sidebar__project {
+  margin-bottom: 1px;
+  border-bottom: none;
+}
+
+.project-sidebar__proj-row {
+  position: relative;
+  border-radius: 5px;
+}
+
+.project-sidebar__proj-row:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+}
+
+.project-sidebar__proj-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
+  background: transparent;
+  border-radius: 5px;
+  transition: padding-right 0.12s ease;
+}
+
+/* On hover the action icons reveal over the right slot — reserve room so the
+   project name re-truncates (ellipsis) instead of running under the icons. */
+.project-sidebar__proj-row:hover .project-sidebar__proj-toggle,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-toggle {
+  padding-right: 78px;
+}
+
+.project-sidebar__proj-toggle:hover {
+  background: transparent;
+}
+
+.project-sidebar__proj-toggle--active,
+.project-sidebar__proj-row:has(.project-sidebar__proj-toggle--active) {
+  background: var(--hover-2, rgba(255, 255, 255, 0.07));
+}
+
+.project-sidebar__proj-chevron {
+  width: 9px;
+  height: 9px;
+  color: var(--t4, #444951);
+  flex-shrink: 0;
+}
+
+.project-sidebar__proj-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--t2, #9ba1aa);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-sidebar__proj-toggle--active .project-sidebar__proj-name {
+  color: var(--t1, #f4f5f7);
+  font-weight: 600;
+}
+
+/* Plain mono count — shows at rest in the same right slot the action icons
+   reveal into on hover, so the project name keeps full width at rest. */
+.project-sidebar__proj-count {
+  font-size: 11px;
+  color: var(--t3, #646a73);
+  font-family: var(--mono, var(--font-mono));
+  flex-shrink: 0;
+  transition: opacity 0.12s ease;
+}
+
+.project-sidebar__proj-row:hover .project-sidebar__proj-count,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-count {
+  opacity: 0;
+}
+
+/* ── Per-project action icons — out of flow, revealed on hover ────────── */
+.project-sidebar__proj-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.project-sidebar__proj-row:hover .project-sidebar__proj-actions,
+.project-sidebar__proj-row:focus-within .project-sidebar__proj-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-sidebar__proj-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--t3, #646a73);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.project-sidebar__proj-action:hover {
+  background: var(--hover-2, rgba(255, 255, 255, 0.07));
+  color: var(--t1, #f4f5f7);
+}
+
+.project-sidebar__proj-action--menu[aria-expanded="true"] {
+  background: var(--hover-2, rgba(255, 255, 255, 0.07));
+  color: var(--t1, #f4f5f7);
+}
+
+/* ── Sessions list ───────────────────────────────────────────────────── */
+.project-sidebar__sessions {
+  padding: 2px 0 8px 4px;
+  margin-left: 5px;
+  border-left: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+}
+
+.project-sidebar__sess-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px 5px 8px;
+  border-radius: 5px;
+}
+
+.project-sidebar__sess-row:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+}
+
+.project-sidebar__sess-row--active {
+  background: var(--hover-2, rgba(255, 255, 255, 0.07));
+  border-left: 0;
+  padding-left: 8px;
+}
+
+.project-sidebar__sess-label {
+  display: block;
+  font-size: 12px;
+  font-family: var(--mono, var(--font-mono));
+  color: var(--t2, #9ba1aa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* At rest the link spans the row so the label gets full width (with ellipsis).
+   On hover the rename pencil reveals as an absolute overlay, so we reserve room
+   for it by padding the link — the text re-truncates instead of being covered. */
+.project-sidebar__sess-link {
+  transition: padding-right 0.12s ease;
+}
+
+.project-sidebar__sess-row:hover .project-sidebar__sess-link,
+.project-sidebar__sess-row:focus-within .project-sidebar__sess-link {
+  padding-right: 22px;
+}
+
+.project-sidebar__sess-row--active .project-sidebar__sess-label,
+.project-sidebar__sess-label--active {
+  color: var(--t1, #f4f5f7);
+  font-weight: 400;
+}
+
+.project-sidebar__sess-meta {
+  margin-top: 0;
+}
+
+.project-sidebar__sess-id {
+  font-size: 10px;
+  color: var(--t4, #444951);
+  font-family: var(--mono, var(--font-mono));
+}
+
+/* ── Session status dots ─────────────────────────────────────────────── */
+.sidebar-session-dot {
+  width: 6px;
+  height: 6px;
+  /* Nudge down ~1px: mono text sits slightly low in its line box, so a
+     geometrically-centered dot reads high next to the label. */
+  margin-top: 1px;
+  background: var(--t4, #444951);
+}
+
+.sidebar-session-dot[data-level="working"] {
+  background: var(--orange, #f59f4c);
+  animation: mc-breathe 2.4s ease-in-out infinite;
+}
+
+.sidebar-session-dot--glow {
+  box-shadow: none;
+}
+
+@keyframes mc-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Rename pencil — hover-only, neutral. */
+.project-sidebar__sess-rename-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--t4, #444951);
+  border-radius: 5px;
+}
+
+.project-sidebar__sess-rename-btn:hover {
+  background: var(--hover-2, rgba(255, 255, 255, 0.07));
+  color: var(--t1, #f4f5f7);
+}
+
+/* ── Footer: single Settings button + popover ────────────────────────── */
+.project-sidebar__footer {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+  margin-top: auto;
+}
+
+.project-sidebar__foot-inner {
+  display: flex;
+  align-items: center;
+  padding: 12px 0 0;
+}
+
+.project-sidebar__foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--t3, #646a73);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.project-sidebar__foot-btn:hover,
+.project-sidebar__foot-btn--active {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+  color: var(--t1, #f4f5f7);
+}
+
+.project-sidebar__foot-label {
+  letter-spacing: -0.01em;
+}
+
+.project-sidebar__settings-wrap {
+  position: relative;
+}
+
+.project-sidebar__settings-popover {
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2, rgba(255, 255, 255, 0.1));
+  background: var(--card, #15171b);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-sidebar__settings-row {
+  padding: 7px 8px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  color: var(--t2, #9ba1aa);
+}
+
+.project-sidebar__settings-row:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.04));
+}
+
+.project-sidebar__settings-row--toggle {
+  justify-content: space-between;
+  cursor: default;
+}
+
+.project-sidebar__settings-row--toggle:hover {
+  background: transparent;
+}
+
+.project-sidebar__settings-row input[type="checkbox"] {
+  accent-color: var(--blue, #4d8dff);
+}

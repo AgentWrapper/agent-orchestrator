@@ -125,6 +125,11 @@ export function getProjectWorktreesDir(projectId: string): string {
   return join(getProjectDir(projectId), "worktrees");
 }
 
+/** Get the AO-local code review store directory for a project. */
+export function getProjectCodeReviewsDir(projectId: string): string {
+  return join(getProjectDir(projectId), "code-reviews");
+}
+
 /** Get the feedback reports directory for a project (V2 layout). */
 export function getProjectFeedbackReportsDir(projectId: string): string {
   return join(getProjectDir(projectId), "feedback-reports");

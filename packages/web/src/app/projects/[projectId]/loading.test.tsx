@@ -8,7 +8,8 @@ describe("ProjectRouteLoading", () => {
 
     expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
     expect(screen.getByText("Loading project…")).toBeInTheDocument();
-    expect(screen.getByText("Projects")).toBeInTheDocument();
-    expect(screen.getByLabelText("Loading project dashboard")).toBeInTheDocument();
+    // Sidebar is owned by ProjectLayoutClient — no duplicate skeleton sidebar here
+    expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
   });
 });

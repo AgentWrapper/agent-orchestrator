@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
-import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
+import { getAttentionLevel, type DashboardSession } from "@/lib/types";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { getSessionTitle, humanizeBranch } from "@/lib/format";
 import { usePopoverClamp } from "@/hooks/usePopoverClamp";
+import { useResizable } from "@/hooks/useResizable";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 import { ThemeToggle } from "./ThemeToggle";
+import { AppMark } from "./AppMark";
 import { AddProjectModal } from "./AddProjectModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
 
@@ -42,7 +44,7 @@ interface ProjectSidebarProps {
 
 type SessionDotLevel = "respond" | "review" | "action" | "pending" | "working" | "merge" | "done";
 
-function SessionDot({ level }: { level: SessionDotLevel }) {
+const SessionDot = memo(function SessionDot({ level }: { level: SessionDotLevel }) {
   return (
     <div
       className={cn(
@@ -52,7 +54,7 @@ function SessionDot({ level }: { level: SessionDotLevel }) {
       data-level={level}
     />
   );
-}
+});
 
 // ProjectSidebar consumes `getAttentionLevel()` without passing a mode,
 // so the function defaults to "detailed" and `action` never appears here
@@ -70,15 +72,81 @@ function loadShowSessionId(): boolean {
   }
 }
 
-const LEVEL_LABELS: Record<AttentionLevel, string> = {
-  working: "working",
-  pending: "pending",
-  review: "review",
-  respond: "respond",
-  action: "action",
-  merge: "merge",
-  done: "done",
-};
+const SHOW_KILLED_KEY = "ao:sidebar:show-killed";
+const SHOW_DONE_KEY = "ao:sidebar:show-done";
+const EXPANDED_PROJECTS_KEY = "ao:sidebar:expanded-projects";
+
+function loadShowKilled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(SHOW_KILLED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function loadShowDone(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(SHOW_DONE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function loadExpandedProjects(): Set<string> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(EXPANDED_PROJECTS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return new Set<string>(parsed);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+
+/**
+ * Brand row at the top of the sidebar: blue mascot mark + wordmark with the
+ * " / " separator dimmed. Mirrors the mockup `.brand`. When a toggle handler is
+ * supplied, a collapse affordance (panel-left icon) sits at the right edge.
+ */
+function SidebarBrand({ onToggleCollapsed }: { onToggleCollapsed?: () => void }) {
+  return (
+    <div className="project-sidebar__brand">
+      <AppMark />
+      <span className="project-sidebar__brand-name">
+        Agent<b className="project-sidebar__brand-sep"> / </b>Orchestrator
+      </span>
+      {onToggleCollapsed ? (
+        <button
+          type="button"
+          className="project-sidebar__collapse-btn"
+          onClick={onToggleCollapsed}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export function ProjectSidebar(props: ProjectSidebarProps) {
   if (props.projects.length === 0) {
@@ -86,6 +154,102 @@ export function ProjectSidebar(props: ProjectSidebarProps) {
   }
   return <ProjectSidebarInner {...props} />;
 }
+
+interface SessionRowProps {
+  session: DashboardSession;
+  level: SessionDotLevel;
+  isActive: boolean;
+  showSessionId: boolean;
+  pendingRename: string | undefined;
+  onNavigate: (href: string, session: DashboardSession) => void;
+  onStartRename: (session: DashboardSession, title: string) => void;
+}
+
+const SessionRow = memo(function SessionRow({
+  session,
+  level,
+  isActive,
+  showSessionId,
+  pendingRename,
+  onNavigate,
+  onStartRename,
+}: SessionRowProps) {
+  const effectiveDisplayName =
+    pendingRename !== undefined
+      ? pendingRename
+      : session.displayNameUserSet
+        ? (session.displayName ?? "")
+        : "";
+  const title =
+    effectiveDisplayName !== ""
+      ? effectiveDisplayName
+      : (session.branch ?? getSessionTitle(session));
+  const sessionHref = projectSessionPath(session.projectId, session.id);
+
+  return (
+    <div
+      className={cn(
+        "project-sidebar__sess-row group",
+        isActive && "project-sidebar__sess-row--active",
+      )}
+    >
+      <a
+        href={sessionHref}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+          e.preventDefault();
+          onNavigate(sessionHref, session);
+        }}
+        className="project-sidebar__sess-link flex flex-1 min-w-0 items-center gap-[7px]"
+        aria-current={isActive ? "page" : undefined}
+        aria-label={`Open ${title}`}
+      >
+        <SessionDot level={level} />
+        <div className="flex-1 min-w-0">
+          <span
+            className={cn(
+              "project-sidebar__sess-label",
+              isActive && "project-sidebar__sess-label--active",
+            )}
+          >
+            {title}
+          </span>
+          {showSessionId ? (
+            <div className="project-sidebar__sess-meta">
+              <span className="project-sidebar__sess-id">{session.id}</span>
+            </div>
+          ) : null}
+        </div>
+      </a>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onStartRename(session, title);
+        }}
+        className="project-sidebar__sess-rename-btn opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+        title="Rename session"
+        aria-label={`Rename ${session.id}`}
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+        </svg>
+      </button>
+    </div>
+  );
+});
 
 function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
   const [addProjectOpen, setAddProjectOpen] = useState(false);
@@ -116,8 +280,9 @@ function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
 
   return (
     <aside className="project-sidebar flex h-full flex-col">
-      <div className="project-sidebar__compact-hdr">
-        <span className="project-sidebar__sect-label">Projects</span>
+      <SidebarBrand />
+      <div className="project-sidebar__nav-label">
+        <span>Projects</span>
         <button
           type="button"
           className="project-sidebar__add-btn"
@@ -128,7 +293,8 @@ function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
             aria-hidden="true"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.8"
+            strokeLinecap="round"
             viewBox="0 0 24 24"
           >
             <path d="M12 5v14M5 12h14" />
@@ -139,7 +305,7 @@ function ProjectSidebarEmpty({ collapsed = false }: { collapsed?: boolean }) {
         No projects yet. Click + to add one.
       </div>
       <div className="project-sidebar__footer">
-        <div className="flex items-center justify-end gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
+        <div className="project-sidebar__foot-inner">
           <ThemeToggle className="project-sidebar__theme-toggle" />
         </div>
       </div>
@@ -158,17 +324,27 @@ function ProjectSidebarInner({
   error = false,
   onRetry,
   collapsed = false,
-  onToggleCollapsed: _onToggleCollapsed,
+  onToggleCollapsed,
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const isLoading = loading || sessions === null;
+  const _isLoading = loading || sessions === null;
+  const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
+    cssVar: "--ao-sidebar-w",
+    storageKey: "ao-sidebar-w",
+    defaultWidth: 240,
+    min: 200,
+    max: 420,
+    edge: "right",
+  });
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
-    () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
+    () =>
+      loadExpandedProjects() ??
+      new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
   );
-  const [showKilled, setShowKilled] = useState(false);
-  const [showDone, setShowDone] = useState(false);
+  const [showKilled, setShowKilled] = useState<boolean>(loadShowKilled);
+  const [showDone, setShowDone] = useState<boolean>(loadShowDone);
   const [showSessionId, setShowSessionId] = useState<boolean>(loadShowSessionId);
   // Inline session-rename state. Only one row is edited at a time. `pendingRenames`
   // mirrors the in-flight / just-saved value so the new label appears immediately
@@ -197,6 +373,30 @@ function ProjectSidebarInner({
       // localStorage unavailable — accept the in-memory state for this session.
     }
   }, [showSessionId]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(SHOW_KILLED_KEY, String(showKilled));
+    } catch {
+      // sessionStorage unavailable — accept in-memory state.
+    }
+  }, [showKilled]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(SHOW_DONE_KEY, String(showDone));
+    } catch {
+      // sessionStorage unavailable — accept in-memory state.
+    }
+  }, [showDone]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([...expandedProjects]));
+    } catch {
+      // sessionStorage unavailable — accept in-memory state.
+    }
+  }, [expandedProjects]);
 
   // Close the settings popover on outside click or Escape.
   useEffect(() => {
@@ -266,12 +466,27 @@ function ProjectSidebarInner({
     [visibleProjects],
   );
 
-  // The API (selectPreferredOrchestratorId) sends at most one entry per
-  // project, so collapsing into a Map keyed by projectId is lossless. If a
-  // future API change starts emitting multiples, the last one wins here.
   const orchestratorByProject = useMemo(
     () => new Map((orchestrators ?? []).map((o) => [o.projectId, o])),
     [orchestrators],
+  );
+
+  // Stable ref so sessionsByProject can read latest sessions without depending
+  // on the array reference (which changes every SSE tick even when content is unchanged).
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+
+  // Content-based key — only changes when session IDs, statuses, or projects change.
+  // Used as the sole sessions-related dependency of sessionsByProject below.
+  const sessionsKey = useMemo(
+    () =>
+      (sessions ?? [])
+        .map(
+          (s) =>
+            `${s.id}:${s.status}:${s.activity ?? ""}:${s.projectId}:${s.displayName ?? ""}:${s.displayNameUserSet ? "1" : "0"}:${s.branch ?? ""}:${s.issueTitle ?? ""}:${s.pr?.title ?? ""}:${s.summary ?? ""}`,
+        )
+        .join("|"),
+    [sessions],
   );
 
   const sessionsByProject = useMemo(() => {
@@ -279,7 +494,9 @@ function ProjectSidebarInner({
     // Build a set of valid project IDs to filter sessions strictly
     const validProjectIds = new Set(visibleProjects.map((p) => p.id));
 
-    for (const s of sessions ?? []) {
+    // Read via ref so this memo only reruns when sessionsKey changes (content
+    // changed), not when sessions gets a new array reference with identical data.
+    for (const s of sessionsRef.current ?? []) {
       // Only include sessions whose projectId matches a configured project
       if (!validProjectIds.has(s.projectId)) continue;
       if (isOrchestratorSession(s, prefixByProject.get(s.projectId), allPrefixes)) continue;
@@ -295,7 +512,8 @@ function ProjectSidebarInner({
       map.set(s.projectId, list);
     }
     return map;
-  }, [sessions, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
+  }, [sessionsKey, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
+
 
   // Clear an optimistic rename once the prop session.displayName catches up.
   // Without this, we'd keep masking the server value forever after a save.
@@ -313,18 +531,23 @@ function ProjectSidebarInner({
     if (changed) setPendingRenames(next);
   }, [sessions, pendingRenames]);
 
-  const startRename = (session: DashboardSession, currentTitle: string) => {
-    // Prefer the in-flight optimistic value over the prop — if the user opens
-    // rename while a previous PATCH is still propagating, the prop still shows
-    // the pre-rename value but we want the input to start from the latest.
-    // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
-    // from the live title so the user types over the visible label.
-    const pending = pendingRenames.get(session.id);
-    const initial =
-      pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "");
-    setEditingSessionId(session.id);
-    setEditingValue(initial || currentTitle);
-  };
+  const pendingRenamesRef = useRef(pendingRenames);
+  pendingRenamesRef.current = pendingRenames;
+
+  const startRename = useCallback(
+    (session: DashboardSession, currentTitle: string) => {
+      // Prefer the in-flight optimistic value over the prop — if the user opens
+      // rename while a previous PATCH is still propagating, the prop still shows
+      // the pre-rename value but we want the input to start from the latest.
+      // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
+      // from the live title so the user types over the visible label.
+      const pending = pendingRenamesRef.current.get(session.id);
+      const initial = pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "");
+      setEditingSessionId(session.id);
+      setEditingValue(initial || currentTitle);
+    },
+    [],
+  );
 
   const cancelRename = () => {
     setEditingSessionId(null);
@@ -367,17 +590,20 @@ function ProjectSidebarInner({
     }
   };
 
-  const navigate = (url: string, session?: DashboardSession) => {
-    if (session) {
-      try {
-        sessionStorage.setItem(`ao-session-nav:${session.id}`, JSON.stringify(session));
-      } catch {
-        // sessionStorage unavailable — silent fallback
+  const navigate = useCallback(
+    (url: string, session?: DashboardSession) => {
+      if (session) {
+        try {
+          sessionStorage.setItem(`ao-session-nav:${session.id}`, JSON.stringify(session));
+        } catch {
+          // sessionStorage unavailable — silent fallback
+        }
       }
-    }
-    router.push(url);
-    onMobileClose?.();
-  };
+      router.push(url);
+      onMobileClose?.();
+    },
+    [router, onMobileClose],
+  );
 
   const toggleExpand = (projectId: string) => {
     setExpandedProjects((prev) => {
@@ -438,6 +664,29 @@ function ProjectSidebarInner({
           "project-sidebar project-sidebar--collapsed flex flex-col h-full items-center py-2 gap-1 overflow-y-auto",
         )}
       >
+        {onToggleCollapsed ? (
+          <button
+            type="button"
+            className="project-sidebar__collapse-btn project-sidebar__expand-btn"
+            onClick={onToggleCollapsed}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+          >
+            <svg
+              width="17"
+              height="17"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2.5" />
+              <line x1="9" y1="4" x2="9" y2="20" />
+              <path d="m13 9 3 3-3 3" />
+            </svg>
+          </button>
+        ) : null}
         {visibleProjects.map((project, idx) => {
           const workerSessions = sessionsByProject.get(project.id) ?? [];
           // sessionsByProject already applies the showDone filter consistently.
@@ -501,9 +750,10 @@ function ProjectSidebarInner({
   }
 
   return (
-    <aside className="project-sidebar flex h-full flex-col">
-      <div className="project-sidebar__compact-hdr">
-        <span className="project-sidebar__sect-label">Projects</span>
+    <aside className="project-sidebar relative flex h-full flex-col">
+      <SidebarBrand onToggleCollapsed={onToggleCollapsed} />
+      <div className="project-sidebar__nav-label">
+        <span>Projects</span>
         <button
           type="button"
           className="project-sidebar__add-btn"
@@ -514,7 +764,8 @@ function ProjectSidebarInner({
             aria-hidden="true"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="1.8"
+            strokeLinecap="round"
             viewBox="0 0 24 24"
           >
             <path d="M12 5v14M5 12h14" />
@@ -544,6 +795,16 @@ function ProjectSidebarInner({
 
       {/* Project tree */}
       <div className="project-sidebar__tree flex-1 overflow-y-auto overflow-x-hidden">
+        {sessions === null ? (
+          <div className="space-y-1 px-3 py-3" aria-label="Loading projects">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="flex items-center gap-2 py-1">
+                <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--color-border-strong)]" />
+                <div className="h-3 flex-1 animate-pulse rounded bg-[var(--color-bg-primary)]" />
+              </div>
+            ))}
+          </div>
+        ) : null}
         {visibleProjects.map((project) => {
           const workerSessions = sessionsByProject.get(project.id) ?? [];
           const isExpanded = expandedProjects.has(project.id);
@@ -552,9 +813,14 @@ function ProjectSidebarInner({
           const projectHref = projectDashboardPath(project.id);
           // sessionsByProject already applies the showDone filter consistently.
           const visibleSessions = workerSessions;
-          const hasActiveSessions = visibleSessions.length > 0;
-
           const orchestratorLink = orchestratorByProject.get(project.id) ?? null;
+          // Look up the full session object so navigate() can cache it in
+          // sessionStorage — prevents the "Session unavailable" flash on
+          // first load. Orchestrators are filtered out of sessionsByProject
+          // but still present in the raw sessions prop.
+          const orchestratorSession = orchestratorLink
+            ? (sessions?.find((s) => s.id === orchestratorLink.id) ?? null)
+            : null;
 
           return (
             <div key={project.id} className="project-sidebar__project">
@@ -619,17 +885,15 @@ function ProjectSidebarInner({
                       <path d="m9 18 6-6-6-6" />
                     </svg>
                     <span className="project-sidebar__proj-name">{project.name}</span>
-                    <span
-                      className={cn(
-                        "project-sidebar__proj-badge",
-                        hasActiveSessions && "project-sidebar__proj-badge--active",
-                      )}
-                    >
-                      {workerSessions.length}
+                    <span className="project-sidebar__proj-count">
+                      {sessionsByProject.get(project.id)?.length ?? 0}
                     </span>
                   </button>
                 )}
 
+                {/* Row actions — absolutely positioned over the count slot; the
+                    count shows at rest, these reveal on hover (frees name space). */}
+                <div className="project-sidebar__proj-actions">
                 {/* Dashboard button */}
                 {!isDegraded ? (
                   <Link
@@ -656,14 +920,17 @@ function ProjectSidebarInner({
                   </Link>
                 ) : null}
 
-                {/* Orchestrator button */}
                 {!isDegraded && orchestratorLink && (
-                  <Link
+                  <a
                     href={projectSessionPath(project.id, orchestratorLink.id)}
-                    prefetch={false}
                     onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      e.preventDefault();
                       e.stopPropagation();
-                      onMobileClose?.();
+                      navigate(
+                        projectSessionPath(project.id, orchestratorLink.id),
+                        orchestratorSession ?? undefined,
+                      );
                     }}
                     className="project-sidebar__proj-action"
                     aria-label={`Open ${project.name} orchestrator`}
@@ -683,7 +950,7 @@ function ProjectSidebarInner({
                       <circle cx="12" cy="17" r="2" />
                       <circle cx="18" cy="17" r="2" />
                     </svg>
-                  </Link>
+                  </a>
                 )}
 
                 <div
@@ -730,7 +997,10 @@ function ProjectSidebarInner({
                           role="menuitem"
                           onClick={() => {
                             setProjectMenuOpenId(null);
-                            navigate(projectSessionPath(project.id, orchestratorLink.id));
+                            navigate(
+                              projectSessionPath(project.id, orchestratorLink.id),
+                              orchestratorSession ?? undefined,
+                            );
                           }}
                         >
                           Open orchestrator
@@ -759,6 +1029,7 @@ function ProjectSidebarInner({
                     </div>
                   ) : null}
                 </div>
+                </div>
               </div>
 
               {isDegraded ? (
@@ -768,7 +1039,7 @@ function ProjectSidebarInner({
               {/* Sessions */}
               {!isDegraded && isExpanded && (
                 <div className="project-sidebar__sessions">
-                  {isLoading ? (
+                  {sessions === null ? (
                     <div className="space-y-2 px-3 py-2" aria-label="Loading sessions">
                       {Array.from({ length: 3 }, (_, index) => (
                         <div
@@ -785,24 +1056,6 @@ function ProjectSidebarInner({
                     visibleSessions.map((session) => {
                       const level = getAttentionLevel(session);
                       const isSessionActive = activeSessionId === session.id;
-                      // Display precedence: optimistic rename (just-saved value)
-                      // → user-set displayName → branch → fallback chain.
-                      // Auto-derived displayName (displayNameUserSet=false) is
-                      // intentionally skipped here so PR/issue titles surfaced
-                      // by getSessionTitle aren't shadowed — mirrors the gate in
-                      // format.ts:getSessionTitle.
-                      const pending = pendingRenames.get(session.id);
-                      const effectiveDisplayName =
-                        pending !== undefined
-                          ? pending
-                          : session.displayNameUserSet
-                            ? (session.displayName ?? "")
-                            : "";
-                      const title =
-                        effectiveDisplayName !== ""
-                          ? effectiveDisplayName
-                          : (session.branch ?? getSessionTitle(session));
-                      const sessionHref = projectSessionPath(project.id, session.id);
                       const isEditing = editingSessionId === session.id;
                       if (isEditing) {
                         return (
@@ -839,76 +1092,16 @@ function ProjectSidebarInner({
                         );
                       }
                       return (
-                        <div
+                        <SessionRow
                           key={session.id}
-                          className={cn(
-                            "project-sidebar__sess-row group",
-                            isSessionActive && "project-sidebar__sess-row--active",
-                          )}
-                        >
-                          <a
-                            href={sessionHref}
-                            onClick={(e) => {
-                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
-                              e.preventDefault();
-                              navigate(sessionHref, session);
-                            }}
-                            className="project-sidebar__sess-link flex flex-1 min-w-0 items-center gap-[7px]"
-                            aria-current={isSessionActive ? "page" : undefined}
-                            aria-label={`Open ${title}`}
-                          >
-                            <SessionDot level={level} />
-                            <div className="flex-1 min-w-0">
-                              <span
-                                className={cn(
-                                  "project-sidebar__sess-label",
-                                  isSessionActive && "project-sidebar__sess-label--active",
-                                )}
-                              >
-                                {title}
-                              </span>
-                              {showSessionId ? (
-                                <div className="project-sidebar__sess-meta">
-                                  <span className="project-sidebar__sess-id">{session.id}</span>
-                                  <span className="project-sidebar__sess-status">
-                                    {LEVEL_LABELS[level]}
-                                  </span>
-                                </div>
-                              ) : null}
-                            </div>
-                            {!showSessionId ? (
-                              <span className="project-sidebar__sess-status project-sidebar__sess-status--inline">
-                                {LEVEL_LABELS[level]}
-                              </span>
-                            ) : null}
-                          </a>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              startRename(session, title);
-                            }}
-                            className="project-sidebar__sess-rename-btn opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
-                            title="Rename session"
-                            aria-label={`Rename ${session.id}`}
-                          >
-                            <svg
-                              width="11"
-                              height="11"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M12 20h9" />
-                              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-                            </svg>
-                          </button>
-                        </div>
+                          session={session}
+                          level={level}
+                          isActive={isSessionActive}
+                          showSessionId={showSessionId}
+                          pendingRename={pendingRenames.get(session.id)}
+                          onNavigate={navigate}
+                          onStartRename={startRename}
+                        />
                       );
                     })
                   ) : error ? (
@@ -923,7 +1116,9 @@ function ProjectSidebarInner({
                       </button>
                     </div>
                   ) : (
-                    <div className="project-sidebar__empty">No sessions shown</div>
+                    <div className="project-sidebar__empty">
+                      No active sessions
+                    </div>
                   )}
                 </div>
               )}
@@ -932,94 +1127,60 @@ function ProjectSidebarInner({
         })}
       </div>
       <div className="project-sidebar__footer">
-        <div className="flex items-center gap-1 border-t border-[var(--color-border-subtle)] px-2 py-2">
-          {/* Show killed toggle */}
-          <button
-            type="button"
-            onClick={() => setShowKilled(!showKilled)}
-            className={cn(
-              "project-sidebar__footer-btn",
-              showKilled && "project-sidebar__footer-btn--active",
-            )}
-            aria-pressed={showKilled}
-            title={showKilled ? "Hide killed sessions" : "Show killed sessions"}
-            aria-label={showKilled ? "Hide killed sessions" : "Show killed sessions"}
-          >
-            {/* skull / terminated icon */}
-            <svg
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path d="M12 3C7.03 3 3 7.03 3 12c0 3.1 1.5 5.84 3.8 7.55V21h2.4v-1h1.6v1h2.4v-1h1.6v1H17v-1.45A9 9 0 0 0 21 12c0-4.97-4.03-9-9-9z" />
-              <circle cx="9" cy="11" r="1.5" fill="currentColor" stroke="none" />
-              <circle cx="15" cy="11" r="1.5" fill="currentColor" stroke="none" />
-            </svg>
-          </button>
-          {/* Show done toggle */}
-          <button
-            type="button"
-            onClick={() => setShowDone(!showDone)}
-            className={cn(
-              "project-sidebar__footer-btn",
-              showDone && "project-sidebar__footer-btn--active",
-            )}
-            aria-pressed={showDone}
-            title={showDone ? "Hide completed sessions" : "Show completed sessions"}
-            aria-label={showDone ? "Hide completed sessions" : "Show completed sessions"}
-          >
-            {/* checkmark / done icon */}
-            <svg
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-          </button>
-          <div className="flex-1" />
-          {/* Sidebar display settings (gear) */}
+        <div className="project-sidebar__foot-inner">
+          {/* Single Settings gear — opens a popover holding all display toggles. */}
           <div className="project-sidebar__settings-wrap" ref={settingsRef}>
             <button
               type="button"
               onClick={() => setSettingsOpen((v) => !v)}
               className={cn(
-                "project-sidebar__footer-btn",
-                settingsOpen && "project-sidebar__footer-btn--active",
+                "project-sidebar__foot-btn",
+                settingsOpen && "project-sidebar__foot-btn--active",
               )}
               aria-expanded={settingsOpen}
               aria-haspopup="dialog"
-              title="Sidebar settings"
-              aria-label="Sidebar settings"
+              title="Settings"
+              aria-label="Settings"
             >
               <svg
-                width="13"
-                height="13"
+                width="15"
+                height="15"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="1.75"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 viewBox="0 0 24 24"
                 aria-hidden="true"
               >
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
+              <span className="project-sidebar__foot-label">Settings</span>
             </button>
             {settingsOpen ? (
               <div
                 ref={settingsPopoverRef}
                 className="project-sidebar__settings-popover"
                 role="dialog"
-                aria-label="Sidebar settings"
+                aria-label="Settings"
               >
+                <label className="project-sidebar__settings-row">
+                  <input
+                    type="checkbox"
+                    checked={showKilled}
+                    onChange={(e) => setShowKilled(e.target.checked)}
+                  />
+                  <span>Show killed sessions</span>
+                </label>
+                <label className="project-sidebar__settings-row">
+                  <input
+                    type="checkbox"
+                    checked={showDone}
+                    onChange={(e) => setShowDone(e.target.checked)}
+                  />
+                  <span>Show done sessions</span>
+                </label>
                 <label className="project-sidebar__settings-row">
                   <input
                     type="checkbox"
@@ -1028,12 +1189,22 @@ function ProjectSidebarInner({
                   />
                   <span>Show session ID</span>
                 </label>
+                <div className="project-sidebar__settings-row project-sidebar__settings-row--toggle">
+                  <span>Theme</span>
+                  <ThemeToggle className="project-sidebar__theme-toggle" />
+                </div>
               </div>
             ) : null}
           </div>
-          <ThemeToggle className="project-sidebar__theme-toggle" />
         </div>
       </div>
+      {!collapsed ? (
+        <div
+          className="resize-handle resize-handle--right"
+          onPointerDown={onResizePointerDown}
+          onDoubleClick={onResizeDoubleClick}
+        />
+      ) : null}
       <AddProjectModal open={addProjectOpen} onClose={() => setAddProjectOpen(false)} />
       <ProjectSettingsModal
         open={projectSettingsProjectId !== null}

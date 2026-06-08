@@ -33,7 +33,7 @@ jobs:
     name: Publish canary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: main
           fetch-depth: 0
@@ -79,9 +79,9 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
         if: steps.check.outputs.skip != 'true'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         if: steps.check.outputs.skip != 'true'
         with:
           node-version: 20
@@ -111,7 +111,31 @@ jobs:
           # create a minimal one. `changeset version --snapshot` consumes and
           # deletes it, so no cleanup is needed.
           if [ -z "$(ls .changeset/*.md 2>/dev/null | grep -vi 'README')" ]; then
-            printf -- '---\n"@aoagents/ao": patch\n---\n\nchore: canary build\n' > .changeset/canary-temp.md
+            node << 'SCRIPT'
+              const fs = require('fs');
+              const pkgs = [];
+
+              const addPackage = (m) => {
+                if (!fs.existsSync(m)) return;
+                const d = JSON.parse(fs.readFileSync(m, 'utf8'));
+                if (!d.private && d.publishConfig?.access === 'public') pkgs.push(d.name);
+              };
+
+              const scanPackages = (dir) => {
+                if (!fs.existsSync(dir)) return;
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                  if (entry.isDirectory()) addPackage(`${dir}/${entry.name}/package.json`);
+                }
+              };
+
+              scanPackages('packages');
+              scanPackages('packages/plugins');
+
+              let body = '---\n';
+              pkgs.forEach(p => body += '"' + p + '": patch\n');
+              body += '---\n\nchore: canary build\n';
+              fs.writeFileSync('.changeset/canary-temp.md', body);
+          SCRIPT
           fi
           pnpm changeset version --snapshot nightly
         env:

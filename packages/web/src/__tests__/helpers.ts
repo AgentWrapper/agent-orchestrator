@@ -219,6 +219,7 @@ export function makeSession(overrides: Partial<DashboardSession> = {}): Dashboar
     ...baseSession,
     ...overrides,
     issueLabel: overrides.issueLabel ?? overrides.issueId ?? baseSession.issueLabel,
+    prs: overrides.prs ?? (overrides.pr ? [overrides.pr] : []),
   } satisfies DashboardSession;
 
   return {

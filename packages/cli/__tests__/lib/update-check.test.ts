@@ -55,6 +55,10 @@ const { mockGlobalConfig } = vi.hoisted(() => ({
   mockGlobalConfig: { value: null as null | { updateChannel?: string; installMethod?: string } },
 }));
 
+const { mockGetInstalledAoVersion } = vi.hoisted(() => ({
+  mockGetInstalledAoVersion: vi.fn(() => "0.0.0"),
+}));
+
 import type * as AoCoreType from "@aoagents/ao-core";
 
 vi.mock("@aoagents/ao-core", async () => {
@@ -62,6 +66,7 @@ vi.mock("@aoagents/ao-core", async () => {
   return {
     ...actual,
     loadGlobalConfig: () => mockGlobalConfig.value,
+    getInstalledAoVersion: () => mockGetInstalledAoVersion(),
   };
 });
 
@@ -84,6 +89,7 @@ import {
   maybeShowUpdateNotice,
   scheduleBackgroundRefresh,
   isVersionOutdated,
+  isOutdatedForChannel,
   resolveUpdateChannel,
   resolveInstallMethodOverride,
   isManualOnlyInstall,
@@ -108,11 +114,49 @@ describe("update-check", () => {
     // Default to nightly so checkForUpdate exercises the registry path.
     // Individual tests reset this when they need different channel behavior.
     mockGlobalConfig.value = { updateChannel: "nightly" };
+    mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+    mockGetCliVersion.mockReturnValue("0.2.2");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     mockGlobalConfig.value = null;
+  });
+
+  // -----------------------------------------------------------------------
+  // isOutdatedForChannel
+  // -----------------------------------------------------------------------
+
+  describe("isOutdatedForChannel", () => {
+    it("treats any nightly dist-tag identity change as an update in both lexical directions", () => {
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-def", "nightly")).toBe(true);
+      expect(isOutdatedForChannel("0.0.0-nightly-def", "0.0.0-nightly-abc", "nightly")).toBe(true);
+      expect(
+        isOutdatedForChannel("0.0.0-nightly-f00d123", "0.0.0-nightly-0dead01", "nightly"),
+      ).toBe(true);
+    });
+
+    it("does not update nightly when the exact dist-tag version is already installed", () => {
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-abc", "nightly")).toBe(false);
+    });
+
+    it("uses semver for stable-to-nightly channel switches", () => {
+      expect(isOutdatedForChannel("0.7.0", "0.0.0-nightly-abc", "nightly")).toBe(false);
+      expect(isOutdatedForChannel("0.7.0", "0.8.0-nightly-abc", "nightly")).toBe(true);
+      expect(isOutdatedForChannel("0.8.0", "0.8.0-nightly-abc", "nightly")).toBe(false);
+    });
+
+    it("treats nightly-to-stable fallback on the nightly channel as an update when the dist-tag differs", () => {
+      // `fetchLatestVersion("nightly")` can fall back to `latest` if the
+      // nightly dist-tag is absent; prerelease-to-stable is a normal
+      // semver upgrade.
+      expect(isOutdatedForChannel("0.0.0-nightly-abc", "0.8.0", "nightly")).toBe(true);
+    });
+
+    it("keeps stable comparisons numeric instead of lexical", () => {
+      expect(isOutdatedForChannel("0.9.0", "0.10.0", "stable")).toBe(true);
+      expect(isOutdatedForChannel("0.7.0", "0.8.0", "stable")).toBe(true);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -296,6 +340,20 @@ describe("update-check", () => {
     it("returns a valid semver version string", () => {
       const version = getCurrentVersion();
       expect(version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it("uses the core-installed AO version when it is available", () => {
+      mockGetInstalledAoVersion.mockReturnValue("0.9.3");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+
+      expect(getCurrentVersion()).toBe("0.9.3");
+    });
+
+    it("falls back to the CLI package version when core only has the placeholder", () => {
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.9.3");
+
+      expect(getCurrentVersion()).toBe("0.9.3");
     });
   });
 
@@ -999,6 +1057,52 @@ describe("update-check", () => {
       expect(output).toContain("npm install -g @aoagents/ao@latest");
     });
 
+    it("does not print placeholder 0.0.0 when the current version is unknown", () => {
+      mockGlobalConfig.value = { updateChannel: "nightly" };
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.9.3-nightly-abc",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.0.0",
+          installMethod: "unknown",
+          channel: "nightly",
+        }),
+      );
+
+      maybeShowUpdateNotice();
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      const output = stderrSpy.mock.calls[0]![0] as string;
+      expect(output).toContain("Update available (nightly): update to latest version");
+      expect(output).toContain("npm install -g @aoagents/ao@nightly");
+      expect(output).not.toContain("0.0.0");
+    });
+
+    it("does not print placeholder 0.0.0 on the stable channel", () => {
+      mockGlobalConfig.value = { updateChannel: "stable" };
+      mockGetInstalledAoVersion.mockReturnValue("0.0.0");
+      mockGetCliVersion.mockReturnValue("0.0.0");
+      mockReadFileSync.mockReturnValue(
+        JSON.stringify({
+          latestVersion: "0.9.3",
+          checkedAt: new Date().toISOString(),
+          currentVersionAtCheck: "0.0.0",
+          installMethod: "unknown",
+          channel: "stable",
+        }),
+      );
+
+      maybeShowUpdateNotice();
+
+      expect(stderrSpy).toHaveBeenCalledTimes(1);
+      const output = stderrSpy.mock.calls[0]![0] as string;
+      expect(output).toContain("Update available: update to latest version");
+      expect(output).toContain("npm install -g @aoagents/ao@latest");
+      expect(output).not.toContain("0.0.0");
+    });
+
     it("prints git update notice from cached git state", () => {
       mockGlobalConfig.value = { updateChannel: "stable" };
       const currentVersion = getCurrentVersion();
@@ -1186,24 +1290,14 @@ describe("update-check", () => {
 
   describe("getUpdateCommand — channel-aware (Section B)", () => {
     it("uses @nightly tag for nightly channel", () => {
-      expect(getUpdateCommand("npm-global", "nightly")).toBe(
-        "npm install -g @aoagents/ao@nightly",
-      );
-      expect(getUpdateCommand("pnpm-global", "nightly")).toBe(
-        "pnpm add -g @aoagents/ao@nightly",
-      );
-      expect(getUpdateCommand("bun-global", "nightly")).toBe(
-        "bun add -g @aoagents/ao@nightly",
-      );
+      expect(getUpdateCommand("npm-global", "nightly")).toBe("npm install -g @aoagents/ao@nightly");
+      expect(getUpdateCommand("pnpm-global", "nightly")).toBe("pnpm add -g @aoagents/ao@nightly");
+      expect(getUpdateCommand("bun-global", "nightly")).toBe("bun add -g @aoagents/ao@nightly");
     });
 
     it("uses @latest tag for stable + manual channels", () => {
-      expect(getUpdateCommand("npm-global", "stable")).toBe(
-        "npm install -g @aoagents/ao@latest",
-      );
-      expect(getUpdateCommand("npm-global", "manual")).toBe(
-        "npm install -g @aoagents/ao@latest",
-      );
+      expect(getUpdateCommand("npm-global", "stable")).toBe("npm install -g @aoagents/ao@latest");
+      expect(getUpdateCommand("npm-global", "manual")).toBe("npm install -g @aoagents/ao@latest");
     });
 
     it("returns the brew upgrade notice for homebrew installs", () => {

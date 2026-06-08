@@ -3,7 +3,9 @@ import { NextRequest } from "next/server";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import type * as AoCoreType from "@aoagents/ao-core";
+import type * as ChildProcessType from "node:child_process";
 
 // Use a real on-disk cache file in a per-test temp dir rather than mocking
 // node:fs. Mocking ESM-imported fs functions is unreliable when the route
@@ -27,14 +29,34 @@ const { mockSessionList } = vi.hoisted(() => ({
   mockSessionList: vi.fn(async () => [] as Array<{ id: string; status: string }>),
 }));
 
+const { mockSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof ChildProcessType>("node:child_process");
+  return {
+    ...actual,
+    default: { ...actual, spawn: (...args: unknown[]) => mockSpawn(...args) },
+    spawn: (...args: unknown[]) => mockSpawn(...args),
+  };
+});
+
 vi.mock("@/lib/services", () => ({
   getServices: vi.fn(async () => ({
     sessionManager: { list: mockSessionList },
   })),
 }));
 
-import { GET as versionGET } from "@/app/api/version/route";
-import { POST as updatePOST } from "@/app/api/update/route";
+async function versionGET() {
+  const { GET } = await import("@/app/api/version/route");
+  return GET();
+}
+
+async function updatePOST(req: NextRequest) {
+  const { POST } = await import("@/app/api/update/route");
+  return POST(req);
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
@@ -174,9 +196,15 @@ describe("GET /api/version", () => {
 });
 
 describe("POST /api/update", () => {
+  let mockChildUnref = vi.fn();
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockSessionList.mockResolvedValue([]);
+    mockChildUnref = vi.fn();
+    const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
+    child.unref = mockChildUnref;
+    mockSpawn.mockReturnValue(child);
   });
 
   afterEach(() => {
@@ -198,6 +226,7 @@ describe("POST /api/update", () => {
     expect(body.ok).toBe(false);
     expect(body.activeSessions).toBe(2);
     expect(body.message).toMatch(/ao stop/);
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it.each(["working", "idle", "needs_input", "stuck"])(
@@ -215,19 +244,35 @@ describe("POST /api/update", () => {
       { id: "s2", status: "terminated" },
     ]);
     const res = await updatePOST(makeReq());
-    // 202 because the guard passed and spawn ran (or failed silently — either
-    // way the route returns 202 since spawn errors are caught).
-    expect([202, 500]).toContain(res.status);
+    expect(res.status).toBe(202);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "ao",
+      ["update"],
+      expect.objectContaining({
+        detached: true,
+        stdio: "ignore",
+        env: expect.objectContaining({ AO_NON_INTERACTIVE_INSTALL: "1" }),
+      }),
+    );
+    expect(mockChildUnref).toHaveBeenCalledTimes(1);
   });
 
   it("returns 202 when no sessions are active", async () => {
     mockSessionList.mockResolvedValue([]);
     const res = await updatePOST(makeReq());
-    expect([202, 500]).toContain(res.status);
-    if (res.status === 202) {
-      const body = (await res.json()) as { ok: boolean };
-      expect(body.ok).toBe(true);
-    }
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "ao",
+      ["update"],
+      expect.objectContaining({
+        detached: true,
+        stdio: "ignore",
+        env: expect.objectContaining({ AO_NON_INTERACTIVE_INSTALL: "1" }),
+      }),
+    );
+    expect(mockChildUnref).toHaveBeenCalledTimes(1);
   });
 
   it("returns 500 when session listing throws", async () => {

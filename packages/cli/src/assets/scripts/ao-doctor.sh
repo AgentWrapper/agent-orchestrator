@@ -13,10 +13,10 @@ while [ $# -gt 0 ]; do
       cat <<'EOF'
 Usage: ao doctor [--fix]
 
-Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
+Checks install, PATH, binaries, service health, web terminal support, stale temp files, and runtime sanity.
 
 Options:
-  --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
+  --fix    Apply safe fixes for missing launcher links, missing support dirs, node-pty spawn-helper permissions, and stale temp files
 EOF
       exit 0
       ;;
@@ -398,6 +398,136 @@ check_stale_temp_files() {
   warn "$stale_count stale temp files older than 60 minutes found under $temp_root. Fix: rerun ao doctor --fix"
 }
 
+file_mode_octal() {
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin|FreeBSD|OpenBSD|NetBSD)
+      stat -f '%Lp' "$1" 2>/dev/null || printf 'unknown'
+      ;;
+    *)
+      stat -c '%a' "$1" 2>/dev/null || printf 'unknown'
+      ;;
+  esac
+}
+
+resolve_node_pty_spawn_helper() {
+  node - "$REPO_ROOT" <<'NODE'
+const fs = require("node:fs");
+const { createRequire } = require("node:module");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+const repoRoot = process.argv[2];
+
+function resolvePackageJson(fromDir) {
+  try {
+    return createRequire(path.join(fromDir, "ao-doctor.js")).resolve("node-pty/package.json");
+  } catch {
+    return null;
+  }
+}
+
+function findPackageUp(startDir, ...segments) {
+  let dir = path.resolve(startDir);
+  while (true) {
+    const candidate = path.resolve(dir, "node_modules", ...segments);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function resolveNodeModulesPackage(fromDir, ...segments) {
+  const packageDir = path.resolve(fromDir, "node_modules", ...segments);
+  return fs.existsSync(path.resolve(packageDir, "package.json")) ? packageDir : null;
+}
+
+function resolveCoreEntrypoint() {
+  const sourceCoreDir = path.resolve(repoRoot, "packages", "core");
+  const coreDir =
+    (fs.existsSync(path.join(sourceCoreDir, "package.json")) ? sourceCoreDir : null) ??
+    findPackageUp(repoRoot, "@aoagents", "ao-core") ??
+    resolveNodeModulesPackage(repoRoot, "@aoagents", "ao-core");
+  if (!coreDir) return null;
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(coreDir, "package.json"), "utf8"));
+    const entry = pkg.exports?.["."]?.import ?? pkg.module ?? pkg.main ?? "dist/index.js";
+    return path.resolve(coreDir, entry);
+  } catch {
+    return null;
+  }
+}
+
+async function getNodePtyPrebuildsSubdir() {
+  const coreEntrypoint = resolveCoreEntrypoint();
+  if (!coreEntrypoint || !fs.existsSync(coreEntrypoint)) return null;
+
+  const core = await import(pathToFileURL(coreEntrypoint).href);
+  return typeof core.getNodePtyPrebuildsSubdir === "function"
+    ? core.getNodePtyPrebuildsSubdir()
+    : null;
+}
+
+(async () => {
+  const packageJsonPath =
+    resolvePackageJson(repoRoot) ??
+    (() => {
+      const directNodePtyDir = findPackageUp(repoRoot, "node-pty");
+      if (directNodePtyDir) return path.join(directNodePtyDir, "package.json");
+
+      const sourceWebDir = path.resolve(repoRoot, "packages", "web");
+      const webDir =
+        (fs.existsSync(path.join(sourceWebDir, "package.json")) ? sourceWebDir : null) ??
+        findPackageUp(repoRoot, "@aoagents", "ao-web") ??
+        resolveNodeModulesPackage(repoRoot, "@aoagents", "ao-web");
+      if (!webDir) return null;
+
+      const webNodePtyDir =
+        resolveNodeModulesPackage(webDir, "node-pty") ?? findPackageUp(webDir, "node-pty");
+      return webNodePtyDir ? path.join(webNodePtyDir, "package.json") : null;
+    })();
+
+  const prebuildsSubdir = await getNodePtyPrebuildsSubdir();
+  if (!packageJsonPath || !prebuildsSubdir) process.exit(0);
+
+  console.log(path.join(path.dirname(packageJsonPath), "prebuilds", prebuildsSubdir, "spawn-helper"));
+})().catch(() => process.exit(0));
+NODE
+}
+
+check_node_pty_spawn_helper() {
+  if ! command -v node >/dev/null 2>&1; then
+    warn "node-pty spawn-helper check skipped because node is unavailable"
+    return
+  fi
+
+  local helper_path mode
+  helper_path="$(resolve_node_pty_spawn_helper 2>/dev/null || true)"
+  if [ -z "$helper_path" ] || [ ! -f "$helper_path" ]; then
+    pass "node-pty spawn-helper check skipped because no helper was found for this platform"
+    return
+  fi
+
+  mode="$(file_mode_octal "$helper_path")"
+  if [ -x "$helper_path" ]; then
+    pass "node-pty spawn-helper is executable at $helper_path (mode 0o$mode)"
+    return
+  fi
+
+  if [ "$FIX_MODE" = true ]; then
+    if chmod 755 "$helper_path"; then
+      fixed "chmod +x applied to node-pty spawn-helper at $helper_path (was 0o$mode)"
+      return
+    fi
+    warn "node-pty spawn-helper is not executable at $helper_path (mode 0o$mode), and chmod failed. Web dashboard terminals can fail with posix_spawnp failed. Fix: chmod +x $helper_path"
+    return
+  fi
+
+  warn "node-pty spawn-helper is not executable at $helper_path (mode 0o$mode). Web dashboard terminals can fail with posix_spawnp failed. Fix: run ao doctor --fix or chmod +x $helper_path. See ao#1770."
+}
+
 printf 'Agent Orchestrator Doctor\n\n'
 
 check_node
@@ -409,6 +539,7 @@ check_gh
 check_config_dirs
 check_stale_temp_files
 check_install_layout
+check_node_pty_spawn_helper
 check_runtime_sanity
 
 printf '\nResults: %s PASS, %s WARN, %s FAIL, %s FIXED\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$FIX_COUNT"

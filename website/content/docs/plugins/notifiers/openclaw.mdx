@@ -23,13 +23,22 @@ ao setup openclaw
 It will:
 
 1. Auto-detect OpenClaw on `localhost` (or prompt for the URL).
-2. Exchange / generate an auth token.
-3. Write `agent-orchestrator.yaml`, `~/.openclaw/openclaw.json`, and a shell-profile export for `OPENCLAW_HOOKS_TOKEN`.
+2. Read `hooks.token` from your OpenClaw config.
+3. If the token is missing, show where to add/generate it from the OpenClaw side.
+4. Write only `agent-orchestrator.yaml`; AO does not generate the token or write shell-profile exports.
+5. Let you review and change the URL, OpenClaw config path, or routing preset before saving.
 
 Non-interactive variant:
 
 ```bash
-ao setup openclaw --non-interactive --url http://127.0.0.1:18789/hooks/agent --token <token>
+ao setup openclaw --non-interactive --url http://127.0.0.1:18789/hooks/agent --routing-preset urgent-action
+```
+
+Refresh an existing setup or inspect status:
+
+```bash
+ao setup openclaw --refresh
+ao setup openclaw --status
 ```
 
 ## Use
@@ -37,11 +46,25 @@ ao setup openclaw --non-interactive --url http://127.0.0.1:18789/hooks/agent --t
 After setup, your config looks like:
 
 ```yaml title="agent-orchestrator.yaml"
-notifier:
-  - type: openclaw
+notifiers:
+  openclaw:
+    plugin: openclaw
     url: http://127.0.0.1:18789/hooks/agent
-    token: ${OPENCLAW_HOOKS_TOKEN}
-    wakeMode: next-heartbeat       # or `now`
+    openclawConfigPath: ~/.openclaw/openclaw.json
+    wakeMode: now
+```
+
+The OpenClaw config keeps the actual secret:
+
+```json title="~/.openclaw/openclaw.json"
+{
+  "hooks": {
+    "enabled": true,
+    "token": "<openclaw-hooks-token>",
+    "allowRequestSessionKey": true,
+    "allowedSessionKeyPrefixes": ["hook:"]
+  }
+}
 ```
 
 ## Config
@@ -49,7 +72,8 @@ notifier:
 | Key | Default | What it does |
 |---|---|---|
 | `url` | `http://127.0.0.1:18789/hooks/agent` | OpenClaw hook endpoint |
-| `token` | — | Auth token. Use `${ENV_VAR}` — never commit the raw value |
+| `openclawConfigPath` | `~/.openclaw/openclaw.json` | Local OpenClaw config path that contains `hooks.token` |
+| `token` | — | Remote/manual fallback. Avoid for local setups because it stores the secret in AO config |
 | `name` | — | Identifier shown in OpenClaw |
 | `sessionKeyPrefix` | — | Prefix for OpenClaw session keys |
 | `wakeMode` | `next-heartbeat` | `now` = deliver immediately, `next-heartbeat` = batch on next OpenClaw tick |
@@ -57,14 +81,18 @@ notifier:
 | `retries` | `3` | Retry count on transient failures |
 | `retryDelayMs` | `1000` | Base retry delay |
 | `healthSummaryPath` | — | Optional local path where OpenClaw writes a summary AO can pick up |
-| `configPath` | `~/.openclaw/openclaw.json` | Override OpenClaw config location |
 
 ## Token precedence
 
 Token is read in this order:
 
-1. `token` in `agent-orchestrator.yaml` (usually `${OPENCLAW_HOOKS_TOKEN}`)
-2. Env var `OPENCLAW_HOOKS_TOKEN`
-3. `~/.openclaw/openclaw.json`
+1. `token` in `agent-orchestrator.yaml` if explicitly configured
+2. `hooks.token` from `openclawConfigPath`
+3. Env var `OPENCLAW_HOOKS_TOKEN` as a legacy fallback
 
-`ao doctor --test-notify` is the only notifier test that can probe OpenClaw without side effects — other notifiers send a real test message.
+`ao setup openclaw --status` probes the OpenClaw gateway and token. To send a
+real AO test notification through the configured notifier, run:
+
+```bash
+ao notify test --to openclaw --template basic
+```
