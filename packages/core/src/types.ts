@@ -931,6 +931,8 @@ export interface PREnrichmentData {
   isBehind?: boolean;
   /** List of blockers preventing merge */
   blockers?: string[];
+  /** Individual CI check results (populated from batch enrichment when available) */
+  ciChecks?: CICheck[];
 }
 
 /**
@@ -1108,60 +1110,6 @@ export interface MergeReadiness {
   blockers: string[];
 }
 
-/**
- * Batch enrichment data returned by SCM plugins.
- * Contains all the information the orchestrator needs for status detection.
- */
-export interface PREnrichmentData {
-  /** Current PR state */
-  state: PRState;
-  /** Overall CI status */
-  ciStatus: CIStatus;
-  /** Review decision */
-  reviewDecision: ReviewDecision;
-  /** Whether the PR is mergeable based on CI, reviews, and merge state */
-  mergeable: boolean;
-  /** PR title */
-  title?: string;
-  /** Number of additions */
-  additions?: number;
-  /** Number of deletions */
-  deletions?: number;
-  /** Whether PR is a draft */
-  isDraft?: boolean;
-  /** Whether PR has merge conflicts */
-  hasConflicts?: boolean;
-  /** Whether PR is behind base branch */
-  isBehind?: boolean;
-  /** List of blockers preventing merge */
-  blockers?: string[];
-  /** Individual CI check results (populated from batch enrichment when available) */
-  ciChecks?: CICheck[];
-}
-
-/**
- * Observer for GraphQL batch PR enrichment operations.
- * Used by SCM plugins to report batch success/failure to the observability system.
- */
-export interface BatchObserver {
-  /** Record a successful batch enrichment */
-  recordSuccess(data: {
-    batchIndex: number;
-    totalBatches: number;
-    prCount: number;
-    durationMs: number;
-  }): void;
-  /** Record a failed batch enrichment */
-  recordFailure(data: {
-    batchIndex: number;
-    totalBatches: number;
-    prCount: number;
-    error: string;
-    durationMs: number;
-  }): void;
-  /** Log a message at a specific level */
-  log(level: ObservabilityLevel, message: string): void;
-}
 // =============================================================================
 // NOTIFIER — Plugin Slot 6 (PRIMARY INTERFACE)
 // =============================================================================
