@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AO — Design Direction Concepts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* ============================================================
+     SHARED RESET + SCAFFOLD
+     ============================================================ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0a0a0c;
+    color: #fff;
+    font-family: "Hanken Grotesk", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+  /* Direction switcher */
+  .switcher {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 100;
+    display: flex; align-items: center; gap: 4px;
+    padding: 0 16px;
+    background: #050506;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .switcher .brand { font-weight: 700; font-size: 13px; letter-spacing: -0.02em; margin-right: 16px; opacity: 0.7; }
+  .switcher .brand b { color: #4d8dff; }
+  .switcher button.tab {
+    padding: 7px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+    color: rgba(255,255,255,0.5); transition: all 0.15s;
+  }
+  .switcher button.tab:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
+  .switcher button.tab.active { color: #fff; background: rgba(77,141,255,0.16); box-shadow: inset 0 0 0 1px rgba(77,141,255,0.4); }
+  .switcher .note { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.35); font-family: "JetBrains Mono", monospace; }
+
+  .stage { position: fixed; inset: 52px 0 0 0; }
+  .concept { display: none; height: 100%; }
+  .concept.active { display: block; }
+
+  /* ============================================================
+     SHARED LAYOUT GRID (each theme overrides tokens)
+     ============================================================ */
+  .app {
+    height: 100%;
+    display: grid;
+    grid-template-columns: 248px 1fr;
+    grid-template-rows: 56px 1fr;
+    grid-template-areas: "side top" "side main";
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ui);
+  }
+  .sidebar { grid-area: side; background: var(--bg-side); border-right: 1px solid var(--border); overflow-y: auto; padding: 14px 10px; }
+  .topbar  { grid-area: top; background: var(--bg-top); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; padding: 0 18px; }
+  .main    { grid-area: main; overflow-y: auto; padding: 22px 26px 60px; }
+
+  /* sidebar */
+  .side-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 14px; }
+  .side-head .logo { display: flex; align-items: center; gap: 9px; }
+  .logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; font-size: 12px; box-shadow: 0 2px 8px var(--accent-glow); }
+  .logo-mark span { filter: drop-shadow(0 0 2px rgba(0,0,0,.3)); }
+  .side-head .title { font-weight: 700; font-size: 13px; letter-spacing: -0.01em; }
+  .side-head .plus { width: 22px; height: 22px; border-radius: 6px; color: var(--text-dim); display: grid; place-items: center; }
+  .side-head .plus:hover { background: var(--hover); color: var(--text); }
+
+  .proj { margin-bottom: 4px; }
+  .proj-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+  .proj-row:hover { background: var(--hover); }
+  .proj-row.sel { background: var(--sel); }
+  .proj-row .chev { font-size: 9px; color: var(--text-dim); width: 8px; }
+  .proj-row .pname { font-size: 12.5px; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proj-row.sel .pname { color: var(--accent-text); }
+  .proj-row .count { font-size: 10.5px; font-weight: 600; color: var(--text-dim); background: var(--chip); padding: 1px 7px; border-radius: 20px; font-variant-numeric: tabular-nums; }
+  .proj-row .tools { display: none; gap: 2px; }
+  .proj-row:hover .tools { display: flex; }
+  .proj-row:hover .count { display: none; }
+  .tools button { width: 18px; height: 18px; border-radius: 4px; color: var(--text-dim); display: grid; place-items: center; font-size: 10px; }
+  .tools button:hover { background: var(--hover2); color: var(--text); }
+
+  .ses-list { padding: 1px 0 6px 4px; }
+  .ses { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .ses:hover { background: var(--hover); }
+  .ses .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .ses .sname { font-size: 11.5px; color: var(--text-soft); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); }
+  .ses .sid { font-size: 9.5px; color: var(--text-dim); font-family: var(--mono); }
+
+  /* topbar */
+  .crumb { display: flex; align-items: center; gap: 9px; }
+  .crumb .home { font-weight: 700; font-size: 13.5px; letter-spacing: -0.01em; }
+  .seg { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 7px; background: var(--chip); color: var(--text-soft); }
+  .seg.live { color: var(--accent-text); background: var(--accent-dim); }
+  .top-spacer { flex: 1; }
+  .top-search { display:flex; align-items:center; gap:8px; font-size:12px; color: var(--text-dim); background: var(--chip); padding: 7px 12px; border-radius: 9px; min-width: 200px; }
+  .top-search kbd { margin-left:auto; font-family: var(--mono); font-size: 10px; background: var(--hover2); padding: 1px 5px; border-radius: 4px; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--text-soft); position: relative; }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .icon-btn .badge { position: absolute; top: 3px; right: 3px; width: 15px; height: 15px; border-radius: 50%; background: #f0b429; color: #1a1300; font-size: 9px; font-weight: 800; display: grid; place-items: center; }
+  .btn { padding: 8px 14px; border-radius: 9px; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 2px 10px var(--accent-glow); }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-ghost { color: var(--text-soft); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .btn-ghost:hover { background: var(--hover); color: var(--text); }
+  .btn-danger { color: #ff7a7a; box-shadow: inset 0 0 0 1px rgba(255,90,90,0.3); }
+  .btn-danger:hover { background: rgba(255,90,90,0.12); }
+
+  /* main / fleet board */
+  .board-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  .board-head h1 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.03em; }
+  .board-head .sub { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; }
+  .stat-rail { display: flex; gap: 8px; }
+  .stat { padding: 8px 14px; border-radius: 11px; background: var(--card); box-shadow: inset 0 0 0 1px var(--border); min-width: 78px; }
+  .stat .n { font-family: var(--display); font-weight: 800; font-size: 19px; font-variant-numeric: tabular-nums; line-height: 1; }
+  .stat .l { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 5px; }
+  .stat.hot .n { color: var(--agent); }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: inset 0 0 0 1px var(--border), var(--shadow); padding: 15px 16px; position: relative; overflow: hidden; }
+  .card::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--st-color); opacity: var(--rail-op, 1); }
+  .card .c-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .agent-ava { width: 30px; height: 30px; border-radius: 8px; background: var(--agent-bg); display: grid; place-items: center; font-size: 14px; flex-shrink: 0; box-shadow: inset 0 0 0 1px var(--agent-border); }
+  .c-id { flex: 1; min-width: 0; }
+  .c-id .branch { font-family: var(--mono); font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .c-id .meta { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; }
+  .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; padding: 3px 9px 3px 7px; border-radius: 20px; background: var(--st-bg); color: var(--st-color); white-space: nowrap; }
+  .status-badge .sd { width: 6px; height: 6px; border-radius: 50%; background: var(--st-color); }
+  .status-badge.pulse .sd { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{ opacity:1; box-shadow:0 0 0 0 var(--st-color);} 50%{ opacity:.5; box-shadow:0 0 0 4px transparent;} }
+
+  .c-line { font-size: 11.5px; color: var(--text-soft); line-height: 1.5; margin-bottom: 12px; min-height: 34px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 13px; }
+  .chip { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: var(--chip); color: var(--text-soft); font-family: var(--mono); display:flex; align-items:center; gap:5px; }
+  .chip.ok { color: #5bd98a; background: rgba(60,200,120,0.12); }
+  .chip.bad { color: #ff8585; background: rgba(255,90,90,0.12); }
+  .chip.pr { color: #b78bff; background: rgba(150,110,255,0.14); }
+  .c-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 11px; }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+  .spark i { width: 3px; background: var(--st-color); border-radius: 1px; opacity: 0.55; }
+  .c-foot .cost { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+  .c-foot .cost b { color: var(--text-soft); font-weight: 600; }
+
+  /* status palette (shared semantic hues) */
+  .s-working  { --st-color:#ff9e2c; --st-bg:rgba(255,158,44,0.14); }
+  .s-input    { --st-color:#ffd23f; --st-bg:rgba(255,210,63,0.14); }
+  .s-stuck    { --st-color:#ff5f5f; --st-bg:rgba(255,95,95,0.14); }
+  .s-review   { --st-color:#36c5f0; --st-bg:rgba(54,197,240,0.14); }
+  .s-merge    { --st-color:#3ddc84; --st-bg:rgba(61,220,132,0.14); }
+  .s-done     { --st-color:#7a8aa8; --st-bg:rgba(122,138,168,0.14); }
+  .s-idle     { --st-color:#6b7280; --st-bg:rgba(107,114,128,0.12); }
+
+  /* ============================================================
+     THEME A — REFINED (Linear-grade)
+     ============================================================ */
+  #A .app {
+    --ui:"Schibsted Grotesk",sans-serif; --display:"Schibsted Grotesk",sans-serif; --mono:"JetBrains Mono",monospace;
+    --bg:#0e0f12; --bg-side:#0b0c0e; --bg-top:#0e0f12;
+    --card:#141519; --radius:13px; --shadow:0 1px 2px rgba(0,0,0,0.4);
+    --text:#eef0f4; --text-soft:#aab1bd; --text-dim:#6b7280;
+    --border:rgba(255,255,255,0.07); --border-strong:rgba(255,255,255,0.12);
+    --hover:rgba(255,255,255,0.05); --hover2:rgba(255,255,255,0.09); --sel:rgba(77,141,255,0.12);
+    --chip:rgba(255,255,255,0.06);
+    --accent:#4d8dff; --accent-text:#7eaaff; --accent-dim:rgba(77,141,255,0.16); --accent-glow:rgba(77,141,255,0.35);
+    --agent:#ff9e2c; --agent-bg:rgba(255,158,44,0.13); --agent-border:rgba(255,158,44,0.3);
+  }
+
+  /* ============================================================
+     THEME B — TERMINAL-CRAFT
+     ============================================================ */
+  #B .app {
+    --ui:"Hanken Grotesk",sans-serif; --display:"Hanken Grotesk",sans-serif; --mono:"IBM Plex Mono",monospace;
+    --bg:#0c0d10; --bg-side:#090a0c; --bg-top:#0a0b0d;
+    --card:#101319; --radius:8px; --shadow:0 0 0 0 transparent;
+    --text:#dfe6e9; --text-soft:#9fb0bd; --text-dim:#5f7180;
+    --border:rgba(120,200,255,0.10); --border-strong:rgba(120,200,255,0.18);
+    --hover:rgba(120,200,255,0.06); --hover2:rgba(120,200,255,0.12); --sel:rgba(77,141,255,0.14);
+    --chip:rgba(120,200,255,0.07);
+    --accent:#2f7bf6; --accent-text:#5fa8ff; --accent-dim:rgba(77,141,255,0.16); --accent-glow:rgba(77,141,255,0.5);
+    --agent:#ffae3d; --agent-bg:rgba(255,174,61,0.12); --agent-border:rgba(255,174,61,0.32);
+  }
+  #B .app { position: relative; }
+  #B .main { background-image: repeating-linear-gradient(0deg, rgba(120,200,255,0.022) 0px, rgba(120,200,255,0.022) 1px, transparent 1px, transparent 3px); }
+  #B .card { box-shadow: inset 0 0 0 1px var(--border); }
+  #B .card::before { box-shadow: 0 0 12px var(--st-color); }
+  #B .logo-mark { box-shadow: 0 0 14px var(--accent-glow); }
+  #B .board-head h1 { font-family: var(--mono); font-weight: 600; letter-spacing: -0.02em; }
+  #B .board-head h1::before { content:"› "; color: var(--accent-text); }
+  #B .status-badge { border-radius: 4px; box-shadow: 0 0 10px -2px var(--st-color); }
+  #B .status-badge .sd { box-shadow: 0 0 6px var(--st-color); }
+  #B .chip { border-radius:3px; }
+  #B .seg, #B .top-search, #B .btn { border-radius: 6px; }
+
+  /* ============================================================
+     THEME C — BOLD CONSOLE
+     ============================================================ */
+  #C .app {
+    --ui:"Hanken Grotesk",sans-serif; --display:"Archivo",sans-serif; --mono:"Spline Sans Mono",monospace;
+    --bg:#070810; --bg-side:#05060c; --bg-top:#090b15;
+    --card:#0f1320; --radius:14px; --shadow:0 8px 24px -12px rgba(0,0,0,0.7);
+    --text:#f2f5ff; --text-soft:#a7b0c8; --text-dim:#626d8a;
+    --border:rgba(255,255,255,0.08); --border-strong:rgba(120,160,255,0.25);
+    --hover:rgba(120,160,255,0.08); --hover2:rgba(120,160,255,0.15); --sel:rgba(70,120,255,0.18);
+    --chip:rgba(120,160,255,0.08);
+    --accent:#3b6bff; --accent-text:#84a4ff; --accent-dim:rgba(70,120,255,0.2); --accent-glow:rgba(59,107,255,0.55);
+    --agent:#ff8c1a; --agent-bg:rgba(255,140,26,0.14); --agent-border:rgba(255,140,26,0.36);
+  }
+  #C .topbar { background: linear-gradient(180deg, #0d1020, #090b15); }
+  #C .sidebar { background: linear-gradient(180deg,#070810,#05060c); }
+  #C .board-head h1 { font-size: 32px; text-transform: uppercase; letter-spacing: -0.01em; }
+  #C .main { background:
+      radial-gradient(900px 400px at 80% -10%, rgba(59,107,255,0.12), transparent 60%),
+      radial-gradient(700px 360px at 0% 120%, rgba(255,140,26,0.06), transparent 55%); }
+  #C .card { box-shadow: inset 0 0 0 1px var(--border), var(--shadow); }
+  #C .card::before { width: 4px; }
+  #C .stat { background: linear-gradient(180deg, rgba(120,160,255,0.06), transparent); }
+  #C .stat .n { font-size: 22px; }
+  #C .status-badge { text-transform: uppercase; letter-spacing: 0.04em; font-size: 9.5px; }
+  #C .logo-mark { width: 24px; height: 24px; }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <div class="brand">AO <b>·</b> Direction Previews</div>
+  <button class="tab active" data-t="A">A · Refined</button>
+  <button class="tab" data-t="B">B · Terminal-craft</button>
+  <button class="tab" data-t="C">C · Bold console</button>
+  <div class="note">blue = orchestrator · orange = agents · same screen, three treatments</div>
+</div>
+
+<div class="stage">
+  <div class="concept active" id="A"></div>
+  <div class="concept" id="B"></div>
+  <div class="concept" id="C"></div>
+</div>
+
+<script>
+const PROJECTS = [
+  { name:"integrator", sel:false, count:5, open:false, sessions:[] },
+  { name:"Agent Orchestrator", sel:true, count:4, open:true, sessions:[
+    { dot:"s-working", id:"ao-204", branch:"session/ao-204" },
+    { dot:"s-review",  id:"ao-201", branch:"docs/architecture-doc" },
+    { dot:"s-idle",    id:"ao-202", branch:"docs/architecture-doc-claude" },
+    { dot:"s-merge",   id:"ao-203", branch:"test/onboarding-harness" },
+  ]},
+  { name:"mercury", sel:false, count:2, open:false, sessions:[] },
+  { name:"WorkOS", sel:false, count:0, open:false, sessions:[] },
+  { name:"Eng Hiring", sel:false, count:0, open:false, sessions:[] },
+];
+
+const CARDS = [
+  { st:"s-working", label:"Working", pulse:true, branch:"session/ao-204", id:"ao-204", model:"Opus 4.7",
+    line:"Building three design-direction previews for the dashboard fleet board…",
+    chips:[["PR #2051","pr"],["CI running","plain"]], cost:"$2.41", spark:[6,9,5,11,8,13,7,10,14,9], t:"now" },
+  { st:"s-input", label:"Needs input", branch:"feat/int-6-api-key-auth", id:"int-6", model:"Sonnet 4.6",
+    line:"Awaiting approval to run database migration on staging.",
+    chips:[["PR #2044","pr"],["3 files","plain"]], cost:"$0.88", spark:[8,4,9,3,7,2,6,1,1,1], t:"2m" },
+  { st:"s-stuck", label:"CI failed", branch:"security/cortex-sanitize", id:"int-8", model:"Opus 4.7",
+    line:"typecheck failed — 2 errors in plugin-registry.ts. Investigating.",
+    chips:[["PR #2049","pr"],["CI failed","bad"]], cost:"$3.10", spark:[10,7,12,6,9,4,5,3,2,1], t:"6m" },
+  { st:"s-review", label:"In review", branch:"docs/architecture-doc", id:"ao-201", model:"Sonnet 4.6",
+    line:"2 review comments from @prateek — addressing nits in CROSS_PLATFORM.md.",
+    chips:[["PR #2038","pr"],["CI passed","ok"]], cost:"$1.20", spark:[5,8,6,9,7,10,6,8,5,7], t:"4m" },
+  { st:"s-merge", label:"Mergeable", branch:"test/onboarding-harness", id:"ao-203", model:"Sonnet 4.6",
+    line:"All checks green, approved by 1 reviewer. Ready to merge.",
+    chips:[["PR #2042","pr"],["CI passed","ok"],["+1 approve","plain"]], cost:"$0.64", spark:[3,4,3,5,4,6,4,3,2,1], t:"11m" },
+  { st:"s-idle", label:"Idle", branch:"docs/architecture-doc-claude", id:"ao-202", model:"Opus 4.7",
+    line:"No activity for 18m. Last action: pushed commit 2f9717f.",
+    chips:[["PR #2040","pr"],["CI passed","ok"]], cost:"$1.95", spark:[2,1,2,1,1,1,1,1,1,1], t:"18m" },
+];
+
+function spark(arr){ return '<div class="spark">'+arr.map(h=>`<i style="height:${h}px"></i>`).join('')+'</div>'; }
+function chip(c){ const cls=c[1]==='plain'?'':c[1]; const dot=c[1]==='ok'?'✓ ':c[1]==='bad'?'✕ ':c[1]==='pr'?'⎇ ':''; return `<span class="chip ${cls}">${dot}${c[0]}</span>`; }
+
+function sidebar(){
+  return PROJECTS.map(p=>{
+    const sess = p.open ? `<div class="ses-list">`+p.sessions.map(s=>
+      `<div class="ses"><span class="dot ${s.dot}" style="background:var(--st-color)"></span><span class="sname">${s.branch}</span><span class="sid">${s.id}</span></div>`
+    ).join('')+`</div>` : '';
+    return `<div class="proj">
+      <div class="proj-row ${p.sel?'sel':''}">
+        <span class="chev">${p.open?'▾':'▸'}</span>
+        <span class="pname">${p.name}</span>
+        <span class="count">${p.count}</span>
+        <span class="tools"><button>▦</button><button>◳</button><button>⋯</button></span>
+      </div>${sess}
+    </div>`;
+  }).join('');
+}
+
+function card(c){
+  return `<div class="card ${c.st}" style="--st-color:var(--st-color)">
+    <div class="c-top">
+      <div class="agent-ava">🤖</div>
+      <div class="c-id"><div class="branch">${c.branch}</div><div class="meta">${c.id} · ${c.model} · ${c.t}</div></div>
+      <span class="status-badge ${c.pulse?'pulse':''}"><span class="sd"></span>${c.label}</span>
+    </div>
+    <div class="c-line">${c.line}</div>
+    <div class="chips">${c.chips.map(chip).join('')}</div>
+    <div class="c-foot">${spark(c.spark)}<span class="cost">cost <b>${c.cost}</b></span></div>
+  </div>`;
+}
+
+function render(){
+  ['A','B','C'].forEach(t=>{
+    document.getElementById(t).innerHTML = `
+    <div class="app">
+      <aside class="sidebar">
+        <div class="side-head">
+          <div class="logo"><span class="logo-mark"><span>🪄</span></span><span class="title">Orchestrator</span></div>
+          <button class="plus">+</button>
+        </div>
+        ${sidebar()}
+      </aside>
+      <header class="topbar">
+        <div class="crumb"><span class="home">Fleet</span><span class="seg live">● 6 active</span></div>
+        <div class="top-spacer"></div>
+        <div class="top-search">⌕ Search sessions, PRs, agents… <kbd>⌘K</kbd></div>
+        <button class="icon-btn">🔔<span class="badge">2</span></button>
+        <button class="btn btn-danger">Stop all</button>
+        <button class="btn btn-primary">🪄 New agent</button>
+      </header>
+      <main class="main">
+        <div class="board-head">
+          <div><h1>Fleet</h1><div class="sub">6 sessions across 3 projects · 1 needs your input · 1 ready to merge</div></div>
+          <div class="stat-rail">
+            <div class="stat hot"><div class="n">1</div><div class="l">Working</div></div>
+            <div class="stat"><div class="n">1</div><div class="l">Needs input</div></div>
+            <div class="stat"><div class="n">1</div><div class="l">Failing</div></div>
+            <div class="stat"><div class="n">1</div><div class="l">Mergeable</div></div>
+          </div>
+        </div>
+        <div class="cols">${CARDS.map(card).join('')}</div>
+      </main>
+    </div>`;
+  });
+}
+render();
+
+document.querySelectorAll('.switcher .tab').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('.switcher .tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.concept').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById(b.dataset.t).classList.add('active');
+  };
+});
+</script>
+</body>
+</html>

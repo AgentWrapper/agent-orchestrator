@@ -41,6 +41,9 @@
     "lifecycle": {
       "$ref": "#/$defs/lifecycleConfig"
     },
+    "observability": {
+      "$ref": "#/$defs/observabilityConfig"
+    },
     "defaults": {
       "$ref": "#/$defs/defaultPlugins"
     },
@@ -510,6 +513,21 @@
             }
           ],
           "default": 300000
+        }
+      }
+    },
+    "observabilityConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "warn"
+        },
+        "stderr": {
+          "type": "boolean",
+          "default": false
         }
       }
     },

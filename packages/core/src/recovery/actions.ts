@@ -5,6 +5,7 @@ import type {
   Runtime,
   Workspace,
 } from "../types.js";
+import { recordActivityEvent } from "../activity-events.js";
 import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
 import { validateStatus } from "../utils/validation.js";
@@ -48,6 +49,12 @@ function buildLifecycleRecoveryPatch(
         : updated.session.terminatedAt,
   };
   return buildLifecycleMetadataPatch(updated);
+}
+
+function preserveSessionAgentPatch(
+  rawMetadata: Record<string, string>,
+): Partial<Record<string, string>> {
+  return rawMetadata["agent"] ? { agent: rawMetadata["agent"] } : {};
 }
 
 export async function recoverSession(
@@ -100,6 +107,7 @@ export async function recoverSession(
         escalatedAt: now,
         escalationReason: `Exceeded max recovery attempts (${context.recoveryConfig.maxRecoveryAttempts})`,
         recoveryCount: String(recoveryCount),
+        ...preserveSessionAgentPatch(rawMetadata),
         ...buildLifecycleRecoveryPatch(rawMetadata, {
           state: "stuck",
           reason: "probe_failure",
@@ -120,6 +128,7 @@ export async function recoverSession(
       status: preservedStatus,
       restoredAt: now,
       recoveryCount: String(recoveryCount),
+      ...preserveSessionAgentPatch(rawMetadata),
     });
     context.invalidateCache?.();
 
@@ -132,6 +141,7 @@ export async function recoverSession(
 
     const session = sessionFromMetadata(sessionId, updatedMetadata, {
       projectId: assessment.projectId,
+      workspacePathFallback: assessment.workspacePath ?? undefined,
       status: preservedStatus,
       runtimeHandle: assessment.runtimeHandle,
       lastActivityAt: new Date(),
@@ -145,11 +155,25 @@ export async function recoverSession(
       session,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    recordActivityEvent({
+      projectId,
+      sessionId,
+      source: "recovery",
+      kind: "recovery.action_failed",
+      level: "error",
+      summary: `recoverSession threw for ${sessionId}: ${errorMessage}`,
+      data: {
+        action: "recover",
+        recoveryCount,
+        errorMessage,
+      },
+    });
     return {
       success: false,
       sessionId,
       action: "recover",
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     };
   }
 }
@@ -209,6 +233,7 @@ export async function cleanupSession(
       status: "terminated",
       terminatedAt: cleanupAt,
       terminationReason: "cleanup",
+      ...preserveSessionAgentPatch(rawMetadata),
       ...buildLifecycleRecoveryPatch(rawMetadata, {
         state: "terminated",
         reason: "auto_cleanup",
@@ -268,6 +293,7 @@ export async function escalateSession(
       status: "stuck",
       escalatedAt: new Date().toISOString(),
       escalationReason: reason,
+      ...preserveSessionAgentPatch(rawMetadata),
       ...buildLifecycleRecoveryPatch(rawMetadata, {
         state: "stuck",
         reason: "probe_failure",

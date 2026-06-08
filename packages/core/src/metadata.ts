@@ -22,9 +22,15 @@ import {
   closeSync,
   constants,
 } from "node:fs";
-import { join, dirname } from "node:path";
-import type { CanonicalSessionLifecycle, RuntimeHandle, SessionId, SessionMetadata } from "./types.js";
+import { basename, join, dirname } from "node:path";
+import type {
+  CanonicalSessionLifecycle,
+  RuntimeHandle,
+  SessionId,
+  SessionMetadata,
+} from "./types.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { recordActivityEvent, type ActivityEventSource } from "./activity-events.js";
 import {
   buildLifecycleMetadataPatch,
   cloneLifecycle,
@@ -94,7 +100,9 @@ function parseRuntimeHandleField(value: unknown): RuntimeHandle | undefined {
       if (typeof parsed["id"] === "string" && typeof parsed["runtimeName"] === "string") {
         return parsed as unknown as RuntimeHandle;
       }
-    } catch { /* not valid JSON */ }
+    } catch {
+      /* not valid JSON */
+    }
   }
   return undefined;
 }
@@ -106,13 +114,16 @@ function parseDashboardField(raw: Record<string, unknown>): SessionMetadata["das
     return {
       port: typeof d["port"] === "number" ? d["port"] : undefined,
       terminalWsPort: typeof d["terminalWsPort"] === "number" ? d["terminalWsPort"] : undefined,
-      directTerminalWsPort: typeof d["directTerminalWsPort"] === "number" ? d["directTerminalWsPort"] : undefined,
+      directTerminalWsPort:
+        typeof d["directTerminalWsPort"] === "number" ? d["directTerminalWsPort"] : undefined,
     };
   }
   // Legacy format: flat fields
   const port = typeof raw["dashboardPort"] === "number" ? raw["dashboardPort"] : undefined;
-  const terminalWsPort = typeof raw["terminalWsPort"] === "number" ? raw["terminalWsPort"] : undefined;
-  const directTerminalWsPort = typeof raw["directTerminalWsPort"] === "number" ? raw["directTerminalWsPort"] : undefined;
+  const terminalWsPort =
+    typeof raw["terminalWsPort"] === "number" ? raw["terminalWsPort"] : undefined;
+  const directTerminalWsPort =
+    typeof raw["directTerminalWsPort"] === "number" ? raw["directTerminalWsPort"] : undefined;
   if (port !== undefined || terminalWsPort !== undefined || directTerminalWsPort !== undefined) {
     return { port, terminalWsPort, directTerminalWsPort };
   }
@@ -159,8 +170,15 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     issueTitle: raw["issueTitle"] as string | undefined,
     pr: raw["pr"] as string | undefined,
     prAutoDetect:
-      raw["prAutoDetect"] === "off" || raw["prAutoDetect"] === "false" || raw["prAutoDetect"] === false ? false :
-      raw["prAutoDetect"] === "on" || raw["prAutoDetect"] === "true" || raw["prAutoDetect"] === true ? true : undefined,
+      raw["prAutoDetect"] === "off" ||
+      raw["prAutoDetect"] === "false" ||
+      raw["prAutoDetect"] === false
+        ? false
+        : raw["prAutoDetect"] === "on" ||
+            raw["prAutoDetect"] === "true" ||
+            raw["prAutoDetect"] === true
+          ? true
+          : undefined,
     summary: raw["summary"] as string | undefined,
     project: raw["project"] as string | undefined,
     agent: raw["agent"] as string | undefined,
@@ -220,8 +238,12 @@ export function readMetadataRaw(
 
 /** Fields that are stored as JSON objects and should be parsed when unflattening. */
 const jsonFields = new Set([
-  "runtimeHandle", "lifecycle", "statePayload", "dashboard",
-  "agentReport", "reportWatcher",
+  "runtimeHandle",
+  "lifecycle",
+  "statePayload",
+  "dashboard",
+  "agentReport",
+  "reportWatcher",
 ]);
 
 /** Unflatten a Record<string, string> to proper types for JSON storage. */
@@ -233,7 +255,12 @@ function unflattenFromStringRecord(data: Record<string, string>): Record<string,
   for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === "") continue;
     if (booleanFields.has(key)) {
-      result[key] = value === "on" || value === "true" ? true : value === "off" || value === "false" ? false : value;
+      result[key] =
+        value === "on" || value === "true"
+          ? true
+          : value === "off" || value === "false"
+            ? false
+            : value;
     } else if (numberFields.has(key)) {
       const num = Number(value);
       result[key] = Number.isFinite(num) ? num : value;
@@ -306,9 +333,14 @@ export function updateMetadata(
   sessionId: SessionId,
   updates: Partial<Record<string, string>>,
 ): void {
-  mutateMetadata(dataDir, sessionId, (existing) => {
-    return applyMetadataUpdates(existing, updates);
-  }, { createIfMissing: true });
+  mutateMetadata(
+    dataDir,
+    sessionId,
+    (existing) => {
+      return applyMetadataUpdates(existing, updates);
+    },
+    { createIfMissing: true },
+  );
 }
 
 export function applyMetadataUpdates(
@@ -336,59 +368,94 @@ function normalizeMetadataRecord(data: Record<string, string>): Record<string, s
   );
 }
 
+export interface MutateMetadataOptions {
+  createIfMissing?: boolean;
+  activityEventSource?: ActivityEventSource;
+}
+
 export function mutateMetadata(
   dataDir: string,
   sessionId: SessionId,
   updater: (existing: Record<string, string>) => Record<string, string>,
-  options: { createIfMissing?: boolean } = {},
+  options: MutateMetadataOptions = {},
 ): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   const lockPath = `${path}.lock`;
 
-  return withFileLockSync(lockPath, () => {
-    let existing: Record<string, string> = {};
+  return withFileLockSync(
+    lockPath,
+    () => {
+      let existing: Record<string, string> = {};
 
-    let content: string | undefined;
-    try {
-      content = readFileSync(path, "utf-8").trim();
-    } catch {
-      // File doesn't exist
-    }
+      let content: string | undefined;
+      try {
+        content = readFileSync(path, "utf-8").trim();
+      } catch {
+        // File doesn't exist
+      }
 
-    if (content !== undefined) {
-      if (content) {
-        const raw = parseMetadataContent(content);
-        if (raw) {
-          existing = flattenToStringRecord(raw);
-        } else {
-          // Corrupt JSON. Preserve forensic evidence by side-renaming
-          // the file before we overwrite it with the merged update.
-          // Without this, the very next mutateMetadata call destroys
-          // the corrupt bytes permanently and the user has no signal
-          // that anything was wrong — the file just becomes "not
-          // corrupt anymore — and missing fields".
-          const corruptPath = `${path}.corrupt-${Date.now()}`;
-          try {
-            renameSync(path, corruptPath);
-            // eslint-disable-next-line no-console
-            console.warn(
-              `[metadata] corrupt JSON at ${path}; preserved as ${corruptPath} before rewriting`,
-            );
-          } catch {
-            // best effort — proceed even if the rename fails (e.g. EACCES)
+      if (content !== undefined) {
+        if (content) {
+          const raw = parseMetadataContent(content);
+          if (raw) {
+            existing = flattenToStringRecord(raw);
+          } else {
+            // Corrupt JSON. Preserve forensic evidence by side-renaming
+            // the file before we overwrite it with the merged update.
+            // Without this, the very next mutateMetadata call destroys
+            // the corrupt bytes permanently and the user has no signal
+            // that anything was wrong — the file just becomes "not
+            // corrupt anymore — and missing fields".
+            const corruptPath = `${path}.corrupt-${Date.now()}`;
+            let renamed = false;
+            try {
+              renameSync(path, corruptPath);
+              renamed = true;
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[metadata] corrupt JSON at ${path}; preserved as ${corruptPath} before rewriting`,
+              );
+            } catch {
+              // best effort — proceed even if the rename fails (e.g. EACCES)
+            }
+            // Forensic activity event so RCA can find every silent overwrite.
+            // Truncate the bad-JSON sample to 200 chars (B11 invariant — full file
+            // could be 16KB+ and would be dropped by the sanitizer cap).
+            const contentSample = content.length > 200 ? content.slice(0, 200) : content;
+            // dataDir is `.../projects/{projectId}/sessions`; recover projectId for filtering.
+            const inferredProjectId = basename(dirname(dataDir));
+            const summary = renamed
+              ? `Corrupt metadata for session ${sessionId} renamed to ${basename(corruptPath)}`
+              : `Corrupt metadata detected for session ${sessionId}; failed to rename forensic copy before rewrite`;
+            recordActivityEvent({
+              projectId: inferredProjectId || undefined,
+              sessionId,
+              source: options.activityEventSource ?? "session-manager",
+              kind: "metadata.corrupt_detected",
+              level: "error",
+              summary,
+              data: {
+                path,
+                renamedTo: renamed ? corruptPath : null,
+                renameSucceeded: renamed,
+                contentSample,
+                contentLength: content.length,
+              },
+            });
           }
         }
+      } else if (!options.createIfMissing) {
+        return null;
       }
-    } else if (!options.createIfMissing) {
-      return null;
-    }
 
-    const next = normalizeMetadataRecord(updater({ ...existing }));
+      const next = normalizeMetadataRecord(updater({ ...existing }));
 
-    mkdirSync(dirname(path), { recursive: true });
-    atomicWriteFileSync(path, serializeMetadata(unflattenFromStringRecord(next)));
-    return next;
-  }, { timeoutMs: 5_000, staleMs: 30_000 });
+      mkdirSync(dirname(path), { recursive: true });
+      atomicWriteFileSync(path, serializeMetadata(unflattenFromStringRecord(next)));
+      return next;
+    },
+    { timeoutMs: 5_000, staleMs: 30_000 },
+  );
 }
 
 export function readCanonicalLifecycle(
@@ -405,11 +472,7 @@ export function writeCanonicalLifecycle(
   sessionId: SessionId,
   lifecycle: CanonicalSessionLifecycle,
 ): void {
-  updateMetadata(
-    dataDir,
-    sessionId,
-    buildLifecycleMetadataPatch(cloneLifecycle(lifecycle)),
-  );
+  updateMetadata(dataDir, sessionId, buildLifecycleMetadataPatch(cloneLifecycle(lifecycle)));
 }
 
 export function updateCanonicalLifecycle(
@@ -450,18 +513,20 @@ export function listMetadata(dataDir: string): SessionId[] {
   const dir = dataDir;
   if (!existsSync(dir)) return [];
 
-  return readdirSync(dir).filter((name) => {
-    // Must be a .json file
-    if (!name.endsWith(JSON_EXTENSION)) return false;
-    const baseName = name.slice(0, -JSON_EXTENSION.length);
-    if (!baseName || baseName.startsWith(".")) return false;
-    if (!SESSION_ID_COMPONENT_PATTERN.test(baseName)) return false;
-    try {
-      return statSync(join(dir, name)).isFile();
-    } catch {
-      return false;
-    }
-  }).map((name) => name.slice(0, -JSON_EXTENSION.length));
+  return readdirSync(dir)
+    .filter((name) => {
+      // Must be a .json file
+      if (!name.endsWith(JSON_EXTENSION)) return false;
+      const baseName = name.slice(0, -JSON_EXTENSION.length);
+      if (!baseName || baseName.startsWith(".")) return false;
+      if (!SESSION_ID_COMPONENT_PATTERN.test(baseName)) return false;
+      try {
+        return statSync(join(dir, name)).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .map((name) => name.slice(0, -JSON_EXTENSION.length));
 }
 
 /**

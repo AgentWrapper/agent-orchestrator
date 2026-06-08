@@ -6,6 +6,8 @@ const {
   mockFindConfigFile,
   mockLoadConfig,
   mockCreatePluginRegistry,
+  mockCreateProjectObserver,
+  mockRecordNotificationDelivery,
   mockDetectOpenClawInstallation,
   mockValidateToken,
   mockRegistry,
@@ -18,6 +20,8 @@ const {
   mockFindConfigFile: vi.fn(),
   mockLoadConfig: vi.fn(),
   mockCreatePluginRegistry: vi.fn(),
+  mockCreateProjectObserver: vi.fn(),
+  mockRecordNotificationDelivery: vi.fn(),
   mockDetectOpenClawInstallation: vi.fn(),
   mockValidateToken: vi.fn(),
   mockRegistry: {
@@ -36,10 +40,16 @@ vi.mock("../../src/lib/script-runner.js", () => ({
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  buildCIFailureNotificationData: () => ({ schemaVersion: 3 }),
+  buildPRStateNotificationData: () => ({ schemaVersion: 3 }),
+  buildReactionNotificationData: () => ({ schemaVersion: 3 }),
+  buildSessionTransitionNotificationData: () => ({ schemaVersion: 3 }),
   createPluginRegistry: (...args: unknown[]) => mockCreatePluginRegistry(...args),
+  createProjectObserver: (...args: unknown[]) => mockCreateProjectObserver(...args),
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
   getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
+  recordNotificationDelivery: (...args: unknown[]) => mockRecordNotificationDelivery(...args),
   resolveNotifierTarget: (
     config: { notifiers?: Record<string, { plugin?: string }> },
     reference: string,
@@ -157,6 +167,12 @@ describe("doctor command", () => {
 
     mockCreatePluginRegistry.mockReset();
     mockCreatePluginRegistry.mockReturnValue(mockRegistry);
+    mockCreateProjectObserver.mockReset();
+    mockCreateProjectObserver.mockReturnValue({
+      recordOperation: vi.fn(),
+      setHealth: vi.fn(),
+    });
+    mockRecordNotificationDelivery.mockReset();
 
     mockRegistry.loadFromConfig.mockReset();
     mockRegistry.loadFromConfig.mockResolvedValue(undefined);

@@ -4,6 +4,7 @@ import codexPlugin from "@aoagents/ao-plugin-agent-codex";
 import aiderPlugin from "@aoagents/ao-plugin-agent-aider";
 import cursorPlugin from "@aoagents/ao-plugin-agent-cursor";
 import kimicodePlugin from "@aoagents/ao-plugin-agent-kimicode";
+import grokPlugin from "@aoagents/ao-plugin-agent-grok";
 import opencodePlugin from "@aoagents/ao-plugin-agent-opencode";
 import githubSCMPlugin from "@aoagents/ao-plugin-scm-github";
 
@@ -13,6 +14,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   aider: aiderPlugin,
   cursor: cursorPlugin,
   kimicode: kimicodePlugin,
+  grok: grokPlugin,
   opencode: opencodePlugin,
 };
 

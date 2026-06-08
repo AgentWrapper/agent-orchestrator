@@ -31,6 +31,7 @@ import type { DashboardSession } from "../types";
 
 // Helper to create a minimal Session for testing
 function createCoreSession(overrides?: Partial<Session>): Session {
+  const { metadata: overrideMetadata, ...sessionOverrides } = overrides ?? {};
   const lifecycle = createInitialCanonicalLifecycle("worker", new Date("2025-01-01T00:00:00Z"));
   lifecycle.session.state = "working";
   lifecycle.session.reason = "task_in_progress";
@@ -57,8 +58,9 @@ function createCoreSession(overrides?: Partial<Session>): Session {
     agentInfo: null,
     createdAt: new Date("2025-01-01T00:00:00Z"),
     lastActivityAt: new Date("2025-01-01T01:00:00Z"),
-    metadata: {},
-    ...overrides,
+    metadata: { agent: "mock-agent", ...(overrideMetadata ?? {}) },
+    ...sessionOverrides,
+    prs: sessionOverrides.prs ?? (sessionOverrides.pr ? [sessionOverrides.pr] : []),
   };
 }
 
@@ -499,6 +501,7 @@ describe("enrichSessionPR", () => {
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
       pr: null,
+      prs: [],
       metadata: { prEnrichment: createEnrichmentMetadata() },
     };
 
@@ -769,6 +772,7 @@ describe("enrichSessionIssueTitle", () => {
       pr: null,
       metadata: {},
       ...overrides,
+      prs: overrides?.prs ?? (overrides?.pr ? [overrides.pr] : []),
     };
   }
 
@@ -1196,7 +1200,79 @@ describe("enrichSessionsMetadata", () => {
     expect(agent.getSessionInfo).toHaveBeenCalledTimes(2); // sessions 1 and 2 only
   });
 
-  it("should use default agent when project has no agent override", async () => {
+  it("uses persisted session agent instead of project default for summary enrichment", async () => {
+    const codexAgent = mockAgent("Wrong Codex summary");
+    codexAgent.name = "codex";
+    const gooseAgent = mockAgent("Goose summary");
+    gooseAgent.name = "goose";
+    const registry = {
+      get: vi.fn((slot: string, name: string) => {
+        if (slot !== "agent") return null;
+        if (name === "codex") return codexAgent;
+        if (name === "goose") return gooseAgent;
+        return null;
+      }),
+      register: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    } as unknown as PluginRegistry;
+    const mixedAgentConfig = {
+      ...testConfig,
+      defaults: { ...testConfig.defaults, agent: "codex" },
+      projects: {
+        test: { ...testProject, agent: "codex" } as ProjectConfig,
+      },
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({ metadata: { agent: "goose" } });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], mixedAgentConfig, registry);
+
+    expect(registry.get).toHaveBeenCalledWith("agent", "goose");
+    expect(registry.get).not.toHaveBeenCalledWith("agent", "codex");
+    expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+    expect(gooseAgent.getSessionInfo).toHaveBeenCalledWith(core);
+    expect(dashboard.summary).toBe("Goose summary");
+  });
+
+  it("uses persisted session agent when no project can be resolved", async () => {
+    const codexAgent = mockAgent("Wrong Codex summary");
+    codexAgent.name = "codex";
+    const gooseAgent = mockAgent("Orphan Goose summary");
+    gooseAgent.name = "goose";
+    const registry = {
+      get: vi.fn((slot: string, name: string) => {
+        if (slot !== "agent") return null;
+        if (name === "codex") return codexAgent;
+        if (name === "goose") return gooseAgent;
+        return null;
+      }),
+      register: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    } as unknown as PluginRegistry;
+    const noProjectsConfig = {
+      ...testConfig,
+      defaults: { ...testConfig.defaults, agent: "codex" },
+      projects: {},
+    } as OrchestratorConfig;
+
+    const core = createCoreSession({ projectId: "deleted", metadata: { agent: "goose" } });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], noProjectsConfig, registry);
+
+    expect(registry.get).toHaveBeenCalledWith("agent", "goose");
+    expect(registry.get).not.toHaveBeenCalledWith("agent", "codex");
+    expect(codexAgent.getSessionInfo).not.toHaveBeenCalled();
+    expect(gooseAgent.getSessionInfo).toHaveBeenCalledWith(core);
+    expect(dashboard.summary).toBe("Orphan Goose summary");
+  });
+
+  it("uses normalized session agent metadata when project has no agent override", async () => {
     const tracker = mockTracker();
     const agent = mockAgent("From default agent");
     const registry = mockRegistry(tracker, agent);
@@ -1212,7 +1288,7 @@ describe("enrichSessionsMetadata", () => {
 
     await enrichSessionsMetadata([core], [dashboard], configNoProjectAgent, registry);
 
-    // Falls back to config.defaults.agent
+    // Uses the normalized Session metadata, not project/default inference.
     expect(registry.get).toHaveBeenCalledWith("agent", "mock-agent");
     expect(dashboard.summary).toBe("From default agent");
   });
@@ -1294,6 +1370,7 @@ describe("computeStats", () => {
       pr: null,
       metadata: {},
       ...overrides,
+      prs: overrides?.prs ?? (overrides?.pr ? [overrides.pr] : []),
     };
   }
 

@@ -25,8 +25,9 @@ ao
 ├── update                      Check for updates and upgrade AO
 ├── init                        (deprecated — use ao start)
 ├── config-help                 Print the config schema and a guide
+├── notify                      test
 ├── session                     ls, attach, kill, cleanup, restore, claim-pr, remap
-├── setup                       openclaw
+├── setup                       dashboard, desktop, webhook, slack, discord, composio, openclaw
 └── plugin                      list, search, create, install, update, uninstall
 ```
 
@@ -184,6 +185,24 @@ Behavior depends on how AO was installed — git, npm-global, pnpm-global, or un
 
 No flags.
 
+## Notify subcommands
+
+### `ao notify test`
+
+> Send a manual demo notification without spawning sessions
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--template <name>` | `basic` | Demo template to send |
+| `--to <refs>` | — | Comma-separated notifier refs to target |
+| `--all` | — | Send to all configured, default, and routed notifier refs |
+| `--route <priority>` | — | Send through `urgent`, `action`, `warning`, or `info` routing |
+| `--actions` | — | Include demo actions when supported |
+| `--message <text>` | — | Override the notification message |
+| `--dry-run` | — | Resolve targets without sending |
+| `--json` | — | Print structured JSON output |
+| `--sink [port]` | — | Add a local webhook target named `sink` |
+
 ## Session subcommands
 
 ### `ao session ls`
@@ -245,6 +264,25 @@ No flags. Relaunches the agent inside the same worktree and rewires session meta
 
 ## Setup subcommands
 
+Notifier setup commands that write AO config support `--routing-preset <preset>`.
+Valid presets are `urgent-only`, `urgent-action`, and `all`. In interactive
+mode, AO asks which notification priorities the notifier should receive before
+writing `notificationRouting`.
+
+| Command | Purpose |
+|---|---|
+| `ao setup dashboard` | Configure dashboard notification retention and routing |
+| `ao setup desktop` | Configure native desktop notifications |
+| `ao setup webhook` | Configure a generic HTTP webhook |
+| `ao setup slack` | Configure a Slack incoming webhook |
+| `ao setup discord` | Configure a Discord incoming webhook |
+| `ao setup composio` | Open the interactive Composio setup hub |
+| `ao setup composio-slack` | Configure Slack through Composio |
+| `ao setup composio-discord` | Configure Discord webhook mode through Composio |
+| `ao setup composio-discord-bot` | Configure Discord bot mode through Composio |
+| `ao setup composio-mail` | Configure Gmail through Composio |
+| `ao setup openclaw` | Configure OpenClaw gateway notifications |
+
 ### `ao setup openclaw`
 
 > Connect AO notifications to an OpenClaw gateway
@@ -252,11 +290,16 @@ No flags. Relaunches the agent inside the same worktree and rewires session meta
 | Flag | Default | Purpose |
 |---|---|---|
 | `--url <url>` | — | OpenClaw webhook URL |
-| `--token <token>` | — | OpenClaw hooks auth token |
+| `--token <token>` | — | Remote/manual fallback; local setup should read `hooks.token` from OpenClaw config |
+| `--openclaw-config-path <path>` | `~/.openclaw/openclaw.json` | OpenClaw config path that contains `hooks.token` |
 | `--routing-preset <preset>` | — | `urgent-only` · `urgent-action` · `all` |
+| `--refresh` | — | Reuse existing values and rewrite AO config |
+| `--no-test` | — | Skip the setup token probe |
+| `--force` | — | Replace a conflicting `notifiers.openclaw` entry |
+| `--status` | — | Show OpenClaw config, gateway state, and token probe status |
 | `--non-interactive` | — | Skip prompts — auto-detect OpenClaw on localhost |
 
-Interactive mode (TTY) uses `@clack/prompts`. Writes to `agent-orchestrator.yaml`, `~/.openclaw/openclaw.json`, and your shell profile. The token lands in YAML as `${OPENCLAW_HOOKS_TOKEN}` — never committed raw.
+Interactive mode (TTY) uses `@clack/prompts` with review/change steps for the gateway URL, OpenClaw config path, and routing preset. OpenClaw owns the token in `hooks.token`; AO does not generate it or write shell-profile exports.
 
 ## Plugin subcommands
 
@@ -296,7 +339,8 @@ No flags.
 | Flag | Default | Purpose |
 |---|---|---|
 | `--url <url>` | — | Passed to `ao setup openclaw` when installing `notifier-openclaw` |
-| `--token <token>` | — | Same — passed through for the openclaw handshake |
+| `--token <token>` | — | Remote/manual OpenClaw token fallback |
+| `--openclaw-config-path <path>` | `~/.openclaw/openclaw.json` | OpenClaw config path that contains `hooks.token` |
 
 `<reference>` is a marketplace id, npm package name, or local path.
 

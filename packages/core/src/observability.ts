@@ -24,6 +24,7 @@ export type ObservabilityMetricName =
   | "graphql_batch"
   | "kill"
   | "lifecycle_poll"
+  | "notification_delivery"
   | "restore"
   | "send"
   | "spawn"
@@ -167,25 +168,43 @@ function sanitizeComponent(component: string): string {
   return component.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "component";
 }
 
-function getLogLevel(): ObservabilityLevel {
-  const raw = process.env["AO_LOG_LEVEL"]?.trim().toLowerCase();
-  if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
-    return raw;
+function parseLogLevel(raw: string | undefined): ObservabilityLevel | null {
+  const value = raw?.trim().toLowerCase();
+  if (value === "debug" || value === "info" || value === "warn" || value === "error") {
+    return value;
   }
-  return "warn";
+  return null;
 }
 
-function shouldLog(level: ObservabilityLevel): boolean {
-  return LEVEL_ORDER[level] >= LEVEL_ORDER[getLogLevel()];
+function parseBooleanEnv(raw: string | undefined): boolean | null {
+  const value = raw?.trim().toLowerCase();
+  if (!value) return null;
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false;
+  return null;
 }
 
-function shouldMirrorStructuredLogsToStderr(): boolean {
-  const raw = process.env["AO_OBSERVABILITY_STDERR"]?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+function getLogLevel(config: OrchestratorConfig): ObservabilityLevel {
+  const raw = process.env["AO_LOG_LEVEL"]?.trim().toLowerCase();
+  return parseLogLevel(raw) ?? config.observability?.logLevel ?? "warn";
 }
 
-function emitStructuredLog(entry: Record<string, unknown>, level: ObservabilityLevel): void {
-  if (!shouldMirrorStructuredLogsToStderr() || !shouldLog(level)) return;
+function shouldLog(level: ObservabilityLevel, config: OrchestratorConfig): boolean {
+  return LEVEL_ORDER[level] >= LEVEL_ORDER[getLogLevel(config)];
+}
+
+function shouldMirrorStructuredLogsToStderr(config: OrchestratorConfig): boolean {
+  return (
+    parseBooleanEnv(process.env["AO_OBSERVABILITY_STDERR"]) ?? config.observability?.stderr ?? false
+  );
+}
+
+function emitStructuredLog(
+  config: OrchestratorConfig,
+  entry: Record<string, unknown>,
+  level: ObservabilityLevel,
+): void {
+  if (!shouldMirrorStructuredLogsToStderr(config) || !shouldLog(level, config)) return;
   process.stderr.write(`${JSON.stringify({ ...entry, level })}\n`);
 }
 
@@ -424,9 +443,9 @@ export function createProjectObserver(
       const snapshot = readSnapshot(filePath, normalizedComponent);
       updater(snapshot);
       writeSnapshot(config, snapshot);
-      if (logEntry && shouldLog(logEntry.level)) {
+      if (logEntry && shouldLog(logEntry.level, config)) {
         appendAuditLog(config, normalizedComponent, logEntry.payload, logEntry.level);
-        emitStructuredLog(logEntry.payload, logEntry.level);
+        emitStructuredLog(config, logEntry.payload, logEntry.level);
       }
     } catch (error) {
       const payload = {
@@ -438,7 +457,7 @@ export function createProjectObserver(
         reason: error instanceof Error ? error.message : String(error),
       };
       appendObservabilityFailure(config, payload);
-      emitStructuredLog(payload, "error");
+      emitStructuredLog(config, payload, "error");
     }
   }
 

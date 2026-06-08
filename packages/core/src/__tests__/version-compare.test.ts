@@ -1,11 +1,46 @@
 import { describe, it, expect } from "vitest";
 
-import { isVersionOutdated } from "../version-compare.js";
+import { isVersionOutdated, isVersionOutdatedForChannel } from "../version-compare.js";
 
 // Both `packages/cli/src/lib/update-check.ts` and
 // `packages/web/src/app/api/version/route.ts` import this implementation
 // from core. These tests are the single source of truth for the comparison
 // rules — if either consumer's behavior diverges, fix the consumer, not this.
+
+describe("isVersionOutdatedForChannel", () => {
+  it("treats nightly dist-tag changes as updates by identity in both lexical directions", () => {
+    expect(isVersionOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-def", "nightly")).toBe(
+      true,
+    );
+    expect(isVersionOutdatedForChannel("0.0.0-nightly-def", "0.0.0-nightly-abc", "nightly")).toBe(
+      true,
+    );
+    expect(
+      isVersionOutdatedForChannel("0.0.0-nightly-f00d123", "0.0.0-nightly-0dead01", "nightly"),
+    ).toBe(true);
+  });
+
+  it("does not update nightly when the exact dist-tag version is already installed", () => {
+    expect(isVersionOutdatedForChannel("0.0.0-nightly-abc", "0.0.0-nightly-abc", "nightly")).toBe(
+      false,
+    );
+  });
+
+  it("uses semver for stable-to-nightly channel switches", () => {
+    expect(isVersionOutdatedForChannel("0.7.0", "0.0.0-nightly-abc", "nightly")).toBe(false);
+    expect(isVersionOutdatedForChannel("0.7.0", "0.8.0-nightly-abc", "nightly")).toBe(true);
+    expect(isVersionOutdatedForChannel("0.8.0", "0.8.0-nightly-abc", "nightly")).toBe(false);
+  });
+
+  it("treats nightly-to-stable fallback on the nightly channel as an update when the dist-tag differs", () => {
+    expect(isVersionOutdatedForChannel("0.0.0-nightly-abc", "0.8.0", "nightly")).toBe(true);
+  });
+
+  it("keeps stable comparisons numeric instead of lexical", () => {
+    expect(isVersionOutdatedForChannel("0.9.0", "0.10.0", "stable")).toBe(true);
+    expect(isVersionOutdatedForChannel("0.7.0", "0.8.0", "stable")).toBe(true);
+  });
+});
 
 describe("isVersionOutdated (shared core implementation)", () => {
   describe("numeric major/minor/patch", () => {
