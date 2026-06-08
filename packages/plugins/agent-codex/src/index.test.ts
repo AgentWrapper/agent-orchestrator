@@ -462,6 +462,13 @@ describe("isProcessRunning", () => {
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
+  it("returns true when Nix launches Codex as codex-unwrapped", async () => {
+    mockTmuxWithProcess(
+      "/nix/store/n6yvqvcmp1jbg031vssnp55hfzsksnm5-codex-0.131.0/bin/codex-unwrapped resume",
+    );
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
+  });
+
   it("returns false when codex not on tmux pane TTY", async () => {
     mockTmuxWithProcess("codex", false);
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);

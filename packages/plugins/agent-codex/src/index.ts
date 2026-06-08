@@ -801,7 +801,7 @@ function createCodexAgent(): Agent {
           });
           if (!psOut) return PROCESS_PROBE_INDETERMINATE;
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)codex(?:\s|$)/;
+          const processRe = /(?:^|\/)codex(?:-unwrapped)?(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
