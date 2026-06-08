@@ -69,7 +69,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
-import { parsePrFromUrl } from "./utils/pr.js";
+import { dedupePrUrls, parsePrFromUrl } from "./utils/pr.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -93,7 +93,6 @@ import {
   normalizeOrchestratorSessionStrategy,
 } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
-import { dedupePrUrls } from "./utils/pr.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveAgentSelectionForSession } from "./agent-selection.js";
