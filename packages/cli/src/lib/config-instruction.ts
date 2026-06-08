@@ -38,6 +38,15 @@ defaults:
   worker:
     agent: claude-code        # Optional override for worker sessions
 
+# ── AO-local reviewer backend (optional) ───────────────────────────
+# Backend for 'ao review run'. Precedence: --command flag > project.review >
+# this block > worker agent (defaults.agent, if it has an adapter) > codex.
+# 'agent' and 'command' are mutually exclusive.
+
+review:
+  agent: claude-code          # claude-code | codex
+  # command: "bash ~/.config/agent-orchestrator/claude-reviewer.sh main"
+
 # ── Installer-managed marketplace plugins (optional) ───────────────
 # External plugins are declared here. Built-ins do not need entries.
 

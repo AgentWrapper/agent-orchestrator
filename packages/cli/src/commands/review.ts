@@ -1,7 +1,6 @@
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
-  createShellCodeReviewRunner,
   createCodeReviewStore,
   executeCodeReviewRun,
   loadConfig,
@@ -91,7 +90,14 @@ function getNextQueuedRun(
 }
 
 export function registerReview(program: Command): void {
-  const review = program.command("review").description("Manage AO-local reviewer runs");
+  const review = program
+    .command("review")
+    .description(
+      "Manage AO-local reviewer runs. The reviewer backend resolves in order: " +
+        "--command flag > project review config > global review config > worker agent > codex. " +
+        "Configure a persistent backend with `review.agent` (claude-code|codex) or " +
+        "`review.command` globally, or under `projects.<id>.review` per project.",
+    );
 
   review
     .command("run")
@@ -100,7 +106,10 @@ export function registerReview(program: Command): void {
     .option("--summary <text>", "Summary to store on the review run")
     .option("--status <status>", "Initial run status (defaults to queued)")
     .option("--execute", "Execute the review run immediately")
-    .option("--command <command>", "Shell command to execute as the reviewer")
+    .option(
+      "--command <command>",
+      "Shell command to execute as the reviewer (overrides review config)",
+    )
     .option("--json", "Output as JSON")
     .action(
       async (
@@ -128,11 +137,7 @@ export function registerReview(program: Command): void {
 
           if (opts.execute || opts.command) {
             run = await executeCodeReviewRun(
-              {
-                config,
-                sessionManager,
-                ...(opts.command ? { runReviewer: createShellCodeReviewRunner(opts.command) } : {}),
-              },
+              { config, sessionManager, reviewCommand: opts.command },
               { projectId: run.projectId, runId: run.id },
             );
           }
@@ -164,7 +169,10 @@ export function registerReview(program: Command): void {
     .description("Execute a queued AO-local reviewer run")
     .argument("[project]", "Project ID (searches all projects if omitted)")
     .option("--run <run>", "Review run ID or reviewer session ID")
-    .option("--command <command>", "Shell command to execute as the reviewer")
+    .option(
+      "--command <command>",
+      "Shell command to execute as the reviewer (overrides review config)",
+    )
     .option("--force", "Execute even if the run is not queued")
     .option("--json", "Output as JSON")
     .action(
@@ -194,7 +202,7 @@ export function registerReview(program: Command): void {
               config,
               sessionManager,
               force: opts.force,
-              ...(opts.command ? { runReviewer: createShellCodeReviewRunner(opts.command) } : {}),
+              reviewCommand: opts.command,
             },
             { projectId: target.projectId, runId: target.run.id },
           );

@@ -42,6 +42,14 @@ defaults:
   workspace: worktree     # worktree | clone
   notifiers: [desktop]    # desktop | slack | discord | webhook | composio | openclaw
 
+# AO-local code reviewer backend (`ao review run`). Optional.
+# Resolution precedence: `--command` flag > project.review > this block >
+# worker agent (defaults.agent, when it has a reviewer adapter) > codex.
+# `agent` and `command` are mutually exclusive.
+# review:
+#   agent: claude-code    # claude-code | codex
+#   # command: "bash ~/.config/agent-orchestrator/claude-reviewer.sh main"
+
 # Installer-managed external plugins (optional)
 # plugins:
 #   - name: owasp-auditor
@@ -107,6 +115,10 @@ projects:
     #   agent: codex
     #   agentConfig:
     #     model: gpt-5-codex
+
+    # Per-project reviewer backend override (see top-level `review:` for keys)
+    # review:
+    #   agent: claude-code
 
     # Inline rules included in every agent prompt for this project
     # agentRules: |
