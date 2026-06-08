@@ -1482,6 +1482,29 @@ describe("listDashboardOrchestrators (issue #1048)", () => {
     expect(result[0].id).toBe("my-app-orchestrator");
   });
 
+  it("drops projects whose only orchestrator is terminal", () => {
+    const lifecycle = createInitialCanonicalLifecycle("orchestrator", new Date("2025-01-01T00:00:00Z"));
+    lifecycle.session.state = "terminated";
+    lifecycle.session.reason = "manual_kill";
+    lifecycle.runtime.state = "missing";
+    lifecycle.runtime.reason = "process_missing";
+
+    const sessions: Session[] = [
+      createCoreSession({
+        id: "app-orchestrator-9",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        lifecycle,
+        metadata: { role: "orchestrator" },
+      }),
+    ];
+
+    const result = listDashboardOrchestrators(sessions, projects);
+
+    expect(result).toEqual([]);
+  });
+
   it("prefers the live orchestrator over stale exited ones for the same project", () => {
     const now = Date.now();
     const sessions: Session[] = [
