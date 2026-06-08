@@ -165,6 +165,7 @@ describe("Dashboard empty state", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+
   it("mounts the sidebar empty state on a fresh install with zero projects", () => {
     render(<Dashboard initialSessions={[]} projects={[]} />);
 

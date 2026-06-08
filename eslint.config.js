@@ -57,6 +57,21 @@ export default tseslint.config(
       "no-debugger": "error",
       "no-duplicate-imports": "error",
       "no-template-curly-in-string": "warn",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.name='createInterface'] Property[key.name='input'] > CallExpression[callee.name='createReadStream']",
+          message:
+            "Do not pass createReadStream() inline to createInterface(); keep the stream in a variable and close/destroy it in a finally block.",
+        },
+        {
+          selector:
+            "CallExpression[callee.name='createInterface'] Property[key.name='input'] > CallExpression[callee.property.name='createReadStream']",
+          message:
+            "Do not pass createReadStream() inline to createInterface(); keep the stream in a variable and close/destroy it in a finally block.",
+        },
+      ],
       "prefer-const": "error",
       "no-var": "error",
       eqeqeq: ["error", "always"],

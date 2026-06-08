@@ -40,6 +40,7 @@ export function makeSession(
     branch: null,
     issueId: null,
     pr: null,
+    prs: [],
     workspacePath,
     runtimeHandle: handle,
     agentInfo: null,

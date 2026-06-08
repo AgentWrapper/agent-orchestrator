@@ -20,7 +20,7 @@
 
 import { request } from "node:https";
 import type { ProjectConfig } from "@aoagents/ao-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import trackerLinear from "@aoagents/ao-plugin-tracker-linear";
 import { pollUntil, pollUntilEqual } from "./helpers/polling.js";
 
@@ -38,15 +38,28 @@ const canRun = hasCredentials && Boolean(LINEAR_TEAM_ID);
 // Helpers
 // ---------------------------------------------------------------------------
 
+interface LinearGraphQLOptions {
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  timeoutMs?: number;
+}
+
 /**
  * Direct GraphQL call for test setup/cleanup.
  * Only available when LINEAR_API_KEY is set.
  */
-function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+function linearGraphQL<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  options: LinearGraphQLOptions = {},
+): Promise<T> {
   if (!LINEAR_API_KEY) {
     throw new Error("linearGraphQL requires LINEAR_API_KEY");
   }
   const body = JSON.stringify({ query, variables });
+  const maxAttempts = options.maxAttempts ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
 
   async function executeWithRetry(attempt = 1): Promise<T> {
     try {
@@ -95,9 +108,9 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
           },
         );
 
-        req.setTimeout(30_000, () => {
+        req.setTimeout(timeoutMs, () => {
           req.destroy();
-          reject(new Error("Linear API request timed out"));
+          reject(new Error(`Linear API request timed out after ${timeoutMs}ms`));
         });
 
         req.on("error", (err) => reject(err));
@@ -105,8 +118,8 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
         req.end();
       });
     } catch (err) {
-      if (attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         return executeWithRetry(attempt + 1);
       }
       throw err;
@@ -114,6 +127,28 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
   }
 
   return executeWithRetry();
+}
+
+async function retryExternal<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function isLinearAuthError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /(?:HTTP 401|AUTHENTICATION_ERROR|Authentication required|not authenticated)/i.test(
+    err.message,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -138,20 +173,30 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
   // Issue state tracked across tests (created in beforeAll, cleaned up in afterAll)
   let issueIdentifier: string; // e.g. "INT-1234"
   let issueUuid: string | undefined; // Linear internal UUID (needed for trash via direct API)
+  let setupSkipReason: string | undefined;
 
   // -------------------------------------------------------------------------
   // Setup — create a test issue
   // -------------------------------------------------------------------------
 
   beforeAll(async () => {
-    const result = await tracker.createIssue!(
-      {
-        title: `[AO Integration Test] ${new Date().toISOString()}`,
-        description: "Automated integration test issue. Safe to delete if found lingering.",
-        priority: 4, // Low
-      },
-      project,
-    );
+    let result: Awaited<ReturnType<NonNullable<typeof tracker.createIssue>>>;
+    try {
+      result = await retryExternal(() =>
+        tracker.createIssue!(
+          {
+            title: `[AO Integration Test] ${new Date().toISOString()}`,
+            description: "Automated integration test issue. Safe to delete if found lingering.",
+            priority: 4, // Low
+          },
+          project,
+        ),
+      );
+    } catch (err) {
+      if (!isLinearAuthError(err)) throw err;
+      setupSkipReason = "Linear credentials are present but not authenticated";
+      return;
+    }
 
     issueIdentifier = result.id;
 
@@ -167,7 +212,13 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
         issueUuid = undefined;
       }
     }
-  }, 30_000);
+  }, 120_000);
+
+  beforeEach((ctx) => {
+    if (setupSkipReason) {
+      ctx.skip(setupSkipReason);
+    }
+  });
 
   // -------------------------------------------------------------------------
   // Cleanup — archive the test issue so it doesn't clutter the board.
@@ -179,7 +230,18 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     if (!issueIdentifier) return;
 
     try {
-      if (issueUuid && LINEAR_API_KEY) {
+      if (LINEAR_API_KEY) {
+        const cleanupRequest = { maxAttempts: 1, timeoutMs: 5_000 };
+        if (!issueUuid) {
+          const data = await linearGraphQL<{ issue: { id: string } }>(
+            `query($id: String!) { issue(id: $id) { id } }`,
+            { id: issueIdentifier },
+            cleanupRequest,
+          );
+          issueUuid = data.issue.id;
+        }
+
+        if (!issueUuid) return;
         await linearGraphQL(
           `mutation($id: String!) {
             issueUpdate(id: $id, input: { trashed: true }) {
@@ -187,6 +249,7 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
             }
           }`,
           { id: issueUuid },
+          cleanupRequest,
         );
       } else {
         // Composio-only: best-effort close via plugin
@@ -195,7 +258,7 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     } catch {
       // Best-effort cleanup
     }
-  }, 15_000);
+  }, 60_000);
 
   // -------------------------------------------------------------------------
   // Test cases
@@ -252,10 +315,10 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     // Linear API has eventual consistency — poll until the issue appears in list results
     const found = await pollUntil(
       async () => {
-        const issues = await tracker.listIssues!({ state: "open", limit: 50 }, project);
+        const issues = await tracker.listIssues!({ state: "open", limit: 100 }, project);
         return issues.find((i: { id: string }) => i.id === issueIdentifier);
       },
-      { timeoutMs: 5_000, intervalMs: 500 },
+      { timeoutMs: 15_000, intervalMs: 1_000 },
     );
 
     expect(found).toBeDefined();

@@ -10,17 +10,37 @@ description: Native macOS / Linux notifications. Silent no-op on Windows.
 
 <PlatformSupport macos="full" linux="full" windows="none" note="On Windows this notifier logs a warning and does nothing — use Discord, Slack, or webhook instead." />
 
+## Setup
+
+Run the setup command on macOS:
+
+```bash
+ao setup desktop
+```
+
+AO asks which desktop backend to use and which notification priorities desktop
+should receive: `urgent-only`, `urgent-action`, or `all`. For scriptable setup,
+pass `--routing-preset <preset>`.
+
 ## Use
 
 ```yaml title="agent-orchestrator.yaml"
-notifier:
-  - type: desktop
-    sound: true            # default
+notifiers:
+  desktop:
+    plugin: desktop
+    backend: ao-app
+    dashboardUrl: http://localhost:3000
+
+notificationRouting:
+  urgent: [desktop]
+  action: [desktop]
 ```
 
 | Config key | Default | What it does |
 |---|---|---|
-| `sound` | `true` | Play the system notification sound |
+| `backend` | `auto` | `ao-app`, `terminal-notifier`, `osascript`, or auto fallback |
+| `dashboardUrl` | dashboard port | URL opened from desktop notification actions |
+| `appPath` | macOS app install path | Custom AO Notifier.app path |
 
 ## How it works
 

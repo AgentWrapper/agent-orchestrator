@@ -229,8 +229,11 @@ async function sessionFileMatchesCwd(filePath: string, workspacePath: string): P
  * Recursively scans ~/.codex/sessions/ (date-sharded: YYYY/MM/DD/rollout-*.jsonl).
  * Returns the path to the most recently modified matching file, or null.
  */
-async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
-  const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
+async function findCodexSessionFile(
+  workspacePath: string,
+  jsonlFiles?: string[],
+): Promise<string | null> {
+  jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
   if (jsonlFiles.length === 0) return null;
 
   let bestMatch: { path: string; mtime: number } | null = null;
@@ -252,6 +255,39 @@ async function findCodexSessionFile(workspacePath: string): Promise<string | nul
   return bestMatch?.path ?? null;
 }
 
+/**
+ * Find a Codex session file by persisted native thread id. Codex rollout
+ * filenames include the thread id, so this path only inspects filenames and
+ * avoids opening historical JSONL files to match session_meta.cwd.
+ */
+async function findCodexSessionFileByThreadId(
+  threadId: string,
+  jsonlFiles?: string[],
+): Promise<string | null> {
+  jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
+  const matches = jsonlFiles.filter((filePath) =>
+    basename(filePath).endsWith(`-${threadId}.jsonl`),
+  );
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0] ?? null;
+
+  let bestMatch: { path: string; mtime: number } | null = null;
+  let fallback: string | null = null;
+  for (const filePath of matches) {
+    fallback ??= filePath;
+    try {
+      const s = await stat(filePath);
+      if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
+        bestMatch = { path: filePath, mtime: s.mtimeMs };
+      }
+    } catch {
+      // Keep a filename match as fallback; thread id in the filename is enough.
+    }
+  }
+
+  return bestMatch?.path ?? fallback;
+}
+
 /** Aggregated data extracted from a Codex session file via streaming */
 interface CodexSessionData {
   model: string | null;
@@ -268,6 +304,9 @@ interface CodexSessionData {
  * into memory. This is critical because Codex rollout files can be 100 MB+.
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
+  let stream: ReturnType<typeof createReadStream> | null = null;
+  let rl: ReturnType<typeof createInterface> | null = null;
+
   try {
     const data: CodexSessionData = {
       model: null,
@@ -277,8 +316,9 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
       cachedTokens: 0,
       reasoningTokens: 0,
     };
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf-8" }),
+    stream = createReadStream(filePath, { encoding: "utf-8" });
+    rl = createInterface({
+      input: stream,
       crlfDelay: Infinity,
     });
 
@@ -352,6 +392,9 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
     return data;
   } catch {
     return null;
+  } finally {
+    rl?.close();
+    stream?.destroy();
   }
 }
 
@@ -492,21 +535,50 @@ function appendNoUpdateCheckFlag(parts: string[]): void {
 const SESSION_FILE_CACHE_TTL_MS = 30_000;
 
 /** Module-level session file cache shared across the agent instance lifetime.
- *  Keyed by workspace path, stores the resolved file path and an expiry timestamp. */
+ *  Keyed by Codex thread id when available, otherwise workspace path. */
 const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
 
-/** Find session file with caching to avoid double scans per refresh cycle */
-async function findCodexSessionFileCached(workspacePath: string): Promise<string | null> {
-  const cached = sessionFileCache.get(workspacePath);
+function getSessionMetadataString(session: Session, key: string): string | null {
+  const value = session.metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+async function getCachedSessionFile(
+  cacheKey: string,
+  resolve: () => Promise<string | null>,
+): Promise<string | null> {
+  const cached = sessionFileCache.get(cacheKey);
   if (cached && Date.now() < cached.expiry) {
     return cached.path;
   }
-  const result = await findCodexSessionFile(workspacePath);
-  sessionFileCache.set(workspacePath, {
+  const result = await resolve();
+  sessionFileCache.set(cacheKey, {
     path: result,
     expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS,
   });
   return result;
+}
+
+/** Find session file with caching to avoid double scans per refresh cycle */
+async function findCodexSessionFileCached(session: Session): Promise<string | null> {
+  let jsonlFiles: string[] | null = null;
+  const getJsonlFiles = async (): Promise<string[]> => {
+    jsonlFiles ??= await collectJsonlFiles(CODEX_SESSIONS_DIR);
+    return jsonlFiles;
+  };
+
+  const threadId = getSessionMetadataString(session, "codexThreadId");
+  if (threadId) {
+    const byThreadId = await getCachedSessionFile(`thread:${threadId}`, async () =>
+      findCodexSessionFileByThreadId(threadId, await getJsonlFiles()),
+    );
+    if (byThreadId) return byThreadId;
+  }
+
+  if (!session.workspacePath) return null;
+  return getCachedSessionFile(`cwd:${toComparablePath(session.workspacePath)}`, async () =>
+    findCodexSessionFile(session.workspacePath!, await getJsonlFiles()),
+  );
 }
 
 /**
@@ -604,11 +676,13 @@ function createCodexAgent(): Agent {
       if (running === PROCESS_PROBE_INDETERMINATE) return null;
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      if (!session.workspacePath) return null;
+      if (!session.workspacePath && !getSessionMetadataString(session, "codexThreadId")) {
+        return null;
+      }
 
       // 1. Try Codex's native JSONL first — it has richer 6-state detection
       //    (approval_request, error, tool_call, etc.) that terminal parsing can't match.
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      const sessionFile = await findCodexSessionFileCached(session);
       if (sessionFile) {
         const entry = await readLastJsonlEntry(sessionFile);
         if (entry) {
@@ -669,7 +743,9 @@ function createCodexAgent(): Agent {
 
       // 2. Fallback: check AO activity JSONL (terminal-derived) for waiting_input/blocked
       //    that the native JSONL may not have captured.
-      const activityResult = await readLastActivityEntry(session.workspacePath);
+      const activityResult = session.workspacePath
+        ? await readLastActivityEntry(session.workspacePath)
+        : null;
       const activityState = checkActivityLogState(activityResult);
       if (activityState) return activityState;
 
@@ -758,9 +834,7 @@ function createCodexAgent(): Agent {
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
-      if (!session.workspacePath) return null;
-
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      const sessionFile = await findCodexSessionFileCached(session);
       if (!sessionFile) return null;
 
       // Stream the file line-by-line to avoid loading potentially huge
@@ -799,13 +873,13 @@ function createCodexAgent(): Agent {
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
-      let threadId = session.metadata?.["codexThreadId"]?.trim();
-      let model: string | null = session.metadata?.["codexModel"]?.trim() || null;
+      let threadId = getSessionMetadataString(session, "codexThreadId");
+      let model: string | null = getSessionMetadataString(session, "codexModel");
       if (!threadId) {
         if (!session.workspacePath) return null;
 
         // Find the Codex session file for this workspace
-        const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+        const sessionFile = await findCodexSessionFileCached(session);
         if (!sessionFile) return null;
 
         // Stream the file line-by-line to avoid loading potentially huge
@@ -833,7 +907,10 @@ function createCodexAgent(): Agent {
       return formatLaunchCommand(parts);
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 

@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
 Usage: ao update [--skip-smoke] [--smoke-only]
 
 Fast-forwards the local Agent Orchestrator install repo to main, installs deps,
-clean-rebuilds critical packages, refreshes the ao launcher, and runs smoke tests.
+clean-rebuilds all workspace packages, refreshes the ao launcher, and runs smoke tests.
 
 Options:
   --skip-smoke  Skip smoke tests after rebuild
@@ -40,7 +40,38 @@ if [ "$SKIP_SMOKE" = true ] && [ "$SMOKE_ONLY" = true ]; then
   exit 1
 fi
 
-REPO_ROOT="${AO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+is_repo_root() {
+  local candidate="$1"
+  [ -f "$candidate/packages/ao/bin/ao.js" ] && [ -d "$candidate/packages/cli" ]
+}
+
+find_repo_root_from() {
+  local dir="$1"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if is_repo_root "$dir"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+resolve_repo_root() {
+  if [ -n "${AO_REPO_ROOT:-}" ]; then
+    printf '%s\n' "$AO_REPO_ROOT"
+    return 0
+  fi
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  find_repo_root_from "$script_dir" || find_repo_root_from "$PWD"
+}
+
+if ! REPO_ROOT="$(resolve_repo_root)"; then
+  printf 'Unable to find Agent Orchestrator repo root. Fix: run via ao update or set AO_REPO_ROOT.\n' >&2
+  exit 1
+fi
 
 require_command() {
   local name="$1"
@@ -186,13 +217,8 @@ if [ "$SMOKE_ONLY" = false ]; then
     run_cmd git pull --ff-only "$UPDATE_REMOTE" "$TARGET_BRANCH"
     run_cmd pnpm install
 
-    run_cmd pnpm --filter @aoagents/ao-core clean
-    run_cmd pnpm --filter @aoagents/ao-cli clean
-    run_cmd pnpm --filter @aoagents/ao-web clean
-
-    run_cmd pnpm --filter @aoagents/ao-core build
-    run_cmd pnpm --filter @aoagents/ao-cli build
-    run_cmd pnpm --filter @aoagents/ao-web build
+    run_cmd pnpm -r --if-present clean
+    run_cmd pnpm build
 
     printf '\nRefreshing ao launcher...\n'
     (
