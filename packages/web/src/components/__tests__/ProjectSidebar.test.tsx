@@ -287,6 +287,37 @@ describe("ProjectSidebar", () => {
     });
   });
 
+  it("redirects home and refreshes after removing the active project", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+
+    render(
+      <ProjectSidebar
+        projects={projects}
+        sessions={[]}
+        activeProjectId="project-2"
+        activeSessionId={undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Project actions for Project Two/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/projects/project-2", { method: "DELETE" });
+      expect(mockPush).toHaveBeenCalledWith("/");
+      expect(mockRefresh).toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: /^Project Two 0$/ })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows non-done worker sessions for the expanded active project", () => {
     render(
       <ProjectSidebar

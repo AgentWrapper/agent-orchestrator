@@ -646,9 +646,8 @@ function ProjectSidebarInner({
       setProjectMenuOpenId(null);
       if (activeProjectId === project.id) {
         router.push("/");
-      } else if ("refresh" in router && typeof router.refresh === "function") {
-        router.refresh();
       }
+      router.refresh();
       onMobileClose?.();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Failed to remove project.");
