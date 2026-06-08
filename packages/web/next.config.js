@@ -9,7 +9,6 @@ const homeDir = os.homedir().replace(/\\/g, "/");
 const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
-    "@aoagents/ao-core",
     "@aoagents/ao-plugin-agent-claude-code",
     "@aoagents/ao-plugin-agent-codex",
     "@aoagents/ao-plugin-agent-opencode",
@@ -22,6 +21,8 @@ const nextConfig = {
   serverExternalPackages: [
     "yaml",
     "zod",
+    "@aoagents/ao-core",
+    "better-sqlite3",
   ],
   webpack: (config, { isServer }) => {
     if (process.platform === "win32") {

@@ -1,4 +1,15 @@
+import type {
+  DashboardNotificationRecord,
+  SerializedDashboardAction as DashboardNotificationAction,
+  SerializedDashboardEvent as DashboardNotificationEvent,
+} from "@aoagents/ao-core";
 import type { AttentionLevel } from "./types";
+
+export type {
+  DashboardNotificationAction,
+  DashboardNotificationEvent,
+  DashboardNotificationRecord,
+};
 
 // ── Client → Server ──
 
@@ -8,7 +19,7 @@ export type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: "sessions"[] };
+  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
 
 // ── Server → Client ──
 
@@ -19,6 +30,13 @@ export type ServerMessage =
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
   | { ch: "sessions"; type: "error"; error: string }
+  | {
+      ch: "notifications";
+      type: "snapshot" | "append";
+      notifications: DashboardNotificationRecord[];
+      limit: number;
+    }
+  | { ch: "notifications"; type: "error"; error: string }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 

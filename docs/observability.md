@@ -10,9 +10,13 @@ This document describes runtime observability emitted by Agent Orchestrator.
 
 ## Emission Model
 
-- **Structured logs**: JSON lines on stderr, controlled by `AO_LOG_LEVEL`.
+- **Structured logs**: JSON lines on stderr when enabled by config or `AO_OBSERVABILITY_STDERR`.
   - Supported levels: `debug`, `info`, `warn`, `error`.
   - Default level: `warn` (production-safe, avoids high-volume info logs).
+  - Default stderr mirroring: disabled.
+  - Runtime env vars override YAML:
+    - `AO_LOG_LEVEL=info`
+    - `AO_OBSERVABILITY_STDERR=1`
 - **Durable snapshots**: process-local JSON snapshots under:
   - `~/.agent-orchestrator/{config-hash}-observability/processes/*.json`
 - **Aggregated view**: merged by project via:
@@ -38,6 +42,7 @@ Counters are emitted per project and operation:
 - `lifecycle_poll` (`lifecycle.merge_cleanup.completed`) — auto-cleanup ran after a PR was detected as merged; session runtime + worktree + metadata were torn down
 - `lifecycle_poll` (`lifecycle.merge_cleanup.deferred`) — auto-cleanup is waiting for the agent to idle (or for the `mergeCleanupIdleGraceMs` window to elapse) before tearing down
 - `lifecycle_poll` (`lifecycle.merge_cleanup.failed`) — auto-cleanup threw during `sessionManager.kill()`; the session stays in `merged` so the next poll retries
+- `notification_delivery` (`notification.deliver`) — per-target notifier dispatch success/failure, with event ID/type, priority, project/session IDs, target reference, plugin name, and delivery method
 - `api_request` (web API routes)
 - `sse_connect`, `sse_snapshot`, `sse_disconnect`
 - `websocket_connect`, `websocket_disconnect`, `websocket_error` (websocket servers)
@@ -83,10 +88,11 @@ Health records provide current status and failure context per surface:
 - **Dashboard**: use **Copy debug info** in the hero toolbar (desktop) to copy `/api/observability` plus page URL, project scope, and correlation id to the clipboard for issue reports. The observability banner shows overall status, SSE stream state, last correlation id, and latest failure reason.
 - **API**: `/api/observability` returns merged per-project diagnostics (`overallStatus`, metrics, health, recent traces, session state).
 - **Terminal websocket health**: `/health` endpoints include active sessions and websocket/terminal health counters with last error/disconnect reasons.
+- **Notifications**: successful deliveries update `notification_delivery` metrics and per-target health; failed/missing targets also appear in `ao events`.
 
 ## Rollout Notes
 
-1. Deploy with default `AO_LOG_LEVEL=warn` to avoid noisy logs.
+1. Deploy with default `observability.logLevel: warn` and `observability.stderr: false` to avoid noisy logs.
 2. Validate `/api/observability` and dashboard banner in a canary environment.
-3. If deeper triage is needed, temporarily raise `AO_LOG_LEVEL=info` (or `debug`), then revert to `warn`.
+3. If deeper triage is needed, temporarily raise `AO_LOG_LEVEL=info` (or `debug`) and set `AO_OBSERVABILITY_STDERR=1`, then revert to defaults.
 4. Monitor `lastFailureReason` and surface-level `reason` fields before enabling broader rollout.

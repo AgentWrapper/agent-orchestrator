@@ -32,7 +32,7 @@ Human only intervenes when notified. Everything else is handled.
 ### Design Principles
 
 1. **Push, not pull**: Notifications are the primary interface. Dashboard is secondary drill-down.
-2. **Server-centric**: All agents report to a central server. The server coordinates everything.
+2. **Server-centric**: One central daemon (`ao start`) manages every registered project, and all agents report to it. Each project gets its own orchestrator agent — one orchestrator per project, never a single orchestrator spanning all projects.
 3. **Plugin everything**: 8 pluggable abstraction slots. Swap any component.
 4. **Works out of the box**: Default config (tmux + claude-code + worktree + github) requires zero setup beyond `npx agent-orchestrator init`.
 5. **Silence by default, loud when needed**: Auto-handle routine issues (CI failures, review comments). Only notify the human when their judgment or action is truly required.
@@ -44,7 +44,8 @@ Human only intervenes when notified. Everything else is handled.
 
 | Term             | Definition                                 | Examples                         |
 | ---------------- | ------------------------------------------ | -------------------------------- |
-| **Orchestrator** | The central server that manages everything | The Next.js app                  |
+| **Orchestrator (daemon)** | The central server process that manages **all** registered projects | `ao start` + the Next.js app |
+| **Orchestrator agent**    | A per-project agent session that spawns and supervises workers — **one per project** | `my-app-orchestrator`, `backend-api-orchestrator` |
 | **Project**      | A configured repository to work on         | `my-app`, `backend-api`          |
 | **Session**      | A running agent instance working on a task | `my-app-1`, `my-app-2`           |
 | **Runtime**      | Where/how the session executes             | tmux, docker, k8s, process       |

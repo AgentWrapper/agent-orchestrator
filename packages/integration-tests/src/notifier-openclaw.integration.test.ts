@@ -49,8 +49,12 @@ describe("notifier-openclaw integration", () => {
     expect(body.sessionKey).toBe("hook:ao:ao-12");
     expect(body.wakeMode).toBe("now");
     expect(body.deliver).toBe(true);
-    expect(body.message).toContain("[AO URGENT]");
+    expect(body.message).toContain("**AO URGENT** `reaction.escalated`");
     expect(body.message).toContain("CI failed 5 times");
+    expect(body.message).toContain("- Project: `my-project`");
+    expect(body.message).toContain("- Session: `ao-12`");
+    expect(body.message).toContain("- attempts: 5");
+    expect(body.message).toContain("- reason: ci_failed");
   });
 
   it("notifyWithActions formats escalation header/context and appends action labels", async () => {
@@ -73,9 +77,14 @@ describe("notifier-openclaw integration", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.sessionKey).toBe("hook:ao:ao-5");
-    expect(body.message).toContain("[AO ACTION] ao-5 ci.failing");
-    expect(body.message).toContain('Context: {"checkName":"lint"}');
-    expect(body.message).toContain("Actions available: retry, kill");
+    expect(body.message).toContain("**AO ACTION** `ci.failing`");
+    expect(body.message).toContain("CI check failed on app-1");
+    expect(body.message).toContain("- Project: `my-project`");
+    expect(body.message).toContain("- Session: `ao-5`");
+    expect(body.message).toContain("- checkName: lint");
+    expect(body.message).toContain("**Actions**");
+    expect(body.message).toContain("- retry");
+    expect(body.message).toContain("- kill");
   });
 
   it("uses explicit deliver=true in hooks payload", async () => {

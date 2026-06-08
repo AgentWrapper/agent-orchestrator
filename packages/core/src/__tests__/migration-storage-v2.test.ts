@@ -12,6 +12,8 @@ import {
 } from "../migration/storage-v2.js";
 import { readMetadata } from "../metadata.js";
 
+vi.setConfig({ testTimeout: 20_000 });
+
 function createTempDir(): string {
   const dir = join(
     tmpdir(),

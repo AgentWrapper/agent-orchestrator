@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -34,7 +35,14 @@ function createHealthyRepo(tempRoot: string): string {
   mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "cli", "dist"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "web"), { recursive: true });
-  writeFileSync(join(fakeRepo, "packages", "core", "dist", "index.js"), "export {};\n");
+  writeFileSync(
+    join(fakeRepo, "packages", "core", "package.json"),
+    JSON.stringify({ type: "module", main: "dist/index.js" }, null, 2),
+  );
+  writeFileSync(
+    join(fakeRepo, "packages", "core", "dist", "index.js"),
+    'export function getNodePtyPrebuildsSubdir() { return process.platform + "-" + process.arch; }\n',
+  );
   writeFileSync(join(fakeRepo, "packages", "cli", "dist", "index.js"), "export {};\n");
   writeFileSync(
     join(fakeRepo, "packages", "ao", "bin", "ao.js"),
@@ -61,7 +69,7 @@ function createHealthyPath(binDir: string): void {
   createFakeBinary(
     binDir,
     "node",
-    'if [ "$1" = "--version" ]; then\n  printf "v20.11.1\\n"\n  exit 0\nfi\nexit 0',
+    `if [ "$1" = "--version" ]; then\n  printf "v20.11.1\\n"\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"`,
   );
   createFakeBinary(
     binDir,
@@ -250,6 +258,67 @@ exit 0`,
     expect(result.stdout).toContain("FIXED");
     expect(repairedLauncherIsExecutable).toBe(true);
     expect(npmCommands).toContain("link --force");
+  });
+
+  it("warns about and repairs a non-executable node-pty spawn-helper", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ao-doctor-node-pty-helper-"));
+    const fakeRepo = createHealthyRepo(tempRoot);
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    createHealthyPath(binDir);
+
+    const helperPath = join(
+      fakeRepo,
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+      "spawn-helper",
+    );
+    mkdirSync(dirname(helperPath), { recursive: true });
+    writeFileSync(join(fakeRepo, "node_modules", "node-pty", "package.json"), "{}\n");
+    writeFileSync(helperPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(helperPath, 0o644);
+
+    const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const dataDir = join(tempRoot, "data");
+    const worktreeDir = join(tempRoot, "worktrees");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+    );
+
+    const warnResult = spawnSync("bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    const fixResult = spawnSync("bash", [scriptPath, "--fix"], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:/bin:/usr/bin`,
+        AO_REPO_ROOT: fakeRepo,
+        AO_CONFIG_PATH: configPath,
+      },
+      encoding: "utf8",
+    });
+
+    const statMode = (statSync(helperPath).mode & 0o111) !== 0;
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    expect(warnResult.status).toBe(0);
+    expect(warnResult.stdout).toContain("WARN node-pty spawn-helper is not executable");
+    expect(warnResult.stdout).toContain("posix_spawnp failed");
+    expect(fixResult.status).toBe(0);
+    expect(fixResult.stdout).toContain("FIXED chmod +x applied to node-pty spawn-helper");
+    expect(statMode).toBe(true);
   });
 
   it("reports a healthy packaged install without source-checkout failures", () => {

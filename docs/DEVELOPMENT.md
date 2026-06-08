@@ -87,7 +87,7 @@ For AI agent-specific guidance (including high-risk files like `types.ts`, `life
 
 ## Getting Started
 
-**Prerequisites**: Node.js 20+, pnpm 9.15+, Git 2.25+
+**Prerequisites**: Node.js 20.18.3+, pnpm 9.15+, Git 2.25+
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git

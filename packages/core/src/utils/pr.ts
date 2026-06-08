@@ -57,6 +57,49 @@ export function parsePrFromUrl(prUrl: string): ParsedPrUrl | null {
   return null;
 }
 
+export function prIdentityKey(pr: Pick<PRInfo, "owner" | "repo" | "number" | "url">): string {
+  const parsed = parsePrFromUrl(pr.url);
+  const owner = pr.owner || parsed?.owner || "";
+  const repo = pr.repo || parsed?.repo || "";
+  const number = pr.number || parsed?.number || 0;
+  if (owner && repo && number > 0) {
+    return `${owner}/${repo}#${number}`;
+  }
+  return `url:${pr.url}`;
+}
+
+export function dedupePrInfos<T extends Pick<PRInfo, "owner" | "repo" | "number" | "url">>(
+  prs: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const pr of prs) {
+    const key = prIdentityKey(pr);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(pr);
+  }
+  return unique;
+}
+
+export function dedupePrUrls(urls: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const rawUrl of urls) {
+    const url = rawUrl.trim();
+    if (!url) continue;
+    const parsed = parsePrFromUrl(url);
+    const key =
+      parsed && parsed.owner && parsed.repo && parsed.number > 0
+        ? `${parsed.owner}/${parsed.repo}#${parsed.number}`
+        : `url:${url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(url);
+  }
+  return unique;
+}
+
 function tryParseUrl(prUrl: string): URL | null {
   try {
     return new URL(prUrl);

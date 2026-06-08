@@ -1,5 +1,7 @@
-import { readdirSync, type Dirent } from "node:fs";
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { isWindows } from "@aoagents/ao-core";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   PathSecurityError,
@@ -16,36 +18,42 @@ interface BrowseEntry {
   hasLocalConfig: boolean;
 }
 
-function isGitRepository(entryPath: string): boolean {
-  try {
-    return readdirSync(entryPath).includes(".git");
-  } catch {
-    return false;
-  }
+interface BrowseCurrentDirectory {
+  isGitRepo: boolean;
+  hasLocalConfig: boolean;
 }
 
-function hasLocalConfig(entryPath: string): boolean {
-  try {
-    const names = new Set(readdirSync(entryPath));
-    return names.has("agent-orchestrator.yaml") || names.has("agent-orchestrator.yml");
-  } catch {
-    return false;
-  }
+interface BrowseRoot {
+  label: string;
+  path: string;
 }
 
-function serializeEntry(rootPath: string, parentPath: string, entry: Dirent): BrowseEntry | null {
-  const entryPath = path.join(parentPath, entry.name);
-  if (shouldHideBrowseEntry(entryPath, rootPath)) {
-    return null;
-  }
+function getBrowseRoots(): BrowseRoot[] {
+  if (!isWindows()) return [];
 
-  const isDirectory = entry.isDirectory();
-  return {
-    name: entry.name,
-    isDirectory,
-    isGitRepo: isDirectory ? isGitRepository(entryPath) : false,
-    hasLocalConfig: isDirectory ? hasLocalConfig(entryPath) : false,
-  };
+  const roots: BrowseRoot[] = [];
+  for (let code = 65; code <= 90; code += 1) {
+    const drive = String.fromCharCode(code);
+    const rootPath = `${drive}:\\`;
+    if (existsSync(rootPath)) {
+      roots.push({ label: `${drive}:`, path: rootPath });
+    }
+  }
+  return roots;
+}
+
+async function describeDirectory(
+  entryPath: string,
+): Promise<{ isGitRepo: boolean; hasLocalConfig: boolean }> {
+  try {
+    const names = new Set(await readdir(entryPath));
+    return {
+      isGitRepo: names.has(".git"),
+      hasLocalConfig: names.has("agent-orchestrator.yaml") || names.has("agent-orchestrator.yml"),
+    };
+  } catch {
+    return { isGitRepo: false, hasLocalConfig: false };
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -72,17 +80,45 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const entries = readdirSync(resolved.resolvedPath, { withFileTypes: true })
-      .map((entry) => serializeEntry(resolved.rootPath, resolved.resolvedPath, entry))
-      .filter((entry): entry is BrowseEntry => entry !== null)
-      .sort((left, right) => {
-        if (left.isDirectory !== right.isDirectory) {
-          return left.isDirectory ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      });
+    const dirents = await readdir(resolved.resolvedPath, { withFileTypes: true });
+    const entries = (
+      await Promise.all(
+        dirents.map(async (entry): Promise<BrowseEntry | null> => {
+          const entryPath = path.join(resolved.resolvedPath, entry.name);
+          if (shouldHideBrowseEntry(entryPath, resolved.rootPath)) {
+            return null;
+          }
 
-    return NextResponse.json({ entries });
+          const isDirectory = entry.isDirectory();
+          const meta = isDirectory
+            ? await describeDirectory(entryPath)
+            : { isGitRepo: false, hasLocalConfig: false };
+
+          return {
+            name: entry.name,
+            isDirectory,
+            isGitRepo: meta.isGitRepo,
+            hasLocalConfig: meta.hasLocalConfig,
+          };
+        }),
+      )
+    )
+      .filter((entry): entry is BrowseEntry => entry !== null)
+      .sort((left, right) =>
+        left.isDirectory !== right.isDirectory
+          ? left.isDirectory
+            ? -1
+            : 1
+          : left.name.localeCompare(right.name),
+      );
+
+    const selfMeta = await describeDirectory(resolved.resolvedPath);
+    const current: BrowseCurrentDirectory = {
+      isGitRepo: selfMeta.isGitRepo,
+      hasLocalConfig: selfMeta.hasLocalConfig,
+    };
+
+    return NextResponse.json({ entries, current, roots: getBrowseRoots() });
   } catch {
     return NextResponse.json({ error: "Failed to browse directory" }, { status: 500 });
   }

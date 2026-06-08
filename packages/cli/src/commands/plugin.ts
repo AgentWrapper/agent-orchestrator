@@ -509,38 +509,51 @@ export function registerPlugin(program: Command): void {
     )
     .option(
       "--token <token>",
-      "OpenClaw hooks auth token (passed to setup when installing notifier-openclaw)",
+      "Remote/manual OpenClaw token fallback (passed to setup when installing notifier-openclaw)",
     )
-    .action(async (reference: string, opts: { url?: string; token?: string }) => {
-      const configPath = findConfigFile();
-      if (!configPath) {
-        throw new Error("No agent-orchestrator.yaml found. Run 'ao start' first.");
-      }
-
-      const config = loadConfig(configPath);
-      const { descriptor, specifier, setupAction } = buildPluginDescriptor(reference, configPath);
-      const verifiedDescriptor = await installOrVerifyPlugin(config, descriptor, specifier);
-      const previousPlugins = config.plugins ?? [];
-      const nextPlugins = upsertInstalledPlugin(previousPlugins, verifiedDescriptor);
-      writePluginsConfig(configPath, nextPlugins);
-
-      console.log(chalk.green(formatInstallSummary(verifiedDescriptor, configPath)));
-
-      if (setupAction === "openclaw-setup") {
-        // Always run setup — interactive in TTY, auto-detect in non-TTY.
-        // Non-interactive setup will auto-detect OpenClaw on localhost if
-        // no --url is given and the gateway is reachable.
-        try {
-          await runSetupAction({ url: opts.url, token: opts.token });
-        } catch (err) {
-          // Rollback: restore previous plugin list so a failed setup
-          // doesn't leave a half-configured notifier enabled in config.
-          writePluginsConfig(configPath, previousPlugins);
-          console.log(chalk.dim("Rolled back plugin config after setup failure."));
-          throw err;
+    .option(
+      "--openclaw-config-path <path>",
+      "OpenClaw config path that contains hooks.token (passed to setup when installing notifier-openclaw)",
+    )
+    .action(
+      async (
+        reference: string,
+        opts: { url?: string; token?: string; openclawConfigPath?: string },
+      ) => {
+        const configPath = findConfigFile();
+        if (!configPath) {
+          throw new Error("No agent-orchestrator.yaml found. Run 'ao start' first.");
         }
-      }
-    });
+
+        const config = loadConfig(configPath);
+        const { descriptor, specifier, setupAction } = buildPluginDescriptor(reference, configPath);
+        const verifiedDescriptor = await installOrVerifyPlugin(config, descriptor, specifier);
+        const previousPlugins = config.plugins ?? [];
+        const nextPlugins = upsertInstalledPlugin(previousPlugins, verifiedDescriptor);
+        writePluginsConfig(configPath, nextPlugins);
+
+        console.log(chalk.green(formatInstallSummary(verifiedDescriptor, configPath)));
+
+        if (setupAction === "openclaw-setup") {
+          // Always run setup — interactive in TTY, auto-detect in non-TTY.
+          // Non-interactive setup will auto-detect OpenClaw on localhost if
+          // no --url is given and the gateway is reachable.
+          try {
+            await runSetupAction({
+              url: opts.url,
+              token: opts.token,
+              openclawConfigPath: opts.openclawConfigPath,
+            });
+          } catch (err) {
+            // Rollback: restore previous plugin list so a failed setup
+            // doesn't leave a half-configured notifier enabled in config.
+            writePluginsConfig(configPath, previousPlugins);
+            console.log(chalk.dim("Rolled back plugin config after setup failure."));
+            throw err;
+          }
+        }
+      },
+    );
 
   plugin
     .command("update")

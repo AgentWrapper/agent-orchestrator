@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { recordActivityEvent } from "@aoagents/ao-core";
 
 /** Keys that AO agents commonly need and OpenClaw may already store. */
 const RESOLVABLE_KEYS = [
@@ -66,8 +67,18 @@ function readOpenClawKeys(): Record<string, string> {
         }
       }
     }
-  } catch {
-    // Malformed config — silently skip.
+  } catch (err) {
+    recordActivityEvent({
+      source: "cli",
+      kind: "cli.credential_load_failed",
+      level: "warn",
+      summary: `failed to read or parse ~/.openclaw/openclaw.json`,
+      data: {
+        configPath,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      },
+    });
+    // Malformed config — silently skip (event surfaces it).
   }
 
   return keys;

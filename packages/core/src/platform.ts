@@ -28,6 +28,10 @@ export function getDefaultRuntime(): "tmux" | "process" {
   return isWindows() ? "process" : "tmux";
 }
 
+export function getNodePtyPrebuildsSubdir(): string {
+  return `${process.platform}-${process.arch}`;
+}
+
 // -- Shell resolution --
 
 interface ShellInfo {

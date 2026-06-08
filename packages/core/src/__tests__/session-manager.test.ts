@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createSessionManager } from "../session-manager.js";
-import { writeMetadata } from "../metadata.js";
+import { readMetadataRaw, updateMetadata, writeMetadata } from "../metadata.js";
 import { recordActivityEvent } from "../activity-events.js";
 import type { OrchestratorConfig, PluginRegistry, Agent } from "../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
@@ -68,6 +68,50 @@ afterEach(() => {
   teardownTestContext(ctx);
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+describe("PR metadata startup migration", () => {
+  it("deduplicates corrupt prs CSV data and removes indexed enrichment keys", () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/app-1",
+      branch: "feat/pr-storage",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      prs: [
+        "https://github.com/aoagents/ReverbCode/pull/143",
+        "https://github.com/aoagents/ReverbCode/pull/143",
+        "https://github.com/aoagents/ReverbCode/pull/143",
+      ].join(","),
+      prEnrichment_1: "{\"state\":\"open\"}",
+      prEnrichment_2: "{\"state\":\"open\"}",
+      prReviewComments_1: "{\"unresolvedThreads\":0}",
+      prReviewComments_2: "{\"unresolvedThreads\":0}",
+    });
+
+    createSessionManager({ config, registry: mockRegistry });
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["prs"]).toBe("https://github.com/aoagents/ReverbCode/pull/143");
+    expect(meta?.["prEnrichment_1"]).toBeUndefined();
+    expect(meta?.["prEnrichment_2"]).toBeUndefined();
+    expect(meta?.["prReviewComments_1"]).toBeUndefined();
+    expect(meta?.["prReviewComments_2"]).toBeUndefined();
+    expect(recordActivityEvent).toHaveBeenCalledWith({
+      projectId: "my-app",
+      sessionId: "app-1",
+      source: "session-manager",
+      kind: "metadata.deduplicated",
+      summary: "deduplicated PR metadata: app-1",
+      data: {
+        beforePrCount: 3,
+        afterPrCount: 1,
+        deletedIndexedKeyCount: 4,
+      },
+    });
+  });
 });
 
 describe("activity event logging", () => {
