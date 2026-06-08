@@ -500,7 +500,7 @@ export interface Agent {
 
   /**
    * Detect what the agent is currently doing from terminal output.
-   * @deprecated Use getActivityState() instead - this uses hacky terminal parsing.
+   * @deprecated v0.2 — use getActivityState() instead; this uses hacky terminal parsing. Removal tracked in #1412.
    */
   detectActivity(terminalOutput: string): ActivityState;
 

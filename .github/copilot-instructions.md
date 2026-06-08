@@ -140,7 +140,7 @@ These files have a wide blast radius and deserve extra scrutiny:
 5. **Do not repeat points.** Each observation should appear exactly once in the review.
 6. **Assume competence.** The author knows the codebase. Explain only non-obvious context: why something is risky, not what it does.
 7. **For backward-compatible deprecations, provide the specific pattern:**
-   - TypeScript: `@deprecated` JSDoc, `console.warn`, and preserved old behavior during the deprecation period
+   - TypeScript: `@deprecated` JSDoc with a cutoff marker (`v<version>` or `removeBy=<date>`) per `scripts/check-deprecated.sh`, plus `console.warn` and preserved old behavior during the deprecation period
    - Config: keep the old key working with a warning and add the new key
    - CLI: keep the old flag working and add a deprecation notice to `--help`
 

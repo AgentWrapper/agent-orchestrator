@@ -12,7 +12,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter @aoagents/ao-web dev",
-    "lint": "eslint .",
+    "lint": "eslint . && ./scripts/check-deprecated.sh",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

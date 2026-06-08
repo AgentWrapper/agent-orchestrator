@@ -23,7 +23,7 @@ interface DirectTerminalProps {
   /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
   appearance?: "theme" | "dark";
-  /** @deprecated Terminal now fills its flex parent via flex:1. This prop is ignored. */
+  /** @deprecated v0.2 — terminal now fills its flex parent via flex:1; this prop is ignored. */
   height?: string;
   isOpenCodeSession?: boolean;
   reloadCommand?: string;
