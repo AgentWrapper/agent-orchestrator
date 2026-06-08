@@ -14,6 +14,7 @@ import {
 import { join, resolve, basename, dirname, sep } from "node:path";
 import { homedir } from "node:os";
 import {
+  getGitExecutable,
   getShell,
   isWindows,
   recordActivityEvent,
@@ -38,12 +39,27 @@ export const manifest = {
 
 /** Run a git command in a given directory */
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    windowsHide: true,
-    timeout: GIT_TIMEOUT,
-  });
-  return stdout.trimEnd();
+  const gitExecutable = getGitExecutable();
+  try {
+    const { stdout } = await execFileAsync(gitExecutable, args, {
+      cwd,
+      windowsHide: true,
+      timeout: GIT_TIMEOUT,
+    });
+    return stdout.trimEnd();
+  } catch (err) {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? String((err as { code?: unknown }).code)
+        : undefined;
+    if (code === "ENOENT") {
+      throw new Error(
+        `Git executable not found while setting up the worktree. Install Git or add it to PATH. Tried: ${gitExecutable}`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -556,7 +572,7 @@ export function create(config?: Record<string, unknown>): Workspace {
     async exists(workspacePath: string): Promise<boolean> {
       if (!existsSync(workspacePath)) return false;
       try {
-        await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+        await execFileAsync(getGitExecutable(), ["rev-parse", "--is-inside-work-tree"], {
           cwd: workspacePath,
           timeout: GIT_TIMEOUT,
           windowsHide: true,

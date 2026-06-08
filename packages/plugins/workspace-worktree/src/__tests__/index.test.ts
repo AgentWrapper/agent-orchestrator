@@ -29,6 +29,7 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("@aoagents/ao-core", () => ({
+  getGitExecutable: vi.fn(() => "git"),
   getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
   isWindows: vi.fn(() => false),
   recordActivityEvent: recordActivityEventMock,

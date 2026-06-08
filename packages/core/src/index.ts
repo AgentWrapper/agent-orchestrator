@@ -375,6 +375,7 @@ export {
   getDefaultRuntime,
   getNodePtyPrebuildsSubdir,
   getShell,
+  getGitExecutable,
   killProcessTree,
   findPidByPort,
   getEnvDefaults,
