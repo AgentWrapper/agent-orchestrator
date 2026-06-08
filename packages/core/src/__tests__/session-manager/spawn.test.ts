@@ -420,13 +420,13 @@ describe("spawn", () => {
 
     const first = await sm.spawn({ projectId: "my-app" });
     expect(first.id).toBe("app-1");
-    expect(first.branch).toBe("session/app-1");
+    expect(first.branch).toMatch(/^session\/app-1-[a-z0-9]{5}$/);
 
     await sm.kill(first.id);
 
     const second = await sm.spawn({ projectId: "my-app" });
     expect(second.id).toBe("app-2");
-    expect(second.branch).toBe("session/app-2");
+    expect(second.branch).toMatch(/^session\/app-2-[a-z0-9]{5}$/);
   });
 
   it("skips remote session branches when allocating a fresh session id", async () => {
@@ -438,7 +438,19 @@ describe("spawn", () => {
     const session = await sm.spawn({ projectId: "my-app" });
 
     expect(session.id).toBe("app-23");
-    expect(session.branch).toBe("session/app-23");
+    expect(session.branch).toMatch(/^session\/app-23-[a-z0-9]{5}$/);
+  });
+
+  it("skips suffixed remote session branches when allocating a fresh session id", async () => {
+    const mockGitBin = installMockGit(tmpDir, ["session/app-22-k7f2m"]);
+    process.env.PATH = `${mockGitBin}:${originalPath ?? ""}`;
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.id).toBe("app-23");
+    expect(session.branch).toMatch(/^session\/app-23-[a-z0-9]{5}$/);
   });
 
   it("writes metadata file", async () => {
@@ -1095,8 +1107,9 @@ describe("spawn", () => {
     const session = await sm.spawn({ projectId: "my-app" });
 
     expect(session.issueId).toBeNull();
-    // Uses session/{sessionId} to avoid conflicts with default branch
-    expect(session.branch).toMatch(/^session\/app-\d+$/);
+    // Uses session/{sessionId}-{suffix} to avoid conflicts with default branch
+    // and remote branches created by other AO users.
+    expect(session.branch).toMatch(/^session\/app-\d+-[a-z0-9]{5}$/);
     expect(session.branch).not.toBe("main");
   });
 
