@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   existsSync,
+  rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -135,6 +136,31 @@ describe("kill", () => {
   it("throws for nonexistent session", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.kill("nonexistent")).rejects.toThrow("not found");
+  });
+
+  it("reaps a managed workspace for an already terminated session", async () => {
+    const managedWorktree = join(getProjectWorktreesDir("my-app"), "app-terminated");
+    mkdirSync(managedWorktree, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-terminated", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-terminated"),
+    });
+    updateMetadata(sessionsDir, "app-terminated", {
+      lifecycle: JSON.stringify({
+        session: { state: "terminated", terminatedAt: new Date().toISOString() },
+      }),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.kill("app-terminated");
+
+    expect(result).toEqual({ cleaned: true, alreadyTerminated: true });
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
   });
 
   it("tolerates runtime destroy failure", async () => {
@@ -396,6 +422,63 @@ describe("cleanup", () => {
     const deleteLog = readFileSync(deleteLogPath, "utf-8");
     expect(deleteLog).toContain("session delete ses_archived");
   }, 15_000);
+
+  it("reaps worktrees left behind by already terminated sessions", async () => {
+    const managedWorktree = join(getProjectWorktreesDir("my-app"), "app-terminated-cleanup");
+    mkdirSync(managedWorktree, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-terminated-cleanup", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-terminated-cleanup"),
+    });
+    updateMetadata(sessionsDir, "app-terminated-cleanup", {
+      lifecycle: JSON.stringify({
+        session: { state: "terminated", terminatedAt: new Date().toISOString() },
+      }),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toContain("app-terminated-cleanup");
+    expect(result.skipped).not.toContain("app-terminated-cleanup");
+    expect(mockRuntime.destroy).not.toHaveBeenCalled();
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
+  });
+
+  it("skips already terminated sessions after orphan worktree cleanup is idempotent", async () => {
+    const managedWorktree = join(getProjectWorktreesDir("my-app"), "app-terminated-idempotent");
+    mkdirSync(managedWorktree, { recursive: true });
+    vi.mocked(mockWorkspace.destroy).mockImplementation(async (workspacePath: string) => {
+      rmSync(workspacePath, { recursive: true, force: true });
+    });
+
+    writeMetadata(sessionsDir, "app-terminated-idempotent", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-terminated-idempotent"),
+    });
+    updateMetadata(sessionsDir, "app-terminated-idempotent", {
+      lifecycle: JSON.stringify({
+        session: { state: "terminated", terminatedAt: new Date().toISOString() },
+      }),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const first = await sm.cleanup();
+    const second = await sm.cleanup();
+
+    expect(first.killed).toContain("app-terminated-idempotent");
+    expect(second.killed).not.toContain("app-terminated-idempotent");
+    expect(second.skipped).toContain("app-terminated-idempotent");
+    expect(mockWorkspace.destroy).toHaveBeenCalledTimes(1);
+    expect(existsSync(managedWorktree)).toBe(false);
+  });
 
   it("does not skip terminated cleanup for matching session IDs in other projects", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-archived-cross-project.log");

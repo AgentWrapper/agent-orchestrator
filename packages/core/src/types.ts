@@ -1857,8 +1857,9 @@ export type LifecycleKillReason = "manually_killed" | "pr_merged" | "auto_cleanu
 
 /**
  * Outcome of a kill() call. `cleaned` means resources were torn down this
- * invocation; `alreadyTerminated` means the session was already archived and
- * kill() was a no-op. Callers can use this to avoid double-notifying.
+ * invocation; `alreadyTerminated` means terminal lifecycle metadata was already
+ * recorded before this call. Both may be true when kill() reaps a workspace
+ * left behind by a previously terminated session.
  */
 export interface KillResult {
   cleaned: boolean;
