@@ -169,6 +169,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     issue: raw["issue"] as string | undefined,
     issueTitle: raw["issueTitle"] as string | undefined,
     pr: raw["pr"] as string | undefined,
+    prHistory: typeof raw["prHistory"] === "string" ? raw["prHistory"] : undefined,
     prAutoDetect:
       raw["prAutoDetect"] === "off" ||
       raw["prAutoDetect"] === "false" ||
@@ -304,6 +305,7 @@ export function writeMetadata(
   if (metadata.issue) data["issue"] = metadata.issue;
   if (metadata.issueTitle) data["issueTitle"] = metadata.issueTitle;
   if (metadata.pr) data["pr"] = metadata.pr;
+  if (metadata.prHistory) data["prHistory"] = metadata.prHistory;
   if (metadata.prAutoDetect !== undefined) data["prAutoDetect"] = metadata.prAutoDetect;
   if (metadata.summary) data["summary"] = metadata.summary;
   if (metadata.project) data["project"] = metadata.project;

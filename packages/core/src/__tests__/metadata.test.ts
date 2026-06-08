@@ -91,6 +91,21 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.lifecycle?.version).toBe(2);
   });
 
+  it("reads prHistory when written", () => {
+    const history = JSON.stringify([{ url: "https://github.com/org/repo/pull/1", replacedAt: "t" }]);
+    writeMetadata(dataDir, "app-pr-hist", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      pr: "https://github.com/org/repo/pull/2",
+      prHistory: history,
+    });
+
+    const meta = readMetadata(dataDir, "app-pr-hist");
+    expect(meta).not.toBeNull();
+    expect(meta!.prHistory).toBe(history);
+  });
+
   it("returns null for nonexistent session", () => {
     const meta = readMetadata(dataDir, "nonexistent");
     expect(meta).toBeNull();

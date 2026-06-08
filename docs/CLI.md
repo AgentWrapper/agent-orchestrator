@@ -25,14 +25,22 @@ These are primarily invoked by the orchestrator agent running inside a runtime s
 ```bash
 ao spawn [issue]                       # Spawn an agent (project auto-detected from cwd)
 ao spawn 123 --agent codex             # Override agent for this session
+ao spawn --claim-pr 42 --claim-pr-repo org/repo
 ao batch-spawn 101 102 103             # Spawn agents for multiple issues at once
 ao send <session> "Fix the tests"      # Send instructions to a running agent
 ao session ls                          # List active sessions (terminated hidden)
 ao session ls --include-terminated     # Include killed/done/merged/errored/cleanup sessions
 ao session ls --json                   # Machine-readable session inventory (see note below)
+ao session claim-pr 42 app-1 --repo org/repo
 ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
 ```
+
+`ao session claim-pr` accepts a bare PR number or a PR URL. When the PR lives
+outside the configured project repository, pass `--repo owner/repo`; AO records
+the replaced primary PR in `prHistory` metadata before switching the session to
+the new PR. `ao spawn --claim-pr` supports the same repository override via
+`--claim-pr-repo`.
 
 > **JSON output:** `ao session ls --json` and `ao status --json` emit
 > `{ "data": [...], "meta": { "hiddenTerminatedCount": N } }`. Terminated sessions

@@ -97,6 +97,7 @@ function resolveProjectAndIssue(
 
 interface SpawnClaimOptions {
   claimPr?: string;
+  claimPrRepo?: string;
   assignOnGithub?: boolean;
 }
 
@@ -245,6 +246,7 @@ async function spawnSession(
       try {
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
+          repoOverride: claimOptions.claimPrRepo,
         });
         claimedPrUrl = claimResult.pr.url;
       } catch (err) {
@@ -303,6 +305,7 @@ export function registerSpawn(program: Command): void {
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
+    .option("--claim-pr-repo <owner/repo>", "Resolve --claim-pr against this repository")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option(
       "--prompt <text>",
@@ -315,6 +318,7 @@ export function registerSpawn(program: Command): void {
           open?: boolean;
           agent?: string;
           claimPr?: string;
+          claimPrRepo?: string;
           assignOnGithub?: boolean;
           prompt?: string;
         },
@@ -345,9 +349,14 @@ export function registerSpawn(program: Command): void {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
           process.exit(1);
         }
+        if (!opts.claimPr && opts.claimPrRepo) {
+          console.error(chalk.red("--claim-pr-repo requires --claim-pr on `ao spawn`."));
+          process.exit(1);
+        }
 
         const claimOptions: SpawnClaimOptions = {
           claimPr: opts.claimPr,
+          claimPrRepo: opts.claimPrRepo,
           assignOnGithub: opts.assignOnGithub,
         };
 
