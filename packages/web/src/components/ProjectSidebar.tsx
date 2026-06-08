@@ -720,7 +720,7 @@ function ProjectSidebarInner({
                     key={session.id}
                     href={sessionHref}
                     onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                       e.preventDefault();
                       navigate(sessionHref, session);
                     }}
@@ -830,7 +830,7 @@ function ProjectSidebarInner({
                   <a
                     href={projectHref}
                     onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                       e.preventDefault();
                       navigate(projectHref);
                     }}
@@ -900,8 +900,10 @@ function ProjectSidebarInner({
                     href={projectHref}
                     prefetch={false}
                     onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                      e.preventDefault();
                       e.stopPropagation();
-                      onMobileClose?.();
+                      navigate(projectHref);
                     }}
                     className="project-sidebar__proj-action"
                     aria-label={`Open ${project.name} dashboard`}
