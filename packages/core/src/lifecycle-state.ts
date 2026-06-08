@@ -495,14 +495,23 @@ export function deriveLegacyStatus(
 export function buildLifecycleMetadataPatch(
   lifecycle: CanonicalSessionLifecycle,
 ): Partial<Record<string, string>> {
-  return {
+  const patch: Partial<Record<string, string>> = {
     lifecycle: JSON.stringify(lifecycle),
     // status is NOT persisted — computed on read via deriveLegacyStatus()
     pr: lifecycle.pr.url ?? "",
-    runtimeHandle: lifecycle.runtime.handle ? JSON.stringify(lifecycle.runtime.handle) : "",
-    tmuxName: lifecycle.runtime.tmuxName ?? "",
     role: lifecycle.session.kind === "orchestrator" ? "orchestrator" : "",
   };
+  // The runtime handle is the session's address (tmux target, PID, etc.).
+  // A transient terminated transition must not erase it; only explicit cleanup
+  // (archive) removes the flat keys. Omit the key when null so the disk value
+  // is left alone.
+  if (lifecycle.runtime.handle) {
+    patch.runtimeHandle = JSON.stringify(lifecycle.runtime.handle);
+  }
+  if (lifecycle.runtime.tmuxName) {
+    patch.tmuxName = lifecycle.runtime.tmuxName;
+  }
+  return patch;
 }
 
 export function cloneLifecycle(lifecycle: CanonicalSessionLifecycle): CanonicalSessionLifecycle {

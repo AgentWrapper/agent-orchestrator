@@ -156,8 +156,16 @@ export function buildTransitionMetadataPatch(
 
   patch["pr"] = lifecycle.pr.url ?? "";
 
-  patch["runtimeHandle"] = lifecycle.runtime.handle ? JSON.stringify(lifecycle.runtime.handle) : "";
-  patch["tmuxName"] = lifecycle.runtime.tmuxName ?? "";
+  // Preserve the runtime address across terminated transitions — the handle is
+  // the only routing key for `ao send`, dashboard attach, and liveness probes.
+  // Omit the key when null so an earlier flat `runtimeHandle=` on disk survives.
+  // Explicit cleanup (archive) removes the keys through a different path. See #1458.
+  if (lifecycle.runtime.handle) {
+    patch["runtimeHandle"] = JSON.stringify(lifecycle.runtime.handle);
+  }
+  if (lifecycle.runtime.tmuxName) {
+    patch["tmuxName"] = lifecycle.runtime.tmuxName;
+  }
 
   patch["role"] = lifecycle.session.kind === "orchestrator" ? "orchestrator" : "";
 

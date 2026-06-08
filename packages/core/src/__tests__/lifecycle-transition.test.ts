@@ -9,7 +9,7 @@ import {
   createStateTransitionDecision,
 } from "../lifecycle-transition.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
-import { readMetadataRaw } from "../metadata.js";
+import { readCanonicalLifecycle, readMetadataRaw } from "../metadata.js";
 import type { LifecycleDecision } from "../lifecycle-status-decisions.js";
 import type { CanonicalSessionLifecycle } from "../types.js";
 
@@ -219,7 +219,7 @@ describe("buildTransitionMetadataPatch", () => {
     expect(JSON.parse(patch["lifecycle"])).toHaveProperty("version", 2);
   });
 
-  it("clears stale PR, runtime, and role metadata when lifecycle no longer carries them", () => {
+  it("clears stale PR and role metadata when lifecycle no longer carries them", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker");
     const decision: LifecycleDecision = {
       status: "working",
@@ -232,9 +232,45 @@ describe("buildTransitionMetadataPatch", () => {
     const patch = buildTransitionMetadataPatch(lifecycle, decision);
 
     expect(patch["pr"]).toBe("");
-    expect(patch["runtimeHandle"]).toBe("");
-    expect(patch["tmuxName"]).toBe("");
     expect(patch["role"]).toBe("");
+  });
+
+  it("omits runtimeHandle and tmuxName when lifecycle has no handle (preserves flat keys on disk)", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker");
+    lifecycle.session.state = "terminated";
+    lifecycle.session.reason = "runtime_lost";
+    const decision: LifecycleDecision = {
+      status: "terminated",
+      evidence: "runtime_dead process_dead",
+      detecting: { attempts: 0 },
+      sessionState: "terminated",
+      sessionReason: "runtime_lost",
+    };
+
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
+
+    // Not "" — an empty string would delete the key. Omitting the key leaves
+    // the existing disk value untouched. See issue #1458.
+    expect("runtimeHandle" in patch).toBe(false);
+    expect("tmuxName" in patch).toBe(false);
+  });
+
+  it("writes runtimeHandle and tmuxName when the lifecycle carries a handle", () => {
+    const lifecycle = createInitialCanonicalLifecycle("worker");
+    lifecycle.runtime.handle = { id: "tmux-1", runtimeName: "tmux", data: {} };
+    lifecycle.runtime.tmuxName = "tmux-1";
+    const decision: LifecycleDecision = {
+      status: "working",
+      evidence: "active",
+      detecting: { attempts: 0 },
+    };
+
+    const patch = buildTransitionMetadataPatch(lifecycle, decision);
+
+    expect(patch["runtimeHandle"]).toBe(
+      JSON.stringify({ id: "tmux-1", runtimeName: "tmux", data: {} }),
+    );
+    expect(patch["tmuxName"]).toBe("tmux-1");
   });
 });
 
@@ -331,7 +367,7 @@ describe("applyLifecycleDecision (integration)", () => {
     expect(meta?.["summary"]).toBe("worker reported PR creation");
   });
 
-  it("clears stale metadata fields that are absent from the next lifecycle", () => {
+  it("clears stale pr and role metadata but preserves runtimeHandle/tmuxName across transitions", () => {
     const lifecycle = createInitialCanonicalLifecycle("worker");
     lifecycle.session.state = "working";
     lifecycle.session.reason = "task_in_progress";
@@ -367,9 +403,68 @@ describe("applyLifecycleDecision (integration)", () => {
 
     const meta = readMetadataRaw(dataDir, "test-3");
     expect(meta?.["pr"]).toBeUndefined();
-    expect(meta?.["runtimeHandle"]).toBeUndefined();
-    expect(meta?.["tmuxName"]).toBeUndefined();
     expect(meta?.["role"]).toBeUndefined();
+    // Runtime address must survive — it's the only routing key for send/attach. See #1458.
+    expect(meta?.["runtimeHandle"]).toBe(
+      JSON.stringify({ id: "rt-1", runtimeName: "tmux", data: {} }),
+    );
+    expect(meta?.["tmuxName"]).toBe("tmux-1");
+  });
+
+  it("preserves runtimeHandle and tmuxName on disk when a terminated transition nulls the in-memory handle", () => {
+    // Regression for #1458: a probe disagreement trips `terminated + runtime_lost`.
+    // The in-memory lifecycle may end up with runtime.handle=null. Before the fix,
+    // the patch wrote `runtimeHandle=""` which deleted the flat key, permanently
+    // losing the tmux name even though the tmux session was still alive.
+    const priorLifecycle = createInitialCanonicalLifecycle("worker");
+    priorLifecycle.session.state = "working";
+    priorLifecycle.session.reason = "task_in_progress";
+    priorLifecycle.runtime.state = "alive";
+    priorLifecycle.runtime.reason = "process_running";
+    priorLifecycle.runtime.handle = { id: "host-ao-17", runtimeName: "tmux", data: {} };
+    priorLifecycle.runtime.tmuxName = "host-ao-17";
+
+    writeTestSession("test-1458", {
+      status: "working",
+      stateVersion: "2",
+      statePayload: JSON.stringify(priorLifecycle),
+      runtimeHandle: JSON.stringify({ id: "host-ao-17", runtimeName: "tmux", data: {} }),
+      tmuxName: "host-ao-17",
+      worktree: "/tmp/test",
+      branch: "main",
+    });
+
+    const result = applyLifecycleDecision({
+      dataDir,
+      sessionId: "test-1458",
+      decision: {
+        status: "terminated",
+        evidence: "runtime_dead process_dead",
+        detecting: { attempts: 0 },
+        sessionState: "terminated",
+        sessionReason: "runtime_lost",
+      },
+      source: "poll",
+    });
+
+    expect(result.success).toBe(true);
+
+    const meta = readMetadataRaw(dataDir, "test-1458");
+    // Flat keys preserved on disk.
+    expect(meta?.["runtimeHandle"]).toBe(
+      JSON.stringify({ id: "host-ao-17", runtimeName: "tmux", data: {} }),
+    );
+    expect(meta?.["tmuxName"]).toBe("host-ao-17");
+
+    // Re-parsing rehydrates the handle even if the payload ended up with
+    // runtime.handle/tmuxName = null.
+    const reparsed = readCanonicalLifecycle(dataDir, "test-1458");
+    expect(reparsed?.runtime.handle).toEqual({
+      id: "host-ao-17",
+      runtimeName: "tmux",
+      data: {},
+    });
+    expect(reparsed?.runtime.tmuxName).toBe("host-ao-17");
   });
 
   it("validates stored legacy status before deriving the previous status", () => {

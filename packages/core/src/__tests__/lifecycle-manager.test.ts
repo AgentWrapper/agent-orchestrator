@@ -439,13 +439,16 @@ describe("check (single session)", () => {
 
     const metadata = readMetadataRaw(env.sessionsDir, "app-1");
     expect(metadata?.["pr"]).toBeUndefined();
-    expect(metadata?.["runtimeHandle"]).toBeUndefined();
-    expect(metadata?.["tmuxName"]).toBeUndefined();
     expect(metadata?.["role"]).toBeUndefined();
     expect(currentSession.metadata["pr"]).toBeUndefined();
-    expect(currentSession.metadata["runtimeHandle"]).toBeUndefined();
-    expect(currentSession.metadata["tmuxName"]).toBeUndefined();
     expect(currentSession.metadata["role"]).toBeUndefined();
+    // runtimeHandle / tmuxName intentionally preserved on disk across lifecycle
+    // writes — they are the routing address for `ao send` and dashboard
+    // attach, and must only be removed by explicit cleanup. See issue #1458.
+    expect(metadata?.["runtimeHandle"]).toBe(
+      JSON.stringify({ id: "stale", runtimeName: "mock", data: {} }),
+    );
+    expect(metadata?.["tmuxName"]).toBe("stale-tmux");
   });
 
   it("does not kill a spawning session when its runtime handle has not been persisted yet", async () => {
