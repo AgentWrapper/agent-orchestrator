@@ -2,25 +2,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { type Session, type SessionManager, getProjectBaseDir } from "@aoagents/ao-core";
+import {
+  recordActivityEvent,
+  type Session,
+  type SessionManager,
+  getProjectBaseDir,
+} from "@aoagents/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockGetRunning } = vi.hoisted(
-  () => ({
-    mockExec: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-      claimPR: vi.fn(),
-    },
-    mockGetRunning: vi.fn(),
-  }),
-);
+const { mockExec, mockConfigRef, mockSessionManager, mockGetRunning } = vi.hoisted(() => ({
+  mockExec: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+    claimPR: vi.fn(),
+  },
+  mockGetRunning: vi.fn(),
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
@@ -49,6 +52,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    recordActivityEvent: vi.fn(),
   };
 });
 
@@ -85,6 +89,9 @@ import { registerSpawn, registerBatchSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+const recordedEvents = (): Array<Record<string, unknown>> =>
+  vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0] as Record<string, unknown>);
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-spawn-test-"));
@@ -134,6 +141,7 @@ beforeEach(() => {
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockGetRunning.mockReset();
+  vi.mocked(recordActivityEvent).mockClear();
   mockRegistryGet.mockReset().mockReturnValue(null);
   mockGetRunning.mockResolvedValue({ pid: 1234, port: 3000, startedAt: "", projects: ["my-app"] });
 });
@@ -534,9 +542,7 @@ describe("spawn command", () => {
   it("reports error when spawn fails", async () => {
     mockSessionManager.spawn.mockRejectedValue(new Error("worktree creation failed"));
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
   });
 
   it("claims a PR for the spawned session when --claim-pr is provided", async () => {
@@ -628,14 +634,7 @@ describe("spawn command", () => {
       takenOverFrom: ["app-9"],
     });
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "spawn",
-      "--claim-pr",
-      "123",
-      "--assign-on-github",
-    ]);
+    await program.parseAsync(["node", "test", "spawn", "--claim-pr", "123", "--assign-on-github"]);
 
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
       assignOnGithub: true,
@@ -736,6 +735,19 @@ describe("spawn pre-flight checks", () => {
       .mock.calls.map((c) => String(c[0]))
       .join("\n");
     expect(errors).toContain("tmux is not installed");
+    expect(recordedEvents()).toContainEqual(
+      expect.objectContaining({
+        kind: "cli.spawn_failed",
+        source: "cli",
+        projectId: "my-app",
+        level: "error",
+        data: expect.objectContaining({
+          issueId: null,
+          agent: null,
+          errorMessage: "tmux is not installed. Install it: brew install tmux",
+        }),
+      }),
+    );
     expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
@@ -860,7 +872,9 @@ describe("batch-spawn command", () => {
     return cmd;
   }
 
-  function makeFakeSession(overrides: Partial<Session> & Pick<Session, "id" | "projectId">): Session {
+  function makeFakeSession(
+    overrides: Partial<Session> & Pick<Session, "id" | "projectId">,
+  ): Session {
     return {
       status: "spawning",
       activity: null,

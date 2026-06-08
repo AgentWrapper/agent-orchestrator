@@ -1,5 +1,90 @@
 # @aoagents/ao-core
 
+## 0.9.1
+
+### Patch Changes
+
+- 2d4c457: Fix canary nightly to include all publishable packages and fix Next.js import.meta.url build path issue
+
+## 0.9.0
+
+### Minor Changes
+
+- 73bed33: Wire activity events into webhook ingress and the mux WebSocket terminal server (sub-issue of #1511, follows #1620).
+  - `api.webhook_unverified` (warn) — signature verification failed; data includes `slug`, `remoteAddr`, `candidateCount` (never the failed signature)
+  - `api.webhook_rejected` (warn) — payload exceeded `maxBodyBytes`; data includes counts and `maxBodyBytes` (never the body)
+  - `api.webhook_received` (info|warn) — accepted webhook; data includes `projectIds`, `matchedSessions`, `parseErrorCount`, `lifecycleErrorCount` (never the body)
+  - `api.webhook_failed` (error) — outer pipeline crash with `errorMessage`
+  - `ui.terminal_connected` / `ui.terminal_disconnected` — one event per mux WS connection lifecycle
+  - `ui.terminal_heartbeat_lost` (warn) — fires once on 3 missed pongs (was console-only)
+  - `ui.terminal_pty_lost` (warn) — fires when PTY exits with subscribers attached (distinguishes "PTY died" from "user closed browser")
+  - `ui.terminal_protocol_error` (warn) — invalid mux client message
+  - `ui.session_broadcast_failed` (warn) — emitted on the healthy→failing transition only (re-arms after a successful poll), so a long outage produces one event, not 20/min
+
+  `api.webhook_unverified` is the security-audit event; treat 401s on webhooks as a signal worth retaining for the full 7-day window.
+
+- 7d9b862: Replace Claude Code terminal-regex activity detection with platform-event hooks (#1941).
+
+  Claude Code emits a lifecycle hook on every state transition that matters
+  (`PermissionRequest`, `StopFailure`, `Notification`, `Stop`, `PreToolUse`,
+  …). Until now, AO ignored all but one of them and tried to infer the
+  same information by regex-matching Claude's rendered terminal output —
+  fragile by construction. Every Claude UI tweak (footer wording, status
+  verb, spinner glyph) broke a heuristic; PR #1932 spent 15 commits
+  patching the sharpest edges.
+
+  This release pivots:
+
+  **`@aoagents/ao-plugin-agent-claude-code`** now installs two scripts per
+  workspace:
+  - `metadata-updater` — unchanged; PostToolUse(Bash) extracts gh/git
+    side-effects (PR URL, branch, merge status).
+  - `activity-updater` — new; registered on every hook that carries
+    activity information (SessionStart, UserPromptSubmit, PreToolUse,
+    PostToolUse, PostToolUseFailure, PostToolBatch, Notification,
+    PermissionRequest, Stop, StopFailure, SubagentStart, SubagentStop,
+    PreCompact, PostCompact). The script reads the JSON payload from
+    stdin, maps `hook_event_name` to an activity state, and appends a
+    JSONL entry to `{workspace}/.ao/activity.jsonl` with `source: "hook"`.
+
+  Notification is filtered by `notification_type` so `auth_success` /
+  `elicitation_*` no longer false-fire `waiting_input` (the RFC's blanket
+  "Notification → waiting_input" would have regressed here).
+
+  The terminal-regex layer (`classifyTerminalOutput`, ~80 LOC of
+  patterns + `agent.recordActivity`) is retired. `detectActivity` stays on
+  the Agent interface for other agents but is now a stable `return "idle"`
+  stub for Claude — the JSONL-backed cascade is the only source of truth
+  for active / ready / waiting_input / blocked.
+
+  **`@aoagents/ao-core`** extends `ActivityLogEntry.source` and
+  `ActivitySignalSource` with a `"hook"` value so the new entries are
+  parseable and their provenance is visible in telemetry. No downstream
+  consumer needs changes — the cascade has always read whatever source
+  appeared in the JSONL, and the new tests assert hook-sourced entries
+  flow through `checkActivityLogState` / `getActivityFallbackState`
+  identically to terminal-sourced ones.
+
+  Idempotent install: calling `setupWorkspaceHooks` twice keeps exactly
+  one entry per event and preserves user-installed hooks alongside ours.
+  Cross-platform: bash + Node (.cjs) variants behave identically against a
+  shared 52-case scenario table.
+
+- 6d48022: Wire CLI activity events into `ao start`, `ao stop`, `ao spawn`, `ao update`, `ao setup`, `ao migrate-storage`, and shared CLI helpers. `ao events list --source cli` now answers RCA questions like "did AO start cleanly?", "was AO killed or did it crash?", and "did `ao spawn`/`ao stop` fail and why?". Adds `"cli"` to the `ActivityEventSource` union and 30+ event-emit sites covering startup, graceful and forced shutdown, restore, project resolution, config recovery, and migration paths.
+- fcedb25: Wire activity events for the recovery subsystem, metadata-corruption detection, and agent-report apply path. New event kinds: `recovery.session_failed`, `recovery.action_failed`, `metadata.corrupt_detected`, `api.agent_report.session_not_found`, `api.agent_report.transition_rejected`. Adds `"recovery"` to the `ActivityEventSource` union. Lets RCA reconstruct `ao recover` invocations, find every silent metadata overwrite, and audit rejected agent transitions. Adds `ao events list --source` and `--kind` so these forensic event queries are available from the CLI.
+- 94981dc: feat: "Launch Orchestrator (clean context)" action on the orchestrator session page
+
+  Adds a `Relaunch (clean)` action on the orchestrator session page that replaces the project's canonical orchestrator with a fresh one — killing the existing orchestrator, deleting its metadata, and spawning a new session with no carryover state. Backed by a new `SessionManager.relaunchOrchestrator(config)` method that ignores `orchestratorSessionStrategy`. Removes the now-redundant Orchestrator Selector page (`/orchestrators?project=X`) — there is only ever one orchestrator per project, so a selector page is no longer meaningful. Closes #1900 and #1080.
+
+### Patch Changes
+
+- a610601: Split Claude Code activity-detection logic out of `index.ts` into a dedicated `activity-detection.ts` module. Removes two unreachable switch branches (`case "permission_request"` → `waiting_input` and `case "error"` → `blocked`) that targeted JSONL types Claude never actually emits. `waiting_input` continues to flow through the AO activity-JSONL safety net added in #1903.
+
+  Closes the `blocked` gap for Claude Code: extend `readLastJsonlEntry` in core to also surface top-level `subtype` and `level` fields, and map `{type:"system", level:"error"}` → `blocked` in the cascade. This catches Claude's real api_error shape (`{type:"system", subtype:"api_error", level:"error", cause:{code:"ConnectionRefused"|"FailedToOpenSocket"|...}}`) so a session stuck in the API retry loop now reports `blocked` instead of `ready`. New fields on `readLastJsonlEntry` are additive and don't break existing callers (Codex, OpenCode, Aider).
+
+- 2980570: Add the notifier test harness, dashboard notifications, and desktop notifier setup.
+- d5d0f07: Rebuild missing better-sqlite3 native bindings during ao postinstall and replace noisy activity-events native-binding failures with a one-line diagnostic.
+
 ## 0.8.0
 
 ### Minor Changes

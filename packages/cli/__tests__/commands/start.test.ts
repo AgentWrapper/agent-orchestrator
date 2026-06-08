@@ -15,11 +15,16 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { EventEmitter } from "node:events";
-import type { SessionManager } from "@aoagents/ao-core";
+import {
+  generateExternalId,
+  getDefaultRuntime,
+  recordActivityEvent,
+  type SessionManager,
+} from "@aoagents/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -153,6 +158,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
     sweepDaemonChildren: mockSweepDaemonChildren,
     scanAoOrphans: mockScanAoOrphans,
     reapAoOrphans: mockReapAoOrphans,
+    recordActivityEvent: vi.fn(),
   };
 });
 
@@ -336,6 +342,7 @@ beforeEach(async () => {
   program.exitOverride();
   registerStart(program);
   registerStop(program);
+  vi.mocked(recordActivityEvent).mockClear();
 
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -504,6 +511,9 @@ function makeProject(overrides: Record<string, unknown> = {}): Record<string, un
     ...overrides,
   };
 }
+
+const recordedEvents = (): Array<Record<string, unknown>> =>
+  vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0] as Record<string, unknown>);
 
 /** Mock process.cwd() to return a specific directory (avoids process.chdir in workers). */
 function mockCwd(dir: string): void {
@@ -1571,6 +1581,19 @@ describe("start command — orchestrator session strategy display", () => {
     await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
 
     expect(releaseStartupLock).toHaveBeenCalledTimes(1);
+    const startFailedEvents = recordedEvents().filter((e) => e.kind === "cli.start_failed");
+    expect(startFailedEvents).toHaveLength(1);
+    expect(startFailedEvents[0]).toEqual(
+      expect.objectContaining({
+        projectId: "my-app",
+        source: "cli",
+        level: "error",
+        data: expect.objectContaining({
+          reason: "orchestrator_setup",
+          errorMessage: "Spawn failed",
+        }),
+      }),
+    );
   });
 
   it("fails and cleans up dashboard when sm.restore throws on a killed orchestrator", async () => {
@@ -1649,6 +1672,56 @@ describe("start command — orchestrator session strategy display", () => {
     expect(written.sessionIds).toEqual(["app-2"]);
     expect(written.projectId).toBe("my-app");
     expect(written.stoppedAt).toBe("2026-04-28T10:00:00.000Z");
+  });
+
+  it("attributes other-project restore failures to the owning project", async () => {
+    mockReadLastStop.mockResolvedValue({
+      stoppedAt: "2026-04-28T10:00:00.000Z",
+      projectId: "my-app",
+      sessionIds: ["app-1"],
+      otherProjects: [{ projectId: "other-app", sessionIds: ["other-1"] }],
+    });
+
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject(),
+      "other-app": makeProject({ name: "Other App", sessionPrefix: "other" }),
+    });
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = { on: vi.fn(), kill: vi.fn(), emit: vi.fn() };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.restore.mockImplementation((id: string) => {
+      if (id === "other-1") return Promise.reject(new Error("workspace gone"));
+      return Promise.resolve(undefined);
+    });
+
+    await program.parseAsync(["node", "test", "start", "my-app", "--no-orchestrator"]);
+
+    const restoreFailedEvents = recordedEvents().filter(
+      (e) => e.kind === "cli.restore_session_failed",
+    );
+    expect(restoreFailedEvents).toHaveLength(1);
+    expect(restoreFailedEvents[0]).toEqual(
+      expect.objectContaining({
+        projectId: "other-app",
+        sessionId: "other-1",
+        source: "cli",
+        level: "warn",
+        data: expect.objectContaining({ errorMessage: "workspace gone" }),
+      }),
+    );
+
+    const written = mockWriteLastStop.mock.calls[0][0];
+    expect(written).toEqual(
+      expect.objectContaining({
+        projectId: "my-app",
+        sessionIds: [],
+        otherProjects: [{ projectId: "other-app", sessionIds: ["other-1"] }],
+      }),
+    );
   });
 
   it("clears last-stop record when every session restored successfully", async () => {
@@ -1740,6 +1813,46 @@ describe("stop command", () => {
       .join("\n");
     expect(output).toContain("Orchestrator stopped");
     expect(output).toContain("app-orchestrator-3");
+  });
+
+  it("does not show the project picker for no-args ao stop across multiple projects", async () => {
+    mockConfigRef.current = makeConfig({
+      "project-1": makeProject({ name: "Project 1", sessionPrefix: "p1" }),
+      "project-2": makeProject({ name: "Project 2", sessionPrefix: "p2" }),
+    });
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "p1-1",
+        projectId: "project-1",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-1" },
+      },
+      {
+        id: "p2-1",
+        projectId: "project-2",
+        status: "working",
+        activity: "active",
+        metadata: {},
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-2" },
+      },
+    ]);
+    mockSessionManager.kill.mockResolvedValue({ cleaned: true, alreadyTerminated: false });
+    mockPromptConfirm.mockResolvedValue(true);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockPromptSelect).not.toHaveBeenCalledWith(
+      expect.stringContaining("Choose project to stop"),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(mockPromptConfirm).toHaveBeenCalledWith("Stop AO and 2 active session(s)?", false);
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("p1-1", { purgeOpenCode: false });
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("p2-1", { purgeOpenCode: false });
   });
 
   it("kills the most-recently-active orchestrator when multiple exist", async () => {
@@ -2254,7 +2367,7 @@ describe("start command — platform-aware runtime fallback", () => {
 // ---------------------------------------------------------------------------
 
 describe("start command — autoCreateConfig", () => {
-  it("generates config with empty notifiers array (no desktop notifier added by default)", async () => {
+  it("writes a flat local config and returns the global project identity", async () => {
     const { detectEnvironment } = await import("../../src/lib/detect-env.js");
     vi.mocked(detectEnvironment).mockResolvedValue({
       isGitRepo: true,
@@ -2277,9 +2390,6 @@ describe("start command — autoCreateConfig", () => {
     vi.mocked(detectAvailableAgents).mockResolvedValue([]);
     vi.mocked(detectAgentRuntime).mockResolvedValue("claude-code");
 
-    const { findFreePort } = await import("../../src/lib/web-dir.js");
-    vi.mocked(findFreePort).mockResolvedValue(3000);
-
     // start.ts uses `import { cwd } from "node:process"` which is intercepted
     // by the node:process mock defined at the top of this file.
     mockProcessCwd.mockReturnValue(tmpDir);
@@ -2288,20 +2398,79 @@ describe("start command — autoCreateConfig", () => {
     const callerContext = await import("../../src/lib/caller-context.js");
     vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
 
-    await autoCreateConfig(tmpDir);
+    const config = await autoCreateConfig(tmpDir);
 
     const configPath = join(tmpDir, "agent-orchestrator.yaml");
     expect(existsSync(configPath)).toBe(true);
 
     const content = readFileSync(configPath, "utf-8");
     const parsed = parseYaml(content) as {
-      $schema?: string;
-      defaults?: { notifiers?: unknown[] };
+      projects?: unknown;
+      runtime?: string;
+      agent?: string;
+      workspace?: string;
     };
-    expect(parsed["$schema"]).toBe(
-      "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json",
+    expect(parsed.projects).toBeUndefined();
+    expect(parsed.runtime).toBe(getDefaultRuntime());
+    expect(parsed.agent).toBe("claude-code");
+    expect(parsed.workspace).toBe("worktree");
+
+    const globalConfigPath = process.env["AO_GLOBAL_CONFIG"]!;
+    const globalContent = readFileSync(globalConfigPath, "utf-8");
+    const globalParsed = parseYaml(globalContent) as {
+      defaults?: { notifiers?: unknown[] };
+      projects?: Record<string, { path?: string; sessionPrefix?: string }>;
+    };
+    expect(globalParsed.defaults?.notifiers).toEqual(["composio", "desktop"]);
+
+    const projectIds = Object.keys(globalParsed.projects ?? {});
+    expect(projectIds).toHaveLength(1);
+    expect(config.configPath).toBe(configPath);
+    expect(Object.keys(config.projects)).toEqual(projectIds);
+    expect(config.projects[projectIds[0]!]!.path).toBe(realpathSync(tmpDir));
+  });
+
+  it("removes the flat local config when global registration fails", async () => {
+    const { detectEnvironment } = await import("../../src/lib/detect-env.js");
+    vi.mocked(detectEnvironment).mockResolvedValue({
+      isGitRepo: true,
+      gitRemote: null,
+      ownerRepo: null,
+      currentBranch: "main",
+      defaultBranch: "main",
+      hasTmux: true,
+      hasGh: false,
+      ghAuthed: false,
+      hasLinearKey: false,
+      hasSlackWebhook: false,
+    });
+
+    const { detectProjectType } = await import("../../src/lib/project-detection.js");
+    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [], tools: [] });
+
+    const { detectAvailableAgents, detectAgentRuntime } =
+      await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAvailableAgents).mockResolvedValue([]);
+    vi.mocked(detectAgentRuntime).mockResolvedValue("claude-code");
+
+    mockProcessCwd.mockReturnValue(tmpDir);
+
+    const callerContext = await import("../../src/lib/caller-context.js");
+    vi.spyOn(callerContext, "isHumanCaller").mockReturnValue(false);
+
+    writeFileSync(
+      process.env["AO_GLOBAL_CONFIG"]!,
+      [
+        "projects:",
+        `  ${basename(tmpDir)}:`,
+        `    path: ${join(tmpDir, "other-repo")}`,
+        "",
+      ].join("\n"),
     );
-    expect(parsed.defaults?.notifiers).toEqual([]);
+
+    await expect(autoCreateConfig(tmpDir)).rejects.toThrow("already registered");
+
+    expect(existsSync(join(tmpDir, "agent-orchestrator.yaml"))).toBe(false);
   });
 });
 
@@ -2658,6 +2827,82 @@ describe("start command — already-running detection", () => {
     // The new entry should have a suffix like "my-app-xxxx"
     const newKey = projectKeys.find((k) => k !== "my-app");
     expect(newKey).toMatch(/^my-app-/);
+  });
+
+  it("creates new orchestrator entry in the global registry when cwd config is flat", async () => {
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 9999,
+      configPath: "/fake/config.yaml",
+      port: 3000,
+      startedAt: "2026-01-01T00:00:00Z",
+      projects: ["agent-orchestrator_5dce9e3fe8"],
+    });
+
+    mockPromptSelect.mockResolvedValue("new");
+
+    const repoDir = join(tmpDir, "agent-orchestrator");
+    createFakeRepo(repoDir, "https://github.com/org/agent-orchestrator.git");
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const projectId = generateExternalId(
+      repoDir,
+      "https://github.com/org/agent-orchestrator.git",
+    );
+    const globalConfigPath = process.env["AO_GLOBAL_CONFIG"]!;
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      globalConfigPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            [projectId]: {
+              projectId,
+              path: repoDir,
+              defaultBranch: "main",
+              displayName: "Agent Orchestrator",
+              sessionPrefix: "app",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+
+    mockConfigRef.current = makeConfig({
+      [projectId]: makeProject({
+        name: "Agent Orchestrator",
+        path: repoDir,
+        sessionPrefix: "app",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = localConfigPath;
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } catch {
+      // Startup may throw after the config mutation; this test only covers
+      // the flat-config new-orchestrator mutation path.
+    }
+
+    const updatedGlobal = parseYaml(readFileSync(globalConfigPath, "utf-8")) as {
+      projects: Record<string, Record<string, unknown>>;
+    };
+    const projectKeys = Object.keys(updatedGlobal.projects);
+    expect(projectKeys).toHaveLength(2);
+    expect(projectKeys).toContain(projectId);
+    const newKey = projectKeys.find((key) => key !== projectId);
+    expect(newKey).toMatch(new RegExp(`^${projectId}-`));
+    expect(updatedGlobal.projects[newKey!].path).toBe(repoDir);
+
+    const localConfig = readFileSync(localConfigPath, "utf-8");
+    expect(localConfig).not.toContain("projects:");
   });
 
   it("does not mutate YAML when non-TTY caller detects already running (path arg)", async () => {
@@ -3038,6 +3283,62 @@ describe("start command — global registry mutations", () => {
       else process.env["AO_CONFIG_PATH"] = origEnv;
       if (origGlobalEnv === undefined) delete process.env["AO_GLOBAL_CONFIG"];
       else process.env["AO_GLOBAL_CONFIG"] = origGlobalEnv;
+    }
+  });
+
+  it("writes interactive agent overrides to a flat repo-local config", async () => {
+    const repoDir = join(tmpDir, "current");
+    createFakeRepo(repoDir, "https://github.com/org/current.git");
+
+    const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
+    writeFileSync(localConfigPath, "agent: claude-code\n");
+
+    const projectId = generateExternalId(repoDir, "https://github.com/org/current.git");
+    mockConfigRef.current = makeConfig({
+      [projectId]: makeProject({
+        name: "Current",
+        path: repoDir,
+        sessionPrefix: "current",
+      }),
+    });
+    (mockConfigRef.current as Record<string, unknown>).configPath = localConfigPath;
+
+    const detectAgent = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAgent.detectAvailableAgents).mockResolvedValue([
+      { name: "claude-code", displayName: "Claude Code" },
+      { name: "codex", displayName: "OpenAI Codex" },
+    ]);
+    mockPromptSelect.mockResolvedValueOnce("claude-code").mockResolvedValueOnce("codex");
+    const originalStdinTty = process.stdin.isTTY;
+    const originalStdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "--interactive",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const localConfig = readFileSync(localConfigPath, "utf-8");
+      expect(localConfig).toContain("agent: claude-code");
+      expect(localConfig).toContain("orchestrator:");
+      expect(localConfig).toContain("worker:");
+      expect(localConfig).toContain("agent: codex");
+      expect(localConfig).not.toContain("projects:");
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: originalStdinTty,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: originalStdoutTty,
+        configurable: true,
+      });
     }
   });
 });

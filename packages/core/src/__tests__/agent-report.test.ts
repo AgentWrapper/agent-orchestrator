@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -18,17 +18,25 @@ import {
 } from "../agent-report.js";
 import { writeMetadata, writeCanonicalLifecycle, readMetadataRaw } from "../metadata.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
+import { recordActivityEvent } from "../activity-events.js";
 import type { CanonicalSessionLifecycle } from "../types.js";
 
+vi.mock("../activity-events.js", () => ({
+  recordActivityEvent: vi.fn(),
+}));
+
 let dataDir: string;
+let tempRoot: string;
 
 beforeEach(() => {
-  dataDir = join(tmpdir(), `ao-test-agent-report-${randomUUID()}`);
+  tempRoot = join(tmpdir(), `ao-test-agent-report-${randomUUID()}`);
+  dataDir = join(tempRoot, "projects", "project-alpha", "sessions");
   mkdirSync(dataDir, { recursive: true });
+  vi.mocked(recordActivityEvent).mockClear();
 });
 
 afterEach(() => {
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(tempRoot, { recursive: true, force: true });
 });
 
 function seedWorkerSession(
@@ -433,6 +441,13 @@ describe("applyAgentReport", () => {
         sessionState: "terminated",
       },
     });
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-alpha",
+        sessionId,
+        kind: "api.agent_report.transition_rejected",
+      }),
+    );
   });
 
   it("throws when the session does not exist", () => {
@@ -442,6 +457,13 @@ describe("applyAgentReport", () => {
         now: new Date(),
       }),
     ).toThrow(/not found/);
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-alpha",
+        sessionId: "missing-session",
+        kind: "api.agent_report.session_not_found",
+      }),
+    );
   });
 
   // 260 atomic-write cycles are slow on Windows (rename + AV scan); bump the

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AO — Kanban</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0b0d; --bg-side:#08090b; --bg-top:#0a0b0d;
+    --col:#0e0f12;                 /* column trough */
+    --card:#15171b; --card-hover:#191b20;
+    --ui:"Schibsted Grotesk",sans-serif; --mono:"JetBrains Mono",monospace;
+    --t1:#f4f5f7; --t2:#9ba1aa; --t3:#646a73; --t4:#444951;
+    --line:rgba(255,255,255,0.06); --line-2:rgba(255,255,255,0.10);
+    --blue:#4d8dff; --blue-soft:#7eaaff;
+    --orange:#f59f4c; --amber:#e8c14a; --red:#ef6b6b; --green:#74b98a;
+    --hover:rgba(255,255,255,0.04); --hover-2:rgba(255,255,255,0.07);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--t1);font-family:var(--ui);-webkit-font-smoothing:antialiased;overflow:hidden;font-size:14px}
+  button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+  .app{height:100%;display:grid;grid-template-columns:256px 1fr;grid-template-rows:56px 1fr;
+    grid-template-areas:"side top" "side main"}
+
+  /* ---- sidebar (same restrained language) ---- */
+  .sidebar{grid-area:side;background:var(--bg-side);border-right:1px solid var(--line);overflow-y:auto;padding:16px 12px;display:flex;flex-direction:column}
+  .brand{display:flex;align-items:center;gap:10px;padding:2px 8px 20px}
+  .mark{width:26px;height:26px;border-radius:7px;background:#000;overflow:hidden;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--line),0 2px 10px rgba(77,141,255,.18)}
+  .mark img{width:23px;height:23px;object-fit:contain;image-rendering:pixelated}
+  .brand .name{font-weight:700;font-size:14px;letter-spacing:-.015em}
+  .brand .name b{font-weight:400;color:var(--t3)}
+  .nav-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--t4);padding:0 8px 8px;display:flex;justify-content:space-between}
+  .nav-label button{color:var(--t4);font-size:13px}
+  .proj{margin-bottom:1px}
+  .prow{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:5px;cursor:pointer}
+  .prow:hover{background:var(--hover)} .prow.sel{background:var(--hover-2)}
+  .prow .chev{font-size:8px;color:var(--t4);width:8px}
+  .prow .pn{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t2)}
+  .prow.sel .pn{color:var(--t1);font-weight:600}
+  .prow .ct{font-size:11px;color:var(--t3);font-family:var(--mono)}
+  .slist{padding:2px 0 8px 5px;margin-left:8px;border-left:1px solid var(--line)}
+  .ses{display:flex;align-items:center;gap:10px;padding:5px 8px 5px 10px;border-radius:5px;cursor:pointer}
+  .ses:hover{background:var(--hover)}
+  .ses .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--t4)}
+  .ses .sn{font-size:12px;color:var(--t2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono)}
+  .ses .si{font-size:10px;color:var(--t4);font-family:var(--mono)}
+  .ses.act .dot{background:var(--orange);animation:breathe 2.4s ease-in-out infinite}
+  .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;gap:2px}
+  .side-foot button{width:30px;height:30px;border-radius:6px;color:var(--t3);display:grid;place-items:center;font-size:14px}
+  .side-foot button:hover{background:var(--hover);color:var(--t1)}
+
+  /* ---- topbar ---- */
+  .topbar{grid-area:top;background:var(--bg-top);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:13px;padding:0 20px}
+  .crumb{display:flex;align-items:center;gap:10px}
+  .crumb .h{font-weight:600;font-size:14.5px;letter-spacing:-.01em}
+  .tabs{display:flex;gap:2px;margin-left:6px}
+  .tabs button{font-size:12.5px;font-weight:500;color:var(--t3);padding:5px 11px;border-radius:6px}
+  .tabs button.on{color:var(--t1);background:var(--hover-2)}
+  .tabs button:hover{color:var(--t1)}
+  .spacer{flex:1}
+  .pill{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--t2);padding:5px 11px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line)}
+  .pill .d{width:6px;height:6px;border-radius:50%;background:var(--orange);animation:breathe 2.4s ease-in-out infinite}
+  .ibtn{width:34px;height:34px;border-radius:7px;display:grid;place-items:center;color:var(--t2);position:relative}
+  .ibtn:hover{background:var(--hover);color:var(--t1)}
+  .ibtn .bdg{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 2px var(--bg-top)}
+  .btn{padding:8px 15px;border-radius:7px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .btn-primary{background:var(--blue);color:#fff} .btn-primary:hover{background:#5b97ff}
+
+  /* ---- board ---- */
+  .main{grid-area:main;overflow:hidden;display:flex;flex-direction:column;padding:22px 22px 0}
+  .bhead{display:flex;align-items:baseline;gap:12px;margin-bottom:18px;padding:0 2px}
+  .bhead h1{font-size:21px;font-weight:700;letter-spacing:-.025em}
+  .bhead .sub{font-size:12.5px;color:var(--t3)}
+
+  .board{flex:1;display:grid;grid-template-columns:repeat(4,minmax(280px,1fr));gap:16px;min-height:0;padding-bottom:14px}
+  /* borderless tinted troughs — one fill, no stroke. cards are the only bordered box.
+     each column carries a faint semantic top-glow in its own colour (consistent treatment). */
+  .column{display:flex;flex-direction:column;min-height:0;position:relative;border-radius:13px;
+    background:linear-gradient(180deg,rgba(var(--cg),.06),transparent 130px),rgba(255,255,255,.018);overflow:hidden}
+  .col-head{display:flex;align-items:center;gap:9px;padding:14px 15px 11px}
+  .col-head .cd{width:7px;height:7px;border-radius:50%;box-shadow:0 0 7px rgba(var(--cg),.6)}
+  .col-head .ct{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:rgb(var(--ctc,155,161,170))}
+  .col-head .cn{margin-left:auto;font-size:11px;color:var(--t3);font-family:var(--mono)}
+  /* column semantic palettes: --cg glow rgb, --ctc title rgb, .cd dot */
+  .c-work {--cg:245,159,76; --ctc:231,180,131} .c-work .cd{background:var(--orange)}
+  .c-attn {--cg:232,193,74; --ctc:227,207,141} .c-attn .cd{background:var(--amber)}
+  .c-rev  {--cg:140,160,190; --ctc:160,170,185} .c-rev .cd{background:var(--t2)}
+  .c-ready{--cg:116,185,138; --ctc:150,200,168} .c-ready .cd{background:var(--green)}
+
+  .col-body{flex:1;overflow-y:auto;padding:0 11px 12px;display:flex;flex-direction:column;gap:10px;position:relative}
+  .col-body::-webkit-scrollbar{width:8px} .col-body::-webkit-scrollbar-thumb{background:var(--hover-2);border-radius:8px}
+
+  .empty{flex:1;display:grid;place-items:center;color:var(--t4);font-size:12px;text-align:center;padding:30px 16px;border:1px dashed var(--line);border-radius:8px}
+
+  /* ---- card (compact) ---- */
+  .k{background:var(--card);border-radius:7px;box-shadow:inset 0 0 0 1px var(--line);padding:12px 13px;cursor:pointer;transition:background .14s,box-shadow .14s}
+  .k:hover{background:var(--card-hover);box-shadow:inset 0 0 0 1px var(--line-2)}
+  .k-top{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .k-id{font-family:var(--mono);font-size:10.5px;color:var(--t3)}
+  .k-stat{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;color:var(--t3)}
+  .k-stat .d{width:6px;height:6px;border-radius:50%;background:var(--t3)}
+  .k-stat.working{color:var(--orange)} .k-stat.working .d{background:var(--orange);animation:breathe 2.4s ease-in-out infinite}
+  .k-stat.input{color:var(--amber)} .k-stat.input .d{background:var(--amber)}
+  .k-stat.fail{color:var(--red)} .k-stat.fail .d{background:var(--red)}
+  .k-stat.changes{color:var(--amber)} .k-stat.changes .d{background:var(--amber)}
+  .k-stat.ready{color:var(--green)} .k-stat.ready .d{background:var(--green)}
+  .k-spacer{flex:1}
+  .k-term{font-size:10px;color:var(--t4);font-family:var(--mono);display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:5px;opacity:0;transition:.14s}
+  .k:hover .k-term{opacity:1} .k-term:hover{background:var(--hover-2);color:var(--t2)}
+
+  .k-title{font-size:13px;font-weight:500;line-height:1.42;color:var(--t1);letter-spacing:-.01em;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:10px}
+  .k-branch{font-family:var(--mono);font-size:11px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .k-branch .g{color:var(--t4);display:inline-flex;align-items:center}
+  .nav-label button,.side-foot button,.ibtn,.k-term{display:inline-flex;align-items:center;justify-content:center}
+  .k-foot{display:flex;align-items:center;gap:10px;font-size:10.5px;color:var(--t3);font-family:var(--mono);border-top:1px solid var(--line);padding-top:9px}
+  .k-foot .pr{color:var(--t2)}
+  .k-foot .ok{color:var(--green)} .k-foot .bad{color:var(--red)}
+  .k-foot .sep{flex:1}
+  @keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .donerow{display:flex;align-items:center;gap:10px;padding:11px 4px 16px;color:var(--t3);font-size:12px}
+  .donerow .chev{font-size:9px;color:var(--t4)}
+  .donerow .n{font-family:var(--mono);font-size:11px;color:var(--t4)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="mark"><img src="mascot.png" alt="AO" /></span><span class="name">Agent<b> / </b>Orchestrator</span></div>
+    <div class="nav-label">Projects <button><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
+    <div class="proj"><div class="prow"><span class="chev">▸</span><span class="pn">integrator</span><span class="ct">5</span></div></div>
+    <div class="proj">
+      <div class="prow sel"><span class="chev">▾</span><span class="pn">Agent Orchestrator</span><span class="ct">4</span></div>
+      <div class="slist">
+        <div class="ses act"><span class="dot"></span><span class="sn">session/ao-204</span><span class="si">ao-204</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">docs/architecture-doc</span><span class="si">ao-201</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">docs/architecture-doc-claude</span><span class="si">ao-202</span></div>
+        <div class="ses"><span class="dot"></span><span class="sn">test/onboarding-harness</span><span class="si">ao-203</span></div>
+      </div>
+    </div>
+    <div class="proj"><div class="prow"><span class="chev">▸</span><span class="pn">mercury</span><span class="ct">2</span></div></div>
+    <div class="proj"><div class="prow"><span class="chev">▸</span><span class="pn">WorkOS</span><span class="ct">0</span></div></div>
+    <div class="proj"><div class="prow"><span class="chev">▸</span><span class="pn">Eng Hiring</span><span class="ct">0</span></div></div>
+    <div class="side-foot">
+      <button><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></button>
+      <button><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 2.5 2.5L16 9"/></svg></button>
+      <button><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8"/><circle cx="15" cy="8" r="2.3"/><line x1="4" x2="20" y1="16" y2="16"/><circle cx="9" cy="16" r="2.3"/></svg></button>
+      <button><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg></button>
+    </div>
+  </aside>
+
+  <header class="topbar">
+    <div class="crumb"><span class="h">Agent Orchestrator</span></div>
+    <div class="tabs"><button class="on">Board</button><button>Reviews</button><button>Activity</button></div>
+    <div class="spacer"></div>
+    <div class="pill"><span class="d"></span>2 working</div>
+    <button class="ibtn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bdg"></span></button>
+    <button class="btn btn-primary">New agent</button>
+  </header>
+
+  <main class="main">
+    <div class="bhead"><h1>Board</h1><span class="sub">Live agent sessions flowing from work → review → merge.</span></div>
+
+    <div class="board">
+
+      <!-- WORKING -->
+      <section class="column c-work">
+        <div class="col-head"><span class="cd"></span><span class="ct">Working</span><span class="cn">2</span></div>
+        <div class="col-body">
+          <div class="k">
+            <div class="k-top"><span class="k-stat working"><span class="d"></span>Working</span><span class="k-spacer"></span><span class="k-id">ao-204</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Brainstorm the design language &amp; component library for the dashboard</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>session/ao-204</div>
+            <div class="k-foot"><span class="pr">PR #2051</span><span>CI running</span><span class="sep"></span><span>$2.41</span></div>
+          </div>
+          <div class="k">
+            <div class="k-top"><span class="k-stat working"><span class="d"></span>Working</span><span class="k-spacer"></span><span class="k-id">int-7</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Wire internal API behind the ALB with Tailscale-only ingress</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>feat/internal-api-alb-tailscale</div>
+            <div class="k-foot"><span class="t4">drafting PR…</span><span class="sep"></span><span>$1.07</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- NEEDS YOU -->
+      <section class="column c-attn">
+        <div class="col-head"><span class="cd"></span><span class="ct">Needs you</span><span class="cn">2</span></div>
+        <div class="col-body">
+          <div class="k">
+            <div class="k-top"><span class="k-stat input"><span class="d"></span>Needs input</span><span class="k-spacer"></span><span class="k-id">int-6</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Add API-key auth to the integrator service</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>feat/int-6-api-key-auth</div>
+            <div class="k-foot"><span class="pr">PR #2044</span><span>approve migration?</span><span class="sep"></span><span>$0.88</span></div>
+          </div>
+          <div class="k">
+            <div class="k-top"><span class="k-stat fail"><span class="d"></span>CI failed</span><span class="k-spacer"></span><span class="k-id">int-8</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Sanitize tool output in the Cortex security pipeline</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>security/cortex-sanitize-tool-output</div>
+            <div class="k-foot"><span class="pr">PR #2049</span><span class="bad">2 checks failed</span><span class="sep"></span><span>$3.10</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- IN REVIEW -->
+      <section class="column c-rev">
+        <div class="col-head"><span class="cd"></span><span class="ct">In review</span><span class="cn">2</span></div>
+        <div class="col-body">
+          <div class="k">
+            <div class="k-top"><span class="k-stat"><span class="d"></span>Review pending</span><span class="k-spacer"></span><span class="k-id">ao-201</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Produce a high-quality HTML architecture design doc</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>docs/architecture-doc</div>
+            <div class="k-foot"><span class="pr">PR #2038</span><span class="ok">✓ CI passed</span><span class="sep"></span><span>$1.20</span></div>
+          </div>
+          <div class="k">
+            <div class="k-top"><span class="k-stat changes"><span class="d"></span>Changes req.</span><span class="k-spacer"></span><span class="k-id">mer-43</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Auth RCA improvements from the incident review</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>docs/auth-rca-improvements</div>
+            <div class="k-foot"><span class="pr">PR #2031</span><span>3 comments</span><span class="sep"></span><span>$0.74</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- READY -->
+      <section class="column c-ready">
+        <div class="col-head"><span class="cd"></span><span class="ct">Ready to merge</span><span class="cn">1</span></div>
+        <div class="col-body">
+          <div class="k">
+            <div class="k-top"><span class="k-stat ready"><span class="d"></span>Mergeable</span><span class="k-spacer"></span><span class="k-id">ao-203</span><span class="k-term"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>terminal</span></div>
+            <div class="k-title">Build an end-to-end onboarding test for the published npm package</div>
+            <div class="k-branch"><span class="g"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="4" x2="6" y2="14"/><circle cx="6" cy="17" r="2.3"/><circle cx="18" cy="7" r="2.3"/><path d="M18 9.3a8 8 0 0 1-8 8"/></svg></span>test/onboarding-harness</div>
+            <div class="k-foot"><span class="pr">PR #2042</span><span class="ok">✓ approved</span><span class="sep"></span><span>$0.64</span></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="donerow"><span class="chev">▸</span>Done / Terminated<span class="n">· 32</span></div>
+  </main>
+</div>
+</body>
+</html>

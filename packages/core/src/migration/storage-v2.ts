@@ -30,6 +30,7 @@ import { parseKeyValueContent } from "../key-value.js";
 import { generateSessionPrefix } from "../paths.js";
 import { atomicWriteFileSync } from "../atomic-write.js";
 import { withFileLockSync } from "../file-lock.js";
+import { recordActivityEvent } from "../activity-events.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1209,6 +1210,16 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     const knownPrefixes = extractProjectPrefixes(effectiveConfigPath);
     const activeSessions = await detectActiveSessions(knownPrefixes);
     if (activeSessions.length > 0) {
+      recordActivityEvent({
+        source: "migration",
+        kind: "migration.blocked",
+        level: "warn",
+        summary: `migration blocked by ${activeSessions.length} active session(s)`,
+        data: {
+          activeSessionCount: activeSessions.length,
+          sample: activeSessions.slice(0, 5),
+        },
+      });
       throw new Error(
         `Found ${activeSessions.length} active AO tmux session(s): ${activeSessions.slice(0, 5).join(", ")}${activeSessions.length > 5 ? "..." : ""}. ` +
         `Kill active sessions first (ao session kill --all) or use --force to migrate anyway.`,
@@ -1228,7 +1239,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
     if (!dryRun && existsSync(markerPath)) {
       try { unlinkSync(markerPath); } catch { /* best-effort */ }
     }
-    return {
+    const totals: MigrationResult = {
       projects: 0,
       sessions: 0,
       worktrees: 0,
@@ -1237,6 +1248,24 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
       claudeSessionsRelinked: 0,
       codexSessionsRewritten: 0,
     };
+    recordActivityEvent({
+      source: "migration",
+      kind: "migration.completed",
+      level: "info",
+      summary: "migration completed: 0 project(s), 0 session(s)",
+      data: {
+        dryRun,
+        projectsMigrated: totals.projects,
+        sessions: totals.sessions,
+        worktrees: totals.worktrees,
+        strayWorktreesMoved: totals.strayWorktreesMoved,
+        claudeSessionsRelinked: totals.claudeSessionsRelinked,
+        codexSessionsRewritten: totals.codexSessionsRewritten,
+        emptyDirsDeleted: totals.emptyDirsDeleted,
+        projectErrors: 0,
+      },
+    });
+    return totals;
   }
 
   log(`Found ${hashDirs.length} legacy director${hashDirs.length === 1 ? "y" : "ies"}.`);
@@ -1315,6 +1344,18 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
       const msg = err instanceof Error ? err.message : String(err);
       log(`  ERROR migrating project ${projectId}: ${msg}`);
       projectErrors.push({ projectId, error: msg });
+      recordActivityEvent({
+        projectId,
+        source: "migration",
+        kind: "migration.project_failed",
+        level: "error",
+        summary: `migration failed for project ${projectId}`,
+        data: {
+          dryRun,
+          hashDirCount: dirs.length,
+          error: msg,
+        },
+      });
       continue;
     }
 
@@ -1343,6 +1384,18 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
               projectErrors.push({
                 projectId,
                 error: `Failed to rename ${basename(dir.path)} to ${basename(migratedPath)}: ${msg}`,
+              });
+              recordActivityEvent({
+                projectId,
+                source: "migration",
+                kind: "migration.rename_failed",
+                level: "error",
+                summary: `failed to rename ${basename(dir.path)} to .migrated`,
+                data: {
+                  from: basename(dir.path),
+                  to: basename(migratedPath),
+                  error: msg,
+                },
               });
             }
           }
@@ -1413,6 +1466,27 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   if (!dryRun && existsSync(markerPath) && projectErrors.length === 0) {
     try { unlinkSync(markerPath); } catch { /* best-effort */ }
   }
+
+  recordActivityEvent({
+    source: "migration",
+    kind: "migration.completed",
+    level: projectErrors.length > 0 ? "warn" : "info",
+    summary:
+      projectErrors.length > 0
+        ? `migration finished with ${projectErrors.length} error(s)`
+        : `migration completed: ${totals.projects} project(s), ${totals.sessions} session(s)`,
+    data: {
+      dryRun,
+      projectsMigrated: totals.projects,
+      sessions: totals.sessions,
+      worktrees: totals.worktrees,
+      strayWorktreesMoved: totals.strayWorktreesMoved,
+      claudeSessionsRelinked: totals.claudeSessionsRelinked,
+      codexSessionsRewritten: totals.codexSessionsRewritten,
+      emptyDirsDeleted: totals.emptyDirsDeleted,
+      projectErrors: projectErrors.length,
+    },
+  });
 
   return totals;
 }
@@ -1587,6 +1661,16 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
       if (postMigrationSessions > 0) {
         log(`  Warning: projects/${projectId} has ${postMigrationSessions} session(s) created after migration — skipping deletion.`);
         log(`    These sessions exist only in projects/${projectId}/ and would be lost. Remove manually after verifying.`);
+        recordActivityEvent({
+          projectId,
+          source: "migration",
+          kind: "migration.rollback_skipped",
+          level: "warn",
+          summary: `rollback skipped projects/${projectId} — ${postMigrationSessions} post-migration session(s)`,
+          data: {
+            postMigrationSessions,
+          },
+        });
       } else {
         safeToDeleteProjects.add(projectId);
       }

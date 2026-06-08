@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
-import { SessionNotFoundError } from "@aoagents/ao-core";
+import { SessionNotFoundError, recordActivityEvent } from "@aoagents/ao-core";
 import {
   getCorrelationId,
   jsonWithCorrelation,
@@ -32,6 +32,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       statusCode: 200,
       projectId,
       sessionId: id,
+    });
+    recordActivityEvent({
+      projectId,
+      sessionId: id,
+      source: "api",
+      kind: "api.session_remap_requested",
+      summary: `session remap requested: ${id}`,
     });
     return jsonWithCorrelation(
       { ok: true, sessionId: id, opencodeSessionId },
@@ -74,6 +81,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           reason: msg,
         });
       }
+      recordActivityEvent({
+        projectId,
+        sessionId: id,
+        source: "api",
+        kind: "api.session_remap_failed",
+        level: "warn",
+        summary: `session remap failed: ${msg}`,
+        data: { reason: msg, statusCode: 422 },
+      });
       return jsonWithCorrelation({ error: msg }, { status: 422 }, correlationId);
     }
     if (config) {
@@ -90,6 +106,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         reason: msg,
       });
     }
+    recordActivityEvent({
+      projectId,
+      sessionId: id,
+      source: "api",
+      kind: "api.session_remap_failed",
+      level: "error",
+      summary: `session remap failed: ${msg}`,
+      data: { reason: msg, statusCode: 500 },
+    });
     return jsonWithCorrelation({ error: msg }, { status: 500 }, correlationId);
   }
 }

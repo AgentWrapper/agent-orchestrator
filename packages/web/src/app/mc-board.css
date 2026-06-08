@@ -1,0 +1,289 @@
+/* Mission-control: mc-board screen styles. Loaded after globals.css (layout.tsx) so
+   these rules win on equal specificity. Tokens: var(--bg/--card/--t1..--t4/
+   --blue/--orange/--amber/--red/--green/--line/--line-2/--hover/--hover-2). */
+
+/* ── Topbar (mockup .topbar) ─────────────────────────────────────────
+   Brand block now lives in the sidebar — restyle the header as page tabs,
+   a "N working" pill, a notifications bell, and one blue primary action. */
+.dashboard-app-header {
+  height: 56px;
+  gap: 13px;
+  padding: 0 20px;
+}
+
+/* Page tabs (mockup .tabs) — flat text tabs, not a boxed segmented switch. */
+.dashboard-app-header .workspace-mode-switch {
+  margin-left: 6px;
+  gap: 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.dashboard-app-header .workspace-mode-switch__item {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--t3);
+}
+
+.dashboard-app-header .workspace-mode-switch__item:hover {
+  background: transparent;
+  color: var(--t1);
+}
+
+.dashboard-app-header .workspace-mode-switch__item--active {
+  background: var(--hover-2);
+  color: var(--t1);
+  box-shadow: none;
+}
+
+/* Project label reads as a crumb to the left of the tabs. */
+.dashboard-app-header__project {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--t1);
+}
+
+/* "N working" pill (mockup .pill) — hairline ring, breathing orange dot. */
+.topbar-status-pill--active {
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t2);
+}
+
+.topbar-status-pill--active .topbar-status-pill__dot--working {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+/* Bell icon button (mockup .ibtn) — frameless ghost button. */
+.dashboard-app-header .dashboard-notification-btn.dashboard-app-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--t2);
+}
+
+.dashboard-app-header .dashboard-notification-btn.dashboard-app-btn:hover {
+  background: var(--hover);
+  color: var(--t1);
+}
+
+/* Blue solid-fill primary action (mockup .btn-primary). */
+.dashboard-app-header .dashboard-app-btn--primary {
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Board header (mockup .bhead) ────────────────────────────────────
+   "Board" 21px/700, tight tracking, with an inline subtitle. */
+.dashboard-main__subhead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 22px 18px 0;
+}
+
+.dashboard-main__title {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.dashboard-main__subtitle {
+  margin-top: 0;
+  font-size: 12.5px;
+  color: var(--t3);
+}
+
+/* ── Column heads (mockup .col-head) ─────────────────────────────────
+   Small dot with a semantic glow + uppercase tinted title (.08em) +
+   mono count pushed right. The trough/glow already live in globals. */
+.kanban-column__header {
+  padding: 14px 15px 11px;
+}
+
+.kanban-column__title-row {
+  gap: 9px;
+}
+
+.kanban-column__dot {
+  width: 7px;
+  height: 7px;
+}
+
+.kanban-column__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-family: var(--font-sans);
+  color: var(--ctc, var(--t2));
+}
+
+.kanban-column__count {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--t3);
+}
+
+/* Per-column dot glow + tinted title, mirroring kanban.html .c-work/.c-attn/.c-rev/.c-ready */
+.kanban-column[data-level="working"] {
+  --ctc: rgb(231, 180, 131);
+}
+.kanban-column[data-level="working"] .kanban-column__dot {
+  background: var(--orange);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--orange) 60%, transparent);
+}
+.kanban-column[data-level="action"],
+.kanban-column[data-level="respond"] {
+  --ctc: rgb(227, 207, 141);
+}
+.kanban-column[data-level="action"] .kanban-column__dot,
+.kanban-column[data-level="respond"] .kanban-column__dot {
+  background: var(--amber);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--amber) 60%, transparent);
+}
+.kanban-column[data-level="pending"],
+.kanban-column[data-level="review"] {
+  --ctc: rgb(160, 170, 185);
+}
+.kanban-column[data-level="pending"] .kanban-column__dot,
+.kanban-column[data-level="review"] .kanban-column__dot {
+  background: var(--t2);
+}
+.kanban-column[data-level="merge"] {
+  --ctc: rgb(150, 200, 168);
+}
+.kanban-column[data-level="merge"] .kanban-column__dot {
+  background: var(--green);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--green) 60%, transparent);
+}
+
+/* ── Column body — gaps/padding to match the mockup .col-body ─────── */
+.kanban-column-body {
+  padding: 0 11px 12px;
+}
+
+.kanban-column__stack {
+  gap: 10px;
+}
+
+/* ── Card (mockup .k) ────────────────────────────────────────────────
+   Header: StatusBadge · spacer · mono id · hover-only "terminal" link.
+   Title 13px/500 2-line clamp. Branch its own mono line. Footer thin
+   top-bordered info row. Most of this lives in globals; here we set the
+   compact paddings and the hover-revealed terminal link (mockup .k-term). */
+.session-card__header {
+  gap: 8px;
+  padding: 12px 13px 9px;
+}
+
+.card__title-wrap {
+  padding: 0 13px 10px;
+}
+
+.card__meta {
+  padding: 0 13px 10px;
+}
+
+.session-card__footer {
+  gap: 10px;
+  padding: 9px 13px 11px;
+}
+
+/* Hover-revealed terminal link (mockup .k-term) — faint mono, no chrome. */
+.session-card__terminal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--t4);
+  opacity: 0;
+  transition:
+    opacity 0.14s ease,
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+.session-card:hover .session-card__terminal-link,
+.session-card:focus-within .session-card__terminal-link {
+  opacity: 1;
+}
+
+.session-card__terminal-link:hover {
+  background: var(--hover-2);
+  color: var(--t2);
+  text-decoration: none;
+}
+
+.session-card__terminal-link-icon {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+/* ── Done / Terminated row (mockup .donerow) ─────────────────────────── */
+.done-bar__toggle {
+  padding: 11px 4px 16px;
+  color: var(--t3);
+  font-size: 12px;
+}
+
+.done-bar__count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--t4);
+}
+
+/* ── Empty-state ghost columns — match the live frameless tinted troughs ──
+   (override globals.css: 4 columns, no dashed/warm border, per the new board.) */
+.kanban-ghost {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.kanban-ghost__col {
+  border: none;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.018);
+  opacity: 1;
+}
+
+.dark .kanban-ghost__col {
+  border-color: transparent;
+}
+
+.kanban-ghost__head {
+  padding: 14px 15px 11px;
+  border-bottom: none;
+  letter-spacing: 0.08em;
+  color: var(--t3, #646a73);
+}
+
+.dark .kanban-ghost__head {
+  border-bottom-color: transparent;
+}
