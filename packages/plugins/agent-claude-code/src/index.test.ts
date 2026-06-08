@@ -17,6 +17,7 @@ const {
   mockReadFile,
   mockReadFileSync,
   mockStat,
+  mockOpen,
   mockHomedir,
   mockWriteFile,
   mockMkdir,
@@ -29,6 +30,7 @@ const {
   mockReadFile: vi.fn(),
   mockReadFileSync: vi.fn(() => ""),
   mockStat: vi.fn(),
+  mockOpen: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
   mockMkdir: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +50,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
   readFile: mockReadFile,
   stat: mockStat,
+  open: mockOpen,
   writeFile: mockWriteFile,
   mkdir: mockMkdir,
   chmod: mockChmod,
@@ -149,14 +152,41 @@ function mockTmuxWithProcess(processName = "claude", tty = "/dev/ttys001", pid =
   });
 }
 
+function makeFakeFileHandle(content: string) {
+  const buf = Buffer.from(content, "utf-8");
+  return {
+    read: vi
+      .fn()
+      .mockImplementation(
+        (buffer: Buffer, offset: number, length: number, position: number | null) => {
+          const start = position ?? 0;
+          if (start >= buf.length) return Promise.resolve({ bytesRead: 0, buffer });
+          const bytesToCopy = Math.min(length, buf.length - start);
+          buf.copy(buffer, offset, start, start + bytesToCopy);
+          return Promise.resolve({ bytesRead: bytesToCopy, buffer });
+        },
+      ),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function setupMockOpenContent(content: string) {
+  mockOpen.mockImplementation(async () => makeFakeFileHandle(content));
+}
+
 function mockJsonlFiles(
   jsonlContent: string,
   files = ["session-abc123.jsonl"],
   mtime = new Date(1700000000000),
 ) {
   mockReaddir.mockResolvedValue(files);
-  mockStat.mockResolvedValue({ mtimeMs: mtime.getTime(), mtime });
+  mockStat.mockResolvedValue({
+    mtimeMs: mtime.getTime(),
+    mtime,
+    size: Buffer.byteLength(jsonlContent),
+  });
   mockReadFile.mockResolvedValue(jsonlContent);
+  setupMockOpenContent(jsonlContent);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +198,7 @@ beforeEach(() => {
   mockHomedir.mockReturnValue("/mock/home");
   // Default: non-Windows so existing tests are unaffected
   mockIsWindows.mockReturnValue(false);
+  setupMockOpenContent("");
 });
 
 describe("toClaudeProjectPath", () => {
@@ -388,7 +419,10 @@ describe("isProcessRunning", () => {
     ["windows exe", "claude.exe"],
     ["js shim", "claude.js"],
     ["hyphenated name", "claude-code"],
-    ["node-shim npm install", "node /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+    [
+      "node-shim npm install",
+      "node /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+    ],
   ])("returns true for %s (%s)", async (_label, args) => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
@@ -530,9 +564,12 @@ describe("detectActivity (retired — see #1941)", () => {
     "     Retrying in 19s · attempt 7/10\n",
     "✻ Fluttering… (6m 49s · ↓ 26.9k tokens)\n",
     "some random terminal output\n",
-  ])("returns idle for ALL non-empty input (no terminal-regex active/waiting_input/blocked): %s", (input) => {
-    expect(agent.detectActivity(input)).toBe("idle");
-  });
+  ])(
+    "returns idle for ALL non-empty input (no terminal-regex active/waiting_input/blocked): %s",
+    (input) => {
+      expect(agent.detectActivity(input)).toBe("idle");
+    },
+  );
 });
 
 // =========================================================================
@@ -682,103 +719,18 @@ describe("getSessionInfo", () => {
     });
   });
 
-  describe("cost estimation", () => {
-    it("aggregates usage.input_tokens and usage.output_tokens", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"type":"assistant","usage":{"input_tokens":1000,"output_tokens":500}}',
-        '{"type":"assistant","usage":{"input_tokens":2000,"output_tokens":300}}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.inputTokens).toBe(3000);
-      expect(result?.cost?.outputTokens).toBe(800);
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.009 + 0.012, 6);
-    });
-
-    it("includes cache tokens in input count", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"type":"assistant","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":500,"cache_creation_input_tokens":200}}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.inputTokens).toBe(800);
-      expect(result?.cost?.outputTokens).toBe(50);
-    });
-
-    it("uses model-aware pricing when cached tokens are present", async () => {
-      const jsonl = [
-        '{"type":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":1000,"output_tokens":100,"cache_read_input_tokens":10000,"cache_creation_input_tokens":2000}}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.inputTokens).toBe(13000);
-      expect(result?.cost?.outputTokens).toBe(100);
-      expect(result?.cost?.estimatedCostUsd).toBeGreaterThan(0);
-    });
-
-    it("uses costUSD field when present", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"costUSD":0.05}',
-        '{"costUSD":0.03}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.08);
-    });
-
-    it("prefers costUSD over estimatedCostUsd to avoid double-counting", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"costUSD":0.10,"estimatedCostUsd":0.10}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      // Should use costUSD only, not sum both
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.1);
-    });
-
-    it("falls back to estimatedCostUsd when costUSD is absent", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"estimatedCostUsd":0.12}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.12);
-    });
-
-    it("uses direct inputTokens/outputTokens fields", async () => {
-      const jsonl = [
-        '{"type":"user","message":{"content":"hi"}}',
-        '{"inputTokens":5000,"outputTokens":1000}',
-      ].join("\n");
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost?.inputTokens).toBe(5000);
-      expect(result?.cost?.outputTokens).toBe(1000);
-    });
-
-    it("returns undefined cost when no usage data", async () => {
-      const jsonl = '{"type":"user","message":{"content":"hi"}}';
-      mockJsonlFiles(jsonl);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.cost).toBeUndefined();
-    });
-  });
-
   describe("file selection", () => {
     it("picks the most recently modified JSONL file", async () => {
       mockReaddir.mockResolvedValue(["old.jsonl", "new.jsonl"]);
       mockStat.mockImplementation((path: string) => {
         if (path.endsWith("old.jsonl")) {
-          return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000) });
+          return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000), size: 48 });
         }
-        return Promise.resolve({ mtimeMs: 2000, mtime: new Date(2000) });
+        return Promise.resolve({ mtimeMs: 2000, mtime: new Date(2000), size: 48 });
       });
-      mockReadFile.mockResolvedValue('{"type":"user","message":{"content":"hi"}}');
+      const content = '{"type":"user","message":{"content":"hi"}}';
+      mockReadFile.mockResolvedValue(content);
+      setupMockOpenContent(content);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("new");
     });
@@ -789,9 +741,11 @@ describe("getSessionInfo", () => {
         if (path.endsWith("broken.jsonl")) {
           return Promise.reject(new Error("ENOENT"));
         }
-        return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000) });
+        return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000), size: 48 });
       });
-      mockReadFile.mockResolvedValue('{"type":"user","message":{"content":"hi"}}');
+      const content = '{"type":"user","message":{"content":"hi"}}';
+      mockReadFile.mockResolvedValue(content);
+      setupMockOpenContent(content);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("good");
     });
@@ -1066,25 +1020,22 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     expect(chmodCall![1]).toBe(0o755);
   });
 
-  it.each(ACTIVITY_EVENTS)(
-    "registers the activity-updater hook on %s",
-    async (event) => {
-      mockWriteFile.mockClear();
-      await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+  it.each(ACTIVITY_EVENTS)("registers the activity-updater hook on %s", async (event) => {
+    mockWriteFile.mockClear();
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
 
-      const settings = getParsedSettings();
-      const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
-        matcher: string;
-        hooks: Array<{ command: string; timeout?: number }>;
-      }>;
-      expect(hookGroup).toBeDefined();
-      const activity = hookGroup.flatMap((g) => g.hooks).find((h) => h.command === ACTIVITY_CMD_UNIX);
-      expect(activity).toBeDefined();
-      // The script does a single JSON parse + append — short timeout keeps a
-      // stuck hook from slowing the turn down.
-      expect(activity!.timeout).toBe(2000);
-    },
-  );
+    const settings = getParsedSettings();
+    const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string; timeout?: number }>;
+    }>;
+    expect(hookGroup).toBeDefined();
+    const activity = hookGroup.flatMap((g) => g.hooks).find((h) => h.command === ACTIVITY_CMD_UNIX);
+    expect(activity).toBeDefined();
+    // The script does a single JSON parse + append — short timeout keeps a
+    // stuck hook from slowing the turn down.
+    expect(activity!.timeout).toBe(2000);
+  });
 
   it("registers activity-updater PostToolUse alongside metadata-updater", async () => {
     mockWriteFile.mockClear();
@@ -1127,9 +1078,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
       const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
         hooks: Array<{ command: string }>;
       }>;
-      const activityHooks = hookGroup.flatMap((g) => g.hooks).filter(
-        (h) => h.command === ACTIVITY_CMD_UNIX,
-      );
+      const activityHooks = hookGroup
+        .flatMap((g) => g.hooks)
+        .filter((h) => h.command === ACTIVITY_CMD_UNIX);
       expect(activityHooks).toHaveLength(1);
     }
   });
@@ -1215,9 +1166,7 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
       matcher: string;
       hooks: Array<{ command: string }>;
     }>;
-    const sharedEntry = pre.find((g) =>
-      g.hooks.some((h) => h.command === "echo user-edits-only"),
-    );
+    const sharedEntry = pre.find((g) => g.hooks.some((h) => h.command === "echo user-edits-only"));
     expect(sharedEntry).toBeDefined();
     // Matcher must NOT be overwritten — user's hook keeps firing on "Edit|Write"
     expect(sharedEntry!.matcher).toBe("Edit|Write");
@@ -1249,7 +1198,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     const stopGroup = (settings.hooks as Record<string, unknown>)["Stop"] as Array<{
       hooks: Array<{ command: string }>;
     }>;
-    expect(stopGroup.flatMap((g) => g.hooks).some((h) => h.command === ACTIVITY_CMD_WIN)).toBe(true);
+    expect(stopGroup.flatMap((g) => g.hooks).some((h) => h.command === ACTIVITY_CMD_WIN)).toBe(
+      true,
+    );
 
     mockIsWindows.mockReturnValue(false);
   });

@@ -10,12 +10,12 @@ import {
   recordTerminalActivity,
   isWindows,
   PROCESS_PROBE_INDETERMINATE,
+  isTerminalSession,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityState,
   type ActivityDetection,
-  type CostEstimate,
   type PluginModule,
   type ProcessProbeResult,
   type ProjectConfig,
@@ -24,12 +24,10 @@ import {
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
-import { createReadStream } from "node:fs";
 import { readdir, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -58,17 +56,10 @@ export const manifest = {
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 const SESSION_MATCH_SCAN_CHUNK_BYTES = 8192;
 const SESSION_MATCH_SCAN_LINE_LIMIT = 10;
+const SESSION_METADATA_SCAN_LINE_LIMIT = 100;
+const SESSION_METADATA_SCAN_BYTE_LIMIT = 1_000_000;
 
-interface CodexTokenUsage {
-  input_tokens?: number;
-  output_tokens?: number;
-  cached_input_tokens?: number;
-  cached_tokens?: number;
-  reasoning_output_tokens?: number;
-  reasoning_tokens?: number;
-}
-
-interface CodexJsonlPayload extends CodexTokenUsage {
+interface CodexJsonlPayload {
   id?: string;
   cwd?: string;
   model_provider?: string;
@@ -78,10 +69,6 @@ interface CodexJsonlPayload extends CodexTokenUsage {
   content?: string;
   role?: string;
   type?: string;
-  info?: {
-    total_token_usage?: CodexTokenUsage;
-    last_token_usage?: CodexTokenUsage;
-  };
 }
 
 /**
@@ -92,7 +79,6 @@ interface CodexJsonlPayload extends CodexTokenUsage {
 interface CodexJsonlLine extends CodexJsonlPayload {
   type?: string;
   payload?: CodexJsonlPayload;
-  msg?: CodexTokenUsage & { type?: string };
 }
 
 function getCodexPayload(entry: CodexJsonlLine): CodexJsonlPayload {
@@ -142,10 +128,15 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
   return results;
 }
 
-async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise<string[]> {
+async function readJsonlPrefixLines(
+  filePath: string,
+  maxLines: number,
+  maxBytes = SESSION_METADATA_SCAN_BYTE_LIMIT,
+): Promise<string[]> {
   const handle = await open(filePath, "r");
   const lines: string[] = [];
   let partialLine = "";
+  let totalBytesRead = 0;
   // Reuse a single decoder across reads so multi-byte UTF-8 sequences that
   // straddle a chunk boundary (e.g. CJK characters in base_instructions) get
   // buffered correctly instead of producing U+FFFD replacement characters.
@@ -155,6 +146,7 @@ async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise
     while (lines.length < maxLines) {
       const buffer = Buffer.allocUnsafe(SESSION_MATCH_SCAN_CHUNK_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      totalBytesRead += bytesRead;
 
       if (bytesRead === 0) {
         partialLine += decoder.end();
@@ -164,6 +156,9 @@ async function readJsonlPrefixLines(filePath: string, maxLines: number): Promise
       }
 
       partialLine += decoder.write(buffer.subarray(0, bytesRead));
+      if (totalBytesRead > maxBytes) {
+        break;
+      }
 
       let newlineIndex = partialLine.indexOf("\n");
       while (newlineIndex !== -1 && lines.length < maxLines) {
@@ -288,48 +283,23 @@ async function findCodexSessionFileByThreadId(
   return bestMatch?.path ?? fallback;
 }
 
-/** Aggregated data extracted from a Codex session file via streaming */
-interface CodexSessionData {
+interface CodexSessionMetadata {
   model: string | null;
   threadId: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  reasoningTokens: number;
 }
 
-/**
- * Stream a Codex JSONL session file line-by-line and aggregate the data
- * we need (model, threadId, token counts) without loading the entire file
- * into memory. This is critical because Codex rollout files can be 100 MB+.
- */
-async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
-  let stream: ReturnType<typeof createReadStream> | null = null;
-  let rl: ReturnType<typeof createInterface> | null = null;
-
+async function readCodexSessionMetadata(filePath: string): Promise<CodexSessionMetadata | null> {
+  const data: CodexSessionMetadata = {
+    model: null,
+    threadId: null,
+  };
   try {
-    const data: CodexSessionData = {
-      model: null,
-      threadId: null,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      reasoningTokens: 0,
-    };
-    stream = createReadStream(filePath, { encoding: "utf-8" });
-    rl = createInterface({
-      input: stream,
-      crlfDelay: Infinity,
-    });
-
-    for await (const line of rl) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    const lines = await readJsonlPrefixLines(filePath, SESSION_METADATA_SCAN_LINE_LIMIT);
+    for (const line of lines) {
       try {
-        const parsed: unknown = JSON.parse(trimmed);
+        const parsed: unknown = JSON.parse(line);
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
         const entry = parsed as CodexJsonlLine;
-
         const payload = getCodexPayload(entry);
 
         if (entry.type === "session_meta") {
@@ -353,49 +323,15 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         } else if (!data.model && typeof payload.model === "string" && payload.model) {
           data.model = payload.model;
         }
-
-        // Token sources are precedence-ordered: total → last → flat → legacy.
-        // `continue` ensures only one source is counted per entry.
-        // `total_token_usage` is a cumulative snapshot (last-write-wins, so `=`);
-        // the rest are per-turn deltas (accumulate with `+=`). Do not "fix" this.
-        const totalUsage = payload.info?.total_token_usage;
-        if (typeof totalUsage?.input_tokens === "number") {
-          data.inputTokens = totalUsage.input_tokens;
-          data.outputTokens = totalUsage.output_tokens ?? 0;
-          continue;
-        }
-
-        const lastUsage = payload.info?.last_token_usage;
-        if (typeof lastUsage?.input_tokens === "number") {
-          data.inputTokens += lastUsage.input_tokens;
-          data.outputTokens += lastUsage.output_tokens ?? 0;
-          continue;
-        }
-
-        if (typeof payload.input_tokens === "number") {
-          data.inputTokens += payload.input_tokens;
-          data.outputTokens += payload.output_tokens ?? 0;
-          continue;
-        }
-
-        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
-          data.inputTokens += entry.msg.input_tokens ?? 0;
-          data.outputTokens += entry.msg.output_tokens ?? 0;
-          data.cachedTokens += entry.msg.cached_tokens ?? 0;
-          data.reasoningTokens += entry.msg.reasoning_tokens ?? 0;
-        }
       } catch {
         // Skip malformed lines
       }
     }
-
-    return data;
   } catch {
     return null;
-  } finally {
-    rl?.close();
-    stream?.destroy();
   }
+
+  return data.threadId || data.model ? data : null;
 }
 
 // =============================================================================
@@ -575,10 +511,41 @@ async function findCodexSessionFileCached(session: Session): Promise<string | nu
     if (byThreadId) return byThreadId;
   }
 
-  if (!session.workspacePath) return null;
-  return getCachedSessionFile(`cwd:${toComparablePath(session.workspacePath)}`, async () =>
-    findCodexSessionFile(session.workspacePath!, await getJsonlFiles()),
+  const workspacePath = session.workspacePath;
+  if (!workspacePath) return null;
+  return getCachedSessionFile(`cwd:${toComparablePath(workspacePath)}`, async () =>
+    findCodexSessionFile(workspacePath, await getJsonlFiles()),
   );
+}
+
+function buildCodexSessionInfo(params: {
+  agentSessionId: string | null;
+  threadId: string | null;
+  model: string | null;
+}): AgentSessionInfo {
+  const metadata: Record<string, string> = {};
+  if (params.threadId) metadata["codexThreadId"] = params.threadId;
+  if (params.model) metadata["codexModel"] = params.model;
+
+  const info: AgentSessionInfo = {
+    summary: params.model ? `Codex session (${params.model})` : null,
+    summaryIsFallback: true,
+    agentSessionId: params.agentSessionId,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+  return info;
+}
+
+function buildPersistedCodexSessionInfo(session: Session): AgentSessionInfo | null {
+  const threadId = getSessionMetadataString(session, "codexThreadId");
+  const model = getSessionMetadataString(session, "codexModel");
+  if (!threadId || (!model && !isTerminalSession(session))) return null;
+
+  return buildCodexSessionInfo({
+    agentSessionId: threadId,
+    threadId,
+    model,
+  });
 }
 
 /**
@@ -834,42 +801,20 @@ function createCodexAgent(): Agent {
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      const metadataInfo = buildPersistedCodexSessionInfo(session);
+      if (metadataInfo) return metadataInfo;
+
       const sessionFile = await findCodexSessionFileCached(session);
       if (!sessionFile) return null;
 
-      // Stream the file line-by-line to avoid loading potentially huge
-      // rollout files (100 MB+) entirely into memory.
-      const data = await streamCodexSessionData(sessionFile);
+      const data = await readCodexSessionMetadata(sessionFile);
       if (!data) return null;
 
-      const agentSessionId = basename(sessionFile, ".jsonl");
-
-      let cost: CostEstimate | undefined;
-      const totalInputTokens = data.inputTokens + data.cachedTokens;
-      if (totalInputTokens > 0 || data.outputTokens > 0 || data.reasoningTokens > 0) {
-        const estimatedCostUsd =
-          (data.inputTokens / 1_000_000) * 2.5 +
-          (data.cachedTokens / 1_000_000) * 0.625 +
-          ((data.outputTokens + data.reasoningTokens) / 1_000_000) * 10.0;
-        cost = {
-          inputTokens: totalInputTokens,
-          outputTokens: data.outputTokens,
-          estimatedCostUsd,
-        };
-      }
-
-      return {
-        summary: data.model ? `Codex session (${data.model})` : null,
-        summaryIsFallback: true,
-        agentSessionId,
-        metadata: data.threadId
-          ? {
-              codexThreadId: data.threadId,
-              ...(data.model ? { codexModel: data.model } : {}),
-            }
-          : undefined,
-        cost,
-      };
+      return buildCodexSessionInfo({
+        agentSessionId: data.threadId ?? basename(sessionFile, ".jsonl"),
+        threadId: data.threadId,
+        model: data.model,
+      });
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
@@ -882,9 +827,7 @@ function createCodexAgent(): Agent {
         const sessionFile = await findCodexSessionFileCached(session);
         if (!sessionFile) return null;
 
-        // Stream the file line-by-line to avoid loading potentially huge
-        // rollout files (100 MB+) entirely into memory.
-        const data = await streamCodexSessionData(sessionFile);
+        const data = await readCodexSessionMetadata(sessionFile);
         if (!data?.threadId) return null;
         threadId = data.threadId;
         model = data.model;

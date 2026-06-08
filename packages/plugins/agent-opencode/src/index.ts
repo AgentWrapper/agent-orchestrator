@@ -406,7 +406,6 @@ function createOpenCodeAgent(): Agent {
         summary: targetSession.title ?? null,
         summaryIsFallback: true,
         agentSessionId: targetSession.id,
-        // OpenCode doesn't expose token/cost data in session list
       };
     },
 

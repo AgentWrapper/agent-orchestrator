@@ -6,12 +6,13 @@ import {
   type AgentLaunchConfig,
 } from "@aoagents/ao-core";
 
-// Mock fs/promises for getSessionInfo tests (readFile for .aider.chat.history.md)
+// Mock fs/promises for getSessionInfo tests
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
+    open: vi.fn().mockRejectedValue(new Error("ENOENT")),
   };
 });
 
@@ -124,6 +125,24 @@ function mockTmuxWithProcess(processName: string, found = true) {
     }
     return Promise.reject(new Error("unexpected"));
   });
+}
+
+function makeFakeFileHandle(content: string) {
+  const buf = Buffer.from(content, "utf-8");
+  return {
+    read: vi
+      .fn()
+      .mockImplementation(
+        (buffer: Buffer, offset: number, length: number, position: number | null) => {
+          const start = position ?? 0;
+          if (start >= buf.length) return Promise.resolve({ bytesRead: 0, buffer });
+          const bytesToCopy = Math.min(length, buf.length - start);
+          buf.copy(buffer, offset, start, start + bytesToCopy);
+          return Promise.resolve({ bytesRead: bytesToCopy, buffer });
+        },
+      ),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 beforeEach(() => {
@@ -413,28 +432,29 @@ describe("getSessionInfo", () => {
   });
 
   it("returns null when no chat history file exists", async () => {
-    const { readFile } = await import("node:fs/promises");
-    vi.mocked(readFile).mockRejectedValueOnce(new Error("ENOENT"));
+    const { open } = await import("node:fs/promises");
+    vi.mocked(open).mockRejectedValueOnce(new Error("ENOENT"));
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   it("extracts summary from chat history file", async () => {
-    const { readFile } = await import("node:fs/promises");
-    vi.mocked(readFile).mockResolvedValueOnce(
-      "# aider chat started\n\n#### Fix the login bug in auth.ts\n\nSome response here...\n",
+    const { open } = await import("node:fs/promises");
+    vi.mocked(open).mockResolvedValueOnce(
+      makeFakeFileHandle(
+        "# aider chat started\n\n#### Fix the login bug in auth.ts\n\nSome response here...\n",
+      ) as never,
     );
     const info = await agent.getSessionInfo(makeSession());
     expect(info).not.toBeNull();
     expect(info!.summary).toBe("Fix the login bug in auth.ts");
     expect(info!.summaryIsFallback).toBe(true);
     expect(info!.agentSessionId).toBeNull();
-    expect(info!.cost).toBeUndefined();
   });
 
   it("truncates long summaries to 120 chars", async () => {
-    const { readFile } = await import("node:fs/promises");
+    const { open } = await import("node:fs/promises");
     const longMsg = "A".repeat(200);
-    vi.mocked(readFile).mockResolvedValueOnce(`#### ${longMsg}\n`);
+    vi.mocked(open).mockResolvedValueOnce(makeFakeFileHandle(`#### ${longMsg}\n`) as never);
     const info = await agent.getSessionInfo(makeSession());
     expect(info!.summary).toHaveLength(123); // 120 + "..."
     expect(info!.summary!.endsWith("...")).toBe(true);

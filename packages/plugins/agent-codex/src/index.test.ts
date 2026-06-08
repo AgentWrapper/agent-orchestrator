@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type * as Readline from "node:readline";
 import {
   createActivitySignal,
   type Session,
@@ -21,8 +20,6 @@ const {
   mockStat,
   mockLstat,
   mockOpen,
-  mockCreateReadStream,
-  mockCreateInterface,
   mockHomedir,
   mockReadLastJsonlEntry,
   mockIsWindows,
@@ -36,8 +33,6 @@ const {
   mockStat: vi.fn(),
   mockLstat: vi.fn(),
   mockOpen: vi.fn(),
-  mockCreateReadStream: vi.fn(),
-  mockCreateInterface: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
   mockReadLastJsonlEntry: vi.fn(),
   mockIsWindows: vi.fn(() => false),
@@ -67,19 +62,7 @@ vi.mock("node:crypto", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
-  createReadStream: mockCreateReadStream,
 }));
-
-vi.mock("node:readline", async (importOriginal) => {
-  const actual = await importOriginal<typeof Readline>();
-  mockCreateInterface.mockImplementation((...args: Parameters<typeof actual.createInterface>) =>
-    actual.createInterface(...args),
-  );
-  return {
-    ...actual,
-    createInterface: mockCreateInterface,
-  };
-});
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
@@ -94,7 +77,6 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   };
 });
 
-import { Readable } from "node:stream";
 import { join as pathJoin } from "node:path";
 import {
   create,
@@ -118,6 +100,32 @@ function makeSession(overrides: Partial<Session> = {}): Session {
       timestamp: new Date(),
       source: "native",
     }),
+    lifecycle: {
+      version: 2,
+      session: {
+        kind: "worker",
+        state: "working",
+        reason: "task_in_progress",
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        terminatedAt: null,
+        lastTransitionAt: new Date().toISOString(),
+      },
+      pr: {
+        state: "none",
+        reason: "not_created",
+        number: null,
+        url: null,
+        lastObservedAt: null,
+      },
+      runtime: {
+        state: "alive",
+        reason: "process_running",
+        lastObservedAt: new Date().toISOString(),
+        handle: null,
+        tmuxName: null,
+      },
+    },
     branch: "feat/test",
     issueId: null,
     pr: null,
@@ -152,6 +160,10 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
     },
     ...overrides,
   };
+}
+
+function jsonl(...lines: Record<string, unknown>[]): string {
+  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
 }
 
 function mockTmuxWithProcess(processName: string, found = true) {
@@ -201,23 +213,7 @@ function makeFakeFileHandle(content: string) {
  * reading `content`. This is used by sessionFileMatchesCwd.
  */
 function setupMockOpen(content: string) {
-  mockOpen.mockResolvedValue(makeFakeFileHandle(content));
-}
-
-/**
- * Create a Readable stream from a string. Used to mock createReadStream
- * for the streaming JSONL parser (streamCodexSessionData).
- */
-function makeContentStream(content: string): Readable {
-  return Readable.from(Buffer.from(content, "utf-8"));
-}
-
-/**
- * Set up mockCreateReadStream to return a readable stream with the given content.
- * Used by getSessionInfo/getRestoreCommand which stream files line-by-line.
- */
-function setupMockStream(content: string) {
-  mockCreateReadStream.mockReturnValue(makeContentStream(content));
+  mockOpen.mockImplementation(async () => makeFakeFileHandle(content));
 }
 
 beforeEach(() => {
@@ -226,12 +222,9 @@ beforeEach(() => {
   mockHomedir.mockReturnValue("/mock/home");
   // Default: open() returns a handle with empty content (no session_meta match).
   // Session tests call setupMockOpen(content) to override.
-  mockOpen.mockResolvedValue(makeFakeFileHandle(""));
+  mockOpen.mockImplementation(async () => makeFakeFileHandle(""));
   // Default: lstat rejects (no subdirectories). Session tests override as needed.
   mockLstat.mockRejectedValue(new Error("ENOENT"));
-  // Default: createReadStream returns an empty stream. Session tests call
-  // setupMockStream(content) to override.
-  mockCreateReadStream.mockReturnValue(makeContentStream(""));
 });
 
 // =========================================================================
@@ -692,7 +685,7 @@ describe("getActivityState", () => {
     expect(await agent.getActivityState(session)).toBeNull();
   });
 
-  it("uses persisted codexThreadId filename without cwd-prefix open scans", async () => {
+  it("uses persisted codexThreadId filename lookup before bounded metadata reads", async () => {
     mockTmuxWithProcess("codex");
     mockReaddir.mockResolvedValue(["rollout-2026-05-22T00-00-00-thread-fast-activity.jsonl"]);
     const modifiedAt = new Date();
@@ -1023,11 +1016,6 @@ describe("getActivityState", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  // Helper to build JSONL content from lines
-  function jsonl(...lines: Record<string, unknown>[]): string {
-    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-  }
-
   it("returns null when workspacePath is null", async () => {
     expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
   });
@@ -1046,7 +1034,7 @@ describe("getSessionInfo", () => {
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
-  it("uses persisted codexThreadId filename without cwd-prefix open scans", async () => {
+  it("uses persisted codexThreadId filename lookup before bounded metadata reads", async () => {
     const sessionContent = jsonl(
       {
         type: "session_meta",
@@ -1063,7 +1051,7 @@ describe("getSessionInfo", () => {
     );
 
     mockReaddir.mockResolvedValue(["rollout-2026-05-22T00-00-00-thread-fast-info.jsonl"]);
-    setupMockStream(sessionContent);
+    setupMockOpen(sessionContent);
 
     const result = await agent.getSessionInfo(
       makeSession({
@@ -1073,8 +1061,173 @@ describe("getSessionInfo", () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-2026-05-22T00-00-00-thread-fast-info");
+    expect(result!.agentSessionId).toBe("thread-fast-info");
     expect(result!.summary).toBe("Codex session (gpt-5.5)");
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns metadata-only info for terminal sessions without JSONL reads", async () => {
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "terminated",
+        activity: "exited",
+        metadata: { codexThreadId: "thread-terminal", codexModel: "gpt-5.4" },
+        lifecycle: {
+          version: 2,
+          session: {
+            kind: "worker",
+            state: "terminated",
+            reason: "runtime_lost",
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            terminatedAt: new Date().toISOString(),
+            lastTransitionAt: new Date().toISOString(),
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "missing",
+            reason: "tmux_missing",
+            lastObservedAt: new Date().toISOString(),
+            handle: null,
+            tmuxName: "test-1",
+          },
+        },
+      }),
+    );
+
+    expect(result).toEqual({
+      summary: "Codex session (gpt-5.4)",
+      summaryIsFallback: true,
+      agentSessionId: "thread-terminal",
+      metadata: { codexThreadId: "thread-terminal", codexModel: "gpt-5.4" },
+    });
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("does not read JSONL for terminal sessions that only have codexThreadId", async () => {
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "killed",
+        activity: "exited",
+        metadata: { codexThreadId: "thread-without-model" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          session: {
+            ...makeSession().lifecycle.session,
+            state: "terminated",
+            reason: "runtime_lost",
+            terminatedAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      summary: null,
+      summaryIsFallback: true,
+      agentSessionId: "thread-without-model",
+      metadata: { codexThreadId: "thread-without-model" },
+    });
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("uses core terminal lifecycle signals for the metadata-only fast path", async () => {
+    const mergedResult = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-pr-merged" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          pr: {
+            state: "merged",
+            reason: "merged",
+            number: 123,
+            url: "https://github.com/example/repo/pull/123",
+            lastObservedAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+
+    const runtimeExitedResult = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-runtime-exited" },
+        lifecycle: {
+          ...makeSession().lifecycle,
+          runtime: {
+            state: "exited",
+            reason: "process_missing",
+            lastObservedAt: new Date().toISOString(),
+            handle: null,
+            tmuxName: "test-1",
+          },
+        },
+      }),
+    );
+
+    expect(mergedResult?.agentSessionId).toBe("thread-pr-merged");
+    expect(runtimeExitedResult?.agentSessionId).toBe("thread-runtime-exited");
+    expect(mockReaddir).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("uses bounded metadata reads for live codexThreadId sessions missing model metadata", async () => {
+    const sessionContent = jsonl(
+      {
+        type: "session_meta",
+        payload: { id: "thread-live-no-model" },
+      },
+      {
+        type: "turn_context",
+        payload: { model: "gpt-5.5" },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-2026-05-22T00-00-00-thread-live-no-model.jsonl"]);
+    setupMockOpen(sessionContent);
+
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-live-no-model" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      summary: "Codex session (gpt-5.5)",
+      agentSessionId: "thread-live-no-model",
+      metadata: { codexThreadId: "thread-live-no-model", codexModel: "gpt-5.5" },
+    });
+    expect(mockOpen).toHaveBeenCalled();
+  });
+
+  it("returns metadata-only info for live sessions that already have codexModel metadata", async () => {
+    const result = await agent.getSessionInfo(
+      makeSession({
+        status: "working",
+        activity: "active",
+        metadata: { codexThreadId: "thread-live-with-model", codexModel: "gpt-5.4" },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      summary: "Codex session (gpt-5.4)",
+      agentSessionId: "thread-live-with-model",
+      metadata: { codexThreadId: "thread-live-with-model", codexModel: "gpt-5.4" },
+    });
+    expect(mockReaddir).not.toHaveBeenCalled();
     expect(mockOpen).not.toHaveBeenCalled();
   });
 
@@ -1087,7 +1240,7 @@ describe("getSessionInfo", () => {
     });
 
     mockReaddir.mockResolvedValue(["rollout-thread-cached-info.jsonl"]);
-    mockCreateReadStream.mockImplementation(() => makeContentStream(sessionContent));
+    setupMockOpen(sessionContent);
 
     const first = await agent.getSessionInfo(
       makeSession({
@@ -1105,7 +1258,7 @@ describe("getSessionInfo", () => {
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
     expect(mockReaddir).toHaveBeenCalledTimes(1);
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledTimes(2);
   });
 
   it("chooses the newest duplicate codexThreadId filename match by mtime", async () => {
@@ -1127,10 +1280,10 @@ describe("getSessionInfo", () => {
       if (path.includes("rollout-new-thread-dupe")) return Promise.resolve({ mtimeMs: 2000 });
       return Promise.reject(new Error("ENOENT"));
     });
-    mockCreateReadStream.mockImplementation((path: string) => {
-      if (path.includes("rollout-old-thread-dupe")) return makeContentStream(oldContent);
-      if (path.includes("rollout-new-thread-dupe")) return makeContentStream(newContent);
-      return makeContentStream("");
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("rollout-old-thread-dupe")) return makeFakeFileHandle(oldContent);
+      if (path.includes("rollout-new-thread-dupe")) return makeFakeFileHandle(newContent);
+      throw new Error("ENOENT");
     });
 
     const result = await agent.getSessionInfo(
@@ -1141,9 +1294,9 @@ describe("getSessionInfo", () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-new-thread-dupe");
+    expect(result!.agentSessionId).toBe("thread-dupe");
     expect(result!.summary).toBe("Codex session (new-model)");
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledTimes(1);
   });
 
   it("does not treat infix filename matches as thread-id hits", async () => {
@@ -1158,14 +1311,12 @@ describe("getSessionInfo", () => {
 
     expect(result).toBeNull();
     expect(mockOpen).not.toHaveBeenCalled();
-    expect(mockCreateReadStream).not.toHaveBeenCalled();
   });
 
   it("returns null when no session files match the workspace cwd", async () => {
     mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
     const content = jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" });
     setupMockOpen(content);
-    mockReadFile.mockResolvedValue(content);
     expect(
       await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
     ).toBeNull();
@@ -1180,7 +1331,6 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["rollout-cwd-fallback.jsonl"]);
     setupMockOpen(sessionContent);
-    setupMockStream(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -1190,7 +1340,7 @@ describe("getSessionInfo", () => {
     expect(mockOpen).toHaveBeenCalled();
   });
 
-  it("returns session info with cost and model when matching session found", async () => {
+  it("returns session info with model while ignoring token_count events", async () => {
     const sessionContent = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
       {
@@ -1217,7 +1367,6 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["session-123.jsonl"]);
     setupMockOpen(sessionContent);
-    setupMockStream(sessionContent);
     mockReadFile.mockResolvedValue(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1227,13 +1376,6 @@ describe("getSessionInfo", () => {
     expect(result!.agentSessionId).toBe("session-123");
     expect(result!.summary).toBe("Codex session (o3-mini)");
     expect(result!.summaryIsFallback).toBe(true);
-    expect(result!.cost).toBeDefined();
-    // cached tokens count toward effective input spend
-    // input: 1000 + 2000 + 200 = 3200
-    // output: 500 + 300 = 800
-    expect(result!.cost!.inputTokens).toBe(3200);
-    expect(result!.cost!.outputTokens).toBe(800);
-    expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
   });
 
   it("parses payload-wrapped Codex session files", async () => {
@@ -1271,17 +1413,13 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
     setupMockOpen(sessionContent);
-    setupMockStream(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
-    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.agentSessionId).toBe("thread-payload-123");
     expect(result!.summary).toBe("Codex session (gpt-5.3-codex)");
-    expect(result!.cost).toBeDefined();
-    expect(result!.cost!.inputTokens).toBe(3000);
-    expect(result!.cost!.outputTokens).toBe(800);
   });
 
   it("does not treat model_provider as the session model", async () => {
@@ -1296,7 +1434,6 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["rollout-abc.jsonl"]);
     setupMockOpen(sessionContent);
-    setupMockStream(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -1320,11 +1457,6 @@ describe("getSessionInfo", () => {
       if (path.includes("new-session")) return Promise.resolve(newContent);
       return Promise.reject(new Error("ENOENT"));
     });
-    mockCreateReadStream.mockImplementation((path: string) => {
-      if (path.includes("old-session")) return makeContentStream(oldContent);
-      if (path.includes("new-session")) return makeContentStream(newContent);
-      return makeContentStream("");
-    });
     mockStat.mockImplementation((path: string) => {
       if (path.includes("old-session")) return Promise.resolve({ mtimeMs: 1000 });
       if (path.includes("new-session")) return Promise.resolve({ mtimeMs: 2000 });
@@ -1346,15 +1478,13 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
-    expect(result!.cost!.inputTokens).toBe(500);
-    expect(result!.cost!.outputTokens).toBe(200);
+    expect(result!.summary).toBe("Codex session (gpt-4o)");
   });
 
   it("returns null summary when no model in session_meta", async () => {
@@ -1365,20 +1495,14 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
-    expect(result).not.toBeNull();
-    expect(result!.summary).toBeNull();
-    // Verify cost was actually parsed from the stream (not just defaulting to undefined)
-    expect(result!.cost).toBeDefined();
-    expect(result!.cost!.inputTokens).toBe(100);
-    expect(result!.cost!.outputTokens).toBe(50);
+    expect(result).toBeNull();
   });
 
-  it("returns undefined cost when no token_count events", async () => {
+  it("returns session info when token_count events are absent", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { type: "event_msg", msg: { type: "other_event" } },
@@ -1386,55 +1510,25 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
-    expect(result!.cost).toBeUndefined();
-    // Verify model was actually parsed from the stream (not just defaulting to null)
     expect(result!.summary).toContain("gpt-4o");
   });
 
   it("handles unreadable session files gracefully", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    // open() finds matching session_meta, but readFile fails for full parse
-    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    const readableMatch = makeFakeFileHandle(
+      jsonl({ type: "session_meta", cwd: "/workspace/test" }),
+    );
+    mockOpen.mockResolvedValueOnce(readableMatch).mockRejectedValueOnce(new Error("EACCES"));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
-    mockReadFile.mockRejectedValue(new Error("EACCES"));
-    mockCreateReadStream.mockImplementation(() => {
-      throw new Error("EACCES");
-    });
 
     expect(
       await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
     ).toBeNull();
-  });
-
-  it("closes readline and destroys the stream when JSONL streaming is interrupted", async () => {
-    const content = jsonl({ type: "session_meta", cwd: "/workspace/test" });
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    setupMockOpen(content);
-    mockStat.mockResolvedValue({ mtimeMs: 1000 });
-
-    const stream = makeContentStream(content);
-    const destroySpy = vi.spyOn(stream, "destroy");
-    const closeSpy = vi.fn();
-    mockCreateReadStream.mockReturnValue(stream);
-    mockCreateInterface.mockImplementationOnce(() => ({
-      close: closeSpy,
-      async *[Symbol.asyncIterator]() {
-        yield JSON.stringify({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
-        throw new Error("aborted");
-      },
-    }));
-
-    expect(
-      await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" })),
-    ).toBeNull();
-    expect(closeSpy).toHaveBeenCalledTimes(1);
-    expect(destroySpy).toHaveBeenCalledTimes(1);
   });
 
   it("skips session files when stat throws", async () => {
@@ -1453,17 +1547,10 @@ describe("getSessionInfo", () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     // open() finds matching session_meta for cwd check
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
-    // readFile (full parse) returns only garbage
-    mockReadFile.mockResolvedValue("not json\n\n   \n");
-    setupMockStream("not json\n\n   \n");
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
-    // With streaming parser, garbage lines are skipped gracefully and a result
-    // is returned with null summary and undefined cost (no valid data extracted).
-    expect(result).not.toBeNull();
-    expect(result!.summary).toBeNull();
-    expect(result!.cost).toBeUndefined();
+    expect(result).toBeNull();
   });
 
   it("finds session files in date-sharded subdirectories (YYYY/MM/DD)", async () => {
@@ -1481,7 +1568,6 @@ describe("getSessionInfo", () => {
     mockStat.mockResolvedValue({ mtimeMs: 2000 });
     const content = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3-mini" });
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -1494,7 +1580,6 @@ describe("getSessionInfo", () => {
     mockReaddir.mockResolvedValue(["notes.txt", "config.json", "sess.jsonl"]);
     const content = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     // Non-JSONL entries trigger lstat to check isDirectory()
     mockLstat.mockResolvedValue({ isDirectory: () => false });
@@ -1503,12 +1588,11 @@ describe("getSessionInfo", () => {
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
     expect(result).not.toBeNull();
-    // With streaming parser, readFile is no longer used for full parse;
-    // cwd check uses open(), data extraction uses createReadStream.
+    // getSessionInfo uses bounded open() reads, not readFile() full-file parses.
     const readFileCalls = mockReadFile.mock.calls.filter(
       (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
     );
-    expect(readFileCalls.length).toBe(0); // streaming replaces readFile for full parse
+    expect(readFileCalls.length).toBe(0);
   });
 });
 
@@ -1517,10 +1601,6 @@ describe("getSessionInfo", () => {
 // =========================================================================
 describe("getRestoreCommand", () => {
   const agent = create();
-
-  function jsonl(...lines: Record<string, unknown>[]): string {
-    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-  }
 
   function makeProjectConfig(overrides: Record<string, unknown> = {}) {
     return {
@@ -1556,7 +1636,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -1571,7 +1650,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1618,7 +1696,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -1640,7 +1717,6 @@ describe("getRestoreCommand", () => {
     });
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -1657,7 +1733,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1683,7 +1758,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1708,7 +1782,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1731,7 +1804,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1754,7 +1826,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1776,7 +1847,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1804,7 +1874,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1827,7 +1896,6 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1840,13 +1908,10 @@ describe("getRestoreCommand", () => {
 
   it("handles unreadable session files gracefully", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    // open() finds matching session_meta for cwd check
-    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
-    // readFile (full parse) fails
-    mockReadFile.mockRejectedValue(new Error("EACCES"));
-    mockCreateReadStream.mockImplementation(() => {
-      throw new Error("EACCES");
-    });
+    const readableMatch = makeFakeFileHandle(
+      jsonl({ type: "session_meta", cwd: "/workspace/test" }),
+    );
+    mockOpen.mockResolvedValueOnce(readableMatch).mockRejectedValueOnce(new Error("EACCES"));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });

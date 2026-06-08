@@ -7,7 +7,6 @@ import {
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
-  type CostEstimate,
   type PluginModule,
   type ProjectConfig,
   type ProcessProbeResult,
@@ -678,32 +677,12 @@ interface JsonlLine {
   type?: string;
   summary?: string;
   message?: { content?: string; role?: string };
-  // Cost/usage fields
-  costUSD?: number;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_read_input_tokens?: number;
-    cache_creation_input_tokens?: number;
-  };
-  inputTokens?: number;
-  outputTokens?: number;
-  estimatedCostUsd?: number;
 }
 
 /**
- * Read only the last chunk of a JSONL file to extract the last entry's type
- * and the file's modification time. This is optimized for polling — it avoids
- * reading the entire file (which `getSessionInfo()` does for full cost/summary).
- * Now uses the shared readLastJsonlEntry utility from @aoagents/ao-core.
- */
-
-/**
  * Parse only the last `maxBytes` of a JSONL file.
- * Summaries and recent activity are always near the end, so reading the whole
- * file (which can be 100MB+) is wasteful. For files smaller than maxBytes,
- * readFile is used directly. For large files, only the tail is read via a
- * file handle to avoid loading the entire file into memory.
+ * Summaries and recent activity are usually near the end, so only read a bounded
+ * tail chunk. This keeps dashboard enrichment away from full transcript loads.
  */
 async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise<JsonlLine[]> {
   let content: string;
@@ -711,20 +690,14 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   try {
     const { size = 0 } = await stat(filePath);
     offset = Math.max(0, size - maxBytes);
-    if (offset === 0) {
-      // Small file (or unknown size) — read it whole
-      content = await readFile(filePath, "utf-8");
-    } else {
-      // Large file — read only the tail via a file handle
-      const handle = await open(filePath, "r");
-      try {
-        const length = size - offset;
-        const buffer = Buffer.allocUnsafe(length);
-        await handle.read(buffer, 0, length, offset);
-        content = buffer.toString("utf-8");
-      } finally {
-        await handle.close();
-      }
+    const handle = await open(filePath, "r");
+    try {
+      const length = Math.min(maxBytes, size);
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      content = buffer.subarray(0, bytesRead).toString("utf-8");
+    } finally {
+      await handle.close();
     }
   } catch {
     return [];
@@ -774,65 +747,6 @@ function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: bool
     }
   }
   return null;
-}
-
-/** Aggregate cost estimate from JSONL usage events */
-function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cachedReadTokens = 0;
-  let cacheCreationTokens = 0;
-  let totalCost = 0;
-
-  for (const line of lines) {
-    // Handle direct cost fields — prefer costUSD; only use estimatedCostUsd
-    // as fallback to avoid double-counting when both are present.
-    if (typeof line.costUSD === "number") {
-      totalCost += line.costUSD;
-    } else if (typeof line.estimatedCostUsd === "number") {
-      totalCost += line.estimatedCostUsd;
-    }
-    // Handle token counts — prefer the structured `usage` object when present;
-    // only fall back to flat `inputTokens`/`outputTokens` fields to avoid
-    // double-counting if a line contains both.
-    if (line.usage) {
-      inputTokens += line.usage.input_tokens ?? 0;
-      cachedReadTokens += line.usage.cache_read_input_tokens ?? 0;
-      cacheCreationTokens += line.usage.cache_creation_input_tokens ?? 0;
-      outputTokens += line.usage.output_tokens ?? 0;
-    } else {
-      if (typeof line.inputTokens === "number") {
-        inputTokens += line.inputTokens;
-      }
-      if (typeof line.outputTokens === "number") {
-        outputTokens += line.outputTokens;
-      }
-    }
-  }
-
-  if (
-    inputTokens === 0 &&
-    outputTokens === 0 &&
-    totalCost === 0 &&
-    cachedReadTokens === 0 &&
-    cacheCreationTokens === 0
-  ) {
-    return undefined;
-  }
-
-  if (totalCost === 0) {
-    totalCost =
-      (inputTokens / 1_000_000) * 3.0 +
-      (outputTokens / 1_000_000) * 15.0 +
-      (cachedReadTokens / 1_000_000) * 0.3 +
-      (cacheCreationTokens / 1_000_000) * 3.75;
-  }
-
-  return {
-    inputTokens: inputTokens + cachedReadTokens + cacheCreationTokens,
-    outputTokens,
-    estimatedCostUsd: totalCost,
-  };
 }
 
 // =============================================================================
@@ -1152,7 +1066,9 @@ function createClaudeCodeAgent(): Agent {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
+      const projectPath = toClaudeProjectPath(
+        await resolveWorkspaceForClaude(session.workspacePath),
+      );
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       // Find the latest session JSONL file
@@ -1172,7 +1088,6 @@ function createClaudeCodeAgent(): Agent {
         summaryIsFallback: summaryResult?.isFallback,
         agentSessionId,
         metadata: { claudeSessionUuid: agentSessionId },
-        cost: extractCost(lines),
       };
     },
 
@@ -1182,7 +1097,9 @@ function createClaudeCodeAgent(): Agent {
         if (!session.workspacePath) return null;
 
         // Find Claude's project directory for this workspace
-        const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
+        const projectPath = toClaudeProjectPath(
+          await resolveWorkspaceForClaude(session.workspacePath),
+        );
         const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
         // Find the latest session JSONL file

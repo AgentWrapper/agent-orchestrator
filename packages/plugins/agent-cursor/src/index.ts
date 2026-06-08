@@ -22,7 +22,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access, readFile, lstat } from "node:fs/promises";
+import { stat, access, open, lstat } from "node:fs/promises";
 import { lstatSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -102,7 +102,15 @@ async function extractCursorSummary(workspacePath: string): Promise<string | nul
         return null; // Reject paths outside workspace
       }
 
-      const content = await readFile(chatFile, "utf-8");
+      const handle = await open(chatFile, "r");
+      let content: string;
+      try {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        content = buffer.subarray(0, bytesRead).toString("utf-8");
+      } finally {
+        await handle.close();
+      }
       // Extract first meaningful line
       for (const line of content.split("\n")) {
         const trimmed = line.trim();
@@ -366,7 +374,6 @@ function createCursorAgent(): Agent {
         summary,
         summaryIsFallback: true,
         agentSessionId: null,
-        // Cursor doesn't expose token/cost data via CLI
       };
     },
 

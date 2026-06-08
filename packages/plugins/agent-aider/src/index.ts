@@ -23,7 +23,7 @@ import {
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access, readFile } from "node:fs/promises";
+import { stat, access, open } from "node:fs/promises";
 import { join } from "node:path";
 import { constants, readFileSync } from "node:fs";
 
@@ -59,7 +59,15 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
 async function extractAiderSummary(workspacePath: string): Promise<string | null> {
   try {
     const chatFile = join(workspacePath, ".aider.chat.history.md");
-    const content = await readFile(chatFile, "utf-8");
+    const handle = await open(chatFile, "r");
+    let content: string;
+    try {
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      content = buffer.subarray(0, bytesRead).toString("utf-8");
+    } finally {
+      await handle.close();
+    }
 
     // Aider chat history uses "#### " prefix for user messages
     for (const line of content.split("\n")) {
@@ -277,7 +285,6 @@ function createAiderAgent(): Agent {
         summary,
         summaryIsFallback: true,
         agentSessionId: null,
-        // Aider doesn't expose token/cost data
       };
     },
 

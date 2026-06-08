@@ -55,7 +55,11 @@ async function extractKimiSummary(sessionDir: string): Promise<string | null> {
   let stream: ReturnType<typeof createReadStream> | null = null;
   let rl: ReturnType<typeof createInterface> | null = null;
   try {
-    stream = createReadStream(wirePath, { encoding: "utf-8" });
+    stream = createReadStream(wirePath, {
+      encoding: "utf-8",
+      start: 0,
+      end: SUMMARY_SCAN_BYTE_LIMIT - 1,
+    });
     rl = createInterface({
       input: stream,
       crlfDelay: Infinity,
@@ -186,9 +190,7 @@ function createKimicodeAgent(): Agent {
       let combinedPrompt = config.prompt ?? "";
       if (config.systemPromptFile) {
         const sysContent = readFileSync(config.systemPromptFile, "utf-8");
-        combinedPrompt = combinedPrompt
-          ? `${sysContent}\n\n---\n\n${combinedPrompt}`
-          : sysContent;
+        combinedPrompt = combinedPrompt ? `${sysContent}\n\n---\n\n${combinedPrompt}` : sysContent;
       }
       if (combinedPrompt) {
         parts.push("--prompt", shellEscape(combinedPrompt));
@@ -234,7 +236,8 @@ function createKimicodeAgent(): Agent {
       // 2. blocked — hard errors surfaced to the terminal. Line-anchored to
       //    skip narration ("Earlier I failed to connect, then retried").
       if (/^\s*error:/im.test(tail)) return "blocked";
-      if (/^\s*(?:error:\s*)?failed to (connect|authenticate|load)\b/im.test(tail)) return "blocked";
+      if (/^\s*(?:error:\s*)?failed to (connect|authenticate|load)\b/im.test(tail))
+        return "blocked";
 
       // 3. idle — only when nothing actionable is visible and the tail is a
       //    bare prompt. Generic shell/REPL prompt…
@@ -373,8 +376,7 @@ function createKimicodeAgent(): Agent {
       const match = await findKimiSessionMatch(session);
       if (!match) return null;
 
-      // Best-effort summary: first user input from wire.jsonl. Kimi does not
-      // store a title, model, or cost breakdown on disk.
+      // Best-effort summary: first user input from a bounded wire.jsonl prefix.
       const summary = await extractKimiSummary(match.dir);
 
       return {

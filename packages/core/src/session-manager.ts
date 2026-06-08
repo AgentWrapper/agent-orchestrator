@@ -1232,7 +1232,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         session.activitySignal = createActivitySignal("probe_failure", { source: "native" });
       }
 
-      // Enrich with agent session info (summary, cost, native restore metadata).
+      // Enrich with lightweight agent session info (summary and native restore metadata).
       await persistAgentSessionInfo();
     }
   }
