@@ -76,6 +76,9 @@ importers:
       '@aoagents/ao-plugin-agent-kimicode':
         specifier: workspace:*
         version: link:../plugins/agent-kimicode
+      '@aoagents/ao-plugin-agent-mistral':
+        specifier: workspace:*
+        version: link:../plugins/agent-mistral
       '@aoagents/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
@@ -379,6 +382,31 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.6.0)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/plugins/agent-mistral:
+    dependencies:
+      '@aoagents/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+      which:
+        specifier: ^6.0.1
+        version: 6.0.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.6.0
+      '@types/which':
+        specifier: ^3.0.4
+        version: 3.0.4
+      '@vitest/coverage-v8':
+        specifier: ^4.0.18
+        version: 4.1.4(vitest@4.1.4)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.1.4(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(vite@7.3.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   packages/plugins/agent-opencode:
     dependencies:

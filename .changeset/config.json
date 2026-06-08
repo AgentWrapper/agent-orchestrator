@@ -17,6 +17,7 @@
       "@aoagents/ao-plugin-agent-opencode",
       "@aoagents/ao-plugin-agent-cursor",
       "@aoagents/ao-plugin-agent-kimicode",
+      "@aoagents/ao-plugin-agent-mistral",
       "@aoagents/ao-plugin-workspace-worktree",
       "@aoagents/ao-plugin-workspace-clone",
       "@aoagents/ao-plugin-tracker-github",

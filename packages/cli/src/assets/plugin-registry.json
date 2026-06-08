@@ -32,6 +32,14 @@
     "latestVersion": "0.1.0"
   },
   {
+    "id": "agent-mistral",
+    "package": "@aoagents/ao-plugin-agent-mistral",
+    "slot": "agent",
+    "description": "Agent plugin: Mistral Vibe CLI",
+    "source": "registry",
+    "latestVersion": "0.7.0"
+  },
+  {
     "id": "notifier-openclaw",
     "package": "@aoagents/ao-plugin-notifier-openclaw",
     "slot": "notifier",
