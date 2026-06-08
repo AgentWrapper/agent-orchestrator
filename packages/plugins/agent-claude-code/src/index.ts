@@ -1,11 +1,7 @@
 import {
   shellEscape,
-  readLastJsonlEntry,
   normalizeAgentPermissionMode,
   isWindows,
-  PROCESS_PROBE_INDETERMINATE,
-  DEFAULT_READY_THRESHOLD_MS,
-  DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -19,14 +15,21 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@aoagents/ao-core";
-import { execFile, execFileSync } from "node:child_process";
-import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
+import {
+  classifyTerminalOutput,
+  findLatestSessionFile,
+  getClaudeActivityState,
+  isClaudeProcessAlive,
+  resolveWorkspaceForClaude,
+  toClaudeProjectPath,
+} from "./activity-detection.js";
 
-const execFileAsync = promisify(execFile);
+export { resetPsCache, resolveWorkspaceForClaude, toClaudeProjectPath } from "./activity-detection.js";
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -170,6 +173,33 @@ if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
+    # Append to prs field (comma-separated list of all PR URLs for this session).
+    # Supports multiple PRs per session — same repo or different repos.
+    existing_prs=""
+    if is_json_metadata; then
+      if command -v jq &>/dev/null; then
+        existing_prs=$(jq -r '.prs // empty' "$metadata_file" 2>/dev/null || echo "")
+      else
+        existing_prs=$(node -e "
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+          process.stdout.write(d.prs || '');
+        " "$metadata_file" 2>/dev/null || echo "")
+      fi
+    else
+      existing_prs=$(grep '^prs=' "$metadata_file" 2>/dev/null | cut -d'=' -f2- || echo "")
+    fi
+    if [[ -z "$existing_prs" ]]; then
+      new_prs="$pr_url"
+    else
+      # Only append if not already present (exact comma-delimited match to avoid /pull/1 matching /pull/10)
+      if ! echo ",$existing_prs," | grep -qF ",$pr_url,"; then
+        new_prs="$existing_prs,$pr_url"
+      else
+        new_prs="$existing_prs"
+      fi
+    fi
+    update_metadata_key "prs" "$new_prs"
     update_metadata_key "status" "pr_open"
     echo '{"systemMessage": "Updated metadata: PR created at '"$pr_url"'"}'
     exit 0
@@ -337,7 +367,23 @@ if (/^gh\\s+pr\\s+create/.test(cleanCommand)) {
   const prMatch = output.match(/https:\\/\\/github[.]com\\/[^/]+\\/[^/]+\\/pull\\/\\d+/);
   if (prMatch) {
     const prUrl = prMatch[0];
+    let existingPrs = "";
+    try {
+      const raw = readFileSync(metadataFile, "utf-8");
+      if (metadataFile.endsWith(".json")) {
+        existingPrs = JSON.parse(raw).prs || "";
+      } else {
+        const prsLine = raw.split("\\n").find((l) => l.startsWith("prs="));
+        existingPrs = prsLine ? prsLine.slice(4) : "";
+      }
+    } catch {}
+    const newPrs = !existingPrs
+      ? prUrl
+      : existingPrs.split(",").map((u) => u.trim()).includes(prUrl)
+        ? existingPrs
+        : existingPrs + "," + prUrl;
     updateMetadataKey("pr", prUrl);
+    updateMetadataKey("prs", newPrs);
     updateMetadataKey("status", "pr_open");
     process.stdout.write(JSON.stringify({ systemMessage: "Updated metadata: PR created at " + prUrl }) + "\\n");
     process.exit(0);
@@ -382,6 +428,237 @@ process.exit(0);
 `;
 
 // =============================================================================
+// Activity Updater Hook Script
+// =============================================================================
+
+/**
+ * Bash hook script that translates Claude Code lifecycle hooks into AO activity
+ * JSONL entries. Registered on every event whose firing carries activity
+ * information (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
+ * PermissionRequest, Notification, Stop, SubagentStop, StopFailure, PreCompact,
+ * PostCompact, SubagentStart, PostToolBatch).
+ *
+ * Reads the JSON payload from stdin, parses `hook_event_name`, maps it to an
+ * activity state, and appends a single JSONL entry to
+ * `$CLAUDE_PROJECT_DIR/.ao/activity.jsonl` with `source: "hook"`.
+ *
+ * Notification is filtered by `notification_type` — only `permission_prompt`
+ * and `idle_prompt` map to `waiting_input`; `auth_success`/`elicitation_*` etc.
+ * are skipped because they don't represent a stuck-on-the-user transition.
+ *
+ * The script always exits 0 (never blocks Claude). Unknown events exit
+ * silently. Exported for integration testing.
+ */
+export const ACTIVITY_UPDATER_SCRIPT = `#!/usr/bin/env bash
+# Activity Updater Hook for Agent Orchestrator
+#
+# Records Claude Code lifecycle events to {workspace}/.ao/activity.jsonl so
+# the dashboard / lifecycle reducer derives activity state from authoritative
+# platform events instead of regex over rendered terminal output. (#1941)
+
+set -uo pipefail
+
+input=$(cat)
+
+if command -v jq &>/dev/null; then
+  event=$(printf '%s' "$input" | jq -r '.hook_event_name // empty')
+  notif_type=$(printf '%s' "$input" | jq -r '.notification_type // empty')
+  tool_name=$(printf '%s' "$input" | jq -r '.tool_name // empty')
+  error_type=$(printf '%s' "$input" | jq -r '.error_type // empty')
+else
+  event=$(printf '%s' "$input" | grep -o '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+  notif_type=$(printf '%s' "$input" | grep -o '"notification_type"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+  tool_name=$(printf '%s' "$input" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+  error_type=$(printf '%s' "$input" | grep -o '"error_type"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+fi
+
+state=""
+trigger=""
+case "$event" in
+  SessionStart|Stop|SubagentStop)
+    state="ready"
+    trigger="$event"
+    ;;
+  UserPromptSubmit|PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|PostCompact|SubagentStart|PostToolBatch)
+    state="active"
+    trigger="$event"
+    ;;
+  PermissionRequest)
+    state="waiting_input"
+    if [[ -n "$tool_name" ]]; then
+      trigger="PermissionRequest ($tool_name)"
+    else
+      trigger="PermissionRequest"
+    fi
+    ;;
+  Notification)
+    if [[ "$notif_type" == "permission_prompt" || "$notif_type" == "idle_prompt" ]]; then
+      state="waiting_input"
+      trigger="Notification ($notif_type)"
+    else
+      # auth_success / elicitation_* / unrecognized — not an activity transition
+      echo '{}'
+      exit 0
+    fi
+    ;;
+  StopFailure)
+    state="blocked"
+    if [[ -n "$error_type" ]]; then
+      trigger="StopFailure ($error_type)"
+    else
+      trigger="StopFailure"
+    fi
+    ;;
+  *)
+    echo '{}'
+    exit 0
+    ;;
+esac
+
+workspace="\${CLAUDE_PROJECT_DIR:-$(pwd)}"
+log_dir="$workspace/.ao"
+log_file="$log_dir/activity.jsonl"
+
+mkdir -p "$log_dir" 2>/dev/null || { echo '{}'; exit 0; }
+
+# Node is a hard runtime dep of Claude Code, so node -p is always available
+# and gives millisecond-precision ISO timestamps matching the rest of the
+# activity-JSONL log. Fall back to seconds-precision date for the unlikely
+# case where node is unavailable (still valid ISO 8601).
+ts=$(node -p 'new Date().toISOString()' 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Escape JSON-special characters in the trigger value. Triggers are bounded
+# today to event/tool/error names (no control chars in practice) but escape
+# defensively — \\ and " for content, plus the five common control chars
+# (\\n \\r \\t \\b \\f) so the JSONL line stays parseable for any future
+# trigger source. Matches what Node's JSON.stringify produces in the .cjs
+# variant so both implementations stay in lockstep.
+escape_json() {
+  local s="$1"
+  s="\${s//\\\\/\\\\\\\\}"
+  s="\${s//\\"/\\\\\\"}"
+  s="\${s//$'\\n'/\\\\n}"
+  s="\${s//$'\\r'/\\\\r}"
+  s="\${s//$'\\t'/\\\\t}"
+  s="\${s//$'\\b'/\\\\b}"
+  s="\${s//$'\\f'/\\\\f}"
+  printf '%s' "$s"
+}
+
+if [[ "$state" == "waiting_input" || "$state" == "blocked" ]]; then
+  esc_trigger=$(escape_json "$trigger")
+  printf '{"ts":"%s","state":"%s","source":"hook","trigger":"%s"}\\n' "$ts" "$state" "$esc_trigger" >> "$log_file"
+else
+  printf '{"ts":"%s","state":"%s","source":"hook"}\\n' "$ts" "$state" >> "$log_file"
+fi
+
+echo '{}'
+exit 0
+`;
+
+/**
+ * Node.js equivalent of ACTIVITY_UPDATER_SCRIPT for Windows. No bash, no jq,
+ * no shebang interpretation; relies only on Node built-ins. Exported for
+ * testing.
+ */
+export const ACTIVITY_UPDATER_SCRIPT_NODE = `#!/usr/bin/env node
+// Activity Updater Hook for Agent Orchestrator (Node.js — Windows). See
+// ACTIVITY_UPDATER_SCRIPT for the canonical bash version. (#1941)
+
+const { appendFileSync, mkdirSync, readFileSync } = require("node:fs");
+const { join } = require("node:path");
+
+let inputRaw = "";
+try {
+  inputRaw = readFileSync(0, "utf-8");
+} catch {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+let payload;
+try {
+  payload = JSON.parse(inputRaw || "{}");
+} catch {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+const event = typeof payload.hook_event_name === "string" ? payload.hook_event_name : "";
+const notifType = typeof payload.notification_type === "string" ? payload.notification_type : "";
+const toolName = typeof payload.tool_name === "string" ? payload.tool_name : "";
+const errorType = typeof payload.error_type === "string" ? payload.error_type : "";
+
+let state = "";
+let trigger = "";
+switch (event) {
+  case "SessionStart":
+  case "Stop":
+  case "SubagentStop":
+    state = "ready";
+    trigger = event;
+    break;
+  case "UserPromptSubmit":
+  case "PreToolUse":
+  case "PostToolUse":
+  case "PostToolUseFailure":
+  case "PreCompact":
+  case "PostCompact":
+  case "SubagentStart":
+  case "PostToolBatch":
+    state = "active";
+    trigger = event;
+    break;
+  case "PermissionRequest":
+    state = "waiting_input";
+    trigger = toolName ? \`PermissionRequest (\${toolName})\` : "PermissionRequest";
+    break;
+  case "Notification":
+    if (notifType === "permission_prompt" || notifType === "idle_prompt") {
+      state = "waiting_input";
+      trigger = \`Notification (\${notifType})\`;
+    } else {
+      process.stdout.write("{}\\n");
+      process.exit(0);
+    }
+    break;
+  case "StopFailure":
+    state = "blocked";
+    trigger = errorType ? \`StopFailure (\${errorType})\` : "StopFailure";
+    break;
+  default:
+    process.stdout.write("{}\\n");
+    process.exit(0);
+}
+
+const workspace = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+const logDir = join(workspace, ".ao");
+const logFile = join(logDir, "activity.jsonl");
+
+try {
+  mkdirSync(logDir, { recursive: true });
+} catch {
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+
+const ts = new Date().toISOString();
+const entry =
+  state === "waiting_input" || state === "blocked"
+    ? { ts, state, source: "hook", trigger }
+    : { ts, state, source: "hook" };
+
+try {
+  appendFileSync(logFile, JSON.stringify(entry) + "\\n", "utf-8");
+} catch {
+  // Best-effort — never block Claude on log append failure
+}
+
+process.stdout.write("{}\\n");
+process.exit(0);
+`;
+
+// =============================================================================
 // Plugin Manifest
 // =============================================================================
 
@@ -396,56 +673,6 @@ export const manifest = {
 // =============================================================================
 // JSONL Helpers
 // =============================================================================
-
-/**
- * Convert a workspace path to Claude's project directory path.
- * Claude stores sessions at ~/.claude/projects/{encoded-path}/
- *
- * Verified against Claude Code's actual on-disk slugs: every non-alphanumeric
- * character (other than `-`) is replaced with `-`. That includes `/`, `.`,
- * `:`, and crucially `_` — AO's per-project data dirs are named like
- * `<sanitized>_<hash>`, and without underscore folding the slug AO computes
- * misses the directory Claude actually wrote (issue #1611).
- *
- * Windows: `C:\Users\dev\project` → `C--Users-dev-project` — Claude leaves the
- * colon-position as a dash rather than stripping it. Verified via on-disk QA
- * during the Windows port (commit 582c5373). Stripping the colon (as #1611
- * inadvertently did) breaks JSONL lookup on Windows.
- *
- * Exported for testing purposes.
- */
-export function toClaudeProjectPath(workspacePath: string): string {
-  const normalized = workspacePath.replace(/\\/g, "/");
-  return normalized.replace(/[^a-zA-Z0-9-]/g, "-");
-}
-
-/** Find the most recently modified .jsonl session file in a directory */
-async function findLatestSessionFile(projectDir: string): Promise<string | null> {
-  let entries: string[];
-  try {
-    entries = await readdir(projectDir);
-  } catch {
-    return null;
-  }
-
-  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
-  if (jsonlFiles.length === 0) return null;
-
-  // Sort by mtime descending
-  const withStats = await Promise.all(
-    jsonlFiles.map(async (f) => {
-      const fullPath = join(projectDir, f);
-      try {
-        const s = await stat(fullPath);
-        return { path: fullPath, mtime: s.mtimeMs };
-      } catch {
-        return { path: fullPath, mtime: 0 };
-      }
-    }),
-  );
-  withStats.sort((a, b) => b.mtime - a.mtime);
-  return withStats[0]?.path ?? null;
-}
 
 interface JsonlLine {
   type?: string;
@@ -609,202 +836,192 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 }
 
 // =============================================================================
-// Process Detection
-// =============================================================================
-
-/**
- * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
- * would spawn N concurrent `ps` processes, each taking 30+ seconds on machines
- * with many processes. The cache ensures `ps` is called at most once per TTL
- * window regardless of how many sessions are being enriched.
- */
-type ProcessListResult = string | typeof PROCESS_PROBE_INDETERMINATE;
-let psCache: {
-  output: ProcessListResult;
-  timestamp: number;
-  promise?: Promise<ProcessListResult>;
-} | null = null;
-const PS_CACHE_TTL_MS = 5_000;
-
-/** Reset the ps cache. Exported for testing only. */
-export function resetPsCache(): void {
-  psCache = null;
-}
-
-async function getCachedProcessList(): Promise<ProcessListResult> {
-  // ps -eo is a Unix-only command; on Windows the tmux branch is never taken
-  // in normal operation, but guard here to avoid a spurious spawn error if
-  // a stale tmux handle is encountered.
-  if (isWindows()) return "";
-  const now = Date.now();
-  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
-    // Cache hit — return resolved output or wait for in-flight request
-    if (psCache.promise) return psCache.promise;
-    return psCache.output;
-  }
-
-  // Cache miss or expired — start a single `ps` call and share the promise.
-  // Guard both callbacks so they only update psCache if it still belongs to
-  // this request — a newer request may have replaced it while we were waiting.
-  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
-    timeout: 30_000,
-  })
-    .then(({ stdout }) => {
-      if (psCache?.promise === promise) {
-        psCache = { output: stdout || PROCESS_PROBE_INDETERMINATE, timestamp: Date.now() };
-      }
-      return stdout || PROCESS_PROBE_INDETERMINATE;
-    })
-    .catch(() => {
-      if (psCache?.promise === promise) {
-        psCache = { output: PROCESS_PROBE_INDETERMINATE, timestamp: Date.now() };
-      }
-      return PROCESS_PROBE_INDETERMINATE;
-    });
-
-  // Store the in-flight promise so concurrent callers share it
-  psCache = { output: "", timestamp: now, promise };
-
-  return promise;
-}
-
-/**
- * Check if a process named "claude" is running in the given runtime handle's context.
- * Uses ps to find processes by TTY (for tmux) or by PID.
- */
-async function findClaudeProcess(
-  handle: RuntimeHandle,
-): Promise<number | null | typeof PROCESS_PROBE_INDETERMINATE> {
-  try {
-    // For tmux runtime, get the pane TTY and find claude on it
-    if (handle.runtimeName === "tmux" && handle.id) {
-      if (isWindows()) return null;
-      const { stdout: ttyOut } = await execFileAsync(
-        "tmux",
-        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 30_000 },
-      );
-      // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
-      const ttys = ttyOut
-        .trim()
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      if (ttys.length === 0) return null;
-
-      const psOut = await getCachedProcessList();
-      if (psOut === PROCESS_PROBE_INDETERMINATE) return PROCESS_PROBE_INDETERMINATE;
-
-      const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-      // Match "claude" as a word boundary — prevents false positives on
-      // names like "claude-code" or paths that merely contain the substring.
-      const processRe = /(?:^|\/)claude(?:\s|$)/;
-      for (const line of psOut.split("\n")) {
-        const cols = line.trimStart().split(/\s+/);
-        if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-        const args = cols.slice(2).join(" ");
-        if (processRe.test(args)) {
-          return parseInt(cols[0] ?? "0", 10);
-        }
-      }
-      return null;
-    }
-
-    // For process runtime, check if the PID stored in handle data is alive
-    const rawPid = handle.data["pid"];
-    const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // Signal 0 = check existence
-        return pid;
-      } catch (err: unknown) {
-        // EPERM means the process exists but we lack permission to signal it
-        if (err instanceof Error && "code" in err && err.code === "EPERM") {
-          return pid;
-        }
-        return null;
-      }
-    }
-
-    // No reliable way to identify the correct process for this session
-    return null;
-  } catch {
-    return PROCESS_PROBE_INDETERMINATE;
-  }
-}
-
-// =============================================================================
-// Terminal Output Patterns for detectActivity
-// =============================================================================
-
-/** Classify Claude Code's activity state from terminal output (pure, sync). */
-function classifyTerminalOutput(terminalOutput: string): ActivityState {
-  // Empty output — can't determine state
-  if (!terminalOutput.trim()) return "idle";
-
-  const lines = terminalOutput.trim().split("\n");
-  const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-  // Check the last line FIRST — if the prompt is visible, the agent is idle
-  // regardless of historical output (e.g. "Reading file..." from earlier).
-  // The ❯ is Claude Code's prompt character.
-  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
-
-  // Check the bottom of the buffer for permission prompts BEFORE checking
-  // full-buffer active indicators. Historical "Thinking"/"Reading" text in
-  // the buffer must not override a current permission prompt at the bottom.
-  const tail = lines.slice(-5).join("\n");
-  if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
-  if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
-  if (/bypass.*permissions/i.test(tail)) return "waiting_input";
-
-  // Everything else is "active" — the agent is processing, waiting for
-  // output, or showing content. Specific patterns (e.g. "esc to interrupt",
-  // "Thinking", "Reading") all map to "active" so no need to check them
-  // individually.
-  return "active";
-}
-
-// =============================================================================
 // Hook Setup Helper
 // =============================================================================
 
 /**
- * Shared helper to setup PostToolUse hooks in a workspace.
- * Writes metadata-updater.sh script and updates settings.json.
+ * Single hook registration: which event, which variant (matcher), which
+ * command to invoke, and a substring used to find-and-update an existing
+ * entry so repeated setup calls are idempotent.
+ */
+interface HookRegistration {
+  event: string;
+  matcher: string;
+  command: string;
+  timeout: number;
+  /** Substring(s) of `command` that identify a pre-existing entry to update. */
+  identifiers: ReadonlyArray<string>;
+}
+
+/**
+ * Set the registration's hook in the `event`'s hook array, updating any
+ * existing entry whose command contains one of `identifiers` (idempotent).
  *
- * @param workspacePath - Path to the workspace directory
- * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
+ * Tolerates malformed pre-existing settings: if `hooks[event]` is not an
+ * array (object, string, missing) we start a fresh array rather than
+ * throwing on `.push`.
+ *
+ * Only refreshes the entry-level `matcher` when the entry contains a single
+ * hook def (ours). When a user has co-located their own hook def in the
+ * same `{ matcher, hooks: [...] }` object, we leave their matcher alone and
+ * only update our def's `command`/`timeout` so their hook keeps firing on
+ * the matchers they chose.
+ */
+function upsertHookEntry(
+  hooks: Record<string, unknown>,
+  reg: HookRegistration,
+): void {
+  const existing = hooks[reg.event];
+  const entries: Array<unknown> = Array.isArray(existing) ? existing : [];
+
+  let foundEntryIdx = -1;
+  let foundDefIdx = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const hooksList = (entry as Record<string, unknown>)["hooks"];
+    if (!Array.isArray(hooksList)) continue;
+    for (let j = 0; j < hooksList.length; j++) {
+      const def = hooksList[j];
+      if (typeof def !== "object" || def === null || Array.isArray(def)) continue;
+      const cmd = (def as Record<string, unknown>)["command"];
+      if (typeof cmd === "string" && reg.identifiers.some((id) => cmd.includes(id))) {
+        foundEntryIdx = i;
+        foundDefIdx = j;
+        break;
+      }
+    }
+    if (foundEntryIdx >= 0) break;
+  }
+
+  if (foundEntryIdx === -1) {
+    entries.push({
+      matcher: reg.matcher,
+      hooks: [{ type: "command", command: reg.command, timeout: reg.timeout }],
+    });
+  } else {
+    const entry = entries[foundEntryIdx] as Record<string, unknown>;
+    const hooksList = entry["hooks"] as Array<Record<string, unknown>>;
+    hooksList[foundDefIdx]!["command"] = reg.command;
+    hooksList[foundDefIdx]!["timeout"] = reg.timeout;
+    // Only refresh the matcher when the entry is clearly owned by AO
+    // (single hook def == ours). With multiple defs the entry is shared
+    // with a user hook; changing the matcher would change when their hook
+    // fires.
+    if (hooksList.length === 1) {
+      entry["matcher"] = reg.matcher;
+    }
+  }
+
+  hooks[reg.event] = entries;
+}
+
+/**
+ * Build the list of hooks to register for this workspace. Two scripts are
+ * installed:
+ *   - metadata-updater: PostToolUse(Bash) only — extracts gh/git side-effects.
+ *   - activity-updater: every event that carries activity information, so
+ *     dashboard / lifecycle reducer state derives from platform events
+ *     instead of regex over rendered terminal output (#1941).
+ *
+ * Activity events use matcher "" — match every variant. PermissionRequest's
+ * tool-name and Notification's notification_type are filtered inside the
+ * script itself so the registered set stays small.
+ */
+function buildHookRegistrations(
+  metadataCommand: string,
+  activityCommand: string,
+): HookRegistration[] {
+  const METADATA_IDS = [
+    "metadata-updater.sh",
+    "metadata-updater.cjs",
+    "metadata-updater.js",
+  ] as const;
+  const ACTIVITY_IDS = ["activity-updater.sh", "activity-updater.cjs"] as const;
+
+  const regs: HookRegistration[] = [
+    {
+      event: "PostToolUse",
+      matcher: "Bash",
+      command: metadataCommand,
+      timeout: 5000,
+      identifiers: METADATA_IDS,
+    },
+  ];
+
+  // Activity-updater events. Every event that the activity-updater script
+  // knows how to map (see ACTIVITY_UPDATER_SCRIPT) must be registered here;
+  // unregistered events fire no hook, so unrecognized hooks waste no time.
+  const activityEvents = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "Notification",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "PreCompact",
+    "PostCompact",
+  ];
+  for (const event of activityEvents) {
+    regs.push({
+      event,
+      matcher: "",
+      command: activityCommand,
+      // Hook execution is best-effort and the activity-updater is intentionally
+      // O(few ms): JSON parse, one append, exit. A short timeout keeps a stuck
+      // hook from slowing a turn down.
+      timeout: 2000,
+      identifiers: ACTIVITY_IDS,
+    });
+  }
+
+  return regs;
+}
+
+/**
+ * Install Claude Code workspace hooks. Writes both helper scripts
+ * (metadata-updater + activity-updater) and merges hook registrations into
+ * `.claude/settings.json` — preserving any user-installed hooks, updating our
+ * own in place on repeated calls.
  */
 async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
 
-  // Create .claude directory if it doesn't exist
   try {
     await mkdir(claudeDir, { recursive: true });
   } catch {
-    // Directory might already exist
+    // Directory may already exist; ignore
   }
 
-  // On Windows: write a Node.js hook script, skip chmod (not needed).
-  // On Unix: write the bash hook script and make it executable.
-  let hookCommand: string;
+  let metadataCommand: string;
+  let activityCommand: string;
   if (isWindows()) {
-    const hookScriptPath = join(claudeDir, "metadata-updater.cjs");
-    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
-    // No chmod — Windows uses file extension for executability
-    // Use `node` to invoke the script (Windows won't run .js via shebang)
-    // Use .cjs extension to force CJS mode regardless of workspace package.json "type" field
-    hookCommand = "node .claude/metadata-updater.cjs";
+    const metadataPath = join(claudeDir, "metadata-updater.cjs");
+    const activityPath = join(claudeDir, "activity-updater.cjs");
+    await writeFile(metadataPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
+    await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT_NODE, "utf-8");
+    // .cjs forces CJS regardless of workspace package.json "type"; node
+    // invocation is required on Windows because shebangs aren't honoured.
+    metadataCommand = "node .claude/metadata-updater.cjs";
+    activityCommand = "node .claude/activity-updater.cjs";
   } else {
-    const hookScriptPath = join(claudeDir, "metadata-updater.sh");
-    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-    await chmod(hookScriptPath, 0o755); // Make executable
-    hookCommand = ".claude/metadata-updater.sh";
+    const metadataPath = join(claudeDir, "metadata-updater.sh");
+    const activityPath = join(claudeDir, "activity-updater.sh");
+    await writeFile(metadataPath, METADATA_UPDATER_SCRIPT, "utf-8");
+    await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT, "utf-8");
+    await chmod(metadataPath, 0o755);
+    await chmod(activityPath, 0o755);
+    metadataCommand = ".claude/metadata-updater.sh";
+    activityCommand = ".claude/activity-updater.sh";
   }
 
-  // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
     try {
@@ -815,61 +1032,12 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     }
   }
 
-  // Merge hooks configuration
   const hooks = (existingSettings["hooks"] as Record<string, unknown>) ?? {};
-  const postToolUse = (hooks["PostToolUse"] as Array<unknown>) ?? [];
-
-  // Check if our hook is already configured
-  let hookIndex = -1;
-  let hookDefIndex = -1;
-  for (let i = 0; i < postToolUse.length; i++) {
-    const hook = postToolUse[i];
-    if (typeof hook !== "object" || hook === null || Array.isArray(hook)) continue;
-    const h = hook as Record<string, unknown>;
-    const hooksList = h["hooks"];
-    if (!Array.isArray(hooksList)) continue;
-    for (let j = 0; j < hooksList.length; j++) {
-      const hDef = hooksList[j];
-      if (typeof hDef !== "object" || hDef === null || Array.isArray(hDef)) continue;
-      const def = hDef as Record<string, unknown>;
-      if (
-        typeof def["command"] === "string" &&
-        (def["command"].includes("metadata-updater.sh") ||
-          def["command"].includes("metadata-updater.js") ||
-          def["command"].includes("metadata-updater.cjs"))
-      ) {
-        hookIndex = i;
-        hookDefIndex = j;
-        break;
-      }
-    }
-    if (hookIndex >= 0) break;
+  for (const reg of buildHookRegistrations(metadataCommand, activityCommand)) {
+    upsertHookEntry(hooks, reg);
   }
-
-  // Add or update our hook
-  if (hookIndex === -1) {
-    // No metadata hook exists, add it
-    postToolUse.push({
-      matcher: "Bash",
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand,
-          timeout: 5000,
-        },
-      ],
-    });
-  } else {
-    // Hook exists, update the command
-    const hook = postToolUse[hookIndex] as Record<string, unknown>;
-    const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    hooksList[hookDefIndex]["command"] = hookCommand;
-  }
-
-  hooks["PostToolUse"] = postToolUse;
   existingSettings["hooks"] = hooks;
 
-  // Write updated settings
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
 }
 
@@ -944,90 +1112,47 @@ function createClaudeCodeAgent(): Agent {
     },
 
     detectActivity(terminalOutput: string): ActivityState {
+      // #1941: Claude activity is derived from platform-event hooks
+      // (PermissionRequest / StopFailure / Notification / Stop / ...) which
+      // write directly to {workspace}/.ao/activity.jsonl. The terminal-regex
+      // layer was structurally fragile (every UI tweak in Claude regressed
+      // it; see the 15-commit churn in #1932) so it has been retired in
+      // favour of those authoritative events.
+      //
+      // detectActivity is kept on the Agent interface for other plugins
+      // (Aider, OpenCode, Codex fallback) that still rely on terminal output.
+      // For Claude, classifyTerminalOutput is a stable "idle" stub — the
+      // lifecycle manager only consults this method when getActivityState
+      // returned null (no Claude process / no JSONL / no hook entry yet),
+      // and in that no-signal case "idle" is the correct conservative
+      // answer (we don't write it back to JSONL — recordActivity is also
+      // intentionally omitted for Claude).
       return classifyTerminalOutput(terminalOutput);
     },
 
+    // recordActivity is intentionally NOT implemented for the Claude agent
+    // (#1941). Hooks write activity entries directly via the activity-updater
+    // script, so polling-driven terminal-output classification would only add
+    // stale duplicates to .ao/activity.jsonl.
+
     async isProcessRunning(handle: RuntimeHandle): Promise<ProcessProbeResult> {
-      const pid = await findClaudeProcess(handle);
-      if (pid === PROCESS_PROBE_INDETERMINATE) return PROCESS_PROBE_INDETERMINATE;
-      return pid !== null;
+      return isClaudeProcessAlive(handle);
     },
 
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
     ): Promise<ActivityDetection | null> {
-      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
-
-      // Check if process is running first
-      const exitedAt = new Date();
-      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (running === PROCESS_PROBE_INDETERMINATE) return null;
-      if (!running) return { state: "exited", timestamp: exitedAt };
-
-      // Process is running - check JSONL session file for activity
-      if (!session.workspacePath) {
-        // No workspace path — cannot determine activity without it
-        return null;
-      }
-
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
-
-      const sessionFile = await findLatestSessionFile(projectDir);
-      if (!sessionFile) {
-        // No session file yet — process is running but no conversation started.
-        // Treat as idle (waiting for first task).
-        return { state: "idle", timestamp: session.createdAt };
-      }
-
-      const entry = await readLastJsonlEntry(sessionFile);
-      if (!entry) {
-        // Empty file or read error — cannot determine activity
-        return null;
-      }
-
-      // If the JSONL entry predates this session, it's from a previous session
-      // in the same worktree. Treat as no data (agent hasn't written yet).
-      if (session.createdAt && entry.modifiedAt < session.createdAt) {
-        return { state: "idle", timestamp: session.createdAt };
-      }
-
-      const ageMs = Date.now() - entry.modifiedAt.getTime();
-      const timestamp = entry.modifiedAt;
-
-      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
-      switch (entry.lastType) {
-        case "user":
-        case "tool_use":
-        case "progress":
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
-        case "assistant":
-        case "system":
-        case "summary":
-        case "result":
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-
-        case "permission_request":
-          return { state: "waiting_input", timestamp };
-
-        case "error":
-          return { state: "blocked", timestamp };
-
-        default:
-          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
-      }
+      return getClaudeActivityState(session, readyThresholdMs, (handle) =>
+        this.isProcessRunning(handle),
+      );
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       // Find the latest session JSONL file
@@ -1057,7 +1182,7 @@ function createClaudeCodeAgent(): Agent {
         if (!session.workspacePath) return null;
 
         // Find Claude's project directory for this workspace
-        const projectPath = toClaudeProjectPath(session.workspacePath);
+        const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
         const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
         // Find the latest session JSONL file

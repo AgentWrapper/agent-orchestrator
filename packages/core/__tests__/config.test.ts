@@ -162,6 +162,9 @@ projects:
         globalConfigPath,
         [
           "port: 4000",
+          "observability:",
+          "  logLevel: info",
+          "  stderr: true",
           "defaults:",
           "  runtime: tmux",
           "  agent: claude-code",
@@ -190,6 +193,7 @@ projects:
       );
 
       const config = loadConfig(globalConfigPath);
+      expect(config.observability).toEqual({ logLevel: "info", stderr: true });
       expect(Object.keys(config.projects)).toEqual(["clean-project"]);
       expect(config.projects["clean-project"]).toBeDefined();
       expect(config.degradedProjects["broken-project"]).toMatchObject({

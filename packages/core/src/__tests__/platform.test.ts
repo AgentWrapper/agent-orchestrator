@@ -44,6 +44,14 @@ describe("platform adapter", () => {
     });
   });
 
+  describe("getNodePtyPrebuildsSubdir", () => {
+    it("centralizes node-pty prebuild platform/arch naming", async () => {
+      setPlatform("darwin");
+      const mod = await import("../platform.js");
+      expect(mod.getNodePtyPrebuildsSubdir()).toBe(`darwin-${process.arch}`);
+    });
+  });
+
   describe("getShell", () => {
     it("always returns /bin/sh on unix (ignores $SHELL)", async () => {
       setPlatform("linux");

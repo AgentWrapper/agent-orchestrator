@@ -6,6 +6,7 @@ import {
   getPortfolio,
   getPortfolioSessionCounts,
   isPortfolioEnabled,
+  recordActivityEvent,
   registerProject,
   unregisterProject,
   loadPreferences,
@@ -94,18 +95,48 @@ export function registerProjectCommand(program: Command): void {
         const existingConfigPath = candidatePaths.find((candidate) => existsSync(candidate));
 
         if (!existingConfigPath) {
+          recordActivityEvent({
+            source: "cli",
+            kind: "cli.project_register_failed",
+            level: "warn",
+            summary: `ao project add: no agent-orchestrator config found`,
+            data: { resolvedPath, reason: "no_config_found" },
+          });
           console.error(chalk.red(`No agent-orchestrator.yaml found at ${resolvedPath}`));
           process.exit(1);
         }
 
         try {
           loadConfig(existingConfigPath);
+          recordActivityEvent({
+            source: "cli",
+            kind: "cli.project_register_failed",
+            level: "warn",
+            summary: `ao project add: found old-format config requiring migration`,
+            data: {
+              resolvedPath,
+              configPath: existingConfigPath,
+              reason: "old_format",
+            },
+          });
           console.error(
             chalk.red(
               `Found old-format config at ${existingConfigPath}. Run \`ao start\` in that project to migrate it before using \`ao project add\`.`,
             ),
           );
         } catch (error) {
+          recordActivityEvent({
+            source: "cli",
+            kind: "cli.project_register_failed",
+            level: "error",
+            summary: `ao project add: config load failed`,
+            data: {
+              resolvedPath,
+              configPath: existingConfigPath,
+              reason: "load_error",
+              errorMessage: error instanceof Error ? error.message : String(error),
+            },
+          });
           console.error(
             chalk.red(
               `Found agent-orchestrator config at ${existingConfigPath}, but it could not be loaded: ${error instanceof Error ? error.message : String(error)}`,

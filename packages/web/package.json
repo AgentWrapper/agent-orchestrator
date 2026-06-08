@@ -1,6 +1,6 @@
 {
   "name": "@aoagents/ao-web",
-  "version": "0.8.0",
+  "version": "0.9.2",
   "description": "Web dashboard for agent-orchestrator",
   "license": "MIT",
   "type": "module",
@@ -12,6 +12,9 @@
   "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
   "bugs": {
     "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+  },
+  "engines": {
+    "node": ">=20.18.3"
   },
   "publishConfig": {
     "access": "public",
@@ -36,6 +39,7 @@
     "dev:optimized": "rimraf .next dist-server && next build && tsc -p tsconfig.server.json && node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:review": "tsx e2e/review-board.e2e.ts",
     "test:watch": "vitest",
     "clean": "node scripts/guard-production-artifact-clean.mjs && rimraf .next dist-server",
     "screenshot": "tsx e2e/screenshot.ts",
@@ -46,6 +50,7 @@
     "@aoagents/ao-plugin-agent-claude-code": "workspace:*",
     "@aoagents/ao-plugin-agent-codex": "workspace:*",
     "@aoagents/ao-plugin-agent-cursor": "workspace:*",
+    "@aoagents/ao-plugin-agent-grok": "workspace:*",
     "@aoagents/ao-plugin-agent-kimicode": "workspace:*",
     "@aoagents/ao-plugin-agent-opencode": "workspace:*",
     "@aoagents/ao-plugin-runtime-process": "workspace:*",
@@ -54,9 +59,11 @@
     "@aoagents/ao-plugin-tracker-github": "workspace:*",
     "@aoagents/ao-plugin-tracker-linear": "workspace:*",
     "@aoagents/ao-plugin-workspace-worktree": "workspace:*",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/xterm": "^6.0.0",
+    "@xterm/addon-fit": "0.12.0-beta.256",
+    "@xterm/addon-unicode11": "0.10.0-beta.256",
+    "@xterm/addon-web-links": "0.13.0-beta.256",
+    "@xterm/addon-webgl": "0.20.0-beta.255",
+    "@xterm/xterm": "6.1.0-beta.256",
     "next": "^15.1.0",
     "next-themes": "^0.4.6",
     "react": "^19.0.0",

@@ -1,7 +1,22 @@
 {
   "name": "@aoagents/ao",
-  "version": "0.8.0",
+  "version": "0.9.2",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
+  "keywords": [
+    "ai",
+    "ai-agents",
+    "coding-agent",
+    "agent-orchestration",
+    "orchestrator",
+    "claude-code",
+    "codex",
+    "aider",
+    "cli",
+    "automation",
+    "devtools",
+    "parallel-agents",
+    "git-worktree"
+  ],
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -11,7 +26,8 @@
     "postinstall": "node bin/postinstall.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "README.md"
   ],
   "repository": {
     "type": "git",
@@ -23,7 +39,7 @@
     "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.18.3"
   },
   "dependencies": {
     "@aoagents/ao-cli": "workspace:*"

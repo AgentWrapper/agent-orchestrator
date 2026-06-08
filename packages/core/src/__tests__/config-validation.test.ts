@@ -1247,3 +1247,61 @@ describe("Config Validation - Power Config", () => {
     ).toThrow();
   });
 });
+
+describe("Config Validation - Observability Config", () => {
+  const baseConfig = {
+    projects: {
+      proj1: {
+        path: "/repos/test",
+        repo: "org/test",
+        defaultBranch: "main",
+      },
+    },
+  };
+
+  it("applies default observability config", () => {
+    const config = validateConfig(baseConfig);
+
+    expect(config.observability).toEqual({
+      logLevel: "warn",
+      stderr: false,
+    });
+  });
+
+  it("accepts explicit observability settings", () => {
+    const config = validateConfig({
+      ...baseConfig,
+      observability: {
+        logLevel: "info",
+        stderr: true,
+      },
+    });
+
+    expect(config.observability).toEqual({
+      logLevel: "info",
+      stderr: true,
+    });
+  });
+
+  it("rejects invalid observability settings", () => {
+    expect(() =>
+      validateConfig({
+        ...baseConfig,
+        observability: {
+          logLevel: "verbose",
+          stderr: false,
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      validateConfig({
+        ...baseConfig,
+        observability: {
+          logLevel: "warn",
+          stderr: "yes",
+        },
+      }),
+    ).toThrow();
+  });
+});

@@ -1,22 +1,37 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import type { OrchestratorEvent, NotifyAction } from "@aoagents/ao-core";
 
 // Mock node:child_process
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
+  execFileSync: vi.fn(),
+}));
+
+// Mock node:fs
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(() => false),
 }));
 
 // Mock node:os
 vi.mock("node:os", () => ({
+  homedir: vi.fn(() => "/Users/test"),
   platform: vi.fn(() => "darwin"),
 }));
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import { manifest, create, escapeAppleScript } from "./index.js";
 
 const mockExecFile = execFile as unknown as Mock;
+const mockExecFileSync = execFileSync as unknown as Mock;
+const mockExistsSync = existsSync as unknown as Mock;
 const mockPlatform = platform as unknown as Mock;
+const originalProcessPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+function setProcessPlatform(value: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", { value, configurable: true });
+}
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
   return {
@@ -36,6 +51,14 @@ describe("notifier-desktop", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPlatform.mockReturnValue("darwin");
+    setProcessPlatform("darwin");
+    mockExistsSync.mockReturnValue(false);
+    // Default: terminal-notifier not available (osascript fallback)
+    mockExecFileSync.mockImplementation(() => {
+      const error = new Error("not found") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    });
     mockExecFile.mockImplementation((..._args: unknown[]) => {
       // execFile may be called as (cmd, args, cb) or (cmd, args, opts, cb).
       // Pick whichever trailing arg is the callback so both shapes work.
@@ -44,6 +67,12 @@ describe("notifier-desktop", () => {
         | undefined;
       cb?.(null);
     });
+  });
+
+  afterEach(() => {
+    if (originalProcessPlatform) {
+      Object.defineProperty(process, "platform", originalProcessPlatform);
+    }
   });
 
   describe("manifest", () => {
@@ -95,7 +124,7 @@ describe("notifier-desktop", () => {
       expect(mockExecFile.mock.calls[0][1][0]).toBe("-e");
     });
 
-    it("includes session ID in title", async () => {
+    it("includes session ID in notification subtitle", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ sessionId: "backend-5" }));
 
@@ -119,12 +148,12 @@ describe("notifier-desktop", () => {
       expect(script).toContain("URGENT");
     });
 
-    it("uses 'Agent Orchestrator' prefix for non-urgent priority", async () => {
+    it("uses event-aware titles for non-urgent priority", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "action" }));
 
       const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("Agent Orchestrator");
+      expect(script).toContain("Session Spawned");
     });
 
     it("includes sound for urgent notifications", async () => {
@@ -178,6 +207,50 @@ describe("notifier-desktop", () => {
       expect(script).toContain('test\\"inject');
       expect(script).toContain('\\"quotes\\"');
       expect(script).toContain("\\\\backslash");
+    });
+
+    it("formats v3 pull request context into a compact desktop summary", async () => {
+      const notifier = create();
+      await notifier.notify(
+        makeEvent({
+          type: "merge.ready",
+          priority: "action",
+          projectId: "demo",
+          sessionId: "demo-agent-29",
+          message: "PR #1579 is ready to merge",
+          data: {
+            schemaVersion: 3,
+            subject: {
+              session: { id: "demo-agent-29", projectId: "demo" },
+              pr: {
+                number: 1579,
+                title: "Normalize AO notifier payloads",
+                url: "https://github.com/ComposioHQ/agent-orchestrator/pull/1579",
+                branch: "ao/demo-notifier-harness",
+                baseBranch: "main",
+              },
+              issue: { id: "AO-1579", title: "Make AO notification payloads API-grade" },
+            },
+            ci: { status: "passing" },
+            review: { decision: "approved" },
+            merge: { ready: true, conflicts: false },
+            transition: { kind: "pr_state", from: "approved", to: "mergeable" },
+          },
+        }),
+      );
+
+      const script = mockExecFile.mock.calls[0][1][1] as string;
+      expect(script).toContain("PR #1579 ready to merge");
+      expect(script).toContain("Normalize AO notifier payloads");
+      expect(script).toContain("demo · demo-agent-29 · PR #1579");
+      expect(script).toContain("PR #1579");
+      expect(script).toContain("AO-1579");
+      expect(script).toContain("Branch: ao/demo-notifier-harness → main");
+      expect(script).toContain("CI: Passing");
+      expect(script).toContain("Review: Approved");
+      expect(script).toContain("Merge: Ready");
+      expect(script).toContain("Conflicts: None");
+      expect(script).toContain("Transition: approved → mergeable");
     });
   });
 
@@ -317,6 +390,224 @@ describe("notifier-desktop", () => {
       );
       const notifier = create();
       await expect(notifier.notify(makeEvent())).rejects.toThrow("osascript not found");
+    });
+  });
+
+  describe("terminal-notifier on macOS", () => {
+    beforeEach(() => {
+      // terminal-notifier is available
+      mockExecFileSync.mockReturnValue(Buffer.from("/usr/local/bin/terminal-notifier\n"));
+    });
+
+    it("uses terminal-notifier when available", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile).toHaveBeenCalledOnce();
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
+    });
+
+    it("passes -title, -subtitle, and -message args", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ sessionId: "s-1", message: "hello" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-title");
+      expect(args).toContain("-subtitle");
+      expect(args).toContain("-message");
+      expect(args[args.indexOf("-subtitle") + 1]).toBe("my-project · s-1 · Info");
+      expect(args[args.indexOf("-message") + 1]).toContain("hello");
+    });
+
+    it("passes session deep link with dashboardUrl when configured", async () => {
+      const notifier = create({ dashboardUrl: "http://localhost:8080" });
+      await notifier.notify(makeEvent());
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-open");
+      expect(args[args.indexOf("-open") + 1]).toBe(
+        "http://localhost:8080/projects/my-project/sessions/app-1",
+      );
+    });
+
+    it("does not pass -open when dashboardUrl is not configured", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-open");
+    });
+
+    it("passes -sound default for urgent notifications", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ priority: "urgent" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-sound");
+      expect(args[args.indexOf("-sound") + 1]).toBe("default");
+    });
+
+    it("does not pass -sound for non-urgent notifications", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent({ priority: "info" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
+    });
+
+    it("respects sound=false config", async () => {
+      const notifier = create({ sound: false });
+      await notifier.notify(makeEvent({ priority: "urgent" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
+    });
+
+    it("falls back to osascript when terminal-notifier is not found", async () => {
+      mockExecFileSync.mockImplementation(() => {
+        const error = new Error("not found") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      });
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("osascript");
+    });
+
+    it("does not use terminal-notifier on Linux", async () => {
+      mockPlatform.mockReturnValue("linux");
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("notify-send");
+    });
+
+    it("uses terminal-notifier for notifyWithActions too", async () => {
+      const notifier = create({ dashboardUrl: "http://localhost:3000" });
+      const actions: NotifyAction[] = [{ label: "View", url: "https://example.com" }];
+      await notifier.notifyWithActions!(makeEvent(), actions);
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-open");
+    });
+  });
+
+  describe("AO Notifier.app backend", () => {
+    beforeEach(() => {
+      mockExistsSync.mockImplementation((path: string) =>
+        path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier"),
+      );
+    });
+
+    it("uses AO Notifier.app before terminal-notifier in auto mode", async () => {
+      mockExecFileSync.mockReturnValue(Buffer.from("/usr/local/bin/terminal-notifier\n"));
+      const notifier = create({ dashboardUrl: "http://localhost:3000" });
+      await notifier.notify(makeEvent({ message: "native app" }));
+
+      expect(mockExecFile.mock.calls[0][0]).toBe(
+        "/Users/test/Applications/AO Notifier.app/Contents/MacOS/ao-notifier",
+      );
+      expect(mockExecFile.mock.calls[0][1][0]).toBe("--notify-base64");
+    });
+
+    it("passes event metadata and default open URL to AO Notifier.app", async () => {
+      const notifier = create({ backend: "ao-app", dashboardUrl: "http://localhost:3001" });
+      await notifier.notify(makeEvent({ id: "evt-native", sessionId: "s-9" }));
+
+      const encoded = mockExecFile.mock.calls[0][1][1] as string;
+      const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8")) as {
+        notificationId: string;
+        threadId: string;
+        subtitle: string;
+        defaultOpenUrl: string;
+        event: { id: string; sessionId: string };
+      };
+      expect(payload.notificationId).toMatch(/^evt-native\./);
+      expect(payload.threadId).toBe("ao.notifications");
+      expect(payload.subtitle).toBe("my-project · s-9 · Info");
+      expect(payload.defaultOpenUrl).toBe("http://localhost:3001/projects/my-project/sessions/s-9");
+      expect(payload.event).toMatchObject({ id: "evt-native", sessionId: "s-9" });
+    });
+
+    it("scopes native notification sequence to each notifier instance", async () => {
+      const first = create({ backend: "ao-app" });
+      const second = create({ backend: "ao-app" });
+
+      await first.notify(makeEvent({ id: "evt-first" }));
+      await second.notify(makeEvent({ id: "evt-second" }));
+
+      const firstEncoded = mockExecFile.mock.calls[0][1][1] as string;
+      const secondEncoded = mockExecFile.mock.calls[1][1][1] as string;
+      const firstPayload = JSON.parse(Buffer.from(firstEncoded, "base64").toString("utf-8")) as {
+        notificationId: string;
+      };
+      const secondPayload = JSON.parse(Buffer.from(secondEncoded, "base64").toString("utf-8")) as {
+        notificationId: string;
+      };
+
+      expect(firstPayload.notificationId).toMatch(/^evt-first\..*\.1$/);
+      expect(secondPayload.notificationId).toMatch(/^evt-second\..*\.1$/);
+    });
+
+    it("passes URL actions to AO Notifier.app", async () => {
+      const notifier = create({ backend: "ao-app" });
+      const actions: NotifyAction[] = [
+        { label: "Open PR", url: "https://github.com/example/pr/1" },
+        { label: "Kill", callbackEndpoint: "/api/kill" },
+      ];
+      await notifier.notifyWithActions!(makeEvent(), actions);
+
+      const encoded = mockExecFile.mock.calls[0][1][1] as string;
+      const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8")) as {
+        body: string;
+        actions: Array<{ label: string; url?: string; callbackEndpoint?: string }>;
+      };
+      expect(payload.actions).toEqual([
+        { label: "Open PR", url: "https://github.com/example/pr/1" },
+      ]);
+      expect(payload.body).toContain("Kill");
+      expect(payload.body).not.toContain("Open PR");
+    });
+
+    it("passes callback actions to AO Notifier.app when they resolve against dashboardUrl", async () => {
+      const notifier = create({ backend: "ao-app", dashboardUrl: "http://localhost:3000" });
+      const actions: NotifyAction[] = [
+        { label: "Kill", callbackEndpoint: "/api/sessions/app-1/kill" },
+      ];
+      await notifier.notifyWithActions!(makeEvent(), actions);
+
+      const encoded = mockExecFile.mock.calls[0][1][1] as string;
+      const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8")) as {
+        body: string;
+        actions: Array<{ label: string; callbackEndpoint?: string }>;
+      };
+      expect(payload.actions).toEqual([
+        { label: "Kill", callbackEndpoint: "http://localhost:3000/api/sessions/app-1/kill" },
+      ]);
+      expect(payload.body).not.toContain("Kill");
+    });
+
+    it("fails when backend ao-app is configured but the app is missing", async () => {
+      mockExistsSync.mockReturnValue(false);
+      const notifier = create({ backend: "ao-app" });
+
+      await expect(notifier.notify(makeEvent())).rejects.toThrow("ao setup desktop");
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    it("does not use a placeholder AO Notifier.app in auto mode", async () => {
+      mockExistsSync.mockImplementation(
+        (path: string) =>
+          path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier") ||
+          path.endsWith("AO Notifier.app/Contents/Resources/ao-notifier-placeholder"),
+      );
+      const notifier = create();
+
+      await notifier.notify(makeEvent());
+
+      expect(mockExecFile.mock.calls[0][0]).toBe("osascript");
     });
   });
 });
