@@ -247,6 +247,32 @@ describe("applyAgentReport", () => {
     });
   });
 
+  it("uses sessionPrefix to reject legacy orchestrator self-reports", () => {
+    const orchestratorSessionId = "demo-orchestrator";
+    writeMetadata(dataDir, orchestratorSessionId, {
+      worktree: "/tmp/worktree",
+      branch: "orchestrator/demo-orchestrator",
+      status: "working",
+      project: "demo",
+    });
+
+    expect(() =>
+      applyAgentReport(
+        dataDir,
+        orchestratorSessionId,
+        {
+          state: "needs_input",
+          now: new Date("2025-01-01T12:00:00.000Z"),
+        },
+        { sessionPrefix: "demo" },
+      ),
+    ).toThrow("orchestrator sessions cannot self-report");
+
+    const meta = readMetadataRaw(dataDir, orchestratorSessionId);
+    expect(meta).not.toBeNull();
+    expect(meta!["lifecycle"]).toBeUndefined();
+  });
+
   it("records pr_created with PR metadata and pr_open lifecycle", () => {
     const now = new Date("2025-01-02T09:30:00.000Z");
     const result = applyAgentReport(dataDir, sessionId, {

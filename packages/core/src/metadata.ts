@@ -37,6 +37,7 @@ import {
   deriveLegacyStatus,
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
+import { deriveSessionKindFromMetadata } from "./utils/session-kind.js";
 import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./utils/session-id.js";
 import { flattenToStringRecord } from "./utils/metadata-flatten.js";
 import { validateStatus } from "./utils/validation.js";
@@ -464,7 +465,11 @@ export function readCanonicalLifecycle(
 ): CanonicalSessionLifecycle | null {
   const raw = readMetadataRaw(dataDir, sessionId);
   if (!raw) return null;
-  return parseCanonicalLifecycle(raw, { sessionId, status: validateStatus(raw["status"]) });
+  return parseCanonicalLifecycle(raw, {
+    sessionId,
+    sessionKind: deriveSessionKindFromMetadata(sessionId, raw),
+    status: validateStatus(raw["status"]),
+  });
 }
 
 export function writeCanonicalLifecycle(
@@ -484,6 +489,7 @@ export function updateCanonicalLifecycle(
   if (!raw) return null;
   const current = parseCanonicalLifecycle(raw, {
     sessionId,
+    sessionKind: deriveSessionKindFromMetadata(sessionId, raw),
     status: validateStatus(raw["status"]),
   });
   const next = updater(cloneLifecycle(current));

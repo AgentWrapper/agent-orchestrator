@@ -77,6 +77,19 @@ describe("deriveLegacyStatus", () => {
 });
 
 describe("parseCanonicalLifecycle", () => {
+  it("does not infer orchestrator kind from sessionId suffix without explicit signal", () => {
+    const parsed = parseCanonicalLifecycle(
+      {
+        status: "working",
+      },
+      {
+        sessionId: "foreign-project-orchestrator",
+      },
+    );
+
+    expect(parsed.session.kind).toBe("worker");
+  });
+
   it("rehydrates legacy merged sessions with a merged PR state", () => {
     const parsed = parseCanonicalLifecycle({
       status: "merged",

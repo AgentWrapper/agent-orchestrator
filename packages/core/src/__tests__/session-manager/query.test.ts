@@ -137,7 +137,10 @@ describe("list", () => {
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
-    await sm.list("my-app");
+    const sessions = await sm.list("my-app");
+    const legacy = sessions.find((session) => session.id === "my-app-orchestrator");
+    expect(legacy).toBeDefined();
+    expect(legacy?.lifecycle.session.kind).toBe("worker");
 
     // After list(), the record on disk must still have no role metadata.
     const raw = readMetadataRaw(sessionsDir, "my-app-orchestrator");

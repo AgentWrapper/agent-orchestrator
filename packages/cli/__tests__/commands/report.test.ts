@@ -58,6 +58,7 @@ describe("report commands", () => {
         app: {
           name: "app",
           path: "/tmp/app",
+          sessionPrefix: "app",
         },
       },
     };
@@ -97,6 +98,9 @@ describe("report commands", () => {
         source: "acknowledge",
         actor: "codex",
       }),
+      {
+        sessionPrefix: "app",
+      },
     );
   });
 

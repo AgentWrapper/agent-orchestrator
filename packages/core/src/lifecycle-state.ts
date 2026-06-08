@@ -274,10 +274,7 @@ function synthesizeCanonicalLifecycle(
 ): CanonicalSessionLifecycle {
   const status = options.status ?? validateStatus(meta["status"]);
   const sessionKind: SessionKind =
-    options.sessionKind ??
-    (meta["role"] === "orchestrator" || options.sessionId?.endsWith("-orchestrator")
-      ? "orchestrator"
-      : "worker");
+    options.sessionKind ?? (meta["role"] === "orchestrator" ? "orchestrator" : "worker");
   const now =
     options.createdAt?.toISOString() ??
     normalizeTimestamp(meta["createdAt"], new Date().toISOString()) ??

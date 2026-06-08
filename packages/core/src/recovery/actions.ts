@@ -8,6 +8,7 @@ import type {
 import { recordActivityEvent } from "../activity-events.js";
 import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
+import { deriveSessionKindFromMetadata } from "../utils/session-kind.js";
 import { validateStatus } from "../utils/validation.js";
 import { sessionFromMetadata } from "../utils/session-from-metadata.js";
 import {
@@ -30,12 +31,18 @@ import type { RecoveryAssessment, RecoveryResult, RecoveryContext } from "./type
  */
 function buildLifecycleRecoveryPatch(
   rawMetadata: Record<string, string>,
+  sessionId: string,
+  sessionPrefix: string | undefined,
   next: { state: CanonicalSessionLifecycle["session"]["state"]; reason: CanonicalSessionLifecycle["session"]["reason"]; terminatedAt?: string },
 ): Partial<Record<string, string>> {
   if (!rawMetadata["lifecycle"] && !(rawMetadata["statePayload"] && rawMetadata["stateVersion"] === "2")) {
     return {};
   }
-  const current = parseCanonicalLifecycle(rawMetadata);
+  const current = parseCanonicalLifecycle(rawMetadata, {
+    sessionId,
+    sessionKind: deriveSessionKindFromMetadata(sessionId, rawMetadata, sessionPrefix),
+    status: validateStatus(rawMetadata["status"]),
+  });
   const updated = cloneLifecycle(current);
   const nowIso = new Date().toISOString();
   updated.session = {
@@ -108,7 +115,7 @@ export async function recoverSession(
         escalationReason: `Exceeded max recovery attempts (${context.recoveryConfig.maxRecoveryAttempts})`,
         recoveryCount: String(recoveryCount),
         ...preserveSessionAgentPatch(rawMetadata),
-        ...buildLifecycleRecoveryPatch(rawMetadata, {
+        ...buildLifecycleRecoveryPatch(rawMetadata, sessionId, project.sessionPrefix, {
           state: "stuck",
           reason: "probe_failure",
         }),
@@ -142,6 +149,11 @@ export async function recoverSession(
     const session = sessionFromMetadata(sessionId, updatedMetadata, {
       projectId: assessment.projectId,
       workspacePathFallback: assessment.workspacePath ?? undefined,
+      sessionKind: deriveSessionKindFromMetadata(
+        sessionId,
+        updatedMetadata,
+        project.sessionPrefix,
+      ),
       status: preservedStatus,
       runtimeHandle: assessment.runtimeHandle,
       lastActivityAt: new Date(),
@@ -234,7 +246,7 @@ export async function cleanupSession(
       terminatedAt: cleanupAt,
       terminationReason: "cleanup",
       ...preserveSessionAgentPatch(rawMetadata),
-      ...buildLifecycleRecoveryPatch(rawMetadata, {
+      ...buildLifecycleRecoveryPatch(rawMetadata, sessionId, project.sessionPrefix, {
         state: "terminated",
         reason: "auto_cleanup",
         terminatedAt: cleanupAt,
@@ -294,7 +306,7 @@ export async function escalateSession(
       escalatedAt: new Date().toISOString(),
       escalationReason: reason,
       ...preserveSessionAgentPatch(rawMetadata),
-      ...buildLifecycleRecoveryPatch(rawMetadata, {
+      ...buildLifecycleRecoveryPatch(rawMetadata, sessionId, project.sessionPrefix, {
         state: "stuck",
         reason: "probe_failure",
       }),

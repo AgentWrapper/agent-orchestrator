@@ -93,6 +93,7 @@ import {
 } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { dedupePrUrls } from "./utils/pr.js";
+import { deriveSessionKindFromMetadata } from "./utils/session-kind.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveAgentSelectionForSession } from "./agent-selection.js";
@@ -354,13 +355,7 @@ function metadataToSession(
   meta: Record<string, string>,
   options: MetadataToSessionOptions,
 ): Session {
-  const sessionKind =
-    meta["role"] === "orchestrator" ||
-    (options.sessionPrefix
-      ? new RegExp(`^${escapeRegex(options.sessionPrefix)}-orchestrator-\\d+$`).test(sessionId)
-      : false)
-      ? "orchestrator"
-      : "worker";
+  const sessionKind = deriveSessionKindFromMetadata(sessionId, meta, options.sessionPrefix);
   return sessionFromMetadata(sessionId, meta, {
     projectId: options.projectId,
     workspacePathFallback: options.workspacePathFallback,
@@ -437,17 +432,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionPrefix?: string,
   ): boolean {
     if (!raw) return false;
-    if (raw["role"] === "orchestrator") return true;
-    // Check the -orchestrator-N pattern only when the prefix is known so the
-    // regex is anchored to the project prefix, preventing false-positives when
-    // the user-configured sessionPrefix itself ends with "-orchestrator".
-    if (sessionPrefix) {
-      if (sessionId === `${sessionPrefix}-orchestrator`) {
-        return true;
-      }
-      return new RegExp(`^${escapeRegex(sessionPrefix)}-orchestrator-\\d+$`).test(sessionId);
-    }
-    return false;
+    return deriveSessionKindFromMetadata(sessionId, raw, sessionPrefix) === "orchestrator";
   }
 
   function isCleanupProtectedSession(

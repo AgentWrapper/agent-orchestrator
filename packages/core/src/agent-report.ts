@@ -35,6 +35,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { parsePrFromUrl } from "./utils/pr.js";
+import { deriveSessionKindFromMetadata } from "./utils/session-kind.js";
 import { assertValidSessionIdComponent } from "./utils/session-id.js";
 import { validateStatus } from "./utils/validation.js";
 
@@ -393,6 +394,7 @@ export function applyAgentReport(
   dataDir: string,
   sessionId: SessionId,
   input: ApplyAgentReportInput,
+  options: { sessionPrefix?: string } = {},
 ): ApplyAgentReportResult {
   const projectId = inferProjectIdFromDataDir(dataDir);
   const raw = readMetadataRaw(dataDir, sessionId);
@@ -460,6 +462,7 @@ export function applyAgentReport(
       const current = cloneLifecycle(
         parseCanonicalLifecycle(existing, {
           sessionId,
+          sessionKind: deriveSessionKindFromMetadata(sessionId, existing, options.sessionPrefix),
           status: validateStatus(existing["status"]),
         }),
       );
