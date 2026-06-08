@@ -70,7 +70,7 @@ projects:
 
     # ── Agent configuration (optional) ────────────────────────────
     agentConfig:
-      permissions: permissionless   # permissionless | default | auto-edit | suggest
+      permissions: permissionless   # permissionless | default | auto-edit | auto | suggest
       model: claude-sonnet-4-20250514
 
     # ── Agent rules (optional) ────────────────────────────────────

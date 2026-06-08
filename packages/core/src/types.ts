@@ -1686,12 +1686,13 @@ export interface OpenCodeAgentConfig extends AgentSpecificConfig {
  * - permissionless: run without interactive permission prompts (most permissive mode).
  * - default: use the agent's normal/default permission model.
  * - auto-edit: automatically approve edit actions where the agent supports granular approval policies.
+ * - auto: agent-driven auto mode where supported (e.g. Claude Code's --permission-mode auto).
  * - suggest: conservative mode that asks for approval on higher-risk/untrusted actions where supported.
  *
  * Note: Not every agent exposes all granular policies; plugins map these modes to
  * their closest supported behavior.
  */
-export type AgentPermissionMode = "permissionless" | "default" | "auto-edit" | "suggest";
+export type AgentPermissionMode = "permissionless" | "default" | "auto-edit" | "auto" | "suggest";
 
 /** Backward-compatible legacy alias accepted in config parsing. */
 export type LegacyAgentPermissionMode = "skip";
@@ -1708,6 +1709,7 @@ export function normalizeAgentPermissionMode(
     mode !== "permissionless" &&
     mode !== "default" &&
     mode !== "auto-edit" &&
+    mode !== "auto" &&
     mode !== "suggest"
   ) {
     if (mode === "skip") return "permissionless";

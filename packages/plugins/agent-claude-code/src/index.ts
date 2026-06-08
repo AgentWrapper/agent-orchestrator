@@ -1057,6 +1057,8 @@ function createClaudeCodeAgent(): Agent {
       const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
+      } else if (permissionMode === "auto") {
+        parts.push("--permission-mode", "auto");
       }
 
       if (config.model) {
@@ -1200,6 +1202,8 @@ function createClaudeCodeAgent(): Agent {
       const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
+      } else if (permissionMode === "auto") {
+        parts.push("--permission-mode", "auto");
       }
 
       if (project.agentConfig?.model) {
