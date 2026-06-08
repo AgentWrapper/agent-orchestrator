@@ -23,6 +23,8 @@ Include:
 - What you expected vs. what happened
 - Relevant output from `ao doctor`
 
+GitHub issue templates are available for bugs, maintenance/refactors, and behavior-change RFCs. Please pick the one that best matches the work so reviewers and AI agents can tell whether the task is a bug fix, cleanup, or a product decision before code is written.
+
 ---
 
 ## Development Setup

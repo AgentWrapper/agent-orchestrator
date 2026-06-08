@@ -1,0 +1,123 @@
+name: Behavior change / RFC
+description: Propose a behavior change, workflow change, or design decision that should be agreed before code.
+title: "[rfc] "
+labels:
+  - rfc
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when the change affects product behavior, CLI behavior, public API shape, plugin contracts,
+        lifecycle semantics, or contributor workflow. These should be agreed before implementation PRs are merged.
+        
+        Repo-wide constraints to keep in mind:
+        - should not make the orchestrator feel laggier unless that tradeoff is explicitly accepted
+        - should not increase polling or hot-path overhead without clear justification
+        - should not make session state or operator workflows more confusing
+        - should call out migration impact for CLI, plugin, or API changes
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      description: Please confirm all of the following before filing.
+      options:
+        - label: I searched existing issues, PRs, and RFCs and did not find an already-agreed solution.
+          required: true
+        - label: This change affects behavior, contracts, or workflow enough that it should be agreed before implementation.
+          required: true
+        - label: I described alternatives and tradeoffs, not just the preferred path.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation or decision gap exists today?
+      placeholder: Describe the current behavior and why it is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: why_it_matters
+    attributes:
+      label: Why it matters
+      description: Who benefits or is affected by this change?
+      placeholder: Users, operators, maintainers, plugin authors, contributors, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: current_evidence
+    attributes:
+      label: Current evidence
+      description: What evidence do we have that this is worth changing?
+      placeholder: Repeated confusion, linked bugs, prior PRs, incidents, support burden, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What change do you want to make?
+      placeholder: Describe the desired behavior or decision at a high level.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What is explicitly not part of this proposal?
+      placeholder: New plugin slot, migration automation, additional UI redesign, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: What work belongs under this proposal?
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What should not be bundled into this change?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other paths exist, and why is this one preferred?
+    validations:
+      required: true
+  - type: textarea
+    id: issue_specific_risks
+    attributes:
+      label: Issue-specific risks or constraints
+      description: Optional. Call out anything unusual that this proposal must protect.
+      placeholder: Must preserve current CLI scripts, avoid new background polling, keep plugin contracts stable, etc.
+  - type: textarea
+    id: decision_criteria
+    attributes:
+      label: Done when
+      description: How do we know the proposal is agreed and ready for implementation?
+      placeholder: Decision recorded, constraints agreed, migration path clear, follow-up implementation PR can stay small, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: owner_area
+    attributes:
+      label: Suggested owner area
+      options:
+        - Core
+        - CLI
+        - Web
+        - Plugin system
+        - Infra / CI
+        - Docs / RFC
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for implementers
+      description: Optional extra guidance for humans or agents.
+      placeholder: Keep the implementation split from the decision work, phase this in, separate migration from behavior change, etc.

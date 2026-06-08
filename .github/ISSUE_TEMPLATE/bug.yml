@@ -1,0 +1,137 @@
+name: Bug report
+description: Report a user-visible bug, regression, or incorrect behavior.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for user-visible breakage, regressions, incorrect state, or workflow failures.
+        Please keep the scope concrete and include evidence that the bug is real.
+        If this is a usage question or a feature request, open a different issue instead of forcing it into the bug flow.
+        
+        Repo-wide constraints to keep in mind:
+        - should not make the orchestrator feel laggier
+        - should not increase polling or hot-path overhead unless explicitly intended
+        - should not make session state more misleading
+        - should not change CLI behavior unless explicitly approved
+
+        Maintainers may refine scope, outcome, and done criteria during triage.
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      description: Please confirm all of the following before filing.
+      options:
+        - label: I searched existing issues and PRs and did not find a duplicate.
+          required: true
+        - label: This is a bug or regression, not a usage question.
+          required: true
+        - label: I can reproduce this consistently or I have included concrete evidence that the problem is real.
+          required: true
+        - label: I included a minimal reproduction or exact reproduction steps.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong today?
+      placeholder: Describe the visible symptom or incorrect behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: why_it_matters
+    attributes:
+      label: Why it matters
+      description: Who is affected, and how?
+      placeholder: Users, operators, maintainers, or contributors; what pain does this cause?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: What should have happened instead?
+      placeholder: Describe the correct or expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: How can we reproduce this as minimally and precisely as possible?
+      placeholder: Include exact commands, config, page flow, or file paths. Avoid screenshots when copy-pasteable text is possible.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share the relevant environment details needed to investigate this bug.
+      placeholder: |
+        ao --version:
+        node --version:
+        pnpm --version:
+        OS:
+        Browser (if web-related):
+        Relevant config/plugins:
+    validations:
+      required: true
+  - type: textarea
+    id: current_evidence
+    attributes:
+      label: Current evidence
+      description: What evidence do we have that the problem is real?
+      placeholder: Reproduction steps, logs, screenshots, failing tests, exact file paths, linked PRs/issues.
+    validations:
+      required: true
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: What work is allowed in this issue? Maintainers may refine this during triage.
+      placeholder: Keep this to the smallest acceptable fix.
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What should not change as part of this issue? Maintainers may refine this during triage.
+      placeholder: No CLI behavior changes, no design refresh, no new persistence model, etc.
+  - type: textarea
+    id: expected_outcome
+    attributes:
+      label: Expected outcome
+      description: What should be true when this is done? Maintainers may refine this during triage.
+      placeholder: Describe the observable result after the fix.
+  - type: textarea
+    id: issue_specific_risks
+    attributes:
+      label: Issue-specific risks or constraints
+      description: Optional. Call out anything unusual that maintainers should protect for this specific bug.
+      placeholder: Affects only tmux-backed sessions, only reproduces in the dashboard, must not alter retry timing, etc.
+  - type: textarea
+    id: definition_of_done
+    attributes:
+      label: Definition of done
+      description: How do we know this is complete? Maintainers may refine this during triage.
+      placeholder: Regression test added, manual repro no longer fails, logs/state are correct, docs updated if needed, etc.
+  - type: dropdown
+    id: owner_area
+    attributes:
+      label: Suggested owner area
+      options:
+        - Core
+        - CLI
+        - Web
+        - Plugin system
+        - Infra / CI
+        - Docs / RFC
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for implementers
+      description: Optional extra guidance for humans or agents.
+      placeholder: Prefer smallest fix, split behavior changes into a separate PR, close instead of stretching scope, etc.

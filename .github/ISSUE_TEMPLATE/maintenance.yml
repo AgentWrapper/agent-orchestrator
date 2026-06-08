@@ -1,0 +1,120 @@
+name: Maintenance / refactor
+description: Propose cleanup, refactoring, dead-code removal, or code health work.
+title: "[maintenance] "
+labels:
+  - maintenance
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for refactors, cleanup, CI improvements, or maintenance work.
+        Explain why the change is worth the churn; "duplicate code exists" is not enough by itself.
+        
+        Repo-wide constraints to keep in mind:
+        - should be behavior-preserving unless explicitly approved otherwise
+        - should not make the orchestrator feel laggier
+        - should not increase polling or hot-path overhead unless explicitly intended
+        - should not widen public API surface without clear need
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      description: Please confirm all of the following before filing.
+      options:
+        - label: I searched existing issues and PRs and did not find a duplicate.
+          required: true
+        - label: I included concrete evidence that this maintenance problem is real.
+          required: true
+        - label: I explained why this is worth doing now instead of later.
+          required: true
+        - label: I called out any intended behavior change explicitly rather than bundling it into cleanup.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What maintenance cost or repo problem exists today?
+      placeholder: Large hotspot file, repeated logic, dead code, confusing ownership, brittle tests, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: why_it_matters
+    attributes:
+      label: Why it matters
+      description: Why is this worth doing now?
+      placeholder: Contributor friction, risky future changes, repeated bugs, review burden, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other options exist, and why is this one preferred?
+      placeholder: Leave it alone for now, smaller surgical extraction, warn-only check instead of enforcement, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: current_evidence
+    attributes:
+      label: Current evidence
+      description: What evidence do we have that the problem is real?
+      placeholder: File paths, duplicate snippets, dead exports, flaky tests, linked incidents, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: What work is allowed in this issue?
+      placeholder: Extract one helper, split one file, remove one dead path, add warn-only CI visibility, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What should not change?
+      placeholder: No behavior changes, no unrelated formatting, no broad design cleanup, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_outcome
+    attributes:
+      label: Expected outcome
+      description: What should be true when this is done?
+      placeholder: One source of truth, smaller hotspot, dead code removed, CI warning added, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: issue_specific_risks
+    attributes:
+      label: Issue-specific risks or constraints
+      description: Optional. Call out anything unusual that maintainers should protect for this specific maintenance task.
+      placeholder: Must stay behavior-preserving, should not touch plugin contracts, avoid widening API surface, etc.
+  - type: textarea
+    id: definition_of_done
+    attributes:
+      label: Definition of done
+      description: How do we know this is complete?
+      placeholder: Code moved or deleted, tests pass, behavior preserved, docs updated if needed.
+    validations:
+      required: true
+  - type: dropdown
+    id: owner_area
+    attributes:
+      label: Suggested owner area
+      options:
+        - Core
+        - CLI
+        - Web
+        - Plugin system
+        - Infra / CI
+        - Docs / RFC
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for implementers
+      description: Optional extra guidance for humans or agents.
+      placeholder: Keep this surgical, prefer smallest change, close instead of stretching scope, etc.
