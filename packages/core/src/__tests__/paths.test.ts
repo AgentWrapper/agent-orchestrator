@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import {
+  deriveSessionPrefixFromProjectPath,
   generateProjectId,
   generateSessionName,
   generateSessionPrefix,
+  sanitizeIdentifierComponent,
   generateTmuxName,
   getArchiveDir,
   getFeedbackReportsDir,
@@ -36,7 +38,23 @@ describe("paths", () => {
   it("keeps session prefix generation unchanged", () => {
     expect(generateSessionPrefix("agent-orchestrator")).toBe("ao");
     expect(generateSessionPrefix("Integrator")).toBe("int");
+    expect(generateSessionPrefix("MyApp")).toBe("ma");
     expect(generateSessionName("ao", 7)).toBe("ao-7");
+  });
+
+  it("sanitizes path-like fragments before deriving session prefixes", () => {
+    expect(sanitizeIdentifierComponent(".")).toBe("project");
+    expect(sanitizeIdentifierComponent("/")).toBe("project");
+    expect(sanitizeIdentifierComponent("..")).toBe("project");
+    expect(generateSessionPrefix(".")).toBe("pro");
+    expect(generateSessionPrefix("..")).toBe("pro");
+  });
+
+  it("deriveSessionPrefixFromProjectPath avoids collisions for distinct risky paths", () => {
+    expect(deriveSessionPrefixFromProjectPath("/")).not.toBe(
+      deriveSessionPrefixFromProjectPath(join(process.cwd(), "..")),
+    );
+    expect(deriveSessionPrefixFromProjectPath("/")).toMatch(/^[a-zA-Z0-9_-]+$/);
   });
 
   it("uses the storage key as the tmux hash segment", () => {

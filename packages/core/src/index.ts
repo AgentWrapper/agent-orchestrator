@@ -351,6 +351,8 @@ export {
   // Legacy path functions (deprecated — migration only)
   generateConfigHash,
   generateProjectId,
+  sanitizeIdentifierComponent,
+  deriveSessionPrefixFromProjectPath,
   generateSessionPrefix,
   getProjectBaseDir,
   getSessionsDir,

@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, findConfigFile, validateConfig } from "../src/config.js";
+import {
+  loadConfig,
+  findConfigFile,
+  validateConfig,
+  generateLegacyWrappedStorageKey,
+} from "../src/config.js";
 import { ConfigNotFoundError } from "../src/types.js";
 
 describe("Config Loading", () => {
@@ -232,6 +237,74 @@ projects:
       const config = loadConfig(globalConfigPath);
       expect(Object.values(config.projects)).toEqual([]);
       expect(Object.values(config.degradedProjects)).toHaveLength(1);
+    });
+
+    it("sanitizes wrapped dot-path handling for storage key and derived sessionPrefix", () => {
+      const configPath = join(testDir, "dot-path-config.yaml");
+      writeFileSync(
+        configPath,
+        [
+          "projects:",
+          "  dot-project:",
+          "    path: .",
+          "",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(configPath);
+      const project = config.projects["dot-project"];
+      const storageKey = generateLegacyWrappedStorageKey(configPath, ".");
+
+      expect(project).toBeDefined();
+      if (!project) {
+        throw new Error("dot-project missing from loaded config");
+      }
+      expect(storageKey).toMatch(/^[a-z0-9]{12}-[a-zA-Z0-9_-]+$/);
+      expect(storageKey).not.toContain(".");
+      expect(project.sessionPrefix).toMatch(/^[a-zA-Z0-9_-]+$/);
+      expect(project.sessionPrefix).not.toBe(".");
+    });
+
+    it("disambiguates legacy wrapped storage keys when the sanitized basename is the generic fallback", () => {
+      const configPath = join(testDir, "legacy-fingerprint.yaml");
+      writeFileSync(configPath, "projects: {}\n");
+      mkdirSync(join(testDir, "nested"), { recursive: true });
+
+      const fsRootKey = generateLegacyWrappedStorageKey(configPath, "/");
+      expect(fsRootKey).toMatch(/^[a-f0-9]{12}-project-[a-f0-9]{8}$/);
+
+      const normalKey = generateLegacyWrappedStorageKey(configPath, "nested");
+      expect(normalKey).toMatch(/^[a-f0-9]{12}-nested$/);
+      expect(normalKey).not.toBe(fsRootKey);
+    });
+
+    it("does not collapse distinct risky paths to the same legacy wrapped storageKey", () => {
+      const configPath = join(testDir, "risky-paths.yaml");
+      writeFileSync(
+        configPath,
+        [
+          "projects:",
+          "  fs-root:",
+          "    path: /",
+          "  parent-relative:",
+          "    path: ..",
+          "",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(configPath);
+      const a = config.projects["fs-root"];
+      const b = config.projects["parent-relative"];
+      expect(a?.sessionPrefix).toBeDefined();
+      expect(b?.sessionPrefix).toBeDefined();
+      expect(a!.sessionPrefix).not.toBe(b!.sessionPrefix);
+
+      // Zod-validated config strips unknown keys — storageKey is injected pre-parse only.
+      const storageKeyFs = generateLegacyWrappedStorageKey(configPath, "/");
+      const storageKeyParent = generateLegacyWrappedStorageKey(configPath, "..");
+      expect(storageKeyFs).not.toBe(storageKeyParent);
+      expect(storageKeyFs).toMatch(/^[a-z0-9]{12}-[a-zA-Z0-9_-]+$/);
+      expect(storageKeyParent).toMatch(/^[a-z0-9]{12}-[a-zA-Z0-9_-]+$/);
     });
   });
 

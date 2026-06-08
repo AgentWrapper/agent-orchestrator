@@ -210,6 +210,29 @@ describe("global-config storage identity", () => {
     expect(config?.projects[idB]?.sessionPrefix).toBe("ao-1");
   });
 
+  it("re-derives invalid stored session prefixes from the registered path", () => {
+    const repoPath = createRepo("dot-path-project");
+    writeFileSync(
+      configPath,
+      [
+        "projects:",
+        "  dot:",
+        "    projectId: dot",
+        `    path: ${repoPath}`,
+        "    displayName: Dot",
+        "    sessionPrefix: .",
+        "notifiers: {}",
+        "notificationRouting: {}",
+        "reactions: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const resolved = resolveProjectIdentity("dot", loadGlobalConfig(configPath)!, configPath);
+
+    expect(resolved?.sessionPrefix).toBe("dpp");
+  });
+
   it("strips stale shadow fields from legacy entries and rewrites the config", () => {
     const repoPath = createRepo("legacy", "https://github.com/OpenAI/demo.git");
     writeFileSync(
