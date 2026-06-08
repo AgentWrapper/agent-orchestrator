@@ -1174,6 +1174,7 @@ describe("scm-github plugin", () => {
 
       const result = await scm.getMergeability(pr);
       expect(result.blockers).toContain("Review required");
+      expect(result.noConflicts).toBe(true);
     });
 
     it("reports merge conflicts as blockers", async () => {
@@ -1191,7 +1192,7 @@ describe("scm-github plugin", () => {
       expect(result.blockers).toContain("Merge conflicts");
     });
 
-    it("reports UNKNOWN mergeable as noConflicts false", async () => {
+    it("treats UNKNOWN mergeable as non-conflicting", async () => {
       mockGh({ state: "OPEN" }); // getPRState
       mockGh({
         mergeable: "UNKNOWN",
@@ -1202,7 +1203,7 @@ describe("scm-github plugin", () => {
       mockGh([{ name: "build", state: "SUCCESS" }]);
 
       const result = await scm.getMergeability(pr);
-      expect(result.noConflicts).toBe(false);
+      expect(result.noConflicts).toBe(true);
       expect(result.blockers).toContain("Merge status unknown (GitHub is computing)");
       expect(result.mergeable).toBe(false);
     });
@@ -1220,6 +1221,24 @@ describe("scm-github plugin", () => {
       const result = await scm.getMergeability(pr);
       expect(result.blockers).toContain("PR is still a draft");
       expect(result.mergeable).toBe(false);
+    });
+
+    it("draft PR with UNKNOWN + BLOCKED merge state is not treated as conflicting (#1314)", async () => {
+      mockGh({ state: "OPEN" }); // getPRState
+      mockGh({
+        mergeable: "UNKNOWN",
+        reviewDecision: "APPROVED",
+        mergeStateStatus: "BLOCKED",
+        isDraft: true,
+      });
+      mockGh([{ name: "build", state: "SUCCESS" }]);
+
+      const result = await scm.getMergeability(pr);
+      expect(result.noConflicts).toBe(true);
+      expect(result.mergeable).toBe(false);
+      expect(result.blockers).toContain("PR is still a draft");
+      expect(result.blockers).toContain("Merge status unknown (GitHub is computing)");
+      expect(result.blockers).toContain("Merge is blocked by branch protection");
     });
 
     it("reports multiple blockers simultaneously", async () => {
