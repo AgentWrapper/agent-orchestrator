@@ -35,6 +35,7 @@ import {
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
 import pluginRuntimeProcess from "@aoagents/ao-plugin-runtime-process";
+import pluginAgentAider from "@aoagents/ao-plugin-agent-aider";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
 import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
 import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
@@ -42,9 +43,20 @@ import pluginAgentKimicode from "@aoagents/ao-plugin-agent-kimicode";
 import pluginAgentGrok from "@aoagents/ao-plugin-agent-grok";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
+import pluginWorkspaceClone from "@aoagents/ao-plugin-workspace-clone";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
+import pluginScmGitlab from "@aoagents/ao-plugin-scm-gitlab";
+import pluginTerminalIterm2 from "@aoagents/ao-plugin-terminal-iterm2";
+import pluginTerminalWeb from "@aoagents/ao-plugin-terminal-web";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
+import pluginTrackerGitlab from "@aoagents/ao-plugin-tracker-gitlab";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
+import pluginNotifierComposio from "@aoagents/ao-plugin-notifier-composio";
+import pluginNotifierDesktop from "@aoagents/ao-plugin-notifier-desktop";
+import pluginNotifierDiscord from "@aoagents/ao-plugin-notifier-discord";
+import pluginNotifierOpenClaw from "@aoagents/ao-plugin-notifier-openclaw";
+import pluginNotifierSlack from "@aoagents/ao-plugin-notifier-slack";
+import pluginNotifierWebhook from "@aoagents/ao-plugin-notifier-webhook";
 
 export interface Services {
   config: LoadedConfig;
@@ -108,6 +120,7 @@ async function initServices(): Promise<Services> {
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
   registry.register(pluginRuntimeProcess);
+  registry.register(pluginAgentAider);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentCodex);
   registry.register(pluginAgentCursor);
@@ -115,9 +128,20 @@ async function initServices(): Promise<Services> {
   registry.register(pluginAgentGrok);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
+  registry.register(pluginWorkspaceClone);
   registry.register(pluginScmGithub);
+  registry.register(pluginScmGitlab);
+  registry.register(pluginTerminalIterm2);
+  registry.register(pluginTerminalWeb);
   registry.register(pluginTrackerGithub);
+  registry.register(pluginTrackerGitlab);
   registry.register(pluginTrackerLinear);
+  registry.register(pluginNotifierComposio);
+  registry.register(pluginNotifierDesktop);
+  registry.register(pluginNotifierDiscord);
+  registry.register(pluginNotifierOpenClaw);
+  registry.register(pluginNotifierSlack);
+  registry.register(pluginNotifierWebhook);
 
   const sessionManager = createSessionManager({ config, registry });
 
