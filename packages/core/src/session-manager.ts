@@ -3045,21 +3045,41 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         throw new SessionNotFoundError(sessionId);
       }
 
-      const handle =
-        current.runtimeHandle ??
-        ({
-          id: sessionId,
-          runtimeName,
-          data: {},
-        } satisfies RuntimeHandle);
-      const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
+      // The zombie-session hazard is tmux-specific: real tmux sessions are named
+      // `{projectHash}-{sessionId}`, so synthesizing a handle from the bare
+      // sessionId would spawn a second session under the wrong unprefixed name
+      // alongside the real one. See #1456.
+      //
+      // For other runtimes (e.g. process), sessionId IS the correct handle id —
+      // synthesis is safe and the old fallback is the right behavior.
+      //
+      // For tmux sessions, refuse unless we can recover a real identity: either
+      // the stored `runtimeHandle` JSON parsed successfully, or a `tmuxName` is
+      // present (legacy sessions predate the field; ensureHandleAndEnrich builds
+      // the correct prefixed handle from it). Also catches corrupt JSON with no
+      // tmuxName fallback, which the previous guard missed.
+      const rawHandleJson = current.metadata["runtimeHandle"];
+      const storedTmuxName = current.metadata["tmuxName"]?.trim();
+      const hasParseableHandle = parsedHandle !== null;
+      const hasTmuxName =
+        typeof storedTmuxName === "string" && storedTmuxName.length > 0;
+      if (runtimeName === "tmux" && !hasParseableHandle && !hasTmuxName) {
+        const reason = rawHandleJson
+          ? "has a corrupt runtime handle in metadata and no tmuxName fallback"
+          : "is missing its runtime handle";
+        throw new Error(
+          `Session ${sessionId} ${reason} — ` +
+            `use 'ao session ls' to inspect or 'ao session restore ${sessionId}' explicitly`,
+        );
+      }
+      const handle = current.runtimeHandle!;
 
-      if (forceRestore || isRestorable(normalized)) {
+      if (forceRestore || isRestorable(current)) {
         return restoreForDelivery(
           forceRestore
             ? "session needed to be restarted before delivery"
             : "session is not running",
-          normalized,
+          current,
         );
       }
 
@@ -3068,8 +3088,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
       ]);
 
-      if (normalized.status === "spawning" && runtimeAlive) {
-        await waitForInteractiveReadiness(normalized, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
+      if (current.status === "spawning" && runtimeAlive) {
+        await waitForInteractiveReadiness(current, SEND_BOOTSTRAP_READY_TIMEOUT_MS);
         [runtimeAlive, processRunning] = await Promise.all([
           runtimePlugin.isAlive(handle).catch(() => true),
           isAgentProcessNotDefinitelyMissing(agentPlugin, handle),
@@ -3079,11 +3099,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!runtimeAlive || !processRunning) {
         return restoreForDelivery(
           !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-          normalized,
+          current,
         );
       }
 
-      return normalized;
+      return current;
     };
 
     const sendWithConfirmation = async (session: Session): Promise<void> => {
