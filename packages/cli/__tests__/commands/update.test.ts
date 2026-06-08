@@ -5,9 +5,7 @@ import { Command } from "commander";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const {
-  mockRunRepoScript,
-} = vi.hoisted(() => ({
+const { mockRunRepoScript } = vi.hoisted(() => ({
   mockRunRepoScript: vi.fn(),
 }));
 
@@ -55,8 +53,8 @@ vi.mock("../../src/lib/update-check.js", () => ({
   isManualOnlyInstall: (m: string) => m === "homebrew",
 }));
 
-// Stub the active-session guard's dependencies so handlers don't try to load
-// real config / spawn plugins. Default: no sessions, so the guard passes.
+// Stub the update lifecycle planner's dependencies so handlers don't try to
+// load real config / spawn plugins. Default: no sessions, so no stop is needed.
 const { mockSessions } = vi.hoisted(() => ({
   mockSessions: { value: [] as Array<{ id: string; status: string }> },
 }));
@@ -84,8 +82,7 @@ vi.mock("@aoagents/ao-core", async () => {
     loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
     loadGlobalConfig: (...args: unknown[]) => mockLoadGlobalConfig(...args),
     getGlobalConfigPath: () => "/tmp/test-global-config.yaml",
-    isCanonicalGlobalConfigPath: (p: string | undefined) =>
-      p === "/tmp/test-global-config.yaml",
+    isCanonicalGlobalConfigPath: (p: string | undefined) => p === "/tmp/test-global-config.yaml",
     isWindows: () => mockIsWindows(),
   };
 });
@@ -98,10 +95,8 @@ vi.mock("node:fs", async () => {
   };
 });
 
-// running.json is the live signal: ensureNoActiveSessions now consults
-// `getRunning()` before falling back to the global registry. Default to
-// "no daemon running" so the existing global-config-driven tests keep
-// exercising the fallback path. Per-test overrides simulate a live daemon.
+// running.json is the live signal for update stop/start orchestration. Default
+// to "no daemon running"; per-test overrides simulate a live daemon.
 const { mockGetRunning } = vi.hoisted(() => ({
   mockGetRunning: vi.fn<() => Promise<unknown>>(async () => null),
 }));
@@ -147,9 +142,28 @@ function makeNpmUpdateInfo(overrides = {}) {
   };
 }
 
-function createMockChild(exitCode: number | null, signal?: NodeJS.Signals) {
+function createMockChild(
+  exitCode: number | null,
+  signal?: NodeJS.Signals,
+  output: { stdout?: string; stderr?: string } = { stdout: "0.3.0\n" },
+) {
   const child = new EventEmitter();
-  setTimeout(() => child.emit("exit", exitCode, signal ?? null), 0);
+  const stdout = new EventEmitter();
+  const stderr = new EventEmitter();
+  Object.assign(child, { stdout, stderr });
+  const emitResult = () => {
+    setTimeout(() => {
+      if (output.stdout) stdout.emit("data", Buffer.from(output.stdout));
+      if (output.stderr) stderr.emit("data", Buffer.from(output.stderr));
+      child.emit("exit", exitCode, signal ?? null);
+    }, 0);
+  };
+  const originalOn = child.on.bind(child);
+  child.on = ((event: string | symbol, listener: (...args: unknown[]) => void) => {
+    const result = originalOn(event, listener);
+    if (event === "exit") emitResult();
+    return result;
+  }) as EventEmitter["on"];
   return child;
 }
 
@@ -166,7 +180,9 @@ describe("update command", () => {
     mockRunRepoScript.mockResolvedValue(0);
     mockDetectInstallMethod.mockReturnValue("git");
     mockCheckForUpdate.mockReset();
-    mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }));
+    mockCheckForUpdate.mockResolvedValue(
+      makeNpmUpdateInfo({ installMethod: "git", recommendedCommand: "ao update" }),
+    );
     mockInvalidateCache.mockReset();
     mockPromptConfirm.mockReset();
     mockPromptConfirm.mockResolvedValue(false);
@@ -234,9 +250,9 @@ describe("update command", () => {
     it("rejects --smoke-only on npm installs with an actionable message", async () => {
       mockDetectInstallMethod.mockReturnValue("npm-global");
       const errSpy = vi.mocked(console.error);
-      await expect(
-        program.parseAsync(["node", "test", "update", "--smoke-only"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update", "--smoke-only"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       const messages = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
       expect(messages).toMatch(/--smoke-only only applies to git installs/);
     });
@@ -306,9 +322,9 @@ describe("update command", () => {
         new Error("Script not found: ao-update.sh. Expected at: /tmp/ao-update.sh"),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(mockSpawn).not.toHaveBeenCalled();
       expect(mockCheckForUpdate).not.toHaveBeenCalled();
@@ -353,7 +369,9 @@ describe("update command", () => {
     });
 
     it("prints already up to date when not outdated", async () => {
-      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }));
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({ isOutdated: false, latestVersion: "0.2.2", currentVersion: "0.2.2" }),
+      );
 
       const logSpy = vi.mocked(console.log);
       await program.parseAsync(["node", "test", "update"]);
@@ -365,9 +383,9 @@ describe("update command", () => {
         makeNpmUpdateInfo({ latestVersion: null, isOutdated: false }),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(vi.mocked(console.error)).toHaveBeenCalledWith(
         expect.stringContaining("Could not reach npm registry"),
       );
@@ -375,9 +393,7 @@ describe("update command", () => {
 
     it("forces a fresh registry fetch", async () => {
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockCheckForUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ force: true }),
-      );
+      expect(mockCheckForUpdate).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
     });
 
     it("prints command and exits cleanly in non-TTY mode without prompting", async () => {
@@ -400,7 +416,11 @@ describe("update command", () => {
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(mockSpawn).toHaveBeenCalledWith("npm", expect.arrayContaining(["install"]), expect.anything());
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "npm",
+        expect.arrayContaining(["install"]),
+        expect.anything(),
+      );
       expect(mockInvalidateCache).toHaveBeenCalled();
     });
 
@@ -410,9 +430,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(1));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
       expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
 
@@ -438,9 +458,9 @@ describe("update command", () => {
       mockPromptConfirm.mockResolvedValue(true);
       mockSpawn.mockReturnValue(createMockChild(null, "SIGTERM"));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(vi.mocked(console.error)).not.toHaveBeenCalledWith(
         expect.stringContaining("exited with code null"),
@@ -448,18 +468,26 @@ describe("update command", () => {
       expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
 
-    it("handles spawn error (e.g. npm not found)", async () => {
+    it("handles spawn error (e.g. npm not found) with a friendly update failure", async () => {
       Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
       Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
       mockPromptConfirm.mockResolvedValue(true);
 
       const child = new EventEmitter();
+      Object.assign(child, { stdout: new EventEmitter(), stderr: new EventEmitter() });
       mockSpawn.mockReturnValue(child);
       setTimeout(() => child.emit("error", new Error("ENOENT: npm not found")), 0);
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("ENOENT");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      const stderr = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => String(c[0]))
+        .join("\n");
+      expect(stderr).toContain("AO was not updated. You are still on version 0.2.2.");
+      expect(stderr).toContain("npm not found");
     });
 
     it("does nothing when user declines prompt", async () => {
@@ -489,7 +517,9 @@ describe("update command", () => {
 
       await program.parseAsync(["node", "test", "update"]);
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Could not detect install method"));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Could not detect install method"),
+      );
       expect(mockRunRepoScript).not.toHaveBeenCalled();
     });
 
@@ -521,269 +551,157 @@ describe("update command", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Active-session guard (Section C)
+  // Update lifecycle orchestration (#1972)
   // -----------------------------------------------------------------------
 
-  describe("active-session guard", () => {
+  describe("update lifecycle orchestration", () => {
     beforeEach(() => {
-      mockDetectInstallMethod.mockReturnValue("npm-global");
-      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "npm-global" }));
+      mockDetectInstallMethod.mockReturnValue("pnpm-global");
+      mockResolveUpdateChannel.mockReturnValue("stable");
+      mockGetUpdateCommand.mockImplementation((method: string) => {
+        if (method === "pnpm-global") return "pnpm add -g @aoagents/ao@latest";
+        return "npm install -g @aoagents/ao@latest";
+      });
+      mockCheckForUpdate.mockResolvedValue(
+        makeNpmUpdateInfo({
+          installMethod: "pnpm-global",
+          recommendedCommand: "pnpm add -g @aoagents/ao@latest",
+        }),
+      );
       Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
       Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-      // The guard now ALWAYS loads from global config. Stage a registered
-      // project so the early-return ("no registry → allow") doesn't fire.
+      mockGetRunning
+        .mockResolvedValueOnce({
+          pid: 12345,
+          configPath: "/tmp/test-global-config.yaml",
+          port: 3000,
+          startedAt: new Date().toISOString(),
+          projects: ["my-app"],
+        })
+        .mockResolvedValue(null);
+      mockLoadConfig.mockImplementation((path?: string) => ({
+        projects: { "my-app": { path: "/tmp/foo" } },
+        configPath: path ?? "/cwd/agent-orchestrator.yaml",
+      }));
+      mockSessions.value = [{ id: "feat-1", status: "working", projectId: "my-app" }];
+    });
+
+    it("runs stop → package install → version verification → start/restore when sessions are active", async () => {
+      mockSpawn.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "ao" && args[0] === "--version") {
+          return createMockChild(0, undefined, { stdout: "0.3.0\n" });
+        }
+        return createMockChild(0, undefined, { stdout: "" });
+      });
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn).toHaveBeenCalledTimes(4);
+      expect(mockSpawn.mock.calls[0]).toEqual([
+        "ao",
+        ["stop", "--yes"],
+        expect.objectContaining({
+          stdio: "inherit",
+          env: expect.objectContaining({ AO_CONFIG_PATH: "/tmp/test-global-config.yaml" }),
+        }),
+      ]);
+      expect(mockSpawn.mock.calls[1][0]).toBe("pnpm");
+      expect(mockSpawn.mock.calls[1][1]).toEqual(["add", "-g", "@aoagents/ao@latest"]);
+      expect(mockSpawn.mock.calls[2][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[2][1]).toEqual(["--version"]);
+      expect(mockSpawn.mock.calls[3]).toEqual([
+        "ao",
+        ["start", "my-app", "--restore"],
+        expect.objectContaining({
+          stdio: "inherit",
+          env: expect.objectContaining({ AO_CONFIG_PATH: "/tmp/test-global-config.yaml" }),
+        }),
+      ]);
+
+      const stopOrder = mockSpawn.mock.invocationCallOrder[0];
+      const installOrder = mockSpawn.mock.invocationCallOrder[1];
+      const startOrder = mockSpawn.mock.invocationCallOrder[3];
+      expect(stopOrder).toBeLessThan(installOrder);
+      expect(installOrder).toBeLessThan(startOrder);
+    });
+
+    it("does not stop/start when no daemon or active sessions exist", async () => {
+      mockGetRunning.mockReset();
+      mockGetRunning.mockResolvedValue(null);
+      mockExistsSync.mockReturnValue(false);
+      mockSessions.value = [];
+      mockSpawn.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "ao" && args[0] === "--version") {
+          return createMockChild(0, undefined, { stdout: "0.3.0\n" });
+        }
+        return createMockChild(0, undefined, { stdout: "" });
+      });
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn).toHaveBeenCalledTimes(2);
+      expect(mockSpawn.mock.calls[0][0]).toBe("pnpm");
+      expect(mockSpawn.mock.calls[1][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[1][1]).toEqual(["--version"]);
+    });
+
+    it("cleans up orphaned active sessions without starting a daemon that was not running", async () => {
+      mockGetRunning.mockReset();
+      mockGetRunning.mockResolvedValue(null);
       mockExistsSync.mockReturnValue(true);
       mockLoadGlobalConfig.mockReturnValue({
         projects: { "my-app": { path: "/tmp/foo" } },
       });
-      mockLoadConfig.mockImplementation((path?: string) =>
-        path
-          ? { projects: { "my-app": { path: "/tmp/foo" } }, configPath: path }
-          : { projects: { "my-app": { path: "/tmp/foo" } }, configPath: "/cwd/agent-orchestrator.yaml" },
+      mockSessions.value = [{ id: "orphan-1", status: "working", projectId: "my-app" }];
+      mockSpawn.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "ao" && args[0] === "stop") {
+          mockSessions.value = [];
+          return createMockChild(0, undefined, { stdout: "" });
+        }
+        if (cmd === "ao" && args[0] === "--version") {
+          return createMockChild(0, undefined, { stdout: "0.3.0\n" });
+        }
+        return createMockChild(0, undefined, { stdout: "" });
+      });
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn.mock.calls[0][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[0][1]).toEqual(["stop", "--yes"]);
+      expect(mockSpawn.mock.calls[0][2]).toEqual(
+        expect.objectContaining({
+          env: expect.objectContaining({ AO_CONFIG_PATH: "/tmp/test-global-config.yaml" }),
+        }),
+      );
+      expect(mockSpawn.mock.calls[1][0]).toBe("pnpm");
+      expect(mockSpawn.mock.calls[2][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[2][1]).toEqual(["--version"]);
+      expect(mockSpawn.mock.calls.some((call) => call[0] === "ao" && call[1][0] === "start")).toBe(
+        false,
       );
     });
 
-    it("refuses to install when a session is in 'working'", async () => {
-      mockSessions.value = [{ id: "feat-1", status: "working" }];
-      const errSpy = vi.mocked(console.error);
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
-      const messages = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(messages).toMatch(/1 session active/);
-      expect(messages).toMatch(/ao stop/);
-      expect(mockSpawn).not.toHaveBeenCalled();
-    });
-
-    it.each(["working", "idle", "needs_input", "stuck"])(
-      "refuses for status %s",
-      async (status) => {
-        mockSessions.value = [{ id: "feat-1", status }];
-        await expect(
-          program.parseAsync(["node", "test", "update"]),
-        ).rejects.toThrow("process.exit(1)");
-      },
-    );
-
-    it("does NOT refuse for terminal statuses (done, terminated, killed)", async () => {
-      mockSessions.value = [
-        { id: "old-1", status: "done" },
-        { id: "old-2", status: "terminated" },
-      ];
-      mockPromptConfirm.mockResolvedValue(false); // decline, no install
-      await program.parseAsync(["node", "test", "update"]);
-      // Reaches the prompt step since the guard passed.
-      expect(mockPromptConfirm).toHaveBeenCalled();
-    });
-
-    // ---------------------------------------------------------------------
-    // Global-config layout (review #3 / scope-gap follow-up)
-    // ---------------------------------------------------------------------
-
-    it("the refusal message lists active sessions from EVERY registered project, not just one (Dhruv proof)", async () => {
-      // Reviewer challenge: prove loadConfig(globalPath) actually enumerates
-      // sessions across all registered projects, not just the cwd's project.
-      // We register proj-a + proj-b in the global config, seed one active
-      // session in each, and assert BOTH ids appear in the stderr output.
-      mockLoadConfig.mockImplementation((path?: string) => {
-        // Mimic buildEffectiveConfigFromGlobalConfigPath: the global path
-        // returns BOTH projects; project-local would only return one.
-        if (!path) {
-          return { projects: { "proj-a": {} }, configPath: "/cwd/agent-orchestrator.yaml" };
+    it("honors --no-restore when restarting after update", async () => {
+      mockSpawn.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "ao" && args[0] === "--version") {
+          return createMockChild(0, undefined, { stdout: "0.3.0\n" });
         }
-        return {
-          projects: {
-            "proj-a": { path: "/repos/a" },
-            "proj-b": { path: "/repos/b" },
-          },
-          configPath: path,
-        };
+        return createMockChild(0, undefined, { stdout: "" });
       });
-      mockLoadGlobalConfig.mockReturnValue({
-        projects: {
-          "proj-a": { path: "/repos/a" },
-          "proj-b": { path: "/repos/b" },
-        },
-      });
-      mockExistsSync.mockReturnValue(true);
-      // One active session per project. sm.list() is single-call (the SM
-      // implementation enumerates across all projectIds), so we return both
-      // sessions in one shot — matching real behavior. `projectId` is
-      // included so it's visible to anyone reading the refusal output.
-      mockSessions.value = [
-        { id: "proj-a-feat-1", status: "working", projectId: "proj-a" },
-        { id: "proj-b-feat-2", status: "needs_input", projectId: "proj-b" },
-      ];
 
-      const errSpy = vi.mocked(console.error);
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await program.parseAsync(["node", "test", "update", "--no-restore"]);
 
-      const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-      // Refusal message reports the correct total count (2, not 1).
-      expect(stderr).toMatch(/2 sessions active/);
-      // Both project's session ids appear in the listing.
-      expect(stderr).toMatch(/proj-a-feat-1/);
-      expect(stderr).toMatch(/proj-b-feat-2/);
-      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockSpawn.mock.calls.at(-1)).toEqual([
+        "ao",
+        ["start", "my-app", "--no-restore"],
+        expect.objectContaining({
+          stdio: "inherit",
+          env: expect.objectContaining({ AO_CONFIG_PATH: "/tmp/test-global-config.yaml" }),
+        }),
+      ]);
     });
 
-    it("always loads global config (never project-local), so sessions in OTHER projects fire the guard", async () => {
-      // Simulate running inside a project: project-local loadConfig() would
-      // succeed and return only THIS project's sessions. The guard must
-      // ignore it and still consult the global registry, otherwise active
-      // sessions in other projects get missed and the install would proceed.
-      mockLoadConfig.mockImplementation((path?: string) => {
-        if (!path) {
-          // Project-local: would return only "this-project"'s sessions.
-          return { projects: { "this-project": {} }, configPath: "/cwd/agent-orchestrator.yaml" };
-        }
-        return {
-          projects: {
-            "this-project": { path: "/cwd" },
-            "other-project": { path: "/other" },
-          },
-          configPath: path,
-        };
-      });
-      mockLoadGlobalConfig.mockReturnValue({
-        projects: {
-          "this-project": { path: "/cwd" },
-          "other-project": { path: "/other" },
-        },
-      });
-      mockExistsSync.mockReturnValue(true);
-      // Active session lives in the OTHER project — only visible via global.
-      mockSessions.value = [
-        { id: "other-1", status: "working" },
-      ];
-
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
-
-      expect(mockLoadGlobalConfig).toHaveBeenCalled();
-      // Critical: we did NOT call the project-local (no-arg) loadConfig path.
-      const noArgCalls = mockLoadConfig.mock.calls.filter((c) => c.length === 0);
-      expect(noArgCalls).toHaveLength(0);
-      expect(mockSpawn).not.toHaveBeenCalled();
-    });
-
-    it("uses the global registry when running outside any project", async () => {
-      mockLoadConfig.mockImplementation((path?: string) => {
-        if (!path) throw new Error("no config found");
-        return { projects: { "my-app": { path: "/tmp/foo" } }, configPath: path };
-      });
-      mockLoadGlobalConfig.mockReturnValue({
-        projects: { "my-app": { path: "/tmp/foo" } },
-      });
-      mockExistsSync.mockReturnValue(true);
-      mockSessions.value = [{ id: "feat-1", status: "working" }];
-
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
-
-      expect(mockLoadGlobalConfig).toHaveBeenCalled();
-      expect(mockSpawn).not.toHaveBeenCalled();
-    });
-
-    it("returns early without building SessionManager when global registry is empty", async () => {
-      mockLoadConfig.mockImplementation((path?: string) => {
-        if (!path) throw new Error("no config found");
-        return { projects: {}, configPath: path };
-      });
-      mockLoadGlobalConfig.mockReturnValue({ projects: {} });
-      mockExistsSync.mockReturnValue(true);
-
-      // Guard returns true (allow update) without ever calling sm.list().
-      // No mockSessions configured, no spawn → confirms we never reached
-      // SessionManager construction.
-      mockPromptConfirm.mockResolvedValue(false); // decline soft-install
-      await program.parseAsync(["node", "test", "update"]);
-      expect(mockLoadGlobalConfig).toHaveBeenCalled();
-      // The decline-prompt path means the guard let us through.
-      expect(mockPromptConfirm).toHaveBeenCalled();
-    });
-
-    it("returns early without building SessionManager when global config file is missing", async () => {
-      mockLoadConfig.mockImplementation((path?: string) => {
-        if (!path) throw new Error("no config found");
-        return { projects: {}, configPath: path };
-      });
-      mockExistsSync.mockReturnValue(false); // no ~/.agent-orchestrator/config.yaml
-
-      mockPromptConfirm.mockResolvedValue(false);
-      await program.parseAsync(["node", "test", "update"]);
-      // We didn't even consult loadGlobalConfig — existsSync(globalPath) was false.
-      expect(mockLoadGlobalConfig).not.toHaveBeenCalled();
-      expect(mockPromptConfirm).toHaveBeenCalled();
-    });
-
-    it("refuses when sessions exist in a locally-registered project not in global config (Dhruv edge-case)", async () => {
-      // The bypass: user ran `ao start` from a repo with a local
-      // agent-orchestrator.yaml and no global registration. running.json
-      // says that project is being polled, sessions live on disk, but the
-      // global registry is empty. Before this fix, the guard hit the
-      // "global has no projects → allow" branch and let `ao update`
-      // clobber the running daemon.
-      //
-      // Fix: consult running.json BEFORE falling back to global. When
-      // running.json has projects, build the SessionManager from
-      // running.configPath (which is the local project's yaml in this case)
-      // and enumerate from there.
-      mockGetRunning.mockResolvedValue({
-        pid: 12345,
-        configPath: "/repos/local-only/agent-orchestrator.yaml",
-        port: 3000,
-        startedAt: new Date().toISOString(),
-        projects: ["local-only"],
-      });
-      // Global registry has no record of `local-only` — this is the bypass
-      // condition. With the old code, we'd return true here.
-      mockLoadGlobalConfig.mockReturnValue({ projects: {} });
-      // loadConfig with the local configPath returns the local project's
-      // OrchestratorConfig (project-local schema is auto-wrapped).
-      mockLoadConfig.mockImplementation((path?: string) => {
-        if (path === "/repos/local-only/agent-orchestrator.yaml") {
-          return {
-            projects: { "local-only": { path: "/repos/local-only" } },
-            configPath: path,
-          };
-        }
-        return { projects: {}, configPath: path ?? "/cwd/agent-orchestrator.yaml" };
-      });
-      mockSessions.value = [
-        { id: "local-feat-1", status: "working", projectId: "local-only" },
-      ];
-
-      const errSpy = vi.mocked(console.error);
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
-
-      const stderr = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(stderr).toMatch(/1 session active/);
-      expect(stderr).toMatch(/local-feat-1/);
-      // We must have routed through running.configPath, NOT the global path.
-      expect(mockLoadConfig).toHaveBeenCalledWith("/repos/local-only/agent-orchestrator.yaml");
-      expect(mockSpawn).not.toHaveBeenCalled();
-    });
-
-    it("returns true (allows update) when running.json is gone and global is empty", async () => {
-      // No daemon running, no global projects. Genuinely safe to update.
-      mockGetRunning.mockResolvedValue(null);
-      mockExistsSync.mockReturnValue(false);
-      mockPromptConfirm.mockResolvedValue(false);
-      await program.parseAsync(["node", "test", "update"]);
-      expect(mockPromptConfirm).toHaveBeenCalled(); // guard passed → reached prompt
-    });
-
-    it("trusts running.json over an inconsistent global config", async () => {
-      // running.json says project P is being polled. Global config also
-      // lists P. We should use running.configPath (the live signal), and
-      // any active session in P fires the guard.
+    it("aborts before install if ao stop exits 0 but AO still appears active", async () => {
       mockGetRunning.mockResolvedValue({
         pid: 12345,
         configPath: "/tmp/test-global-config.yaml",
@@ -791,23 +709,46 @@ describe("update command", () => {
         startedAt: new Date().toISOString(),
         projects: ["my-app"],
       });
-      mockLoadConfig.mockImplementation((path?: string) => ({
-        projects: { "my-app": { path: "/tmp/foo" } },
-        configPath: path ?? "/cwd/agent-orchestrator.yaml",
-      }));
-      mockLoadGlobalConfig.mockReturnValue({
-        projects: { "my-app": { path: "/tmp/foo" } },
-      });
-      mockSessions.value = [{ id: "feat-1", status: "working" }];
+      mockSpawn.mockReturnValue(createMockChild(0, undefined, { stdout: "" }));
 
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-      // Because getRunning() returned a daemon, we went straight to its
-      // configPath — we should NOT have fallen back to loadGlobalConfig.
-      expect(mockLoadGlobalConfig).not.toHaveBeenCalled();
-      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      expect(mockSpawn.mock.calls[0][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[0][1]).toEqual(["stop", "--yes"]);
+      expect(mockSpawn.mock.calls.some((call) => call[0] === "pnpm")).toBe(false);
+      const stderr = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => String(c[0]))
+        .join("\n");
+      expect(stderr).toContain("AO still appears to be running after `ao stop --yes`");
+    });
+
+    it("prints a friendly pnpm diagnostic and npm fallback when pnpm fails", async () => {
+      mockGetRunning.mockReset();
+      mockGetRunning.mockResolvedValue(null);
+      mockExistsSync.mockReturnValue(false);
+      mockSpawn.mockReturnValue(
+        createMockChild(1, undefined, {
+          stderr: "ERR_PNPM_UNEXPECTED_VIRTUAL_STORE Unexpected virtual store location\n",
+        }),
+      );
+
+      await expect(program.parseAsync(["node", "test", "update"])).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      const stderr = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => String(c[0]))
+        .join("\n");
+      expect(stderr).toContain("AO was not updated. You are still on version 0.2.2.");
+      expect(stderr).toContain("pnpm's global store metadata is inconsistent");
+      expect(stderr).toContain("You can also try: npm install -g @aoagents/ao@latest");
+      expect(stderr).toContain("ERR_PNPM_UNEXPECTED_VIRTUAL_STORE");
+      expect(mockInvalidateCache).not.toHaveBeenCalled();
     });
   });
 
@@ -874,7 +815,7 @@ describe("update command", () => {
         }),
       );
       mockPromptConfirm.mockResolvedValue(true);
-      mockSpawn.mockReturnValue(createMockChild(0));
+      mockSpawn.mockReturnValue(createMockChild(0, undefined, { stdout: "0.5.0-nightly-abc\n" }));
 
       await program.parseAsync(["node", "test", "update"]);
 
@@ -990,7 +931,7 @@ describe("update command", () => {
         }),
       );
       mockPromptConfirm.mockResolvedValue(true);
-      mockSpawn.mockReturnValue(createMockChild(0));
+      mockSpawn.mockReturnValue(createMockChild(0, undefined, { stdout: "0.5.0-nightly-abc\n" }));
 
       await program.parseAsync(["node", "test", "update"]);
 
@@ -1035,9 +976,7 @@ describe("update command", () => {
     beforeEach(() => {
       mockDetectInstallMethod.mockReturnValue("npm-global");
       mockResolveUpdateChannel.mockReturnValue("stable");
-      mockCheckForUpdate.mockResolvedValue(
-        makeNpmUpdateInfo({ installMethod: "npm-global" }),
-      );
+      mockCheckForUpdate.mockResolvedValue(makeNpmUpdateInfo({ installMethod: "npm-global" }));
       mockExistsSync.mockReturnValue(true);
       mockLoadGlobalConfig.mockReturnValue({
         projects: { "my-app": { path: "/tmp/foo" } },
@@ -1063,13 +1002,21 @@ describe("update command", () => {
       }
     });
 
-    it("actually invokes runNpmInstall when AO_NON_INTERACTIVE_INSTALL=1 even though isTTY is false", async () => {
+    it("invokes runNpmInstall exactly once when AO_NON_INTERACTIVE_INSTALL=1 even though isTTY is false", async () => {
       // The P1 bug: before this fix, the !isTTY() branch printed "Run: ..."
       // and returned. The dashboard's banner click would 202 but no install
       // would run. Asserting spawn was called proves the install actually
       // happens in the API-invoked path.
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "npm",
+        expect.arrayContaining(["install"]),
+        expect.anything(),
+      );
+      const installCalls = mockSpawn.mock.calls.filter(([cmd, args]) => {
+        return cmd === "npm" && Array.isArray(args) && args.includes("install");
+      });
+      expect(installCalls).toHaveLength(1);
       // And without a TTY, we MUST NOT have prompted — that would hang the
       // detached child forever.
       expect(mockPromptConfirm).not.toHaveBeenCalled();
@@ -1084,12 +1031,25 @@ describe("update command", () => {
       expect(mockSpawn).not.toHaveBeenCalled();
     });
 
-    it("still refuses on active sessions even when API-invoked (the API's own guard isn't a single point of trust)", async () => {
+    it("orchestrates stop/install/verify/start when active sessions exist and update is API-invoked", async () => {
       mockSessions.value = [{ id: "feat-1", status: "working" }];
-      await expect(
-        program.parseAsync(["node", "test", "update"]),
-      ).rejects.toThrow("process.exit(1)");
-      expect(mockSpawn).not.toHaveBeenCalled();
+      mockExistsSync.mockReturnValue(false);
+      mockGetRunning
+        .mockResolvedValueOnce({
+          pid: 12345,
+          configPath: "/tmp/test-global-config.yaml",
+          port: 3000,
+          startedAt: new Date().toISOString(),
+          projects: ["my-app"],
+        })
+        .mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "update"]);
+
+      expect(mockSpawn.mock.calls[0][0]).toBe("ao");
+      expect(mockSpawn.mock.calls[0][1]).toEqual(["stop", "--yes"]);
+      expect(mockSpawn.mock.calls.at(-1)?.[0]).toBe("ao");
+      expect(mockSpawn.mock.calls.at(-1)?.[1]).toEqual(["start", "my-app", "--restore"]);
     });
   });
 
@@ -1128,17 +1088,15 @@ describe("update command", () => {
     it("passes shell:true and windowsHide:true on Windows so PATHEXT resolves npm.cmd", async () => {
       mockIsWindows.mockReturnValue(true);
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockSpawn).toHaveBeenCalledTimes(1);
       const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
       expect(opts.shell).toBe(true);
       expect(opts.windowsHide).toBe(true);
-      expect(opts.stdio).toBe("inherit");
+      expect(opts.stdio).toEqual(["inherit", "pipe", "pipe"]);
     });
 
     it("passes shell:false on macOS / Linux (no shell wrap needed)", async () => {
       mockIsWindows.mockReturnValue(false);
       await program.parseAsync(["node", "test", "update"]);
-      expect(mockSpawn).toHaveBeenCalledTimes(1);
       const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
       expect(opts.shell).toBe(false);
     });

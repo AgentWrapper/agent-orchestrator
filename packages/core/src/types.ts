@@ -157,7 +157,7 @@ export const ACTIVITY_STATE = {
 
 export type ActivitySignalState = "valid" | "stale" | "null" | "unavailable" | "probe_failure";
 
-export type ActivitySignalSource = "native" | "terminal" | "runtime" | "none";
+export type ActivitySignalSource = "native" | "terminal" | "hook" | "runtime" | "none";
 
 export interface ActivitySignal {
   /** Confidence bucket for the activity probe result. */
@@ -183,11 +183,16 @@ export interface ActivityDetection {
 export interface ActivityLogEntry {
   /** ISO 8601 timestamp */
   ts: string;
-  /** Activity state derived from terminal output or agent-native data */
+  /** Activity state derived from terminal output, agent-native data, or a platform-event hook */
   state: ActivityState;
-  /** What triggered this state classification */
-  source: "terminal" | "native";
-  /** Raw terminal snippet that caused waiting_input/blocked (for debugging) */
+  /**
+   * Provenance of this entry:
+   *   - "terminal": classified from terminal output (regex/heuristic; deprecated for hook-capable agents)
+   *   - "native":   read from the agent's own JSONL/API
+   *   - "hook":     emitted by an agent lifecycle hook (e.g. Claude Code's PermissionRequest, Stop, StopFailure)
+   */
+  source: "terminal" | "native" | "hook";
+  /** Raw terminal snippet, hook event name, or other context that caused waiting_input/blocked (for debugging) */
   trigger?: string;
 }
 
@@ -299,6 +304,11 @@ export interface Session {
 
   /** PR info (once PR is created) */
   pr: PRInfo | null;
+
+  /** All PRs opened by this session (across multiple repos). Always in sync with pr —
+   *  single-PR sessions have prs = [pr], no-PR sessions have prs = [].
+   *  Populated from metadata field "prs" (comma-separated URLs) on load. */
+  prs: PRInfo[];
 
   /** Workspace path on disk */
   workspacePath: string | null;
@@ -474,6 +484,13 @@ export interface Agent {
 
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
+
+  /**
+   * How the initial user prompt is delivered.
+   * Defaults to inline, meaning the agent embeds the prompt in getLaunchCommand().
+   * Use post-launch for interactive CLIs that must start first and receive input over stdin.
+   */
+  readonly promptDelivery?: "inline" | "post-launch";
 
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
@@ -1334,6 +1351,13 @@ export interface LifecycleConfig {
   mergeCleanupIdleGraceMs: number;
 }
 
+export interface ObservabilityConfig {
+  /** Minimum structured log level to persist/mirror. Defaults to "warn". */
+  logLevel: ObservabilityLevel;
+  /** Mirror structured observability logs to stderr. Defaults to false. */
+  stderr: boolean;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /** Optional JSON Schema hint for editor autocomplete/validation. */
@@ -1368,6 +1392,12 @@ export interface OrchestratorConfig {
    * than dereferencing directly. Mirrors the `power?` pattern above.
    */
   lifecycle?: LifecycleConfig;
+
+  /**
+   * Process observability settings. Populated with defaults by Zod when loaded
+   * from YAML, but optional for hand-constructed tests.
+   */
+  observability?: ObservabilityConfig;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;
@@ -1845,6 +1875,13 @@ export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   ensureOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  /**
+   * Replace the canonical orchestrator with a fresh one. If an orchestrator
+   * already exists for the project, it is killed, its metadata deleted, and a
+   * new orchestrator spawned with no carryover state. Ignores
+   * `orchestratorSessionStrategy` — replacement is the whole point.
+   */
+  relaunchOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
@@ -1998,11 +2035,14 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
+export type ProjectResolveErrorKind = "malformed" | "invalid" | "old-format";
+
 /** Thrown when a project cannot be resolved into an effective runtime config. */
 export class ProjectResolveError extends Error {
   constructor(
     public readonly projectId: string,
     message: string,
+    public readonly reasonKind?: ProjectResolveErrorKind,
   ) {
     super(message);
     this.name = "ProjectResolveError";

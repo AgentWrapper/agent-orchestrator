@@ -13,6 +13,7 @@ const {
   claudePlugin,
   codexPlugin,
   cursorPlugin,
+  grokPlugin,
   opencodePlugin,
   worktreePlugin,
   clonePlugin,
@@ -61,6 +62,7 @@ const {
     claudePlugin: { manifest: { name: "claude-code" } },
     codexPlugin: { manifest: { name: "codex" } },
     cursorPlugin: { manifest: { name: "cursor" } },
+    grokPlugin: { manifest: { name: "grok" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     clonePlugin: { manifest: { name: "clone" } },
@@ -101,6 +103,7 @@ vi.mock("@aoagents/ao-plugin-agent-aider", () => ({ default: aiderPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@aoagents/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-cursor", () => ({ default: cursorPlugin }));
+vi.mock("@aoagents/ao-plugin-agent-grok", () => ({ default: grokPlugin }));
 vi.mock("@aoagents/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@aoagents/ao-plugin-workspace-clone", () => ({ default: clonePlugin }));
@@ -169,6 +172,7 @@ describe("services", () => {
 
     expect(mockRegister).toHaveBeenCalledWith(processPlugin);
     expect(mockRegister).toHaveBeenCalledWith(aiderPlugin);
+    expect(mockRegister).toHaveBeenCalledWith(grokPlugin);
     expect(mockRegister).toHaveBeenCalledWith(clonePlugin);
     expect(mockRegister).toHaveBeenCalledWith(scmGitlabPlugin);
     expect(mockRegister).toHaveBeenCalledWith(trackerGitlabPlugin);

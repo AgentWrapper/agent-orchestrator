@@ -8,7 +8,22 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import { type Socket, connect as netConnect } from "node:net";
+import { dirname, join } from "node:path";
+import {
+  DEFAULT_DASHBOARD_NOTIFICATION_LIMIT,
+  getEnvDefaults,
+  getDashboardNotificationStorePath,
+  getNodePtyPrebuildsSubdir,
+  isWindows,
+  loadConfig,
+  normalizeDashboardNotificationLimit,
+  recordActivityEvent,
+  readDashboardNotificationsFromFile,
+  type DashboardNotificationRecord,
+} from "@aoagents/ao-core";
 import {
   findTmux,
   resolveTmuxSession,
@@ -16,7 +31,6 @@ import {
   tmuxHasSession,
   validateSessionId,
 } from "./tmux-utils.js";
-import { getEnvDefaults, isWindows } from "@aoagents/ao-core";
 
 // These types mirror src/lib/mux-protocol.ts exactly.
 // tsconfig.server.json constrains rootDir to "server/", so we cannot import
@@ -29,7 +43,7 @@ type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: "sessions"[] };
+  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
 
 // ── Server → Client ──
 type ServerMessage =
@@ -39,6 +53,13 @@ type ServerMessage =
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
   | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
   | { ch: "sessions"; type: "error"; error: string }
+  | {
+      ch: "notifications";
+      type: "snapshot" | "append";
+      notifications: DashboardNotificationRecord[];
+      limit: number;
+    }
+  | { ch: "notifications"; type: "error"; error: string }
   | { ch: "system"; type: "pong" }
   | { ch: "system"; type: "error"; message: string };
 
@@ -63,6 +84,9 @@ export class SessionBroadcaster {
   private errorSubscribers = new Set<(error: string) => void>();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private polling = false;
+  // Tracks the last fetch outcome so we only emit ui.session_broadcast_failed on
+  // the healthy → failing transition (not every 3s during an outage).
+  private lastFetchOk = true;
   private readonly baseUrl: string;
 
   constructor(nextPort: string) {
@@ -158,15 +182,194 @@ export class SessionBroadcaster {
       if (!res.ok) {
         const msg = `Session fetch failed: HTTP ${res.status}`;
         console.warn(`[SessionBroadcaster] ${msg}`);
+        this.recordFetchFailure(msg, { httpStatus: res.status });
         return { sessions: null, error: msg };
       }
       const data = (await res.json()) as { sessions?: SessionPatch[] };
+      this.lastFetchOk = true;
       return { sessions: data.sessions ?? null, error: null };
     } catch (err) {
       clearTimeout(timeoutId);
       const msg = err instanceof Error ? err.message : String(err);
       console.warn("[SessionBroadcaster] fetchSnapshot error:", msg);
+      this.recordFetchFailure(msg);
       return { sessions: null, error: msg };
+    }
+  }
+
+  /**
+   * Emit ui.session_broadcast_failed once per healthy→failing transition.
+   * The broadcaster polls every 3s; emitting on every failure during a long
+   * outage would flood the events table (~20/min). Recovery resets the flag.
+   */
+  private recordFetchFailure(message: string, extra?: Record<string, unknown>): void {
+    if (!this.lastFetchOk) return;
+    this.lastFetchOk = false;
+    recordActivityEvent({
+      source: "ui",
+      kind: "ui.session_broadcast_failed",
+      level: "warn",
+      summary: `session broadcaster fetch failed: ${message}`,
+      data: {
+        url: `${this.baseUrl}/api/sessions/patches`,
+        errorMessage: message,
+        ...extra,
+      },
+    });
+  }
+
+  private disconnect(): void {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
+
+function notificationKey(record: DashboardNotificationRecord): string {
+  return `${record.id}:${record.receivedAt}`;
+}
+
+function readDashboardLimit(configPath: string | undefined): number {
+  if (!configPath) return DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
+  try {
+    const config = loadConfig(configPath);
+    const dashboardConfig = config.notifiers?.["dashboard"];
+    return normalizeDashboardNotificationLimit(dashboardConfig?.["limit"]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[NotificationBroadcaster] Could not read dashboard notifier limit:", message);
+    return DEFAULT_DASHBOARD_NOTIFICATION_LIMIT;
+  }
+}
+
+/**
+ * Polls the dashboard notification JSONL store and broadcasts changes to mux
+ * subscribers. The store is config-scoped and survives dashboard reloads.
+ */
+export class NotificationBroadcaster {
+  private subscribers = new Set<
+    (
+      notifications: DashboardNotificationRecord[],
+      type: "snapshot" | "append",
+      limit: number,
+    ) => void
+  >();
+  private errorSubscribers = new Set<(error: string) => void>();
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private lastRecords: DashboardNotificationRecord[] = [];
+  private readonly configPath: string | undefined;
+  private readonly storePath: string | null;
+
+  constructor(configPath = process.env["AO_CONFIG_PATH"]) {
+    this.configPath = configPath;
+    this.storePath = configPath ? getDashboardNotificationStorePath(configPath) : null;
+  }
+
+  subscribe(
+    callback: (
+      notifications: DashboardNotificationRecord[],
+      type: "snapshot" | "append",
+      limit: number,
+    ) => void,
+    onError?: (error: string) => void,
+  ): () => void {
+    const wasEmpty = this.subscribers.size === 0;
+    this.subscribers.add(callback);
+    if (onError) this.errorSubscribers.add(onError);
+
+    const snapshot = this.fetchSnapshot();
+    if (wasEmpty) {
+      this.lastRecords = snapshot.notifications;
+    }
+    try {
+      callback(snapshot.notifications, "snapshot", snapshot.limit);
+    } catch {
+      // Isolate subscriber errors so one bad socket does not break others.
+    }
+
+    if (snapshot.error && onError) {
+      try {
+        onError(snapshot.error);
+      } catch {
+        // Isolate subscriber errors.
+      }
+    }
+
+    if (wasEmpty) {
+      this.intervalId = setInterval(() => {
+        const result = this.fetchSnapshot();
+        if (result.error) {
+          this.broadcastError(result.error);
+          return;
+        }
+
+        const previousKeys = new Set(this.lastRecords.map(notificationKey));
+        const appended = result.notifications.filter(
+          (record) => !previousKeys.has(notificationKey(record)),
+        );
+        const trimmed = result.notifications.length < this.lastRecords.length;
+        this.lastRecords = result.notifications;
+
+        if (appended.length > 0 && !trimmed) {
+          this.broadcast(appended, "append", result.limit);
+        } else if (appended.length > 0 || trimmed) {
+          this.broadcast(result.notifications, "snapshot", result.limit);
+        }
+      }, 1000);
+    }
+
+    return () => {
+      this.subscribers.delete(callback);
+      if (onError) this.errorSubscribers.delete(onError);
+      if (this.subscribers.size === 0) {
+        this.disconnect();
+      }
+    };
+  }
+
+  private fetchSnapshot(): {
+    notifications: DashboardNotificationRecord[];
+    error: string | null;
+    limit: number;
+  } {
+    const limit = readDashboardLimit(this.configPath);
+    if (!this.storePath) return { notifications: [], error: null, limit };
+
+    try {
+      return {
+        notifications: readDashboardNotificationsFromFile(this.storePath, limit),
+        error: null,
+        limit,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[NotificationBroadcaster] fetchSnapshot error:", message);
+      return { notifications: [], error: message, limit };
+    }
+  }
+
+  private broadcast(
+    notifications: DashboardNotificationRecord[],
+    type: "snapshot" | "append",
+    limit: number,
+  ): void {
+    for (const callback of this.subscribers) {
+      try {
+        callback(notifications, type, limit);
+      } catch (err) {
+        console.error("[MuxServer] Notification broadcast subscriber threw:", err);
+      }
+    }
+  }
+
+  private broadcastError(error: string): void {
+    for (const callback of this.errorSubscribers) {
+      try {
+        callback(error);
+      } catch (err) {
+        console.error("[MuxServer] Notification error subscriber threw:", err);
+      }
     }
   }
 
@@ -181,8 +384,38 @@ export class SessionBroadcaster {
 // node-pty is an optionalDependency — load dynamically
 /* eslint-disable @typescript-eslint/consistent-type-imports -- node-pty is optional; static import would crash if missing */
 type IPty = import("node-pty").IPty;
-let ptySpawn: typeof import("node-pty").spawn | undefined;
+type PtySpawn = typeof import("node-pty").spawn;
+type PtySpawnOptions = Parameters<PtySpawn>[2];
+let ptySpawn: PtySpawn | undefined;
 /* eslint-enable @typescript-eslint/consistent-type-imports */
+const nodePtyRequire = createRequire(import.meta.url);
+
+export function resolveNodePtySpawnHelperPath(): string | null {
+  const override = process.env.AO_NODE_PTY_SPAWN_HELPER_PATH;
+  if (override) return override;
+
+  try {
+    const packageJsonPath = nodePtyRequire.resolve("node-pty/package.json");
+    return join(dirname(packageJsonPath), "prebuilds", getNodePtyPrebuildsSubdir(), "spawn-helper");
+  } catch {
+    return null;
+  }
+}
+
+function isPosixSpawnpFailure(err: unknown): boolean {
+  return err instanceof Error && err.message.includes("posix_spawnp");
+}
+
+function repairNodePtySpawnHelper(): string | null {
+  if (isWindows()) return null;
+
+  const spawnHelperPath = resolveNodePtySpawnHelperPath();
+  if (!spawnHelperPath || !fs.existsSync(spawnHelperPath)) return null;
+
+  fs.chmodSync(spawnHelperPath, 0o755);
+  return spawnHelperPath;
+}
+
 try {
   const nodePty = await import("node-pty");
   ptySpawn = nodePty.spawn;
@@ -199,6 +432,7 @@ interface ManagedTerminal {
   buffer: string[];
   bufferBytes: number;
   reattachAttempts: number;
+  ptyLostEmitted: boolean;
   /**
    * Pending grace-period timer that resets reattachAttempts when the
    * currently-attached PTY survives REATTACH_RESET_GRACE_MS. Tracked so
@@ -232,6 +466,7 @@ const REATTACH_RESET_GRACE_MS = 5_000;
 export class TerminalManager {
   private terminals = new Map<string, ManagedTerminal>();
   private TMUX: string;
+  private spawnHelperRepairAttempted = false;
 
   constructor(tmuxPath?: string) {
     const resolved = tmuxPath ?? findTmux();
@@ -243,6 +478,41 @@ export class TerminalManager {
 
   private terminalKey(id: string, projectId?: string): string {
     return projectId ? `${projectId}:${id}` : id;
+  }
+
+  private spawnTmuxPty(args: string[], options: PtySpawnOptions): IPty {
+    if (!ptySpawn) {
+      throw new Error("node-pty not available");
+    }
+
+    try {
+      return ptySpawn(this.TMUX, args, options);
+    } catch (err) {
+      if (this.spawnHelperRepairAttempted || !isPosixSpawnpFailure(err)) {
+        throw err;
+      }
+
+      this.spawnHelperRepairAttempted = true;
+      try {
+        const repairedPath = repairNodePtySpawnHelper();
+        if (repairedPath) {
+          console.warn(
+            `[MuxServer] node-pty posix_spawnp failed; set executable bit on ${repairedPath} and retrying once.`,
+          );
+        } else {
+          console.warn(
+            "[MuxServer] node-pty posix_spawnp failed; spawn-helper was not found, retrying once.",
+          );
+        }
+      } catch (repairErr) {
+        const message = repairErr instanceof Error ? repairErr.message : String(repairErr);
+        console.warn(
+          `[MuxServer] node-pty posix_spawnp failed; chmod spawn-helper failed (${message}), retrying once.`,
+        );
+      }
+
+      return ptySpawn(this.TMUX, args, options);
+    }
   }
 
   /**
@@ -276,6 +546,7 @@ export class TerminalManager {
         buffer: [],
         bufferBytes: 0,
         reattachAttempts: 0,
+        ptyLostEmitted: false,
       };
       this.terminals.set(key, terminal);
     }
@@ -314,14 +585,10 @@ export class TerminalManager {
       TMPDIR: platformDefaults.TMPDIR,
     };
 
-    if (!ptySpawn) {
-      throw new Error("node-pty not available");
-    }
-
     // Spawn PTY — use `=`-prefixed exact-match target so we never attach to
     // a session whose name happens to be a prefix of the requested id.
     const exactTmuxTarget = `=${tmuxSessionId}`;
-    const pty = ptySpawn(this.TMUX, ["attach-session", "-t", exactTmuxTarget], {
+    const pty = this.spawnTmuxPty(["attach-session", "-t", exactTmuxTarget], {
       name: "xterm-256color",
       cols: 80,
       rows: 24,
@@ -346,6 +613,7 @@ export class TerminalManager {
       terminal.resetTimer = undefined;
       if (terminal.pty === pty) {
         terminal.reattachAttempts = 0;
+        terminal.ptyLostEmitted = false;
       }
     }, REATTACH_RESET_GRACE_MS);
     terminal.resetTimer.unref();
@@ -383,6 +651,7 @@ export class TerminalManager {
     pty.onExit(async ({ exitCode }) => {
       console.log(`[MuxServer] PTY exited for ${id} with code ${exitCode}`);
       terminal.pty = null;
+      let reattachError: string | undefined;
 
       // Skip the re-attach loop entirely when the underlying tmux session is
       // gone (e.g. user pressed Ctrl-C in the pane and the launch command
@@ -392,14 +661,32 @@ export class TerminalManager {
       // clean user-initiated termination — see issue #1756. The
       // MAX_REATTACH_ATTEMPTS bound from #1640 still covers tmux server
       // hiccups where the session does still exist.
-      if (
-        terminal.subscribers.size > 0 &&
-        !(await tmuxHasSession(this.TMUX, tmuxSessionId))
-      ) {
+      if (terminal.subscribers.size > 0 && !(await tmuxHasSession(this.TMUX, tmuxSessionId))) {
         console.log(`[MuxServer] tmux session ${tmuxSessionId} is gone, not re-attaching`);
         if (terminal.resetTimer) {
           clearTimeout(terminal.resetTimer);
           terminal.resetTimer = undefined;
+        }
+        if (!terminal.ptyLostEmitted) {
+          terminal.ptyLostEmitted = true;
+          recordActivityEvent({
+            projectId,
+            sessionId: id,
+            source: "ui",
+            kind: "ui.terminal_pty_lost",
+            level: "warn",
+            summary: `terminal PTY exited (code ${exitCode}) — tmux session gone`,
+            data: {
+              sessionId: id,
+              exitCode,
+              reattachAttempts: terminal.reattachAttempts,
+              maxReattachAttempts: MAX_REATTACH_ATTEMPTS,
+              reattachExhausted: false,
+              reattachSkipped: true,
+              tmuxSessionPresent: false,
+              subscriberCount: terminal.subscribers.size,
+            },
+          });
         }
         for (const cb of terminal.exitCallbacks) {
           cb(exitCode);
@@ -423,12 +710,61 @@ export class TerminalManager {
         );
         try {
           this.open(id, projectId, tmuxSessionId);
+          if (!terminal.ptyLostEmitted) {
+            terminal.ptyLostEmitted = true;
+            recordActivityEvent({
+              projectId,
+              sessionId: id,
+              source: "ui",
+              kind: "ui.terminal_pty_lost",
+              level: "warn",
+              summary: `terminal PTY exited (code ${exitCode}) — reattached`,
+              data: {
+                sessionId: id,
+                exitCode,
+                reattachAttempts: terminal.reattachAttempts,
+                maxReattachAttempts: MAX_REATTACH_ATTEMPTS,
+                reattachExhausted: false,
+                reattachRecovered: true,
+                subscriberCount: terminal.subscribers.size,
+              },
+            });
+          }
           return; // re-attached — don't notify exit
         } catch (err) {
+          reattachError = err instanceof Error ? err.message : String(err);
           console.error(`[MuxServer] Failed to re-attach ${id}:`, err);
         }
       } else if (terminal.reattachAttempts >= MAX_REATTACH_ATTEMPTS) {
         console.error(`[MuxServer] Max re-attach attempts reached for ${id}, giving up`);
+      }
+
+      // PTY actually died (vs user closed browser): only emit when subscribers
+      // are still attached — otherwise the exit is just normal cleanup.
+      // Keep this event one-shot for the terminal entry. Clients may re-open
+      // the same terminal after a failed reattach; repeated PTY exits should
+      // not flood the activity log for the same loss condition.
+      if (terminal.subscribers.size > 0 && !terminal.ptyLostEmitted) {
+        terminal.ptyLostEmitted = true;
+        recordActivityEvent({
+          projectId,
+          sessionId: id,
+          source: "ui",
+          kind: "ui.terminal_pty_lost",
+          level: "warn",
+          summary: `terminal PTY exited (code ${exitCode})${
+            terminal.reattachAttempts >= MAX_REATTACH_ATTEMPTS ? " — reattach exhausted" : ""
+          }`,
+          data: {
+            sessionId: id,
+            exitCode,
+            reattachAttempts: terminal.reattachAttempts,
+            maxReattachAttempts: MAX_REATTACH_ATTEMPTS,
+            reattachExhausted: terminal.reattachAttempts >= MAX_REATTACH_ATTEMPTS,
+            subscriberCount: terminal.subscribers.size,
+            ...(reattachError ? { reattachError } : {}),
+          },
+        });
       }
 
       // Notify subscribers that the terminal has exited (re-attach failed or no subscribers)
@@ -515,6 +851,8 @@ export class TerminalManager {
 
 // ── Windows Pipe Relay (extracted for testability) ──
 
+const intentionalWinPipeCloses = new WeakSet<Socket>();
+
 /** Minimal WebSocket-like interface for the pipe relay handler */
 export interface WsSink {
   send(data: string): void;
@@ -586,8 +924,36 @@ export function handleWindowsPipeMessage(
       const pipeSocket = deps.connect(pipePath);
       winPipes.set(pipeKey, pipeSocket);
       winPipeBuffers.set(pipeKey, Buffer.alloc(0));
+      let ptyLostEmitted = false;
+      const recordWindowsPtyLost = (
+        reason: "pipe_closed" | "host_not_alive" | "pipe_error",
+        extra?: Record<string, unknown>,
+      ): void => {
+        if (ptyLostEmitted || ws.readyState !== WS_OPEN) return;
+        ptyLostEmitted = true;
+        recordActivityEvent({
+          projectId,
+          sessionId: id,
+          source: "ui",
+          kind: "ui.terminal_pty_lost",
+          level: "warn",
+          summary:
+            reason === "host_not_alive"
+              ? `terminal PTY host reported not alive for ${id}`
+              : reason === "pipe_error"
+                ? `terminal PTY host pipe errored for ${id}`
+                : `terminal PTY host pipe closed for ${id}`,
+          data: {
+            sessionId: id,
+            transport: "windows_pipe",
+            reason,
+            ...extra,
+          },
+        });
+      };
 
       pipeSocket.on("error", (err) => {
+        recordWindowsPtyLost("pipe_error", { errorMessage: err.message });
         winPipes.delete(pipeKey);
         winPipeBuffers.delete(pipeKey);
         pipeSocket.destroy();
@@ -637,9 +1003,8 @@ export function handleWindowsPipeMessage(
               try {
                 const status = JSON.parse(payload.toString("utf-8")) as { alive: boolean };
                 if (!status.alive && ws.readyState === WS_OPEN) {
-                  ws.send(
-                    JSON.stringify({ ch: "terminal", id, type: "exited", code: 0, ...echo }),
-                  );
+                  recordWindowsPtyLost("host_not_alive");
+                  ws.send(JSON.stringify({ ch: "terminal", id, type: "exited", code: 0, ...echo }));
                 }
               } catch {
                 /* ignore parse errors */
@@ -651,7 +1016,11 @@ export function handleWindowsPipeMessage(
         pipeSocket.on("close", () => {
           winPipes.delete(pipeKey);
           winPipeBuffers.delete(pipeKey);
+          const intentionalClose = intentionalWinPipeCloses.delete(pipeSocket);
           if (ws.readyState === WS_OPEN) {
+            if (!intentionalClose) {
+              recordWindowsPtyLost("pipe_closed");
+            }
             ws.send(JSON.stringify({ ch: "terminal", id, type: "exited", code: 0, ...echo }));
           }
         });
@@ -678,6 +1047,7 @@ export function handleWindowsPipeMessage(
   } else if (type === "close") {
     const pipeSocket = winPipes.get(pipeKey);
     if (pipeSocket) {
+      intentionalWinPipeCloses.add(pipeSocket);
       pipeSocket.end();
       winPipes.delete(pipeKey);
       winPipeBuffers.delete(pipeKey);
@@ -703,11 +1073,29 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
 
   const nextPort = process.env.PORT || "3000";
   const broadcaster = new SessionBroadcaster(nextPort);
+  const notificationBroadcaster = new NotificationBroadcaster();
 
   const wss = new WebSocketServer({ noServer: true });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, request) => {
     console.log("[MuxServer] New mux connection");
+
+    const connectedAt = Date.now();
+    // Best-effort remote addr — proxy headers if present, else socket peer.
+    const xff = request?.headers["x-forwarded-for"];
+    const xffStr = Array.isArray(xff) ? xff[0] : xff;
+    const remoteAddr =
+      (typeof xffStr === "string" ? xffStr.split(",")[0]?.trim() : undefined) ??
+      request?.socket?.remoteAddress ??
+      undefined;
+
+    recordActivityEvent({
+      source: "ui",
+      kind: "ui.terminal_connected",
+      level: "info",
+      summary: "mux WebSocket connection opened",
+      data: { remoteAddr },
+    });
 
     const subscriptions = new Map<string, () => void>();
     // Windows: named pipe sockets keyed by session ID
@@ -715,7 +1103,9 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
     // Windows: framing buffers keyed by session ID
     const winPipeBuffers = new Map<string, Buffer>();
     let sessionUnsubscribe: (() => void) | null = null;
+    let notificationUnsubscribe: (() => void) | null = null;
     let missedPongs = 0;
+    let heartbeatLostEmitted = false;
     const MAX_MISSED_PONGS = 3;
 
     // Heartbeat: send native WebSocket ping every 15s.
@@ -728,6 +1118,22 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
         missedPongs += 1;
         if (missedPongs >= MAX_MISSED_PONGS) {
           console.log("[MuxServer] Too many missed pongs, terminating connection");
+          if (!heartbeatLostEmitted) {
+            heartbeatLostEmitted = true;
+            recordActivityEvent({
+              source: "ui",
+              kind: "ui.terminal_heartbeat_lost",
+              level: "warn",
+              summary: `mux WebSocket heartbeat lost (${missedPongs} missed pongs)`,
+              data: {
+                missedPongs,
+                maxMissedPongs: MAX_MISSED_PONGS,
+                connectionAgeMs: Date.now() - connectedAt,
+                remoteAddr,
+                subscriberCount: subscriptions.size,
+              },
+            });
+          }
           ws.terminate();
         }
       }
@@ -759,7 +1165,14 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             if (type === "open") {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; data?: string; cols?: number; rows?: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    data?: string;
+                    cols?: number;
+                    rows?: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
@@ -841,7 +1254,13 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; cols: number; rows: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    cols: number;
+                    rows: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
@@ -853,7 +1272,14 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
             } else if (type === "close") {
               if (isWindows()) {
                 handleWindowsPipeMessage(
-                  msg as { id: string; type: string; projectId?: string; data?: string; cols?: number; rows?: number },
+                  msg as {
+                    id: string;
+                    type: string;
+                    projectId?: string;
+                    data?: string;
+                    cols?: number;
+                    rows?: number;
+                  },
                   ws,
                   winPipes,
                   winPipeBuffers,
@@ -900,9 +1326,43 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
               },
             );
           }
+          if (msg.topics.includes("notifications") && !notificationUnsubscribe) {
+            notificationUnsubscribe = notificationBroadcaster.subscribe(
+              (notifications, type, limit) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
+                  console.warn("[MuxServer] Skipping notification update — socket backpressured");
+                  return;
+                }
+                const msg: ServerMessage = {
+                  ch: "notifications",
+                  type,
+                  notifications,
+                  limit,
+                };
+                ws.send(JSON.stringify(msg));
+              },
+              (error) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                const errMsg: ServerMessage = { ch: "notifications", type: "error", error };
+                ws.send(JSON.stringify(errMsg));
+              },
+            );
+          }
         }
       } catch (err) {
         console.error("[MuxServer] Failed to parse message:", err);
+        recordActivityEvent({
+          source: "ui",
+          kind: "ui.terminal_protocol_error",
+          level: "warn",
+          summary: "invalid mux client message — parse failed",
+          data: {
+            errorMessage: err instanceof Error ? err.message : String(err),
+            remoteAddr,
+            subscriberCount: subscriptions.size,
+          },
+        });
         const errorMsg: ServerMessage = {
           ch: "system",
           type: "error",
@@ -917,11 +1377,27 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
     /**
      * Handle connection close
      */
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
       console.log("[MuxServer] Mux connection closed");
+      recordActivityEvent({
+        source: "ui",
+        kind: "ui.terminal_disconnected",
+        level: "info",
+        summary: "mux WebSocket connection closed",
+        data: {
+          code,
+          reason: reason?.toString("utf8") || undefined,
+          connectionAgeMs: Date.now() - connectedAt,
+          subscriberCount: subscriptions.size,
+          heartbeatLost: heartbeatLostEmitted,
+          remoteAddr,
+        },
+      });
       clearInterval(heartbeatInterval);
       sessionUnsubscribe?.();
       sessionUnsubscribe = null;
+      notificationUnsubscribe?.();
+      notificationUnsubscribe = null;
       for (const unsub of subscriptions.values()) {
         unsub();
       }

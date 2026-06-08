@@ -8,6 +8,7 @@
       "@aoagents/ao-core",
       "@aoagents/ao-cli",
       "@aoagents/ao",
+      "@aoagents/ao-notifier-macos",
       "@aoagents/ao-plugin-runtime-tmux",
       "@aoagents/ao-plugin-runtime-process",
       "@aoagents/ao-plugin-agent-claude-code",
@@ -27,6 +28,7 @@
       "@aoagents/ao-plugin-notifier-slack",
       "@aoagents/ao-plugin-notifier-webhook",
       "@aoagents/ao-plugin-notifier-composio",
+      "@aoagents/ao-plugin-notifier-dashboard",
       "@aoagents/ao-plugin-notifier-discord",
       "@aoagents/ao-plugin-notifier-openclaw",
       "@aoagents/ao-plugin-terminal-iterm2",
@@ -35,7 +37,7 @@
     ]
   ],
   "snapshot": {
-    "useCalculatedVersionForSnapshots": true,
+    "useCalculatedVersion": true,
     "prereleaseTemplate": "{tag}-{commit}"
   },
   "access": "public",

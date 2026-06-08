@@ -20,12 +20,16 @@ terminalPort: 14800           # Optional terminal WebSocket port override
 directTerminalPort: 14801     # Optional direct terminal WebSocket port override
 readyThresholdMs: 300000      # Ms before "ready" becomes "idle" (default: 5 min)
 
+observability:
+  logLevel: warn              # debug | info | warn | error
+  stderr: false               # Mirror structured logs to stderr
+
 # ── Default plugins ─────────────────────────────────────────────────
 # These apply to all projects unless overridden per-project.
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | cursor | kimicode | opencode
+  agent: claude-code          # claude-code | aider | codex | cursor | kimicode | grok | opencode
   workspace: worktree         # worktree | clone
   notifiers:
     - desktop                 # desktop | discord | slack | webhook | composio | openclaw
@@ -110,6 +114,12 @@ projects:
 notifiers:
   desktop:
     plugin: desktop
+    # Run 'ao setup desktop' on macOS to use AO Notifier.app
+    # backend: ao-app
+  dashboard:
+    plugin: dashboard
+    # Run 'ao setup dashboard' to retain notifications in the web dashboard
+    # limit: 50
   slack:
     plugin: slack
     # Requires SLACK_WEBHOOK_URL env var
@@ -119,8 +129,42 @@ notifiers:
   openclaw:
     plugin: openclaw
     # url: http://127.0.0.1:18789/hooks/agent
-    # token: \${OPENCLAW_HOOKS_TOKEN}
+    # openclawConfigPath: ~/.openclaw/openclaw.json
+    # OpenClaw owns hooks.token in openclaw.json
     # Run 'ao setup openclaw' for guided configuration
+  composio:
+    plugin: composio
+    # Run 'ao setup composio' to connect Slack through Composio
+    # userId: aoagent
+    # connectedAccountId: ca_...
+    # channelName: "#agents"
+    # composioApiKey: ak_... # optional; otherwise uses COMPOSIO_API_KEY
+    # toolVersion: "20260508_00" # optional Slack override
+  composio-discord:
+    plugin: composio
+    # Run 'ao setup composio-discord' for Discord webhook mode through Composio
+    # defaultApp: discord
+    # mode: webhook
+    # webhookUrl: https://discord.com/api/webhooks/...
+    # userId: aoagent
+    # composioApiKey: ak_... # optional; otherwise uses COMPOSIO_API_KEY
+  composio-discord-bot:
+    plugin: composio
+    # Run 'ao setup composio-discord-bot' for Discord bot mode through Composio
+    # defaultApp: discord
+    # mode: bot
+    # channelId: "1234567890"
+    # userId: aoagent
+    # connectedAccountId: ca_...
+    # composioApiKey: ak_... # optional; otherwise uses COMPOSIO_API_KEY
+  composio-mail:
+    plugin: composio
+    # Run 'ao setup composio-mail' to connect Gmail through Composio
+    # defaultApp: gmail
+    # emailTo: alerts@example.com
+    # userId: aoagent
+    # connectedAccountId: ca_...
+    # composioApiKey: ak_... # optional; otherwise uses COMPOSIO_API_KEY
 
 # ── Notification routing (optional) ─────────────────────────────────
 # Route notifications by priority level.
@@ -138,12 +182,12 @@ notificationRouting:
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, cursor, kimicode, opencode
+# Agent:     claude-code, aider, codex, cursor, kimicode, grok, opencode
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab
 # Tracker:   github, linear, gitlab
-# Notifier:  desktop, discord, slack, webhook, composio, openclaw
+# Notifier:  dashboard, desktop, discord, slack, webhook, composio, openclaw
 # Terminal:  iterm2, web
 `.trim();
 }

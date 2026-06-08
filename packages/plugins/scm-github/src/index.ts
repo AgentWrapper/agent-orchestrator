@@ -11,6 +11,7 @@ import {
   CI_STATUS,
   execGhObserved,
   memoizeAsync,
+  recordActivityEvent,
   type PluginModule,
   type PreflightContext,
   type SCM,
@@ -62,6 +63,12 @@ const BOT_AUTHORS = new Set([
 ]);
 
 const CI_FAILURE_LOG_TAIL_LINES = 120;
+const ciSummaryFailClosedEmitted = new Set<string>();
+
+/** Test-only: reset once-per-PR activity event guards. */
+export function _resetGitHubActivityEventDedupeForTesting(): void {
+  ciSummaryFailClosedEmitted.clear();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -237,10 +244,7 @@ async function getFailedJobLog(
     ]);
   } catch (err) {
     if (!runReference.jobId) throw err;
-    return gh([
-      "api",
-      `repos/${pr.owner}/${pr.repo}/actions/jobs/${runReference.jobId}/logs`,
-    ]);
+    return gh(["api", `repos/${pr.owner}/${pr.repo}/actions/jobs/${runReference.jobId}/logs`]);
   }
 }
 
@@ -520,6 +524,10 @@ function parseGitHubWebhookEvent(
 
 function repoFlag(pr: PRInfo): string {
   return `${pr.owner}/${pr.repo}`;
+}
+
+function prEventKey(pr: PRInfo): string {
+  return `${repoFlag(pr)}#${pr.number}`;
 }
 
 function parseDate(val: string | undefined | null): Date {
@@ -932,7 +940,7 @@ function createGitHubSCM(): SCM {
       let checks: CICheck[];
       try {
         checks = await this.getCIChecks(pr);
-      } catch {
+      } catch (err) {
         // Before fail-closing, check if the PR is merged/closed —
         // GitHub may not return check data for those, and reporting
         // "failing" for a merged PR is wrong.
@@ -943,7 +951,26 @@ function createGitHubSCM(): SCM {
           // Can't determine state either; fall through to fail-closed.
         }
         // Fail closed for open PRs: report as failing rather than
-        // "none" (which getMergeability treats as passing).
+        // "none" (which getMergeability treats as passing). Emit so RCA
+        // can distinguish "really failing" from "we couldn't tell".
+        const eventKey = prEventKey(pr);
+        if (!ciSummaryFailClosedEmitted.has(eventKey)) {
+          ciSummaryFailClosedEmitted.add(eventKey);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          recordActivityEvent({
+            source: "scm",
+            kind: "scm.ci_summary_failclosed",
+            level: "warn",
+            summary: `getCISummary failed-closed for PR #${pr.number}`,
+            data: {
+              plugin: "scm-github",
+              prNumber: pr.number,
+              prOwner: pr.owner,
+              prRepo: pr.repo,
+              errorMessage,
+            },
+          });
+        }
         return "failing";
       }
       if (checks.length === 0) return "none";
@@ -1035,16 +1062,16 @@ function createGitHubSCM(): SCM {
         try {
           // Use GraphQL with variables to get review threads with actual isResolved status
           const raw = await gh([
-          "api",
-          "graphql",
-          "-f",
-          `owner=${pr.owner}`,
-          "-f",
-          `name=${pr.repo}`,
-          "-F",
-          `number=${pr.number}`,
-          "-f",
-          `query=query($owner: String!, $name: String!, $number: Int!) {
+            "api",
+            "graphql",
+            "-f",
+            `owner=${pr.owner}`,
+            "-f",
+            `name=${pr.repo}`,
+            "-F",
+            `number=${pr.number}`,
+            "-f",
+            `query=query($owner: String!, $name: String!, $number: Int!) {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $number) {
                 reviewThreads(first: 100) {
@@ -1067,58 +1094,58 @@ function createGitHubSCM(): SCM {
               }
             }
           }`,
-        ]);
+          ]);
 
-        const data: {
-          data: {
-            repository: {
-              pullRequest: {
-                reviewThreads: {
-                  nodes: Array<{
-                    id: string;
-                    isResolved: boolean;
-                    comments: {
-                      nodes: Array<{
-                        id: string;
-                        author: { login: string } | null;
-                        body: string;
-                        path: string | null;
-                        line: number | null;
-                        url: string;
-                        createdAt: string;
-                      }>;
-                    };
-                  }>;
+          const data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: Array<{
+                      id: string;
+                      isResolved: boolean;
+                      comments: {
+                        nodes: Array<{
+                          id: string;
+                          author: { login: string } | null;
+                          body: string;
+                          path: string | null;
+                          line: number | null;
+                          url: string;
+                          createdAt: string;
+                        }>;
+                      };
+                    }>;
+                  };
                 };
               };
             };
-          };
-        } = JSON.parse(raw);
+          } = JSON.parse(raw);
 
-        const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+          const threads = data.data.repository.pullRequest.reviewThreads.nodes;
 
-        return threads
-          .filter((t) => {
-            if (t.isResolved) return false; // only pending (unresolved) threads
-            const c = t.comments.nodes[0];
-            if (!c) return false; // skip threads with no comments
-            const author = c.author?.login ?? "";
-            return !BOT_AUTHORS.has(author);
-          })
-          .map((t) => {
-            const c = t.comments.nodes[0];
-            return {
-              id: c.id,
-              threadId: t.id,
-              author: c.author?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? undefined,
-              isResolved: t.isResolved,
-              createdAt: parseDate(c.createdAt),
-              url: c.url,
-            };
-          });
+          return threads
+            .filter((t) => {
+              if (t.isResolved) return false; // only pending (unresolved) threads
+              const c = t.comments.nodes[0];
+              if (!c) return false; // skip threads with no comments
+              const author = c.author?.login ?? "";
+              return !BOT_AUTHORS.has(author);
+            })
+            .map((t) => {
+              const c = t.comments.nodes[0];
+              return {
+                id: c.id,
+                threadId: t.id,
+                author: c.author?.login ?? "unknown",
+                body: c.body,
+                path: c.path || undefined,
+                line: c.line ?? undefined,
+                isResolved: t.isResolved,
+                createdAt: parseDate(c.createdAt),
+                url: c.url,
+              };
+            });
         } catch (err) {
           throw new Error("Failed to fetch pending comments", { cause: err });
         }
@@ -1129,7 +1156,12 @@ function createGitHubSCM(): SCM {
       const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
 
       // Guard 3: check if review comments changed via REST ETag
-      const reviewsChanged = await checkReviewCommentsETag(pr.owner, pr.repo, pr.number, instanceObserver);
+      const reviewsChanged = await checkReviewCommentsETag(
+        pr.owner,
+        pr.repo,
+        pr.number,
+        instanceObserver,
+      );
       if (!reviewsChanged) {
         const cached = reviewThreadsCache.get(cacheKey);
         if (cached) return cached;

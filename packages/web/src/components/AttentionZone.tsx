@@ -1,11 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import {
-  type DashboardSession,
-  type AttentionLevel,
-  isPRMergeReady,
-} from "@/lib/types";
+import { type DashboardSession, type AttentionLevel, isPRMergeReady } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
 import { projectSessionPath } from "@/lib/routes";
@@ -13,9 +9,8 @@ import { projectSessionPath } from "@/lib/routes";
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
-  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
-  onMerge?: (prNumber: number) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
   onRestore?: (sessionId: string) => void;
   /** Accordion mode: whether this section is collapsed (mobile only) */
   collapsed?: boolean;
@@ -37,15 +32,15 @@ const zoneConfig: Record<
   }
 > = {
   merge: {
-    label: "Ready",
+    label: "Ready to merge",
     emptyMessage: "Nothing cleared to land yet.",
   },
   action: {
-    label: "Action",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   respond: {
-    label: "Respond",
+    label: "Needs you",
     emptyMessage: "No agents need your input.",
   },
   review: {
@@ -53,7 +48,7 @@ const zoneConfig: Record<
     emptyMessage: "No code waiting for review.",
   },
   pending: {
-    label: "Pending",
+    label: "In review",
     emptyMessage: "Nothing blocked.",
   },
   working: {
@@ -78,7 +73,6 @@ const zoneConfig: Record<
 function AttentionZoneView({
   level,
   sessions,
-  onSend,
   onKill,
   onMerge,
   onRestore,
@@ -121,7 +115,9 @@ function AttentionZoneView({
           <span className="accordion-header__dot" data-level={level} />
           <span className="accordion-header__label">{config.label}</span>
           <span className="accordion-header__count">{sessions.length}</span>
-          <span className="accordion-header__chevron" aria-hidden="true">▶</span>
+          <span className="accordion-header__chevron" aria-hidden="true">
+            ▶
+          </span>
         </button>
 
         <div id={`accordion-body-${level}`} className="accordion-body">
@@ -139,7 +135,6 @@ function AttentionZoneView({
                   <SessionCard
                     key={session.id}
                     session={session}
-                    onSend={onSend}
                     onKill={onKill}
                     onMerge={onMerge}
                     onRestore={onRestore}
@@ -183,7 +178,6 @@ function AttentionZoneView({
               <SessionCard
                 key={session.id}
                 session={session}
-                onSend={onSend}
                 onKill={onKill}
                 onMerge={onMerge}
                 onRestore={onRestore}
@@ -201,7 +195,6 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.level === next.level &&
     prev.collapsed === next.collapsed &&
     prev.onToggle === next.onToggle &&
-    prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
@@ -239,11 +232,7 @@ function MobileSessionRow({
         aria-label={`Open ${getSessionTitle(session)}`}
       >
         <div className="mobile-session-row__line">
-          <span
-            className="mobile-session-row__dot"
-            data-level={level}
-            aria-hidden="true"
-          />
+          <span className="mobile-session-row__dot" data-level={level} aria-hidden="true" />
           <span className="mobile-session-row__title">{getSessionTitle(session)}</span>
         </div>
         <div className="mobile-session-row__meta">
@@ -253,7 +242,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-            href={projectSessionPath(session.projectId, session.id)}
+          href={projectSessionPath(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >
@@ -300,10 +289,11 @@ export function getActionChipLabel(session: DashboardSession): string {
   // Review-class: status
   if (session.status === "ci_failed") return "ci failed";
   if (session.status === "changes_requested") return "changes";
-  // Review-class: PR signals
-  if (session.pr?.ciStatus === "failing") return "ci failed";
-  if (session.pr?.reviewDecision === "changes_requested") return "changes";
-  if (session.pr && !session.pr.mergeability.noConflicts) return "conflicts";
+  // Review-class: PR signals — aggregate across all PRs
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (prs.some((p) => p.ciStatus === "failing")) return "ci failed";
+  if (prs.some((p) => p.reviewDecision === "changes_requested")) return "changes";
+  if (prs.some((p) => !p.mergeability.noConflicts)) return "conflicts";
   return "action";
 }
 
@@ -316,16 +306,17 @@ function SessionStateChip({
 }) {
   let label = zoneConfig[level].label.toLowerCase();
 
-  if (level === "merge" && session.pr && isPRMergeReady(session.pr)) {
+  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  if (level === "merge" && prs.length > 0 && prs.every((p) => isPRMergeReady(p))) {
     label = "ready";
   } else if (level === "action") {
     label = getActionChipLabel(session);
   } else if (level === "respond") {
     label = session.activity === "waiting_input" ? "waiting" : "needs input";
   } else if (level === "review") {
-    label = session.pr?.reviewDecision === "changes_requested" ? "changes" : "review";
+    label = prs.some((p) => p.reviewDecision === "changes_requested") ? "changes" : "review";
   } else if (level === "pending") {
-    label = session.pr?.unresolvedThreads ? "threads" : "pending";
+    label = prs.some((p) => p.unresolvedThreads) ? "threads" : "pending";
   } else if (level === "working") {
     label = session.activity === "idle" ? "idle" : "active";
   }

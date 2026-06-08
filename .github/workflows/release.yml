@@ -39,12 +39,12 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: pnpm
@@ -65,7 +65,7 @@ jobs:
       # `publish:` command. We deliberately omit `publish:` so the action
       # never runs `changeset publish`. npm publishing is handled by a
       # private cron that detects the GitHub release.
-      - uses: changesets/action@v1
+      - uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b
         id: changesets
         with:
           version: pnpm changeset version

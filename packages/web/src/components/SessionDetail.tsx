@@ -11,14 +11,13 @@ import {
 import dynamic from "next/dynamic";
 import { getSessionTitle } from "@/lib/format";
 import type { ProjectInfo } from "@/lib/project-name";
-import { SidebarContext } from "./workspace/SidebarContext";
+import { useSidebarContext } from "./workspace/SidebarContext";
 import { projectDashboardPath, projectSessionPath } from "@/lib/routes";
 
-import { ProjectSidebar, type ProjectSidebarOrchestrator } from "./ProjectSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { SessionDetailHeader, type OrchestratorZones } from "./SessionDetailHeader";
 import { SessionEndedSummary } from "./SessionEndedSummary";
-import { sessionActivityMeta } from "./session-detail-utils";
+import { SessionInspector } from "./SessionInspector";
 
 export type { OrchestratorZones } from "./SessionDetailHeader";
 
@@ -40,11 +39,6 @@ interface SessionDetailProps {
   orchestratorZones?: OrchestratorZones;
   projectOrchestratorId?: string | null;
   projects?: ProjectInfo[];
-  sidebarSessions?: DashboardSession[] | null;
-  sidebarOrchestrators?: ProjectSidebarOrchestrator[];
-  sidebarLoading?: boolean;
-  sidebarError?: boolean;
-  onRetrySidebar?: () => void;
 }
 
 export function SessionDetail({
@@ -53,26 +47,19 @@ export function SessionDetail({
   orchestratorZones,
   projectOrchestratorId = null,
   projects = [],
-  sidebarSessions = [],
-  sidebarOrchestrators,
-  sidebarLoading = false,
-  sidebarError = false,
-  onRetrySidebar,
 }: SessionDetailProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const sidebarCtx = useSidebarContext();
   const startFullscreen = searchParams.get("fullscreen") === "true";
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
-  const pr = session.pr;
+  const [selectedPRIndex, setSelectedPRIndex] = useState(0);
+  const prs = session.prs ?? [];
+  const safeSelectedPRIndex = Math.min(selectedPRIndex, Math.max(0, prs.length - 1));
+  const pr = prs[safeSelectedPRIndex] ?? session.pr;
   const terminalEnded = isDashboardSessionTerminal(session);
   const isRestorable = isDashboardSessionRestorable(session);
-  const activity = (session.activity && sessionActivityMeta[session.activity]) ?? {
-    label: session.activity ?? "unknown",
-    color: "var(--color-text-muted)",
-  };
   const headline = getSessionTitle(session);
 
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
@@ -120,10 +107,14 @@ export function SessionDetail({
   }, [session.id]);
 
   const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return projectSessionPath(session.projectId, session.id);
+    if (isOrchestrator) return null;
     if (projectOrchestratorId) return projectSessionPath(session.projectId, projectOrchestratorId);
     return null;
-  }, [isOrchestrator, projectOrchestratorId, session.id, session.projectId]);
+  }, [isOrchestrator, projectOrchestratorId, session.projectId]);
+
+  useEffect(() => {
+    setSelectedPRIndex(0);
+  }, [session.id]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setShowTerminal(true));
@@ -133,104 +124,68 @@ export function SessionDetail({
     };
   }, [session.id]);
 
-  const handleToggleSidebar = useCallback(() => {
-    if (isMobile) {
-      setMobileSidebarOpen((v) => !v);
-    } else {
-      setSidebarCollapsed((v) => !v);
-    }
-  }, [isMobile]);
-
   return (
-    <SidebarContext.Provider value={{ onToggleSidebar: handleToggleSidebar, mobileSidebarOpen }}>
-      <div className="dashboard-app-shell">
-        <SessionDetailHeader
-          session={session}
-          isOrchestrator={isOrchestrator}
-          isMobile={isMobile}
-          terminalEnded={terminalEnded}
-          isRestorable={isRestorable}
-          activity={activity}
-          headline={headline}
-          projects={projects}
-          orchestratorHref={orchestratorHref}
-          orchestratorZones={orchestratorZones}
-          onToggleSidebar={handleToggleSidebar}
-          onRestore={handleRestore}
-          onKill={handleKill}
-        />
-
-        <div
-          className={`dashboard-shell dashboard-shell--desktop${
-            sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""
-          }`}
-        >
-          {projects.length > 0 ? (
-            <div
-              className={`sidebar-wrapper${
-                mobileSidebarOpen ? " sidebar-wrapper--mobile-open" : ""
-              }`}
-            >
-              <ProjectSidebar
-                projects={projects}
-                sessions={sidebarSessions}
-                orchestrators={sidebarOrchestrators}
-                loading={sidebarLoading}
-                error={sidebarError}
-                onRetry={onRetrySidebar}
-                activeProjectId={session.projectId}
-                activeSessionId={session.id}
-                collapsed={sidebarCollapsed}
-                onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-                onMobileClose={() => setMobileSidebarOpen(false)}
-              />
-            </div>
-          ) : null}
-          {mobileSidebarOpen && (
-            <div className="sidebar-mobile-backdrop" onClick={() => setMobileSidebarOpen(false)} />
+    <div className="dashboard-main--desktop">
+      <SessionDetailHeader
+        session={session}
+        isOrchestrator={isOrchestrator}
+        isMobile={isMobile}
+        terminalEnded={terminalEnded}
+        isRestorable={isRestorable}
+        headline={headline}
+        projects={projects}
+        orchestratorHref={orchestratorHref}
+        orchestratorZones={orchestratorZones}
+        selectedPRIndex={safeSelectedPRIndex}
+        onSelectPR={setSelectedPRIndex}
+        onToggleSidebar={sidebarCtx?.onToggleSidebar ?? (() => {})}
+        onRestore={handleRestore}
+        onKill={handleKill}
+      />
+      <main className="session-detail-page session-workspace flex-1 min-h-0 flex bg-[var(--color-bg-base)]">
+        <div className="session-workspace__main flex-1 min-h-0 flex flex-col">
+          {!showTerminal ? (
+            <div className="session-detail-terminal-placeholder h-full" />
+          ) : terminalEnded ? (
+            <SessionEndedSummary
+              session={session}
+              headline={headline}
+              pr={pr}
+              dashboardHref={dashboardHref}
+              isRestorable={isRestorable}
+              onRestore={handleRestore}
+            />
+          ) : (
+            <DirectTerminal
+              sessionId={session.id}
+              projectId={session.projectId}
+              tmuxName={session.metadata?.tmuxName}
+              startFullscreen={startFullscreen}
+              variant={terminalVariant}
+              appearance="theme"
+              height="100%"
+              isOpenCodeSession={isOpenCodeSession}
+              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+              autoFocus
+            />
           )}
-
-          <div className="dashboard-main dashboard-main--desktop">
-            <main className="session-detail-page flex-1 min-h-0 flex flex-col bg-[var(--color-bg-base)]">
-              <div className="flex-1 min-h-0 flex flex-col">
-                {!showTerminal ? (
-                  <div className="session-detail-terminal-placeholder h-full" />
-                ) : terminalEnded ? (
-                  <SessionEndedSummary
-                    session={session}
-                    headline={headline}
-                    pr={pr}
-                    dashboardHref={dashboardHref}
-                  />
-                ) : (
-                  <DirectTerminal
-                    sessionId={session.id}
-                    projectId={session.projectId}
-                    tmuxName={session.metadata?.tmuxName}
-                    startFullscreen={startFullscreen}
-                    variant={terminalVariant}
-                    appearance="dark"
-                    height="100%"
-                    isOpenCodeSession={isOpenCodeSession}
-                    reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-                    autoFocus
-                  />
-                )}
-              </div>
-            </main>
-          </div>
         </div>
-        <MobileBottomNav
-          ariaLabel="Session navigation"
-          activeTab={isOrchestrator ? "orchestrator" : undefined}
-          dashboardHref={dashboardHref}
-          prsHref={
-            session.projectId ? `/?project=${encodeURIComponent(session.projectId)}&tab=prs` : "/"
-          }
-          showOrchestrator={!!orchestratorHref}
-          orchestratorHref={orchestratorHref}
-        />
-      </div>
-    </SidebarContext.Provider>
+        {/* The orchestrator session has no PR/changes/browser to inspect — give
+            it the full-width terminal (no inspector rail). */}
+        {!isMobile && !terminalEnded && !isOrchestrator ? (
+          <SessionInspector session={session} />
+        ) : null}
+      </main>
+      <MobileBottomNav
+        ariaLabel="Session navigation"
+        activeTab={isOrchestrator ? "orchestrator" : undefined}
+        dashboardHref={dashboardHref}
+        prsHref={
+          session.projectId ? `/?project=${encodeURIComponent(session.projectId)}&tab=prs` : "/"
+        }
+        showOrchestrator={!!orchestratorHref}
+        orchestratorHref={orchestratorHref}
+      />
+    </div>
   );
 }

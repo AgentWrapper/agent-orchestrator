@@ -52,9 +52,12 @@ async function extractKimiSummary(sessionDir: string): Promise<string | null> {
   // still be planted as symlinks pointing at /etc/passwd or /dev/zero.
   if (!(await isKimiSessionFile(wirePath))) return null;
   let summary: string | null = null;
+  let stream: ReturnType<typeof createReadStream> | null = null;
+  let rl: ReturnType<typeof createInterface> | null = null;
   try {
-    const rl = createInterface({
-      input: createReadStream(wirePath, { encoding: "utf-8" }),
+    stream = createReadStream(wirePath, { encoding: "utf-8" });
+    rl = createInterface({
+      input: stream,
       crlfDelay: Infinity,
     });
     let bytes = 0;
@@ -85,9 +88,11 @@ async function extractKimiSummary(sessionDir: string): Promise<string | null> {
         // Skip malformed line
       }
     }
-    rl.close();
   } catch {
     return null;
+  } finally {
+    rl?.close();
+    stream?.destroy();
   }
   return summary;
 }

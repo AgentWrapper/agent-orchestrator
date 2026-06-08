@@ -8,6 +8,34 @@
  * Spec: release-process.html §07 (Auto-update mechanics).
  */
 
+import type { UpdateChannel } from "./global-config.js";
+
+export function isVersionOutdatedForChannel(
+  current: string,
+  latest: string,
+  channel: UpdateChannel,
+): boolean {
+  if (channel === "nightly") {
+    const currentParsed = parseVersion(current);
+    const latestParsed = parseVersion(latest);
+    if (
+      isNightlyPrerelease(currentParsed.prerelease) &&
+      isNightlyPrerelease(latestParsed.prerelease)
+    ) {
+      return current !== latest;
+    }
+  }
+  return isVersionOutdated(current, latest);
+}
+
+function isNightlyPrerelease(prerelease: string | undefined): boolean {
+  return (
+    prerelease === "nightly" ||
+    prerelease?.startsWith("nightly-") === true ||
+    prerelease?.startsWith("nightly.") === true
+  );
+}
+
 /**
  * Returns true if `current` is an older version than `latest`.
  *
