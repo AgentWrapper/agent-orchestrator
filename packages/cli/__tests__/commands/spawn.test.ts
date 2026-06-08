@@ -516,6 +516,151 @@ describe("spawn command", () => {
     });
   });
 
+  it("passes --prompt without an issue ID", async () => {
+    const fakeSession: Session = {
+      id: "app-2",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-2", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "--prompt", "Fix the flaky tests"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: undefined,
+      prompt: "Fix the flaky tests",
+    });
+  });
+
+  it("passes --prompt together with an issue ID", async () => {
+    const fakeSession: Session = {
+      id: "app-3",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-44",
+      issueId: "INT-44",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-3", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "spawn",
+      "INT-44",
+      "--prompt",
+      "Continue from the latest CI failure",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-44",
+      agent: undefined,
+      prompt: "Continue from the latest CI failure",
+    });
+  });
+
+  it("sanitizes --prompt by stripping newlines and trimming whitespace", async () => {
+    const fakeSession: Session = {
+      id: "app-4",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-4", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "spawn",
+      "--prompt",
+      "  Fix the flaky test\r\nand update snapshots\rnow  ",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: undefined,
+      prompt: "Fix the flaky test  and update snapshots now",
+    });
+  });
+
+  it("accepts --prompt values up to 4096 characters", async () => {
+    const fakeSession: Session = {
+      id: "app-5",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-5", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    const maxLengthPrompt = "x".repeat(4096);
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "--prompt", maxLengthPrompt]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: undefined,
+      prompt: maxLengthPrompt,
+    });
+  });
+
+  it("rejects --prompt values longer than 4096 characters", async () => {
+    const tooLongPrompt = "x".repeat(4097);
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "--prompt", tooLongPrompt]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Prompt must be at most 4096 characters");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+  });
+
   it("shows a single optional issue positional in help", () => {
     const spawnCommand = program.commands.find((command) => command.name() === "spawn");
     const help = spawnCommand?.helpInformation() ?? "";
