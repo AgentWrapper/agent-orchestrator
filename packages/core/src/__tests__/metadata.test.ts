@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync, renameSync } from "node:fs";
+import type * as NodeFs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -13,12 +14,29 @@ import {
   deleteMetadata,
   listMetadata,
 } from "../metadata.js";
+import { recordActivityEvent } from "../activity-events.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return {
+    ...actual,
+    renameSync: vi.fn((...args: Parameters<typeof actual.renameSync>) =>
+      actual.renameSync(...args),
+    ),
+  };
+});
+
+vi.mock("../activity-events.js", () => ({
+  recordActivityEvent: vi.fn(),
+}));
 
 let dataDir: string;
 
 beforeEach(() => {
   dataDir = join(tmpdir(), `ao-test-metadata-${randomUUID()}`);
   mkdirSync(dataDir, { recursive: true });
+  vi.mocked(recordActivityEvent).mockClear();
+  vi.mocked(renameSync).mockClear();
 });
 
 afterEach(() => {
@@ -389,6 +407,123 @@ describe("mutateMetadata corrupt-file handling", () => {
 
     const corruptCopies = readdirSync(dataDir).filter((f) => f.includes(".corrupt-"));
     expect(corruptCopies).toHaveLength(0);
+  });
+
+  it("emits metadata.corrupt_detected when JSON parse fails and file is renamed", () => {
+    const sessionPath = join(dataDir, "ao-3.json");
+    writeFileSync(sessionPath, "{ broken json", "utf-8");
+
+    const result = mutateMetadata(
+      dataDir,
+      "ao-3",
+      (existing) => ({ ...existing, branch: "feat/x" }),
+      { createIfMissing: true },
+    );
+
+    expect(result).not.toBeNull();
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "ao-3",
+        source: "session-manager",
+        kind: "metadata.corrupt_detected",
+        level: "error",
+        summary: expect.stringContaining("renamed to"),
+        data: expect.objectContaining({
+          renamedTo: expect.stringContaining(`${sessionPath}.corrupt-`),
+          renameSucceeded: true,
+          contentSample: "{ broken json",
+          path: sessionPath,
+        }),
+      }),
+    );
+  });
+
+  it("emits a rename-failed summary when corrupt metadata cannot be renamed", () => {
+    const sessionPath = join(dataDir, "ao-rename-failed.json");
+    writeFileSync(sessionPath, "{ broken json", "utf-8");
+    vi.mocked(renameSync).mockImplementationOnce(() => {
+      throw new Error("rename denied");
+    });
+
+    const result = mutateMetadata(
+      dataDir,
+      "ao-rename-failed",
+      (existing) => ({ ...existing, branch: "feat/x" }),
+      { createIfMissing: true },
+    );
+
+    expect(result).not.toBeNull();
+    const call = vi
+      .mocked(recordActivityEvent)
+      .mock.calls.find((c) => c[0].kind === "metadata.corrupt_detected");
+    expect(call).toBeDefined();
+    expect(call![0]).toMatchObject({
+      sessionId: "ao-rename-failed",
+      summary: expect.stringContaining("failed to rename"),
+      data: expect.objectContaining({
+        renamedTo: null,
+        renameSucceeded: false,
+        path: sessionPath,
+      }),
+    });
+    expect(call![0].summary).not.toContain("renamed to");
+  });
+
+  it("uses the provided source for metadata.corrupt_detected", () => {
+    const sessionPath = join(dataDir, "ao-api-source.json");
+    writeFileSync(sessionPath, "{ broken json", "utf-8");
+
+    mutateMetadata(
+      dataDir,
+      "ao-api-source",
+      (existing) => ({ ...existing, branch: "feat/api" }),
+      { createIfMissing: true, activityEventSource: "api" },
+    );
+
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "ao-api-source",
+        source: "api",
+        kind: "metadata.corrupt_detected",
+      }),
+    );
+  });
+
+  it("truncates contentSample to 200 chars in metadata.corrupt_detected", () => {
+    const sessionPath = join(dataDir, "ao-4.json");
+    // 250 char garbage payload — sanitizer cap is 16KB but invariant B11 caps
+    // forensic sample at 200 chars.
+    const huge = "x".repeat(250);
+    writeFileSync(sessionPath, huge, "utf-8");
+
+    mutateMetadata(
+      dataDir,
+      "ao-4",
+      (existing) => ({ ...existing, branch: "feat/y" }),
+      { createIfMissing: true },
+    );
+
+    const call = vi
+      .mocked(recordActivityEvent)
+      .mock.calls.find((c) => c[0].kind === "metadata.corrupt_detected");
+    expect(call).toBeDefined();
+    const sample = (call![0].data as Record<string, unknown>)["contentSample"] as string;
+    expect(sample.length).toBe(200);
+    expect((call![0].data as Record<string, unknown>)["contentLength"]).toBe(250);
+  });
+
+  it("does not emit metadata.corrupt_detected for healthy JSON", () => {
+    writeMetadata(dataDir, "ao-5", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+    mutateMetadata(dataDir, "ao-5", (existing) => ({ ...existing, summary: "hi" }));
+
+    const corruptCalls = vi
+      .mocked(recordActivityEvent)
+      .mock.calls.filter((c) => c[0].kind === "metadata.corrupt_detected");
+    expect(corruptCalls).toHaveLength(0);
   });
 });
 

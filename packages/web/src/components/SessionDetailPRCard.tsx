@@ -178,6 +178,7 @@ export function SessionDetailPRCard({
   const allGreen = isPRMergeReady(pr);
   const blockerIssues = buildBlockerChips(pr, metadata, lifecyclePrReason);
   const fileCount = pr.changedFiles ?? 0;
+  const showDiffStats = !isPRUnenriched(pr);
   const showConflictActions = hasMergeConflicts(pr) && pr.state === "open";
   const compareUrl = showConflictActions ? buildGitHubCompareUrl(pr) : "";
 
@@ -213,10 +214,12 @@ export function SessionDetailPRCard({
         >
           PR #{pr.number}: {pr.title}
         </a>
-        <span className="session-detail-pr-card__diff-stats">
-          <span className="session-detail-diff--add">+{pr.additions}</span>{" "}
-          <span className="session-detail-diff--del">-{pr.deletions}</span>
-        </span>
+        {showDiffStats ? (
+          <span className="session-detail-pr-card__diff-stats">
+            <span className="session-detail-diff--add">+{pr.additions}</span>{" "}
+            <span className="session-detail-diff--del">-{pr.deletions}</span>
+          </span>
+        ) : null}
         {fileCount > 0 ? (
           <span className="session-detail-pr-card__diff-label">
             {fileCount} file{fileCount !== 1 ? "s" : ""}

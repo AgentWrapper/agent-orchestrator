@@ -151,11 +151,13 @@ describe("loadBuiltins", () => {
 
     const fakeClaudeCode = makePlugin("agent", "claude-code");
     const fakeCodex = makePlugin("agent", "codex");
+    const fakeGrok = makePlugin("agent", "grok");
     const fakeOpenCode = makePlugin("agent", "opencode");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
       if (pkg === "@aoagents/ao-plugin-agent-claude-code") return fakeClaudeCode;
       if (pkg === "@aoagents/ao-plugin-agent-codex") return fakeCodex;
+      if (pkg === "@aoagents/ao-plugin-agent-grok") return fakeGrok;
       if (pkg === "@aoagents/ao-plugin-agent-opencode") return fakeOpenCode;
       throw new Error(`Not found: ${pkg}`);
     });
@@ -163,10 +165,12 @@ describe("loadBuiltins", () => {
     const agents = registry.list("agent");
     expect(agents).toContainEqual(expect.objectContaining({ name: "claude-code", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "codex", slot: "agent" }));
+    expect(agents).toContainEqual(expect.objectContaining({ name: "grok", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "opencode", slot: "agent" }));
 
     expect(registry.get("agent", "codex")).not.toBeNull();
     expect(registry.get("agent", "claude-code")).not.toBeNull();
+    expect(registry.get("agent", "grok")).not.toBeNull();
     expect(registry.get("agent", "opencode")).not.toBeNull();
   });
 
@@ -348,6 +352,68 @@ describe("loadBuiltins", () => {
     });
   });
 
+  it("passes configPath for named notifier references without explicit config", async () => {
+    const registry = createPluginRegistry();
+    const fakeDashboard = makePlugin("notifier", "dashboard");
+    const cfg = makeOrchestratorConfig({
+      configPath: "/test/config.yaml",
+      defaults: {
+        runtime: "tmux",
+        agent: "codex",
+        workspace: "worktree",
+        notifiers: ["dashboard"],
+      },
+      notificationRouting: {
+        urgent: ["dashboard"],
+        action: [],
+        warning: [],
+        info: [],
+      },
+      notifiers: {},
+    });
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@aoagents/ao-plugin-notifier-dashboard") return fakeDashboard;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDashboard.create).toHaveBeenCalledWith({
+      configPath: "/test/config.yaml",
+    });
+    expect(
+      registry.get<{ _config: Record<string, unknown> }>("notifier", "dashboard")?._config,
+    ).toEqual({
+      configPath: "/test/config.yaml",
+    });
+  });
+
+  it("does not create an implicit notifier registration over a conflicting explicit entry", async () => {
+    const registry = createPluginRegistry();
+    const fakeDashboard = makePlugin("notifier", "dashboard");
+    const cfg = makeOrchestratorConfig({
+      defaults: {
+        runtime: "tmux",
+        agent: "codex",
+        workspace: "worktree",
+        notifiers: ["dashboard"],
+      },
+      notifiers: {
+        dashboard: {
+          plugin: "webhook",
+          url: "https://hooks.example.com/dashboard",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@aoagents/ao-plugin-notifier-dashboard") return fakeDashboard;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDashboard.create).not.toHaveBeenCalled();
+    expect(registry.get("notifier", "dashboard")).toBeNull();
+  });
+
   it("strips package loading metadata from notifier config", async () => {
     const registry = createPluginRegistry();
     const fakeWebhook = makePlugin("notifier", "webhook");
@@ -427,7 +493,7 @@ describe("loadBuiltins", () => {
       throw new Error(`Not found: ${pkg}`);
     });
 
-    expect(fakeOpenClaw.create).toHaveBeenCalledWith(undefined);
+    expect(fakeOpenClaw.create).not.toHaveBeenCalled();
     expect(fakeWebhook.create).toHaveBeenCalledWith({
       url: "http://127.0.0.1:8787/hook",
       retries: 3,

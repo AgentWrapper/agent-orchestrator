@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { isWindows } from "@aoagents/ao-core";
 
 const RESTRICTED_SINGLE_SEGMENTS = new Set([
   ".ssh",
@@ -44,6 +45,10 @@ function containsRestrictedSegments(targetPath: string, rootPath = homeRealPath(
   }
 
   return false;
+}
+
+function shouldConstrainToHome(): boolean {
+  return !isWindows();
 }
 
 function toRequestedAbsolutePath(rawPath: string, rootPath: string): string {
@@ -93,11 +98,12 @@ export function resolveHomeContainedPath(rawPath: string): ResolvedHomePath {
     throw new PathSecurityError("not_found", "path not found");
   }
 
-  if (!isWithinRoot(rootPath, resolvedPath)) {
+  if (shouldConstrainToHome() && !isWithinRoot(rootPath, resolvedPath)) {
     throw new PathSecurityError("outside_root", "path outside allowed root");
   }
 
-  if (containsRestrictedSegments(resolvedPath, rootPath)) {
+  const restrictedRootPath = shouldConstrainToHome() ? rootPath : path.parse(resolvedPath).root;
+  if (containsRestrictedSegments(resolvedPath, restrictedRootPath)) {
     throw new PathSecurityError("restricted", "path is restricted");
   }
 
@@ -127,8 +133,9 @@ export function shouldHideBrowseEntry(entryPath: string, rootPath: string): bool
       return true;
     }
     const resolvedEntryPath = realpathSync(entryPath);
-    if (!isWithinRoot(rootPath, resolvedEntryPath)) return true;
-    return containsRestrictedSegments(resolvedEntryPath, rootPath);
+    if (shouldConstrainToHome() && !isWithinRoot(rootPath, resolvedEntryPath)) return true;
+    const restrictedRootPath = shouldConstrainToHome() ? rootPath : path.parse(resolvedEntryPath).root;
+    return containsRestrictedSegments(resolvedEntryPath, restrictedRootPath);
   } catch {
     return true;
   }

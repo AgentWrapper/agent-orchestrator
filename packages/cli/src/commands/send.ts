@@ -32,7 +32,7 @@ async function resolveSessionContext(sessionName: string): Promise<{
     if (session) {
       const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
       const project = config.projects[session.projectId];
-      const agentName = session.metadata["agent"] ?? project?.agent ?? config.defaults.agent;
+      const agentName = session.metadata["agent"]!;
       const runtimeName =
         session.runtimeHandle?.runtimeName ?? project?.runtime ?? config.defaults.runtime;
       return {

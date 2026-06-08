@@ -351,6 +351,57 @@ describe("global-config storage identity", () => {
     });
   });
 
+  it("preserves wrapped config defaults when repairing local behavior", () => {
+    const repoPath = createRepo("wrapped-local-defaults", "https://github.com/OpenAI/demo.git");
+    const projectId = registerProjectInGlobalConfig(
+      "wrapped-local-defaults",
+      "Wrapped Local Defaults",
+      repoPath,
+      { defaultBranch: "main" },
+      configPath,
+    );
+    writeFileSync(
+      join(repoPath, "agent-orchestrator.yaml"),
+      [
+        "defaults:",
+        "  agent: codex",
+        "  runtime: tmux",
+        "  workspace: worktree",
+        "  orchestrator:",
+        "    agent: codex",
+        "  worker:",
+        "    agent: opencode",
+        "projects:",
+        "  wrapped-local-defaults:",
+        `    path: ${repoPath}`,
+        "    name: Wrapped Local Defaults",
+        "",
+      ].join("\n"),
+    );
+
+    expect(resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath)).toMatchObject({
+      resolveError: expect.stringContaining("wrapped projects: format"),
+    });
+
+    repairWrappedLocalProjectConfig(projectId, repoPath);
+
+    const repaired = parseYaml(readFileSync(join(repoPath, "agent-orchestrator.yaml"), "utf-8"));
+    expect(repaired).toEqual({
+      agent: "codex",
+      runtime: "tmux",
+      workspace: "worktree",
+      orchestrator: { agent: "codex" },
+      worker: { agent: "opencode" },
+    });
+    expect(resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath)).toMatchObject({
+      agent: "codex",
+      runtime: "tmux",
+      workspace: "worktree",
+      orchestrator: { agent: "codex" },
+      worker: { agent: "opencode" },
+    });
+  });
+
   it("repairs wrapped local .yml configs without creating a .yaml sibling", () => {
     const repoPath = createRepo("wrapped-local-yml", "https://github.com/OpenAI/demo.git");
     const configPathYml = join(repoPath, "agent-orchestrator.yml");

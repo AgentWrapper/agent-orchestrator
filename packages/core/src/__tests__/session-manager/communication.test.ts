@@ -598,6 +598,7 @@ describe("remap", () => {
 
     expect(mapped).toBe("ses_project_agent");
     const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["agent"]).toBe("opencode");
     expect(meta?.["opencodeSessionId"]).toBe("ses_project_agent");
   });
 });
