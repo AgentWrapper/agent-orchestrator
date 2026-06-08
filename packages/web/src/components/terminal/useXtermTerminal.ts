@@ -81,9 +81,11 @@ export function useXtermTerminal(
       import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
+      import("@xterm/addon-webgl").then((mod) => mod.WebglAddon),
+      import("@xterm/addon-unicode11").then((mod) => mod.Unicode11Addon),
       document.fonts.ready,
     ])
-      .then(([Terminal, FitAddon, WebLinksAddon]) => {
+      .then(([Terminal, FitAddon, WebLinksAddon, WebglAddon, Unicode11Addon]) => {
         if (!mounted || !terminalRef.current) return;
 
         const isDark = appearance === "dark" || resolvedTheme !== "light";
@@ -101,15 +103,26 @@ export function useXtermTerminal(
           // tall x-height. 1.2 restores visual breathing room between lines.
           lineHeight: 1.2,
           theme: activeTheme,
-          // Light mode needs an explicit contrast floor because agent UIs often emit
-          // dim/faint ANSI sequences that become unreadable on a near-white background.
-          minimumContrastRatio: isDark ? 1 : 7,
+          // Enforce a contrast floor in BOTH themes. Agent TUIs (e.g. Claude
+          // Code's expanded "shell command" block) paint regions on an ANSI
+          // white background; our theme's `white` ≈ `foreground` (#c5ccd3), so
+          // with no floor the text is the same colour as its background and the
+          // block renders as an unreadable grey blob. A floor makes xterm adjust
+          // only the failing foregrounds. Light mode uses a higher floor because
+          // dim/faint sequences wash out on its near-white base. (#grey-blob)
+          minimumContrastRatio: isDark ? 4.5 : 7,
           // scrollback disabled — tmux provides scrollback/copy-mode, and leaving
           // this > 0 makes FitAddon subtract DEFAULT_SCROLL_BAR_WIDTH (14px) from
           // the available width, causing right-side clipping when the actual
           // scrollbar is narrower or wider than assumed. Fixes #1677.
           scrollback: 0,
           allowProposedApi: true,
+          // JetBrains Mono is subset to Latin glyphs, so anything it lacks
+          // (arrows like → ←, CJK, emoji, powerline) is drawn from a fallback
+          // font whose advance can exceed our monospace cell — the glyph then
+          // bleeds into the next cell and overlaps the following text. This
+          // tells xterm to shrink any glyph wider than its cell back to fit.
+          rescaleOverlappingGlyphs: true,
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });
@@ -125,6 +138,41 @@ export function useXtermTerminal(
 
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+
+        // Match modern terminals' character-width tables (Unicode 11). xterm
+        // defaults to Unicode 6, where emoji such as ✅/❌ are 1 cell wide; tmux
+        // and agent TUIs lay tables out treating them as 2, so without this the
+        // grid shifts a column after every emoji (broken borders, stray text).
+        try {
+          terminal.loadAddon(new Unicode11Addon());
+          terminal.unicode.activeVersion = "11";
+        } catch {
+          // Addon optional — fall back to xterm's built-in width tables.
+        }
+
+        // WebGL renderer. xterm's default DOM renderer cannot tile box-drawing /
+        // block glyphs cleanly across rows (each row is a separate DOM line), so
+        // agent TUIs like Claude Code's bordered panels render with broken edges
+        // regardless of font or lineHeight. The WebGL renderer custom-draws those
+        // glyphs into each cell, so frames connect and shaded regions stay solid.
+        // Loaded rAF-deferred (post-open viewport sync) with a DOM fallback if the
+        // GPU context is lost or WebGL is unavailable (headless, blocklisted GPU).
+        let webglAddon: InstanceType<typeof WebglAddon> | null = null;
+        const webglRaf = requestAnimationFrame(() => {
+          if (!mounted || !terminalInstance.current) return;
+          try {
+            const addon = new WebglAddon();
+            addon.onContextLoss(() => {
+              addon.dispose();
+              webglAddon = null;
+            });
+            terminal.loadAddon(addon);
+            webglAddon = addon;
+          } catch {
+            // WebGL unavailable — xterm keeps using the DOM renderer.
+            webglAddon = null;
+          }
+        });
 
         if (autoFocus) {
           terminal.focus();
@@ -333,6 +381,12 @@ export function useXtermTerminal(
 
         cleanup = () => {
           clearTimeout(deferredFitTimeout);
+          cancelAnimationFrame(webglRaf);
+          try {
+            webglAddon?.dispose();
+          } catch {
+            // addon may already be disposed via context-loss handler
+          }
           resizeObserver?.disconnect();
           dprMedia?.removeEventListener?.("change", handleDprChange);
           cleanupTouchScroll();

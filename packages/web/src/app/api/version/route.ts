@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import {
   getInstalledAoVersion,
-  isVersionOutdated,
+  isVersionOutdatedForChannel,
   loadGlobalConfig,
   readUpdateCheckCacheRaw,
   type UpdateChannel,
@@ -53,7 +53,8 @@ export async function GET() {
   const latest = cache?.latestVersion && cacheMatchesChannel ? cache.latestVersion : null;
 
   // Git installs cache `latestVersion: "origin/main"` (a ref, not a semver),
-  // so `isVersionOutdated(current, "origin/main")` would always return false.
+  // so `isVersionOutdatedForChannel(current, "origin/main", channel)` would
+  // always return false.
   // The CLI works around this by trusting the precomputed `cached.isOutdated`
   // for git installs — mirror that here so the dashboard banner actually
   // appears when a git-installed user is behind origin/main.
@@ -62,7 +63,7 @@ export async function GET() {
     isOutdated =
       cache?.installMethod === "git"
         ? cache.isOutdated === true
-        : isVersionOutdated(current, latest);
+        : isVersionOutdatedForChannel(current, latest, channel);
   }
 
   const body: VersionResponse = {

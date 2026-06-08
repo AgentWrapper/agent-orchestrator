@@ -5,6 +5,10 @@ import type { ProjectConfig, WorkspaceCreateConfig, WorkspaceInfo } from "@aoage
 // Mocks — must be declared before any import that uses the mocked modules
 // ---------------------------------------------------------------------------
 
+const { recordActivityEventMock } = vi.hoisted(() => ({
+  recordActivityEventMock: vi.fn(),
+}));
+
 vi.mock("node:child_process", () => {
   const mockExecFile = vi.fn();
   // Set custom promisify so `promisify(execFile)` returns { stdout, stderr }
@@ -27,6 +31,7 @@ vi.mock("node:fs", () => ({
 vi.mock("@aoagents/ao-core", () => ({
   getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
   isWindows: vi.fn(() => false),
+  recordActivityEvent: recordActivityEventMock,
 }));
 
 vi.mock("node:os", () => ({

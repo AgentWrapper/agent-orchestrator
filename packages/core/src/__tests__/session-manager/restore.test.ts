@@ -575,7 +575,7 @@ describe("restore", () => {
     expect(meta!["restoreFallbackReason"]).toBe("mock-agent.getRestoreCommand returned null");
   });
 
-  it("does not launch a fresh chat when a native-restore agent cannot build restore command", async () => {
+  it("falls back to a fresh launch when a native-restore agent cannot build restore command", async () => {
     const wsPath = join(tmpDir, "ws-app-native-restore-missing");
     mkdirSync(wsPath, { recursive: true });
 
@@ -605,10 +605,117 @@ describe("restore", () => {
 
     const sm = createSessionManager({ config, registry: registryWithNativeRestoreAgent });
 
-    await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
-    expect(mockRuntime.create).not.toHaveBeenCalled();
+    await sm.restore("app-1");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    const createCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.launchCommand).toBe("mock-agent --start");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta!["restoreFallbackReason"]).toBe("codex.getRestoreCommand returned null");
+  });
+
+  it("persists native restore metadata even when runtime is already dead", async () => {
+    const wsPath = join(tmpDir, "ws-app-dead-runtime-metadata");
+    mkdirSync(wsPath, { recursive: true });
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const agentWithDiscoverableThread: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: null,
+        agentSessionId: "rollout-1",
+        metadata: { codexThreadId: "thread-1" },
+      }),
+      getRestoreCommand: vi
+        .fn()
+        .mockImplementation(async (session) =>
+          session.metadata?.codexThreadId ? `codex resume ${session.metadata.codexThreadId}` : null,
+        ),
+    };
+
+    const registryWithDeadRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return agentWithDiscoverableThread;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeadRuntime });
+    const restored = await sm.restore("app-1");
+
+    expect(agentWithDiscoverableThread.getSessionInfo).toHaveBeenCalled();
+    expect(agentWithDiscoverableThread.getRestoreCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ codexThreadId: "thread-1" }),
+      }),
+      expect.any(Object),
+    );
+    expect(restored.metadata["codexThreadId"]).toBe("thread-1");
+    const createCall = (deadRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.launchCommand).toBe("codex resume thread-1");
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["codexThreadId"]).toBe("thread-1");
+  });
+
+  it("uses project path as restore workspace when worktree metadata is missing", async () => {
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const agentWithWorkspaceAssertion: Agent = {
+      ...mockAgent,
+      name: "codex",
+      getRestoreCommand: vi
+        .fn()
+        .mockImplementation(async (session) =>
+          session.workspacePath === config.projects["my-app"]!.path
+            ? "codex resume thread-1"
+            : null,
+        ),
+    };
+
+    const registryWithWorkspaceAssertion: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithWorkspaceAssertion;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "",
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithWorkspaceAssertion });
+    const restored = await sm.restore("app-1");
+
+    expect(restored.workspacePath).toBe(config.projects["my-app"]!.path);
+    expect(agentWithWorkspaceAssertion.getRestoreCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ workspacePath: config.projects["my-app"]!.path }),
+      expect.any(Object),
+    );
+    const createCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.workspacePath).toBe(config.projects["my-app"]!.path);
+    expect(createCall.launchCommand).toBe("codex resume thread-1");
   });
 
   it("clears restore fallback reason when getRestoreCommand succeeds", async () => {

@@ -49,6 +49,102 @@ describe("AddProjectModal", () => {
     );
   });
 
+  it("lets the user type an absolute path and add the current git directory", async () => {
+    const onClose = vi.fn();
+    const absolutePath = "D:\\projects\\my-repo";
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        current: { isGitRepo: false, hasLocalConfig: false },
+      }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        current: { isGitRepo: true, hasLocalConfig: false },
+      }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ ok: true, projectId: "my-repo" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AddProjectModal open onClose={onClose} />);
+
+    const pathInput = await screen.findByLabelText(/folder path/i);
+    fireEvent.change(pathInput, { target: { value: absolutePath } });
+    fireEvent.keyDown(pathInput, { key: "Enter" });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/filesystem/browse?path=${encodeURIComponent(absolutePath)}`,
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^add project$/i }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/projects/my-repo"));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/projects",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "my-repo",
+          name: "My Repo",
+          path: absolutePath,
+          useDefaultProjectId: false,
+        }),
+      }),
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("shows Windows drive roots when the browse API returns them", async () => {
+    const roots = [
+      { label: "C:", path: "C:\\" },
+      { label: "D:", path: "D:\\" },
+    ];
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        entries: [],
+        current: { isGitRepo: false, hasLocalConfig: false },
+        roots,
+      }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        entries: [{ name: "projects", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+        current: { isGitRepo: false, hasLocalConfig: false },
+        roots,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AddProjectModal open onClose={vi.fn()} />);
+
+    const driveSelect = await screen.findByLabelText(/location/i);
+    fireEvent.change(driveSelect, { target: { value: "D:\\" } });
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/filesystem/browse?path=${encodeURIComponent("D:\\")}`,
+      ),
+    );
+    // Drive switch navigates but no longer auto-selects (selection is an explicit user
+    // action — see useDirectoryBrowser). The location input is the canonical "where we are".
+    await waitFor(() =>
+      expect((screen.getByLabelText(/folder path/i) as HTMLInputElement).value).toBe("D:\\"),
+    );
+    expect(await screen.findByRole("button", { name: /projects/i })).toBeInTheDocument();
+  });
+
   it("shows the server browse error and disables submit when browsing fails", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

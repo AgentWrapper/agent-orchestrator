@@ -5,10 +5,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { ACTIVITY_STATE, SESSION_STATUS, isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
-import {
-  ProjectSidebar,
-  type ProjectSidebarOrchestrator,
-} from "@/components/ProjectSidebar";
+import { ProjectSidebar, type ProjectSidebarOrchestrator } from "@/components/ProjectSidebar";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -261,9 +258,6 @@ function SessionPageShell({
             </svg>
           )}
         </button>
-        <div className="dashboard-app-header__brand">
-          <span>Agent Orchestrator</span>
-        </div>
         <div className="dashboard-app-header__spacer" />
       </header>
 
@@ -938,11 +932,6 @@ export default function SessionPage() {
       orchestratorZones={zoneCounts ?? undefined}
       projectOrchestratorId={projectOrchestratorId}
       projects={projects}
-      sidebarSessions={sidebarSessions}
-      sidebarOrchestrators={sidebarOrchestrators}
-      sidebarLoading={sidebarSessions === null}
-      sidebarError={sidebarError}
-      onRetrySidebar={fetchSidebarSessions}
     />
   );
 }

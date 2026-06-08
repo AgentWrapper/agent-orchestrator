@@ -9,16 +9,34 @@
  */
 
 import { request } from "node:https";
-import type {
-  PluginModule,
-  Tracker,
-  Issue,
-  IssueFilters,
-  IssueUpdate,
-  CreateIssueInput,
-  ProjectConfig,
+import {
+  recordActivityEvent,
+  type CreateIssueInput,
+  type Issue,
+  type IssueFilters,
+  type IssueUpdate,
+  type PluginModule,
+  type ProjectConfig,
+  type Tracker,
 } from "@aoagents/ao-core";
 import type { Composio } from "@composio/core";
+
+// Module-level guard so we only emit tracker.dep_missing once per process
+// even if multiple sessions trigger the missing-SDK path.
+let depMissingEmitted = false;
+
+/** Test-only: reset the once-per-process dep_missing guard. */
+export function _resetDepMissingEmittedForTesting(): void {
+  depMissingEmitted = false;
+}
+
+function recordTransportActivityEvent(event: Parameters<typeof recordActivityEvent>[0]): void {
+  try {
+    recordActivityEvent(event);
+  } catch {
+    // Activity logging must never prevent timeout promises from settling.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Transport abstraction
@@ -35,6 +53,43 @@ type GraphQLTransport = <T>(query: string, variables?: Record<string, unknown>) 
 // ---------------------------------------------------------------------------
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
+const DIRECT_TRANSPORT_MAX_ATTEMPTS = 3;
+const DIRECT_TRANSPORT_RETRY_DELAY_MS = 500;
+
+class LinearHttpError extends Error {
+  constructor(
+    readonly status: number,
+    body: string,
+  ) {
+    super(`Linear API returned HTTP ${status}: ${body.slice(0, 200)}`);
+  }
+
+  get transient(): boolean {
+    return this.status === 408 || this.status === 429 || this.status >= 500;
+  }
+}
+
+class LinearNetworkError extends Error {
+  constructor(message: string) {
+    super(`Linear API network error: ${message}`);
+  }
+}
+
+class LinearTimeoutError extends Error {
+  constructor() {
+    super("Linear API request timed out after 30s");
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableDirectTransportError(err: unknown): boolean {
+  if (err instanceof LinearHttpError) return err.transient;
+  if (err instanceof LinearTimeoutError) return true;
+  return err instanceof LinearNetworkError;
+}
 
 function getApiKey(): string {
   const key = process.env["LINEAR_API_KEY"];
@@ -52,73 +107,100 @@ interface LinearResponse<T> {
 }
 
 function createDirectTransport(): GraphQLTransport {
-  return <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+  return async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
     const apiKey = getApiKey();
     const body = JSON.stringify({ query, variables });
 
-    return new Promise<T>((resolve, reject) => {
-      const url = new URL(LINEAR_API_URL);
-      let settled = false;
-      const settle = (fn: () => void) => {
-        if (!settled) {
-          settled = true;
-          fn();
-        }
-      };
+    const execute = (): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const url = new URL(LINEAR_API_URL);
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (!settled) {
+            settled = true;
+            fn();
+          }
+        };
 
-      const req = request(
-        {
-          hostname: url.hostname,
-          path: url.pathname,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: apiKey,
-            "Content-Length": Buffer.byteLength(body),
+        const req = request(
+          {
+            hostname: url.hostname,
+            path: url.pathname,
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: apiKey,
+              "Content-Length": Buffer.byteLength(body),
+            },
           },
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("error", (err: Error) => settle(() => reject(err)));
-          res.on("data", (chunk: Buffer) => chunks.push(chunk));
-          res.on("end", () => {
-            settle(() => {
-              try {
-                const text = Buffer.concat(chunks).toString("utf-8");
-                const status = res.statusCode ?? 0;
-                if (status < 200 || status >= 300) {
-                  reject(new Error(`Linear API returned HTTP ${status}: ${text.slice(0, 200)}`));
-                  return;
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("error", (err: Error) =>
+              settle(() => reject(new LinearNetworkError(err.message))),
+            );
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () => {
+              settle(() => {
+                try {
+                  const text = Buffer.concat(chunks).toString("utf-8");
+                  const status = res.statusCode ?? 0;
+                  if (status < 200 || status >= 300) {
+                    reject(new LinearHttpError(status, text));
+                    return;
+                  }
+                  const json: LinearResponse<T> = JSON.parse(text);
+                  if (json.errors && json.errors.length > 0) {
+                    reject(new Error(`Linear API error: ${json.errors[0].message}`));
+                    return;
+                  }
+                  if (!json.data) {
+                    reject(new Error("Linear API returned no data"));
+                    return;
+                  }
+                  resolve(json.data);
+                } catch (err) {
+                  reject(err);
                 }
-                const json: LinearResponse<T> = JSON.parse(text);
-                if (json.errors && json.errors.length > 0) {
-                  reject(new Error(`Linear API error: ${json.errors[0].message}`));
-                  return;
-                }
-                if (!json.data) {
-                  reject(new Error("Linear API returned no data"));
-                  return;
-                }
-                resolve(json.data);
-              } catch (err) {
-                reject(err);
-              }
+              });
             });
-          });
-        },
-      );
+          },
+        );
 
-      req.setTimeout(30_000, () => {
-        settle(() => {
-          req.destroy();
-          reject(new Error("Linear API request timed out after 30s"));
+        req.setTimeout(30_000, () => {
+          settle(() => {
+            req.destroy();
+            recordTransportActivityEvent({
+              source: "tracker",
+              kind: "tracker.api_timeout",
+              level: "warn",
+              summary: "Linear API request timed out after 30s",
+              data: {
+                plugin: "tracker-linear",
+                transport: "direct",
+                timeoutMs: 30_000,
+              },
+            });
+            reject(new LinearTimeoutError());
+          });
         });
+
+        req.on("error", (err) => settle(() => reject(new LinearNetworkError(err.message))));
+        req.write(body);
+        req.end();
       });
 
-      req.on("error", (err) => settle(() => reject(err)));
-      req.write(body);
-      req.end();
-    });
+    for (let attempt = 1; attempt <= DIRECT_TRANSPORT_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await execute();
+      } catch (err) {
+        const shouldRetry =
+          isRetryableDirectTransportError(err) && attempt < DIRECT_TRANSPORT_MAX_ATTEMPTS;
+        if (!shouldRetry) throw err;
+        await sleep(DIRECT_TRANSPORT_RETRY_DELAY_MS * attempt);
+      }
+    }
+
+    throw new Error("unreachable");
   };
 }
 
@@ -147,6 +229,21 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
             msg.includes("Cannot find package") ||
             msg.includes("ERR_MODULE_NOT_FOUND")
           ) {
+            // User-actionable, system-wide. Emit once per process.
+            if (!depMissingEmitted) {
+              depMissingEmitted = true;
+              recordActivityEvent({
+                source: "tracker",
+                kind: "tracker.dep_missing",
+                level: "error",
+                summary: "Composio SDK (@composio/core) is not installed",
+                data: {
+                  plugin: "tracker-linear",
+                  package: "@composio/core",
+                  installHint: "pnpm add @composio/core",
+                },
+              });
+            }
             throw new Error(
               "Composio SDK (@composio/core) is not installed. " +
                 "Install it with: pnpm add @composio/core",
@@ -175,6 +272,17 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        recordTransportActivityEvent({
+          source: "tracker",
+          kind: "tracker.api_timeout",
+          level: "warn",
+          summary: "Composio Linear API request timed out after 30s",
+          data: {
+            plugin: "tracker-linear",
+            transport: "composio",
+            timeoutMs: 30_000,
+          },
+        });
         reject(new Error("Composio Linear API request timed out after 30s"));
       }, 30_000);
     });

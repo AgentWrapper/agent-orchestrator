@@ -100,6 +100,30 @@ describe("Dashboard project overview cards", () => {
     );
   });
 
+  it("renders the same Coding/Reviews switch in project-scoped dashboard headers", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Coding" })).toHaveAttribute(
+      "href",
+      "/projects/my-app",
+    );
+    expect(screen.getByRole("link", { name: "Coding" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Reviews" })).toHaveAttribute(
+      "href",
+      "/review?project=my-app",
+    );
+  });
+
   it("renders a header spawn action when the project has no orchestrator yet", () => {
     render(
       <Dashboard

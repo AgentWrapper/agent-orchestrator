@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getVerifyIssues, getServices } from "@/lib/services";
 import { validateConfiguredProject } from "@/lib/validation";
-import type { Tracker } from "@aoagents/ao-core";
+import { recordActivityEvent, type Tracker } from "@aoagents/ao-core";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +25,9 @@ export async function GET() {
  * Body: { issueId: string, projectId: string, action: "verify" | "fail", comment?: string }
  */
 export async function POST(req: NextRequest) {
+  let issueId: string | undefined;
+  let projectId: string | undefined;
+  let action: "verify" | "fail" | undefined;
   try {
     const body = (await req.json().catch(() => null)) as
       | {
@@ -37,12 +40,13 @@ export async function POST(req: NextRequest) {
     if (!body) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
-    const { issueId, projectId, action, comment } = body as {
+    let comment: string | undefined;
+    ({ issueId, projectId, action, comment } = body as {
       issueId: string;
       projectId: string;
       action: "verify" | "fail";
       comment?: string;
-    };
+    });
 
     if (!issueId || !projectId || !action) {
       return NextResponse.json(
@@ -96,11 +100,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    recordActivityEvent({
+      projectId,
+      source: "api",
+      kind: "api.issue_verified",
+      summary: `issue ${issueId} ${action}`,
+      data: { issueId, action },
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to update issue" },
-      { status: 500 },
-    );
+    const reason = err instanceof Error ? err.message : "Failed to update issue";
+    recordActivityEvent({
+      projectId,
+      source: "api",
+      kind: "api.issue_verify_failed",
+      level: "error",
+      summary: `issue verify failed: ${reason}`,
+      data: { issueId, action, reason },
+    });
+    return NextResponse.json({ error: reason }, { status: 500 });
   }
 }

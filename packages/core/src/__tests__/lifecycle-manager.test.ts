@@ -10,7 +10,7 @@ import {
   resolveProbeDecision,
 } from "../lifecycle-status-decisions.js";
 import { createSessionManager } from "../session-manager.js";
-import { writeMetadata, readMetadataRaw } from "../metadata.js";
+import { updateMetadata, writeMetadata, readMetadataRaw } from "../metadata.js";
 import { readObservabilitySummary } from "../observability.js";
 import type {
   OrchestratorConfig,
@@ -149,6 +149,7 @@ function setupCheck(
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    agent: opts.session.metadata["agent"] ?? "mock-agent",
     runtimeHandle: opts.session.runtimeHandle ?? undefined,
     ...opts.metaOverrides,
   };
@@ -225,6 +226,7 @@ function setupPollCheck(
     branch: opts.session.branch ?? "main",
     status: opts.session.status,
     project: "my-app",
+    agent: opts.session.metadata["agent"] ?? "mock-agent",
     runtimeHandle: opts.session.runtimeHandle ?? undefined,
     ...opts.metaOverrides,
   };
@@ -530,7 +532,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("detecting");
   });
 
-  it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
+  it("uses persisted session agent even when worker config differs", async () => {
     const codexAgent: Agent = {
       ...plugins.agent,
       name: "codex",
@@ -557,13 +559,13 @@ describe("check (single session)", () => {
         "my-app": {
           ...config.projects["my-app"],
           agent: "mock-agent",
-          worker: { agent: "codex" },
+          worker: { agent: "mock-agent" },
         },
       },
     };
 
     const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working", metadata: {} }),
+      session: makeSession({ status: "working", metadata: { agent: "codex" } }),
       registry: registryWithMultipleAgents,
       configOverride: configWithWorkerAgent,
     });
@@ -902,6 +904,42 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 
+  it("keeps prs metadata deduplicated across repeated detectPR polls", async () => {
+    const detectedPR = makePR({
+      owner: "aoagents",
+      repo: "ReverbCode",
+      number: 143,
+      url: "https://github.com/aoagents/ReverbCode/pull/143",
+    });
+    const mockSCM = createMockSCM({
+      detectPR: vi.fn().mockResolvedValue(detectedPR),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      workspace: plugins.workspace,
+      scm: mockSCM,
+    });
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/reverb-fix",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+    } as SessionMetadata);
+    const realSessionManager = createSessionManager({ config, registry });
+    const lm = createLifecycleManager({ config, registry, sessionManager: realSessionManager });
+
+    for (let i = 0; i < 10; i += 1) {
+      await lm.check("app-1");
+    }
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["pr"]).toBe(detectedPR.url);
+    expect(meta?.["prs"]?.split(",")).toEqual([detectedPR.url]);
+    expect(mockSCM.detectPR).toHaveBeenCalledTimes(10);
+  });
+
   it("refreshes worker branch metadata from the current worktree HEAD before PR detection", async () => {
     const workspacePath = join(env.tmpDir, "worker-ws");
     const gitDir = join(env.tmpDir, "repo", ".git", "worktrees", "app-1");
@@ -1038,7 +1076,14 @@ describe("check (single session)", () => {
       url: "https://github.com/org/repo/pull/43",
       title: "Follow up fix",
     });
-    const mockSCM = createMockSCM({ detectPR: vi.fn().mockResolvedValue(followUpPR) });
+    const mockSCM = createMockSCM({
+      detectPR: vi.fn().mockResolvedValue(followUpPR),
+      // Enrichment cache must show closedPR as closed so the detectPR filter
+      // can remove it using per-PR state rather than the aggregate lifecycle state.
+      getPRState: vi.fn().mockImplementation((pr: PRInfo) =>
+        Promise.resolve(pr.number === closedPR.number ? "closed" : "open"),
+      ),
+    });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
       agent: plugins.agent,
@@ -1314,8 +1359,10 @@ describe("check (single session)", () => {
       // can race past the lifecycle list() call before adoption resolves.
       const deadline = Date.now() + 2000;
       while (Date.now() < deadline) {
-        if (vi.mocked(mockSessionManager.list).mock.calls.length >= 1) {
-          await new Promise((resolve) => setTimeout(resolve, 25));
+        const adoptedCount = [sessionA.branch, sessionB.branch].filter(
+          (branch) => branch === "shared-branch",
+        ).length;
+        if (vi.mocked(mockSessionManager.list).mock.calls.length >= 1 && adoptedCount > 0) {
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1770,7 +1817,11 @@ describe("check (single session)", () => {
     expect(notifier.notify).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "reaction.triggered",
-        data: expect.objectContaining({ reactionKey: "pr-closed" }),
+        data: expect.objectContaining({
+          schemaVersion: 3,
+          semanticType: "pr.closed",
+          reaction: expect.objectContaining({ key: "pr-closed" }),
+        }),
       }),
     );
   });
@@ -1867,10 +1918,11 @@ describe("reactions", () => {
 
       const reactionNotifications = vi.mocked(notifier.notify).mock.calls.filter((call) => {
         const event = call[0] as { type?: string; data?: Record<string, unknown> } | undefined;
-        return (
-          event?.type === "reaction.triggered" &&
-          event.data?.["reactionKey"] === "report-no-acknowledge"
-        );
+        const reaction =
+          event?.data?.reaction && typeof event.data.reaction === "object"
+            ? (event.data.reaction as Record<string, unknown>)
+            : null;
+        return event?.type === "reaction.triggered" && reaction?.key === "report-no-acknowledge";
       });
 
       expect(reactionNotifications).toHaveLength(1);
@@ -2839,6 +2891,112 @@ describe("reactions", () => {
     expect(notifier.notify).toHaveBeenCalledWith(
       expect.objectContaining({ type: "merge.completed" }),
     );
+
+    const summary = readObservabilitySummary(config);
+    expect(summary.projects["my-app"]?.metrics["notification_delivery"]?.success).toBe(1);
+    expect(
+      summary.projects["my-app"]?.recentTraces.some(
+        (trace) =>
+          trace.operation === "notification.deliver" &&
+          trace.outcome === "success" &&
+          trace.data?.["targetReference"] === "desktop",
+      ),
+    ).toBe(true);
+  });
+
+  it("records notifier delivery failures without interrupting lifecycle transitions", async () => {
+    const notifier = createMockNotifier();
+    vi.mocked(notifier.notify).mockRejectedValue(new Error("webhook failed"));
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "notifier",
+        kind: "notification.delivery_failed",
+        level: "warn",
+        data: expect.objectContaining({
+          eventType: "merge.completed",
+          targetReference: "desktop",
+          targetPlugin: "desktop",
+        }),
+      }),
+    );
+
+    const summary = readObservabilitySummary(config);
+    expect(summary.projects["my-app"]?.metrics["notification_delivery"]?.failure).toBe(1);
+    expect(summary.projects["my-app"]?.health["notification.delivery.desktop"]?.status).toBe(
+      "warn",
+    );
+  });
+
+  it("records missing notifier targets as delivery failures", async () => {
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged" }),
+    });
+    const configWithMissingNotifier: OrchestratorConfig = {
+      ...config,
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["missing"],
+      },
+    };
+
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "approved", pr: makePR() }),
+      registry,
+      configOverride: configWithMissingNotifier,
+    });
+
+    await lm.check("app-1");
+
+    expect(recordActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "notifier",
+        kind: "notification.target_missing",
+        level: "warn",
+        data: expect.objectContaining({
+          eventType: "merge.completed",
+          targetReference: "missing",
+          targetPlugin: "missing",
+        }),
+      }),
+    );
+
+    const summary = readObservabilitySummary(configWithMissingNotifier);
+    expect(summary.projects["my-app"]?.metrics["notification_delivery"]?.failure).toBe(1);
   });
 
   it("resolves notifier aliases from notificationRouting before dispatch", async () => {
@@ -3344,22 +3502,34 @@ describe("reactions", () => {
     // Reach escalated state: attempt 1 → send, attempt 2 → escalate
     await lm.check("app-1"); // pr_open → ci_failed: attempt 1, send
     vi.mocked(mockSessionManager.send).mockClear();
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "passing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "passing" }),
+    );
     await lm.check("app-1"); // ci_failed → pr_open
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1"); // pr_open → ci_failed: attempt 2 → escalate
-    expect(notifier.notify).toHaveBeenCalledWith(expect.objectContaining({ type: "reaction.escalated" }));
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
     vi.mocked(notifier.notify).mockClear();
 
     // ONE passing poll (stableCount = 1, not enough)
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "passing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "passing" }),
+    );
     await lm.check("app-1");
 
     // Next CI failure: tracker still escalated → short-circuit
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).not.toHaveBeenCalled();
-    expect(notifier.notify).not.toHaveBeenCalledWith(expect.objectContaining({ type: "reaction.escalated" }));
+    expect(notifier.notify).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
   });
 
   it("pending CI does not count toward ci-failed tracker resolution", async () => {
@@ -3401,12 +3571,16 @@ describe("reactions", () => {
     vi.mocked(mockSessionManager.send).mockClear();
 
     // CI goes pending (agent pushed a fix, new run started): ci_failed → pr_open
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "pending" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "pending" }),
+    );
     await lm.check("app-1"); // stableCount must NOT increment
     await lm.check("app-1"); // two pending polls — must NOT clear tracker
 
     // CI fails again (run completed failing): pr_open → ci_failed, attempt 2 — send
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1");
     // If pending had wrongly cleared the tracker, this would be attempt 1 (fresh), not attempt 2.
     // Attempt 2 ≤ retries:2 → sends to agent (not escalates)
@@ -3414,10 +3588,14 @@ describe("reactions", () => {
     vi.mocked(mockSessionManager.send).mockClear();
 
     // CI goes pending again, then failing — attempt 3 > retries:2 → escalate
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "pending" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "pending" }),
+    );
     await lm.check("app-1"); // pending: no clear
     await lm.check("app-1"); // pending: no clear
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).not.toHaveBeenCalled(); // escalated, not sent to agent
   });
@@ -3461,25 +3639,35 @@ describe("reactions", () => {
     // Reach escalated state: attempt 1 → send, attempt 2 → escalate
     await lm.check("app-1"); // attempt 1, send
     vi.mocked(mockSessionManager.send).mockClear();
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "passing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "passing" }),
+    );
     await lm.check("app-1"); // ci_failed → pr_open
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1"); // attempt 2 → escalate
     vi.mocked(notifier.notify).mockClear();
 
     // CI goes pending (new run) — stableCount stays 0, does NOT progress toward resolution
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "pending" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "pending" }),
+    );
     await lm.check("app-1");
     await lm.check("app-1");
     await lm.check("app-1"); // many pending polls — stableCount never reaches threshold
 
     // CI finally passes (2 stable polls) → tracker cleared
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "passing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "passing" }),
+    );
     await lm.check("app-1"); // stableCount = 1
     await lm.check("app-1"); // stableCount = 2 → clearReactionTracker
 
     // Next CI failure gets fresh budget: attempt 1, send
-    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(mockBatchEnrichment({ ciStatus: "failing" }));
+    vi.mocked(mockSCM.enrichSessionsPRBatch!).mockImplementation(
+      mockBatchEnrichment({ ciStatus: "failing" }),
+    );
     await lm.check("app-1");
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
     expect(notifier.notify).not.toHaveBeenCalledWith(
@@ -3632,7 +3820,11 @@ describe("pollAll terminal status accounting", () => {
       .mock.calls.filter((call: unknown[]) => {
         const event = call[0] as Record<string, unknown> | undefined;
         const data = event?.data as Record<string, unknown> | undefined;
-        return event?.type === "reaction.triggered" && data?.reactionKey === "all-complete";
+        const reaction =
+          data?.reaction && typeof data.reaction === "object"
+            ? (data.reaction as Record<string, unknown>)
+            : null;
+        return event?.type === "reaction.triggered" && reaction?.key === "all-complete";
       });
     expect(allCompleteNotifications).toHaveLength(0);
 
@@ -4210,14 +4402,19 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "pr.closed",
         data: expect.objectContaining({
-          context: expect.objectContaining({
+          schemaVersion: 3,
+          subject: expect.objectContaining({
             pr: expect.objectContaining({
               url: "https://github.com/org/repo/pull/42",
               number: 42,
             }),
             branch: "feat/test-123",
           }),
-          schemaVersion: 2,
+          transition: expect.objectContaining({
+            kind: "pr_state",
+            from: "none",
+            to: "closed",
+          }),
         }),
       }),
     );
@@ -4257,11 +4454,13 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "pr.closed",
         data: expect.objectContaining({
-          context: expect.objectContaining({
-            issueId: "INT-123",
-            issueTitle: "Fix login bug",
+          schemaVersion: 3,
+          subject: expect.objectContaining({
+            issue: {
+              id: "INT-123",
+              title: "Fix login bug",
+            },
           }),
-          schemaVersion: 2,
         }),
       }),
     );
@@ -4305,13 +4504,242 @@ describe("event enrichment", () => {
       expect.objectContaining({
         type: "session.needs_input",
         data: expect.objectContaining({
-          context: expect.objectContaining({
-            pr: null,
-            issueId: "INT-456",
+          schemaVersion: 3,
+          subject: expect.objectContaining({
+            issue: { id: "INT-456" },
           }),
-          schemaVersion: 2,
+          transition: expect.objectContaining({
+            kind: "session_status",
+            from: "working",
+            to: "needs_input",
+          }),
         }),
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-PR state machine aggregation (issue #1821)
+// ---------------------------------------------------------------------------
+
+describe("multi-PR state machine aggregation", () => {
+  /** Batch enrichment mock returning different data per PR key. */
+  function mockBatchEnrichmentPerPR(
+    perPR: Record<
+      string,
+      { state?: string; ciStatus?: string; reviewDecision?: string; mergeable?: boolean }
+    >,
+  ) {
+    return vi.fn().mockImplementation(async (prs: PRInfo[]) => {
+      const result = new Map();
+      for (const p of prs) {
+        const key = `${p.owner}/${p.repo}#${p.number}`;
+        const data = perPR[key] ?? {};
+        result.set(key, {
+          state: data.state ?? "open",
+          ciStatus: data.ciStatus ?? "passing",
+          reviewDecision: data.reviewDecision ?? "none",
+          mergeable: data.mergeable ?? false,
+        });
+      }
+      return result;
+    });
+  }
+
+  it("2.1 — session stays open when only one of two PRs is merged", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "merged" },
+          "org/my-app#11": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).not.toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.1b — enrichment metadata uses unique PRs and deletes duplicate-index orphans", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "open", ciStatus: "passing", reviewDecision: "none" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({
+        id: "app-1",
+        status: "pr_open",
+        pr: pr10,
+        prs: [pr10, { ...pr10 }],
+        metadata: {
+          prEnrichment_1: "{\"state\":\"open\"}",
+          prReviewComments_1: "{\"unresolvedThreads\":0}",
+        },
+      });
+
+      const lm = setupPollCheck("app-1", {
+        session,
+        registry,
+        metaOverrides: {
+          pr: pr10.url,
+          prs: `${pr10.url},${pr10.url}`,
+          prEnrichment_1: "{\"state\":\"open\"}",
+          prReviewComments_1: "{\"unresolvedThreads\":0}",
+        },
+      });
+      updateMetadata(env.sessionsDir, "app-1", {
+        prEnrichment_1: "{\"state\":\"open\"}",
+        prReviewComments_1: "{\"unresolvedThreads\":0}",
+      });
+
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+      expect(metadata?.["prEnrichment"]).toBeDefined();
+      expect(metadata?.["prEnrichment_1"]).toBeUndefined();
+      expect(metadata?.["prReviewComments_1"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.2 — session merges when ALL PRs are merged", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "merged" },
+          "org/my-app#11": { state: "merged" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.3 — ci_failed if ANY PR has failing CI", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+          "org/my-app#11": { state: "open", ciStatus: "failing" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.4 — review_pending when not all PRs are approved", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const pr11 = makeMatchingPR({ number: 11, url: "https://github.com/org/my-app/pull/11" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichmentPerPR({
+          "org/my-app#10": { state: "open", ciStatus: "passing", reviewDecision: "approved" },
+          "org/my-app#11": { state: "open", ciStatus: "passing", reviewDecision: "pending" },
+        }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10, prs: [pr10, pr11] });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      const state = lm.getStates().get("app-1");
+      expect(state).not.toBe("merged");
+      expect(state).toBe("review_pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("2.5 — single PR session still merges correctly (backwards compat)", async () => {
+    vi.useFakeTimers();
+    try {
+      const pr10 = makeMatchingPR({ number: 10, url: "https://github.com/org/my-app/pull/10" });
+      const mockSCM = createMockSCM({
+        enrichSessionsPRBatch: mockBatchEnrichment({ state: "merged", ciStatus: "none" }),
+      });
+      const registry = createMockRegistry({
+        runtime: plugins.runtime,
+        agent: plugins.agent,
+        scm: mockSCM,
+      });
+      const session = makeSession({ status: "pr_open", pr: pr10 });
+
+      const lm = setupPollCheck("app-1", { session, registry });
+      lm.start(60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      lm.stop();
+
+      expect(lm.getStates().get("app-1")).toBe("merged");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

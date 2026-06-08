@@ -3,7 +3,6 @@ import type { Command } from "commander";
 import {
   createInitialCanonicalLifecycle,
   createActivitySignal,
-  type Agent,
   type SCM,
   type Session,
   type PRInfo,
@@ -13,12 +12,16 @@ import {
   type Tracker,
   type ProjectConfig,
   type AgentReportAuditEntry,
+  type PluginRegistry,
   isOrchestratorSession,
   isTerminalSession,
   isWindows,
   loadConfig,
   getProjectSessionsDir,
   readAgentReportAuditTrailAsync,
+  createCodeReviewStore,
+  type CodeReviewRunStatus,
+  type CodeReviewRunSummary,
 } from "@aoagents/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -61,6 +64,24 @@ interface StatusOptions {
   reports?: string;
 }
 
+interface ProjectReviewStatus {
+  projectId: string;
+  runs: CodeReviewRunSummary[];
+  runCount: number;
+  activeRunCount: number;
+  openFindingCount: number;
+}
+
+const REVIEW_ATTENTION_STATUSES: ReadonlySet<CodeReviewRunStatus> = new Set([
+  "queued",
+  "preparing",
+  "running",
+  "needs_triage",
+  "sent_to_agent",
+  "waiting_update",
+  "failed",
+]);
+
 /** Parse --reports value: "full" → Infinity, positive integer → N, undefined → 0 (off). */
 function parseReportsLimit(value: string | undefined): number {
   if (value === undefined) return 0;
@@ -89,9 +110,24 @@ function maybeClearScreen(): void {
   }
 }
 
+function gatherProjectReviewStatus(projectId: string): ProjectReviewStatus {
+  const runs = createCodeReviewStore(projectId).listRunSummaries();
+  const activeRunCount = runs.filter(
+    (run) => REVIEW_ATTENTION_STATUSES.has(run.status) || run.openFindingCount > 0,
+  ).length;
+  const openFindingCount = runs.reduce((sum, run) => sum + run.openFindingCount, 0);
+  return {
+    projectId,
+    runs,
+    runCount: runs.length,
+    activeRunCount,
+    openFindingCount,
+  };
+}
+
 async function gatherSessionInfo(
   session: Session,
-  agent: Agent,
+  registry: PluginRegistry,
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
   reportsLimit: number = 0,
@@ -124,11 +160,17 @@ async function gatherSessionInfo(
     lastActivity = activityTs ? formatAge(activityTs) : "-";
   }
 
-  // Get agent's auto-generated summary via introspection
+  // Get agent's auto-generated summary via introspection. The SessionManager
+  // normalizes session.metadata.agent on read, so never infer the session agent
+  // from current project/default config here.
   let claudeSummary: string | null = null;
   try {
-    const introspection = await agent.getSessionInfo(session);
-    claudeSummary = introspection?.summary ?? null;
+    const agentName = session.metadata["agent"];
+    if (agentName) {
+      const agent = getAgentByNameFromRegistry(registry, agentName);
+      const introspection = await agent.getSessionInfo(session);
+      claudeSummary = introspection?.summary ?? null;
+    }
   } catch {
     // Summary extraction failed — not critical
   }
@@ -306,6 +348,44 @@ function printOrchestratorRow(info: SessionInfo): void {
   printReportRows(info.reports, "                ");
 }
 
+function printReviewStatus(summary: ProjectReviewStatus): void {
+  if (summary.runCount === 0) return;
+
+  const findings =
+    summary.openFindingCount === 1
+      ? "1 open finding"
+      : `${summary.openFindingCount} open findings`;
+  const active =
+    summary.activeRunCount === 1 ? "1 active" : `${summary.activeRunCount} active`;
+
+  console.log(
+    `  ${chalk.magenta("Reviews:")} ${summary.runCount} run${summary.runCount !== 1 ? "s" : ""} · ${active} · ${findings}`,
+  );
+
+  const visibleRuns = summary.runs
+    .filter((run) => REVIEW_ATTENTION_STATUSES.has(run.status) || run.openFindingCount > 0)
+    .slice(0, 5);
+
+  for (const run of visibleRuns) {
+    const findingText =
+      run.openFindingCount === 1
+        ? "1 open finding"
+        : `${run.openFindingCount} open findings`;
+    console.log(
+      `    ${chalk.green(run.reviewerSessionId)} ${chalk.dim(run.status)} → ${chalk.cyan(run.linkedSessionId)} ${chalk.dim(findingText)}`,
+    );
+  }
+
+  const hiddenCount = summary.runs.length - visibleRuns.length;
+  if (hiddenCount > 0) {
+    console.log(
+      chalk.dim(
+        `    ${hiddenCount} more review run${hiddenCount !== 1 ? "s" : ""}. Use \`ao review list ${summary.projectId}\`.`,
+      ),
+    );
+  }
+}
+
 export function registerStatus(program: Command): void {
   program
     .command("status")
@@ -406,8 +486,12 @@ export function registerStatus(program: Command): void {
         // Show projects that have no sessions too (if not filtered)
         const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
         const jsonOutput: SessionInfo[] = [];
+        const reviewOutput: CodeReviewRunSummary[] = [];
         let totalWorkers = 0;
         let totalOrchestrators = 0;
+        let totalReviewRuns = 0;
+        let totalActiveReviewRuns = 0;
+        let totalOpenReviewFindings = 0;
 
         for (const projectId of projectIds) {
           const projectConfig = config.projects[projectId];
@@ -416,10 +500,15 @@ export function registerStatus(program: Command): void {
           const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
             a.id.localeCompare(b.id),
           );
+          const reviewStatus = gatherProjectReviewStatus(projectId);
+          reviewOutput.push(...reviewStatus.runs);
+          totalReviewRuns += reviewStatus.runCount;
+          totalActiveReviewRuns += reviewStatus.activeRunCount;
+          totalOpenReviewFindings += reviewStatus.openFindingCount;
 
-          // Resolve agent and SCM for this project via the shared registry
-          const agentName = projectConfig.agent ?? config.defaults.agent;
-          const agent = getAgentByNameFromRegistry(registry, agentName);
+          // Resolve SCM for this project via the shared registry. Agents are
+          // resolved per session because historical metadata may record a
+          // different agent than the current project default.
           const scm = getSCMFromRegistry(registry, config, projectId);
 
           if (!opts.json) {
@@ -429,13 +518,16 @@ export function registerStatus(program: Command): void {
           if (projectSessions.length === 0) {
             if (!opts.json) {
               console.log(chalk.dim("  (no active sessions)"));
+              printReviewStatus(reviewStatus);
               console.log();
             }
             continue;
           }
 
           // Gather all session info in parallel
-          const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config, reportsLimit));
+          const infoPromises = projectSessions.map((s) =>
+            gatherSessionInfo(s, registry, scm, config, reportsLimit),
+          );
           const sessionInfos = await Promise.all(infoPromises);
 
           const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");
@@ -462,6 +554,7 @@ export function registerStatus(program: Command): void {
 
           if (workers.length === 0) {
             console.log(chalk.dim("  (no active sessions)"));
+            printReviewStatus(reviewStatus);
             console.log();
             continue;
           }
@@ -470,13 +563,23 @@ export function registerStatus(program: Command): void {
           for (const info of workers) {
             printSessionRow(info);
           }
+          printReviewStatus(reviewStatus);
           console.log();
         }
 
         if (opts.json) {
           console.log(
             JSON.stringify(
-              { data: jsonOutput, meta: { hiddenTerminatedCount } },
+              {
+                data: jsonOutput,
+                reviews: reviewOutput,
+                meta: {
+                  hiddenTerminatedCount,
+                  reviewRunCount: totalReviewRuns,
+                  activeReviewRunCount: totalActiveReviewRuns,
+                  openReviewFindingCount: totalOpenReviewFindings,
+                },
+              },
               null,
               2,
             ),
@@ -487,6 +590,12 @@ export function registerStatus(program: Command): void {
               `  ${totalWorkers} active session${totalWorkers !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}` +
                 (totalOrchestrators > 0
                   ? ` · ${totalOrchestrators} orchestrator${totalOrchestrators !== 1 ? "s" : ""}`
+                  : "") +
+                (totalReviewRuns > 0
+                  ? ` · ${totalReviewRuns} review run${totalReviewRuns !== 1 ? "s" : ""}` +
+                    (totalOpenReviewFindings > 0
+                      ? ` · ${totalOpenReviewFindings} open finding${totalOpenReviewFindings !== 1 ? "s" : ""}`
+                      : "")
                   : ""),
             ),
           );
@@ -610,6 +719,7 @@ async function showFallbackStatus(): Promise<void> {
         branch: null,
         issueId: null,
         pr: null,
+        prs: [],
         workspacePath: null,
         runtimeHandle: lifecycle.runtime.handle,
         agentInfo: null,

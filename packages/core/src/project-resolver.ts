@@ -16,7 +16,7 @@ export function loadEffectiveProjectConfig(
     throw new ProjectResolveError(projectId, `Unknown project: ${projectId}`);
   }
   if (typeof resolved.resolveError === "string" && resolved.resolveError.length > 0) {
-    throw new ProjectResolveError(projectId, resolved.resolveError);
+    throw new ProjectResolveError(projectId, resolved.resolveError, resolved.resolveErrorKind);
   }
   return resolved;
 }
