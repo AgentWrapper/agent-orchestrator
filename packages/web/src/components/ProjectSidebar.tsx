@@ -15,6 +15,8 @@ import { ThemeToggle } from "./ThemeToggle";
 import { AppMark } from "./AppMark";
 import { AddProjectModal } from "./AddProjectModal";
 import { ProjectSettingsModal } from "./ProjectSettingsModal";
+import { RemoveProjectConfirmModal } from "./RemoveProjectConfirmModal";
+import { ToastProvider, useToast } from "./Toast";
 
 /** Minimal shape needed to render an orchestrator link in the sidebar. */
 export interface ProjectSidebarOrchestrator {
@@ -152,7 +154,11 @@ export function ProjectSidebar(props: ProjectSidebarProps) {
   if (props.projects.length === 0) {
     return <ProjectSidebarEmpty collapsed={props.collapsed} />;
   }
-  return <ProjectSidebarInner {...props} />;
+  return (
+    <ToastProvider>
+      <ProjectSidebarInner {...props} />
+    </ToastProvider>
+  );
 }
 
 interface SessionRowProps {
@@ -328,6 +334,7 @@ function ProjectSidebarInner({
   onMobileClose,
 }: ProjectSidebarProps) {
   const router = useRouter();
+  const { showToast } = useToast();
   const _isLoading = loading || sessions === null;
   const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
     cssVar: "--ao-sidebar-w",
@@ -356,6 +363,7 @@ function ProjectSidebarInner({
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
   const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<string | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [projectPendingRemoval, setProjectPendingRemoval] = useState<ProjectInfo | null>(null);
   const [removedProjectIds, setRemovedProjectIds] = useState<Set<string>>(new Set());
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -617,11 +625,19 @@ function ProjectSidebarInner({
     });
   };
 
-  const handleRemoveProject = async (project: ProjectInfo) => {
-    const confirmed = window.confirm(
-      `Remove project ${project.name} from AO? This clears its AO sessions/history and removes it from the portfolio, but keeps the repository folder on disk.`,
-    );
-    if (!confirmed) return;
+  const requestRemoveProject = useCallback((project: ProjectInfo) => {
+    setProjectMenuOpenId(null);
+    setProjectPendingRemoval(project);
+  }, []);
+
+  const cancelRemoveProject = useCallback(() => {
+    if (deletingProjectId) return;
+    setProjectPendingRemoval(null);
+  }, [deletingProjectId]);
+
+  const confirmRemoveProject = useCallback(async () => {
+    const project = projectPendingRemoval;
+    if (!project) return;
 
     setDeletingProjectId(project.id);
     try {
@@ -643,7 +659,7 @@ function ProjectSidebarInner({
         next.delete(project.id);
         return next;
       });
-      setProjectMenuOpenId(null);
+      setProjectPendingRemoval(null);
       if (activeProjectId === project.id) {
         router.push("/");
       } else if ("refresh" in router && typeof router.refresh === "function") {
@@ -651,11 +667,16 @@ function ProjectSidebarInner({
       }
       onMobileClose?.();
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Failed to remove project.");
+      const message = error instanceof Error ? error.message : "Failed to remove project.";
+      showToast(message, "error");
     } finally {
       setDeletingProjectId(null);
     }
-  };
+  }, [activeProjectId, onMobileClose, projectPendingRemoval, router, showToast]);
+
+  const handleConfirmRemoveProject = useCallback(() => {
+    void confirmRemoveProject();
+  }, [confirmRemoveProject]);
 
   if (collapsed) {
     return (
@@ -1021,7 +1042,7 @@ function ProjectSidebarInner({
                         type="button"
                         className="project-sidebar__proj-menu-item project-sidebar__proj-menu-item--danger"
                         role="menuitem"
-                        onClick={() => void handleRemoveProject(project)}
+                        onClick={() => requestRemoveProject(project)}
                         disabled={deletingProjectId === project.id}
                       >
                         {deletingProjectId === project.id ? "Removing..." : "Remove project"}
@@ -1210,6 +1231,12 @@ function ProjectSidebarInner({
         open={projectSettingsProjectId !== null}
         projectId={projectSettingsProjectId}
         onClose={() => setProjectSettingsProjectId(null)}
+      />
+      <RemoveProjectConfirmModal
+        project={projectPendingRemoval}
+        busy={projectPendingRemoval !== null && deletingProjectId === projectPendingRemoval.id}
+        onCancel={cancelRemoveProject}
+        onConfirm={handleConfirmRemoveProject}
       />
     </aside>
   );
