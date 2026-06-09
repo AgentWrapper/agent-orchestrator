@@ -30,6 +30,13 @@ export function escapeAppleScript(s: string): string {
 }
 
 /**
+ * Minimal hello world helper for TypeScript consumers.
+ */
+export function helloWorld(): string {
+  return "Hello, world!";
+}
+
+/**
  * Validate that a URL starts with http:// or https://.
  * Throws with a descriptive error including the plugin label if invalid.
  */

@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  helloWorld,
   isGitBranchNameSafe,
   isRetryableHttpStatus,
   normalizeRetryConfig,
@@ -10,6 +11,12 @@ import {
   shellEscape,
 } from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
+
+describe("helloWorld", () => {
+  it("returns the canonical greeting", () => {
+    expect(helloWorld()).toBe("Hello, world!");
+  });
+});
 
 describe("readLastJsonlEntry", () => {
   let tmpDir: string;
