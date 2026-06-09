@@ -49,6 +49,8 @@ Every helper you need to write Windows-safe code. **Memorise the imports — the
 ```ts
 import {
   isWindows,
+  isMac,
+  isLinux,
   getDefaultRuntime,
   getShell,
   killProcessTree,
@@ -60,6 +62,8 @@ import {
 | Symbol | Purpose | Notes |
 |--------|---------|-------|
 | `isWindows(): boolean` | The canonical OS check. **Always use this** instead of `process.platform === "win32"`. | Constant-time. Trivially mockable in tests. |
+| `isMac(): boolean` | The canonical macOS check. Use instead of `process.platform === "darwin"`. | Same shape as `isWindows()`. |
+| `isLinux(): boolean` | The canonical Linux check. Use instead of `process.platform === "linux"`. | Same shape as `isWindows()`. |
 | `getDefaultRuntime(): "tmux" \| "process"` | Returns `"process"` on Windows, `"tmux"` elsewhere. Used by `ao start` / startup-preflight to default runtime selection. | Don't hardcode `"tmux"`. |
 | `getShell(): { cmd, args(command) }` | Resolves the shell for non-interactive command execution. POSIX → `/bin/sh -c`. Windows → priority order: `AO_SHELL` env override → `pwsh` → `powershell.exe` (absolute path, robust to degraded PATH) → `powershell` → `cmd.exe`. Cached. | Use this whenever you need to run *any* shellish string. Don't assume bash. |
 | `killProcessTree(pid, signal?)` | Kills a process and its descendants. Windows → `taskkill /T /F /PID <pid>`. POSIX → `process.kill(-pid, signal)` with direct-PID fallback. Guards `pid > 0`. | **Never write `process.kill(-pid, …)` directly.** Negative PIDs are POSIX-only. |

@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { validateConfig } from "../config.js";
+import { isLinux, isMac } from "../platform.js";
 
 describe("Config Validation - Project Uniqueness", () => {
   it("accepts projects that share a basename when projectIds differ", () => {
@@ -1191,9 +1192,9 @@ describe("Config Validation - Power Config", () => {
       },
     });
 
-    // Default is true on darwin, false elsewhere
+    // Default is true on darwin and linux, false elsewhere
     expect(config.power).toBeDefined();
-    expect(config.power!.preventIdleSleep).toBe(process.platform === "darwin");
+    expect(config.power!.preventIdleSleep).toBe(isMac() || isLinux());
   });
 
   it("accepts explicit power.preventIdleSleep: true", () => {

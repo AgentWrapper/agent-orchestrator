@@ -297,13 +297,13 @@ export async function runtimePreflight(config: OrchestratorConfig): Promise<void
   warnAboutLegacyStorage();
   await warnAboutOpenClawStatus(config);
 
-  // Prevent macOS idle sleep while AO is running (if enabled in config).
-  // Uses caffeinate -i -w <pid> to hold an assertion tied to this process
-  // lifetime. No-op on non-macOS platforms.
+  // Prevent idle sleep while AO is running (if enabled in config).
+  // macOS: caffeinate -i -w <pid>. Linux: systemd-inhibit --what=idle.
+  // No-op on Windows and on systems without the underlying binary.
   if (config.power?.preventIdleSleep !== false) {
     const sleepHandle = preventIdleSleep();
     if (sleepHandle) {
-      console.log(chalk.dim("  Preventing macOS idle sleep while AO is running"));
+      console.log(chalk.dim("  Preventing idle sleep while AO is running"));
     }
   }
 
