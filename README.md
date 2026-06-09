@@ -207,6 +207,30 @@ Seven plugin slots. Lifecycle stays in core.
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
+## Integrations
+
+### Hermes (Discord / Telegram)
+
+Control Agent Orchestrator from chat using the [Hermes](https://github.com/NousResearch/hermes-agent) plugin — spawn agents, check status, manage issues, and merge PRs without leaving Discord or Telegram. 17 tools + 1 context-injection hook.
+
+**Install:**
+
+```bash
+pip install hermes-ao
+```
+
+**Configure** (add to your shell profile or `~/.hermes/.env`):
+
+```bash
+export AO_CWD=/path/to/your/project          # where agent-orchestrator.yaml lives (required)
+export AO_API_URL=http://localhost:3000        # AO server URL (default: http://127.0.0.1:3000)
+export AO_PUBLIC_URL=http://your-server:3000   # public dashboard URL for links (optional)
+```
+
+**Restart Hermes** and you're set. Say "what's happening?" to see live sessions, "spawn #42" to start an agent, or "doctor" to run health checks.
+
+See the [plugin repo](https://github.com/illegalcall/hermes-plugin-agent-orchestrator) for the full tool list, architecture details, and alternative install methods.
+
 ## Why Agent Orchestrator?
 
 Running one AI agent in a terminal is easy. Running 30 across different issues, branches, and PRs is a coordination problem.
