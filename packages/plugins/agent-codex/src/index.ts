@@ -606,7 +606,7 @@ function createCodexAgent(): Agent {
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "codex";
-      const parts: string[] = [shellEscape(binary)];
+      const parts: string[] = [shellEscape(binary), "exec"];
       appendNoUpdateCheckFlag(parts);
 
       appendApprovalFlags(parts, config.permissions);

@@ -268,7 +268,7 @@ describe("getLaunchCommand", () => {
 
   it("generates base command", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
-      "'codex' -c check_for_update_on_startup=false",
+      "'codex' exec -c check_for_update_on_startup=false",
     );
   });
 
@@ -318,7 +318,7 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ permissions: "permissionless", model: "o3", prompt: "Go" }),
     );
     expect(cmd).toBe(
-      "'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'",
+      "'codex' exec -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'",
     );
   });
 
@@ -1972,7 +1972,7 @@ describe("postLaunchSetup", () => {
 
     // Before postLaunchSetup, binary is "codex"
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
-      "'codex' -c check_for_update_on_startup=false",
+      "'codex' exec -c check_for_update_on_startup=false",
     );
 
     // After postLaunchSetup resolves the binary
@@ -1980,7 +1980,7 @@ describe("postLaunchSetup", () => {
 
     // Now getLaunchCommand should use the resolved binary
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
-      "'/opt/bin/codex' -c check_for_update_on_startup=false",
+      "'/opt/bin/codex' exec -c check_for_update_on_startup=false",
     );
   });
 });
