@@ -1466,6 +1466,31 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/merged/);
     });
+
+    it("defaults to squash when the project has no mergeMethod", async () => {
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.method).toBe("squash");
+      expect(mockSCM.mergePR).toHaveBeenCalledWith(expect.anything(), "squash");
+    });
+
+    it("uses the project's configured mergeMethod", async () => {
+      const project = mockConfig.projects["my-app"];
+      const original = project.mergeMethod;
+      project.mergeMethod = "merge-with-ff";
+      try {
+        const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+        const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.method).toBe("merge-with-ff");
+        expect(mockSCM.mergePR).toHaveBeenCalledWith(expect.anything(), "merge-with-ff");
+      } finally {
+        project.mergeMethod = original;
+      }
+    });
   });
 
   describe("GET /api/observability", () => {

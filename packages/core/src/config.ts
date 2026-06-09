@@ -267,6 +267,8 @@ const ProjectConfigSchema = z.object({
   orchestrator: RoleAgentConfigSchema,
   worker: RoleAgentConfigSchema,
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
+  /** Merge strategy for the dashboard merge action. Default: "squash". */
+  mergeMethod: z.enum(["merge", "squash", "rebase", "merge-with-ff"]).default("squash"),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),

@@ -89,7 +89,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    await scm.mergePR(targetPR, "squash");
+    const mergeMethod = project.mergeMethod ?? "squash";
+    await scm.mergePR(targetPR, mergeMethod);
     recordApiObservation({
       config,
       method: "POST",
@@ -108,10 +109,10 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       source: "api",
       kind: "api.pr_merge_requested",
       summary: `PR ${prNumber} merge requested`,
-      data: { prNumber, method: "squash" },
+      data: { prNumber, method: mergeMethod },
     });
     return jsonWithCorrelation(
-      { ok: true, prNumber, method: "squash" },
+      { ok: true, prNumber, method: mergeMethod },
       { status: 200 },
       correlationId,
     );
