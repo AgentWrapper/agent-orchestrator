@@ -14,6 +14,17 @@ ao spawn my-app ISSUE-123
 
 ## Examples
 
+### [hello-world.ts](./hello-world.ts)
+
+**Minimal TypeScript example**
+
+Prints `hello world` with a single TypeScript statement.
+
+Use this if:
+
+- You want the smallest possible TypeScript example in the repo
+- You need a quick sanity check for TypeScript execution
+
 ### [simple-github.yaml](./simple-github.yaml)
 
 **Minimal setup with GitHub Issues**
