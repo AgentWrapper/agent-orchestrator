@@ -25,6 +25,7 @@ export function UpdateBanner() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Hydrate dismissal flag from localStorage on mount.
   useEffect(() => {
@@ -119,8 +120,10 @@ export function UpdateBanner() {
           <span className="font-medium">
             Update available{channelLabel}: {info.current} → {info.latest}
           </span>
-          {phase === "blocked" && errorMessage ? (
-            <span className="text-xs text-[var(--color-status-error)]">{errorMessage}</span>
+          {phase === "blocked" ? (
+            <span className="text-xs text-[var(--color-text-secondary)]">
+              Sessions are active. Run in your terminal:
+            </span>
           ) : phase === "error" && errorMessage ? (
             <span className="text-xs text-[var(--color-status-error)]">
               {errorMessage}
@@ -135,14 +138,32 @@ export function UpdateBanner() {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handleUpdate()}
-          disabled={phase === "starting"}
-          className="rounded-sm border border-[var(--color-accent-amber-border)] bg-[var(--color-accent-amber)] px-3 py-1 text-xs font-medium text-[var(--color-text-inverse)] hover:bg-[color-mix(in_srgb,var(--color-accent-amber)_85%,black)] disabled:cursor-wait disabled:opacity-60"
-        >
-          {phase === "starting" ? "Updating…" : "Update"}
-        </button>
+        {phase === "blocked" ? (
+          <code
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.click(); }}
+            onClick={() => {
+              navigator.clipboard.writeText("ao stop && ao update && ao start").then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }).catch(() => {/* clipboard unavailable */});
+            }}
+            title="Click to copy"
+            className="cursor-pointer rounded-sm border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-2 py-1 font-[var(--font-mono)] text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-elevated-hover)]"
+          >
+            {copied ? "Copied!" : "ao stop && ao update && ao start"}
+          </code>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void handleUpdate()}
+            disabled={phase === "starting"}
+            className="rounded-sm border border-[var(--color-accent-amber-border)] bg-[var(--color-accent-amber)] px-3 py-1 text-xs font-medium text-[var(--color-text-inverse)] hover:bg-[color-mix(in_srgb,var(--color-accent-amber)_85%,black)] disabled:cursor-wait disabled:opacity-60"
+          >
+            {phase === "starting" ? "Updating…" : "Update"}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleDismiss}
