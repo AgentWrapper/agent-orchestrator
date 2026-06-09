@@ -317,16 +317,6 @@ describe("tracker-linear Composio transport", () => {
       // Now switch to fake timers
       vi.useFakeTimers();
 
-      // Vitest's fake timers fire the setTimeout callback synchronously
-      // during advanceTimersByTimeAsync, before the microtask queue can
-      // process the .catch() handler on timeoutPromise. Suppress the
-      // transient unhandled rejection that vitest detects in that window.
-      const suppressed: unknown[] = [];
-      const handler = (reason: unknown) => {
-        suppressed.push(reason);
-      };
-      process.on("unhandledRejection", handler);
-
       try {
         // Make execute hang forever
         mockExecute.mockImplementationOnce(
@@ -334,13 +324,15 @@ describe("tracker-linear Composio transport", () => {
         );
 
         const promise = tracker.getIssue("INT-123", project);
+        const timeoutExpectation = expect(promise).rejects.toThrow(
+          "Composio Linear API request timed out after 30s",
+        );
 
         // Advance timers past the 30s timeout
         await vi.advanceTimersByTimeAsync(30_001);
 
-        await expect(promise).rejects.toThrow("Composio Linear API request timed out after 30s");
+        await timeoutExpectation;
       } finally {
-        process.removeListener("unhandledRejection", handler);
         vi.useRealTimers();
       }
     });
