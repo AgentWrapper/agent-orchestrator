@@ -106,7 +106,6 @@ for (const variant of variants) {
       "PreCompact",
       "PostCompact",
       "SubagentStart",
-      "PostToolBatch",
     ])("writes active for %s", (event) => {
       const { lastEntry } = runHook(variant, { hook_event_name: event });
       expect(lastEntry).not.toBeNull();

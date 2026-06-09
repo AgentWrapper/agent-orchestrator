@@ -436,7 +436,7 @@ process.exit(0);
  * JSONL entries. Registered on every event whose firing carries activity
  * information (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
  * PermissionRequest, Notification, Stop, SubagentStop, StopFailure, PreCompact,
- * PostCompact, SubagentStart, PostToolBatch).
+ * PostCompact, SubagentStart).
  *
  * Reads the JSON payload from stdin, parses `hook_event_name`, maps it to an
  * activity state, and appends a single JSONL entry to
@@ -479,7 +479,7 @@ case "$event" in
     state="ready"
     trigger="$event"
     ;;
-  UserPromptSubmit|PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|PostCompact|SubagentStart|PostToolBatch)
+  UserPromptSubmit|PreToolUse|PostToolUse|PostToolUseFailure|PreCompact|PostCompact|SubagentStart)
     state="active"
     trigger="$event"
     ;;
@@ -605,7 +605,6 @@ switch (event) {
   case "PreCompact":
   case "PostCompact":
   case "SubagentStart":
-  case "PostToolBatch":
     state = "active";
     trigger = event;
     break;
@@ -958,7 +957,6 @@ function buildHookRegistrations(
     "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
-    "PostToolBatch",
     "Notification",
     "PermissionRequest",
     "Stop",

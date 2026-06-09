@@ -1035,7 +1035,6 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
-    "PostToolBatch",
     "Notification",
     "PermissionRequest",
     "Stop",
