@@ -148,7 +148,12 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  // Sanitize folder name so names like "llama.cpp" or "my.app"
+  // produce valid project IDs matching [a-zA-Z0-9_-]+
+  const rawBasename = basename(projectPath);
+  const projectId =
+    rawBasename.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") ||
+    "project";
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -162,10 +167,7 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
     typeof parsed["defaultBranch"] === "string"
       ? parsed["defaultBranch"]
       : await detectDefaultBranch(projectPath, repo ?? null);
-  // Strip characters invalid in sessionPrefix (Zod: [a-zA-Z0-9_-]+)
-  // so folder names like "my.app" don't produce invalid prefixes.
-  const prefixInput = projectId.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
-  const prefix = generateSessionPrefix(prefixInput || projectId);
+  const prefix = generateSessionPrefix(projectId);
 
   console.log(chalk.dim(`\n  Registering project "${projectId}" in global config...\n`));
 
@@ -537,7 +539,12 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const agentRules = generateRulesFromTemplates(projectType);
 
   // Build config with smart defaults
-  const projectId = basename(workingDir);
+  // Sanitize folder name so names like "llama.cpp" or "my.app"
+  // produce valid project IDs matching [a-zA-Z0-9_-]+
+  const rawBasename = basename(workingDir);
+  const projectId =
+    rawBasename.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "") ||
+    "project";
   let repo: string | undefined = env.ownerRepo ?? undefined;
   const path = workingDir;
   const defaultBranch = env.defaultBranch || "main";
