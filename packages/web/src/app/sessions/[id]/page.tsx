@@ -602,7 +602,7 @@ export default function SessionPage() {
     }
   }, [clearSessionLoadRetry, id, resetSessionLoadFailures]);
 
-  const fetchProjectSessions = useCallback(async () => {
+  const fetchProjectSessions = useCallback(async (fresh?: boolean) => {
     if (fetchingProjectSessionsRef.current) return;
     const projectId = sessionProjectIdRef.current;
     if (!projectId) return;
@@ -614,8 +614,8 @@ export default function SessionPage() {
     projectSessionsFetchControllerRef.current = controller;
     try {
       const query = isOrchestrator
-        ? `/api/sessions?project=${encodeURIComponent(projectId)}&fresh=true`
-        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true&fresh=true`;
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}${fresh ? "&fresh=true" : ""}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true${fresh ? "&fresh=true" : ""}`;
       const body = await fetchJsonWithTimeout<ProjectSessionsBody>(query, {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
@@ -667,7 +667,7 @@ export default function SessionPage() {
     }
   }, []);
 
-  const fetchSidebarSessions = useCallback(async () => {
+  const fetchSidebarSessions = useCallback(async (fresh?: boolean) => {
     if (fetchingSidebarRef.current) return;
     fetchingSidebarRef.current = true;
     const controller = new AbortController();
@@ -676,7 +676,7 @@ export default function SessionPage() {
       const body = await fetchJsonWithTimeout<{
         sessions?: DashboardSession[];
         orchestrators?: DashboardOrchestratorLink[];
-      } | null>("/api/sessions?fresh=true", {
+      } | null>(fresh ? "/api/sessions?fresh=true" : "/api/sessions", {
         signal: controller.signal,
         timeoutMs: PROJECT_SIDEBAR_FETCH_TIMEOUT_MS,
         timeoutMessage: `Sidebar sessions request timed out after ${PROJECT_SIDEBAR_FETCH_TIMEOUT_MS}ms`,
@@ -754,12 +754,12 @@ export default function SessionPage() {
 
   // Initial fetch — load independent sidebar/session data in parallel.
   useEffect(() => {
-    void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions()]);
+    void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions(true)]);
   }, [fetchProjects, fetchSession, fetchSidebarSessions]);
 
   useEffect(() => {
     if (!sessionProjectId) return;
-    void fetchProjectSessions();
+    void fetchProjectSessions(true);
   }, [fetchProjectSessions, sessionIsOrchestrator, sessionProjectId]);
 
   // Poll frequently enough that sidebar/project session state keeps up with
@@ -881,7 +881,7 @@ export default function SessionPage() {
               setSessionMissing(false);
               setLoading(true);
               resetSessionLoadFailures();
-              void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions()]);
+              void Promise.all([fetchProjects(), fetchSession(), fetchSidebarSessions(true)]);
             },
           }}
           secondaryAction={{
