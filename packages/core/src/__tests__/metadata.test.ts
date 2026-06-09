@@ -833,3 +833,94 @@ describe("corrupt JSON handling", () => {
     expect(meta!.status).toBe("working");
   });
 });
+
+describe("legacy key=value metadata in .json files", () => {
+  it("readMetadata parses key=value content from a .json file", () => {
+    writeFileSync(
+      join(dataDir, "ao-orchestrator.json"),
+      [
+        "codexThreadId=019df929-1773-7720-b07d-08e3cb9851fb",
+        "codexModel=gpt-5.4",
+        "status=working",
+        'runtimeHandle={"id":"ao-orchestrator","runtimeName":"tmux","data":{"createdAt":1778013362949,"workspacePath":"/Users/test"}}',
+        "tmuxName=ao-orchestrator",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const meta = readMetadata(dataDir, "ao-orchestrator");
+    expect(meta).not.toBeNull();
+    expect(meta!.tmuxName).toBe("ao-orchestrator");
+    expect(meta!.runtimeHandle).toBeDefined();
+    expect(meta!.runtimeHandle?.id).toBe("ao-orchestrator");
+    expect(meta!.runtimeHandle?.runtimeName).toBe("tmux");
+    expect(meta!.status).toBe("working");
+  });
+
+  it("readMetadataRaw parses key=value content from a .json file", () => {
+    writeFileSync(
+      join(dataDir, "ao-orchestrator-raw.json"),
+      [
+        "codexThreadId=019df929-1773-7720-b07d-08e3cb9851fb",
+        "codexModel=gpt-5.4",
+        "status=working",
+        'runtimeHandle={"id":"ao-orchestrator","runtimeName":"tmux","data":{"createdAt":1778013362949}}',
+        "tmuxName=ao-orchestrator",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const raw = readMetadataRaw(dataDir, "ao-orchestrator-raw");
+    expect(raw).not.toBeNull();
+    expect(raw!["codexThreadId"]).toBe("019df929-1773-7720-b07d-08e3cb9851fb");
+    expect(raw!["tmuxName"]).toBe("ao-orchestrator");
+    expect(raw!["status"]).toBe("working");
+  });
+
+  it("readMetadata still returns null for empty key=value file", () => {
+    writeFileSync(join(dataDir, "empty-kv.json"), "", "utf-8");
+    expect(readMetadata(dataDir, "empty-kv")).toBeNull();
+  });
+
+  it("readMetadata returns null for comment-only/blank key=value file (exercises fallback path)", () => {
+    writeFileSync(join(dataDir, "blank-kv.json"), "# comment\n\n  \n", "utf-8");
+    expect(readMetadata(dataDir, "blank-kv")).toBeNull();
+  });
+
+  it("mutateMetadata round-trips legacy key=value content into JSON", () => {
+    writeFileSync(
+      join(dataDir, "rt-legacy.json"),
+      [
+        "codexThreadId=019df929-1773-7720-b07d-08e3cb9851fb",
+        "codexModel=gpt-5.4",
+        "status=working",
+        'runtimeHandle={"id":"ao-orchestrator","runtimeName":"tmux","data":{"createdAt":1778013362949,"workspacePath":"/Users/test"}}',
+        "tmuxName=ao-orchestrator",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    // mutateMetadata should read the legacy format and rewrite as JSON
+    mutateMetadata(dataDir, "rt-legacy", (existing) => {
+      return { ...existing, status: "idle" };
+    });
+
+    // Verify the file is now valid JSON and all fields are preserved
+    const meta = readMetadata(dataDir, "rt-legacy");
+    expect(meta).not.toBeNull();
+    expect(meta!.tmuxName).toBe("ao-orchestrator");
+    expect(meta!.runtimeHandle).toBeDefined();
+    expect(meta!.runtimeHandle?.id).toBe("ao-orchestrator");
+    expect(meta!.runtimeHandle?.runtimeName).toBe("tmux");
+    expect(meta!.status).toBe("idle");
+
+    // Verify the underlying file is now valid JSON (not key=value)
+    const raw = readFileSync(join(dataDir, "rt-legacy.json"), "utf-8");
+    expect(() => JSON.parse(raw)).not.toThrow();
+  });
+
+  it("readMetadata still returns null for corrupt JSON that starts with {", () => {
+    writeFileSync(join(dataDir, "corrupt-kv.json"), "{this is not valid json", "utf-8");
+    expect(readMetadata(dataDir, "corrupt-kv")).toBeNull();
+  });
+});

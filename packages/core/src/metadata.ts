@@ -41,6 +41,7 @@ import { assertValidSessionIdComponent, SESSION_ID_COMPONENT_PATTERN } from "./u
 import { flattenToStringRecord } from "./utils/metadata-flatten.js";
 import { validateStatus } from "./utils/validation.js";
 import { withFileLockSync } from "./file-lock.js";
+import { parseKeyValueContent } from "./key-value.js";
 
 const JSON_EXTENSION = ".json";
 
@@ -49,14 +50,29 @@ function serializeMetadata(data: Record<string, unknown>): string {
   return JSON.stringify(data, null, 2) + "\n";
 }
 
-/** Parse JSON metadata file content. Returns null on invalid JSON. */
+/** Parse metadata file content. Returns null on invalid content.
+ *  Supports JSON format (current) and legacy key=value format.
+ *  If content starts with '{' or '[' but fails JSON parse, it's corrupt — return null.
+ *  Otherwise, fall back to key=value parsing for legacy metadata files.
+ */
 function parseMetadataContent(content: string): Record<string, unknown> | null {
+  // Try JSON first — this is the current format.
   try {
     const parsed = JSON.parse(content);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
   } catch {
-    return null;
+    // JSON parse failed.  If the content looks like it was intended to be JSON
+    // (starts with '{' or '['), treat it as corrupt rather than falling through
+    // to the key=value parser.
+    const firstChar = content.trim()[0];
+    if (firstChar === "{" || firstChar === "[") return null;
+
+    // Fall back to legacy key=value format (pre-V2 metadata files that were
+    // stored with a .json extension).
+    const kv = parseKeyValueContent(content);
+    if (Object.keys(kv).length === 0) return null;
+    return kv as Record<string, unknown>;
   }
 }
 
