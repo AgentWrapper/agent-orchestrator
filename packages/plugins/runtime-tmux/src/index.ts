@@ -153,10 +153,14 @@ export function create(): Runtime {
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
       // Clear any partial input
       await tmux("send-keys", "-t", handle.id, "C-u");
+      // Small delay to ensure C-u is processed before pasting begins.
+      // Without this, load-buffer + paste-buffer can collide with the clear.
+      await sleep(200);
 
       // For long or multiline messages, use load-buffer + paste-buffer
       // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
+      const isLongOrMultiline = message.includes("\n") || message.length > 200;
+      if (isLongOrMultiline) {
         const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
@@ -183,9 +187,10 @@ export function create(): Runtime {
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
+      // Delay before Enter to let tmux finish rendering the pasted text.
+      // Multiline/long pastes via paste-buffer need more time than short
+      // send-keys text — 1 s matches the reference delay in core/src/tmux.ts.
+      await sleep(isLongOrMultiline ? 1000 : 300);
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
 
