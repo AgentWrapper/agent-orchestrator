@@ -246,6 +246,7 @@ import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 import { GET as patchesGET } from "@/app/api/sessions/patches/route";
+import { GET as healthGET } from "@/app/api/health/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -1542,6 +1543,29 @@ describe("API Routes", () => {
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("db down");
+    });
+  });
+
+  // ── /api/health ──────────────────────────────────────────────────────
+
+  describe("GET /api/health", () => {
+    it("returns 200 with status ok and project count", async () => {
+      const res = await healthGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe("ok");
+      expect(typeof data.timestamp).toBe("string");
+      expect(data.projects).toBe(Object.keys(mockConfig.projects).length);
+    });
+
+    it("returns 503 when getServices throws", async () => {
+      const { getServices } = await import("@/lib/services");
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("config missing"));
+      const res = await healthGET();
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.status).toBe("error");
+      expect(data.error).toBe("config missing");
     });
   });
 });
