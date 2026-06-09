@@ -20,6 +20,7 @@ import {
   loadConfig,
   generateOrchestratorPrompt,
   generateSessionPrefix,
+  sanitizeProjectId,
   getOrchestratorSessionId,
   isRepoUrl,
   configToYaml,
@@ -148,7 +149,8 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  let projectId = basename(projectPath);
+  projectId = sanitizeProjectId(projectId);
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -663,6 +665,7 @@ async function addProjectToConfig(
   await ensureGit("adding projects");
 
   let projectId = basename(resolvedPath);
+  projectId = sanitizeProjectId(projectId);
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
