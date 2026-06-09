@@ -35,6 +35,7 @@ import {
   recordActivityEvent,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
+  sanitizeProjectId,
   type OrchestratorConfig,
   type LocalProjectConfig,
   type ProjectConfig,
@@ -148,7 +149,7 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  const projectId = sanitizeProjectId(basename(projectPath));
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -537,7 +538,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const agentRules = generateRulesFromTemplates(projectType);
 
   // Build config with smart defaults
-  const projectId = basename(workingDir);
+  const projectId = sanitizeProjectId(basename(workingDir));
   let repo: string | undefined = env.ownerRepo ?? undefined;
   const path = workingDir;
   const defaultBranch = env.defaultBranch || "main";
@@ -662,7 +663,12 @@ async function addProjectToConfig(
 
   await ensureGit("adding projects");
 
-  let projectId = basename(resolvedPath);
+  let projectId = sanitizeProjectId(basename(resolvedPath));
+  if (!projectId) {
+    throw new Error(
+      `Cannot derive a valid project ID from path "${resolvedPath}" — folder name contains only special characters.`,
+    );
+  }
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
