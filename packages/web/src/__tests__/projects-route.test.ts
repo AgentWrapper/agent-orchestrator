@@ -224,7 +224,7 @@ describe("POST /api/projects", () => {
       path.join(repoDir, ".git", "config"),
       '[remote "origin"]\n  url = git@github.com:acme/demo.git\n',
     );
-    symlinkSync(repoDir, aliasDir);
+    symlinkSync(repoDir, aliasDir, "junction");
 
     const { POST } = await import("@/app/api/projects/route");
     const firstResponse = await POST(
