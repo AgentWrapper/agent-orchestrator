@@ -403,7 +403,18 @@ function DashboardInner({
         if (!res.ok) {
           const text = await res.text();
           console.error(`Failed to merge PR #${prNumber}:`, text);
-          showToast(`Merge failed: ${text}`, "error");
+          let message = "Merge failed";
+          try {
+            const body = JSON.parse(text);
+            if (body.blockers?.length) {
+              message = `Merge blocked: ${body.blockers.join(", ")}`;
+            } else if (body.error) {
+              message = body.error;
+            }
+          } catch {
+            message = text || message;
+          }
+          showToast(message, "error");
           return;
         } else {
           showToast(`PR #${prNumber} merged`, "success");
@@ -721,6 +732,7 @@ function DashboardInner({
                       level={level}
                       sessions={grouped[level]}
                       onKill={handleKill}
+                      onMerge={handleMerge}
                       onRestore={handleRestore}
                       compactMobile={isMobile}
                       collapsed={isMobile && collapsedZones.has(level)}
