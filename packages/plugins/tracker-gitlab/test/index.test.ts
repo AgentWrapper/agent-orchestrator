@@ -123,6 +123,14 @@ describe("tracker-gitlab plugin", () => {
       await expect(tracker.getIssue("999", project)).rejects.toThrow("issue not found");
     });
 
+    it("passes GITLAB_HOST env to glab for self-hosted GitLab", async () => {
+      const selfHosted = create({ host: "gitlab.corp.com" });
+      mockGlab(sampleIssue);
+      await selfHosted.getIssue("123", project);
+      const options = glabMock.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+      expect(options.env?.["GITLAB_HOST"]).toBe("gitlab.corp.com");
+    });
+
     it("throws on malformed JSON response", async () => {
       glabMock.mockResolvedValueOnce({ stdout: "not json{" });
       await expect(tracker.getIssue("123", project)).rejects.toThrow();
