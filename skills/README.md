@@ -10,6 +10,7 @@ Reusable skill documents for AI coding agents working on this repository. Each s
 | [`agent-orchestrator/`](agent-orchestrator/SKILL.md) | Architecture and conventions for working on the agent-orchestrator codebase |
 | [`release-notes/`](release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history |
 | [`social-media/`](social-media/SKILL.md) | Social media post generation |
+| [`onboarding-test/`](onboarding-test/SKILL.md) | Verify a published `@aoagents/ao` version onboards cleanly (install → start → dashboard → stop), fully isolated from any real ao on the machine |
 
 ## How to Use
 
