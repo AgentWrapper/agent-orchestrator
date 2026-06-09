@@ -39,7 +39,7 @@
   "devDependencies": {
     "@types/node": "^25.2.3",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.6"
   },
   "publishConfig": {
     "access": "public",

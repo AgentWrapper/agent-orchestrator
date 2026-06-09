@@ -64,12 +64,12 @@
     "@xterm/addon-web-links": "0.13.0-beta.256",
     "@xterm/addon-webgl": "0.20.0-beta.255",
     "@xterm/xterm": "6.1.0-beta.256",
-    "next": "^15.1.0",
+    "next": "^15.5.18",
     "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
-    "ws": "^8.19.0"
+    "ws": "^8.20.1"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
@@ -93,6 +93,6 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vite": "^6.4.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.6"
   }
 }
