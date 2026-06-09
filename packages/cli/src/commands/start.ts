@@ -35,6 +35,7 @@ import {
   recordActivityEvent,
   registerProjectInGlobalConfig,
   getGlobalConfigPath,
+  sanitizeProjectId,
   type OrchestratorConfig,
   type LocalProjectConfig,
   type ProjectConfig,
@@ -148,7 +149,8 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  const rawProjectId = basename(projectPath);
+  const projectId = sanitizeProjectId(rawProjectId) || "project";
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -169,7 +171,7 @@ async function registerFlatConfig(configPath: string): Promise<string | null> {
 
   console.log(chalk.dim(`\n  Registering project "${projectId}" in global config...\n`));
 
-  const registeredProjectId = registerProjectInGlobalConfig(projectId, projectId, projectPath, {
+  const registeredProjectId = registerProjectInGlobalConfig(projectId, rawProjectId, projectPath, {
     defaultBranch,
     sessionPrefix: prefix,
     ...(repo ? { repo } : {}),
@@ -537,7 +539,8 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const agentRules = generateRulesFromTemplates(projectType);
 
   // Build config with smart defaults
-  const projectId = basename(workingDir);
+  const rawProjectId = basename(workingDir);
+  const projectId = sanitizeProjectId(rawProjectId) || "project";
   let repo: string | undefined = env.ownerRepo ?? undefined;
   const path = workingDir;
   const defaultBranch = env.defaultBranch || "main";
@@ -582,7 +585,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   writeLocalProjectConfig(workingDir, localConfig, outputPath);
 
   try {
-    const registeredProjectId = registerProjectInGlobalConfig(projectId, projectId, path, {
+    const registeredProjectId = registerProjectInGlobalConfig(projectId, rawProjectId, path, {
       ...(repo ? { repo } : {}),
       defaultBranch,
       sessionPrefix: generateSessionPrefix(projectId),
@@ -662,7 +665,8 @@ async function addProjectToConfig(
 
   await ensureGit("adding projects");
 
-  let projectId = basename(resolvedPath);
+  const rawProjectId = basename(resolvedPath);
+  let projectId = sanitizeProjectId(rawProjectId) || "project";
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
@@ -746,7 +750,7 @@ async function addProjectToConfig(
   if (isCanonicalGlobalConfigPath(config.configPath)) {
     const registeredProjectId = registerProjectInGlobalConfig(
       projectId,
-      projectId,
+      rawProjectId,
       resolvedPath,
       { defaultBranch, sessionPrefix: prefix },
       config.configPath,
@@ -763,7 +767,7 @@ async function addProjectToConfig(
     if (!rawConfig.projects) rawConfig.projects = {};
 
     rawConfig.projects[projectId] = {
-      name: projectId,
+      name: rawProjectId,
       ...(ownerRepo ? { repo: ownerRepo } : {}),
       path: resolvedPath,
       defaultBranch,
