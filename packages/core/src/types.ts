@@ -765,6 +765,13 @@ export interface Issue {
   branchName?: string;
 }
 
+/** Issue states that allow spawning a new worker session. */
+export function isSpawnableIssueState(
+  state: Issue["state"],
+): state is "open" | "in_progress" {
+  return state === "open" || state === "in_progress";
+}
+
 export interface IssueFilters {
   state?: "open" | "closed" | "all";
   labels?: string[];
@@ -1995,6 +2002,19 @@ export function isIssueNotFoundError(err: unknown): boolean {
     // GitHub: "invalid issue format" (ad-hoc free-text strings)
     message.includes("invalid issue format")
   );
+}
+
+/** Thrown when spawn is requested for a tracker issue that is closed or cancelled. */
+export class IssueNotSpawnableError extends Error {
+  constructor(
+    public readonly issueId: string,
+    public readonly state: Exclude<Issue["state"], "open" | "in_progress">,
+  ) {
+    super(
+      `Issue ${issueId} is ${state}. Cannot spawn a session for a closed/cancelled issue.`,
+    );
+    this.name = "IssueNotSpawnableError";
+  }
 }
 
 /** Thrown when a session cannot be restored (e.g. merged, still working). */
