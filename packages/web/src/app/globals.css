@@ -1185,6 +1185,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--color-text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dashboard-app-header__brand-dot {
@@ -1208,6 +1210,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   font-weight: 400;
   line-height: 1;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .dashboard-app-header__spacer {
@@ -1268,6 +1274,7 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   text-decoration: none;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   transition:
     background 100ms ease,
     border-color 100ms ease,
@@ -8870,7 +8877,9 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 /* Project name + pills: inline on desktop, stacked column on mobile */
