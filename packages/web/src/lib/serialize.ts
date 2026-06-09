@@ -7,9 +7,12 @@ import "server-only";
  * (string dates, flattened DashboardPR) suitable for JSON serialization.
  */
 
+import { statSync, utimesSync } from "node:fs";
 import {
   isOrchestratorSession,
   isTerminalSession,
+  getProjectSessionsDir,
+  updateMetadata,
   type Session,
   type Agent,
   type PRInfo,
@@ -515,7 +518,18 @@ export async function enrichSessionIssueTitle(
 ): Promise<void> {
   if (!dashboard.issueUrl || !dashboard.issueLabel) return;
 
-  // Check cache first
+  // 1. Check persisted metadata first (survives process restarts, zero network).
+  // Tradeoff: persisted titles never expire, so renamed issues show stale data.
+  // Acceptable because issue renames are rare and the in-memory TTL cache will
+  // still refresh on the next cold start (metadata only seeds the first read).
+  const persisted = dashboard.metadata["issueTitle"];
+  if (persisted) {
+    dashboard.issueTitle = persisted;
+    issueTitleCache.set(dashboard.issueUrl, persisted);
+    return;
+  }
+
+  // 2. Check in-memory cache
   const cached = issueTitleCache.get(dashboard.issueUrl);
   if (cached) {
     dashboard.issueTitle = cached;
@@ -525,17 +539,30 @@ export async function enrichSessionIssueTitle(
     return;
   }
 
+  // 3. Fall back to tracker API (gh call) — only on first encounter
   try {
-    // Strip "#" prefix from GitHub-style labels to get the identifier
     const identifier = dashboard.issueLabel.replace(/^#/, "");
     const issue = await tracker.getIssue(identifier, project);
     if (issue.title) {
       dashboard.issueTitle = issue.title;
       issueTitleCache.set(dashboard.issueUrl, issue.title);
+      // Persist to metadata so subsequent requests skip the gh call.
+      // Preserve mtime so SessionManager doesn't treat this as new activity.
+      try {
+        const sessionsDir = getProjectSessionsDir(dashboard.projectId);
+        const metaFile = `${sessionsDir}/${dashboard.id}.json`;
+        let origMtime: Date | undefined;
+        try { origMtime = statSync(metaFile).mtime; } catch { /* new file */ }
+        updateMetadata(sessionsDir, dashboard.id, { issueTitle: issue.title });
+        if (origMtime) {
+          try { utimesSync(metaFile, origMtime, origMtime); } catch { /* best-effort */ }
+        }
+      } catch {
+        // Best-effort persistence — in-memory cache still prevents repeated calls
+      }
     }
   } catch {
     issueTitleMissCache.set(dashboard.issueUrl, true);
-    // Can't fetch issue — keep issueTitle null
   }
 }
 
