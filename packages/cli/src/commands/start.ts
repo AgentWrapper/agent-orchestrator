@@ -74,7 +74,7 @@ import {
   acquireStartupLock,
   writeLastStop,
   readLastStop,
-  clearLastStop,
+  markLastStopAcknowledged,
   type RunningState,
 } from "../lib/running-state.js";
 import { attachToDaemon, killExistingDaemon } from "../lib/daemon.js";
@@ -107,6 +107,7 @@ import {
 } from "../lib/install-helpers.js";
 import { ensureGit, runtimePreflight } from "../lib/startup-preflight.js";
 import { installShutdownHandlers, isShutdownInProgress } from "../lib/shutdown.js";
+import { findRecentlyKilledSessions } from "../lib/last-stop-fallback.js";
 import { resolveOrCreateProject } from "../lib/resolve-project.js";
 import { pathsEqual } from "../lib/path-equality.js";
 import { maybePromptForUpdateChannel } from "../lib/update-channel-onboarding.js";
@@ -1000,9 +1001,41 @@ async function runStartup(
   }
 
   // Check for sessions from last `ao stop` and restore/prompt/skip based on caller intent.
+  // If `last-stop.json` is missing (which can happen if the record never
+  // made it to disk — see issue #1743), fall back to a scan of recently
+  // `manually_killed` sessions so the restore prompt still fires.
+  //
+  // The fallback gate is intentionally `!lastStop` (file absent), not
+  // "has no content". After any user decision (decline / all restored)
+  // we rewrite the file as an empty sentinel below — that keeps the
+  // file present so a second `ao start` within the 10-minute window
+  // doesn't replay the fallback and re-prompt for sessions the user
+  // just declined.
   if (opts?.restore !== false && (opts?.restore === true || isHumanCaller())) {
     try {
-      const lastStop = await readLastStop();
+      let lastStop = await readLastStop();
+      if (!lastStop) {
+        // Use the global config so `sm.list()` sees sessions from every
+        // registered project. The project-scoped `config` only sees the
+        // current project's sessions, which would silently drop the
+        // cross-project rows the existing `readLastStop` path preserves
+        // via `otherProjects`. The restore step below already promotes to
+        // the global config when otherProjects is non-empty, so this just
+        // ensures the fallback can populate that array.
+        let fallbackConfig = config;
+        const globalPath = getGlobalConfigPath();
+        if (existsSync(globalPath)) {
+          fallbackConfig = loadConfig(globalPath);
+        }
+        const fallbackSm = await getSessionManager(fallbackConfig);
+        const fallback = await findRecentlyKilledSessions(fallbackSm, projectId);
+        if (
+          fallback &&
+          (fallback.sessionIds.length > 0 || (fallback.otherProjects ?? []).length > 0)
+        ) {
+          lastStop = fallback;
+        }
+      }
       const totalLastStopSessions =
         (lastStop?.sessionIds.length ?? 0) +
         (lastStop?.otherProjects ?? []).reduce((sum, p) => sum + p.sessionIds.length, 0);
@@ -1151,17 +1184,20 @@ async function runStartup(
                   ),
                 );
               } else {
-                await clearLastStop();
+                await markLastStopAcknowledged(lastStop.projectId);
               }
             } else {
-              await clearLastStop();
+              await markLastStopAcknowledged(lastStop.projectId);
             }
           } else {
-            // User declined restore — clear the record.
-            await clearLastStop();
+            // User declined restore — write an empty marker so the
+            // fallback doesn't surface these same sessions on the next
+            // `ao start` within the 10-minute window. See Greptile P1
+            // review on PR #1780.
+            await markLastStopAcknowledged(lastStop.projectId);
           }
         } else {
-          await clearLastStop();
+          await markLastStopAcknowledged(lastStop.projectId);
         }
       }
     } catch (err) {

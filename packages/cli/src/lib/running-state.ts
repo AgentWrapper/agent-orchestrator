@@ -7,6 +7,8 @@ import {
   closeSync,
   constants,
   statSync,
+  fsyncSync,
+  renameSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -309,15 +311,50 @@ export async function waitForExit(pid: number, timeoutMs = 5000): Promise<boolea
 }
 
 /**
+ * Atomic write that fsyncs the temp file before renaming, so the data
+ * is durable even if the process is killed (SIGKILL/power loss/etc.)
+ * immediately after the call returns. Plain `writeFileSync` only flushes
+ * to the OS page cache; the rename then commits the dirent, but the
+ * file's content can still be lost if the kernel hasn't flushed the
+ * data blocks yet. This is the key durability guarantee for
+ * `last-stop.json` — we want the restore record to survive a SIGKILL
+ * that lands milliseconds after the write call returns.
+ */
+function atomicWriteFileSyncDurable(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  const fd = openSync(tmpPath, "w");
+  let writeSucceeded = false;
+  try {
+    writeFileSync(fd, content, "utf-8");
+    fsyncSync(fd);
+    writeSucceeded = true;
+  } finally {
+    try { closeSync(fd); } catch { /* best effort */ }
+    if (!writeSucceeded) {
+      // writeFileSync or fsyncSync threw — leave nothing on disk.
+      try { unlinkSync(tmpPath); } catch { /* best effort */ }
+    }
+  }
+  try {
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { unlinkSync(tmpPath); } catch { /* best effort */ }
+    throw err;
+  }
+}
+
+/**
  * Record which sessions were active when `ao stop` ran.
+ *
+ * Uses an fsync'd atomic write so the record survives the SIGKILL/
+ * SIGTERM that arrives moments later when the parent process is
+ * torn down. Without fsync, the kernel can lose the file content
+ * if the process dies before the write hits the disk.
  */
 export async function writeLastStop(state: LastStopState): Promise<void> {
   const release = await acquireLock(LAST_STOP_LOCK_FILE, 5000, "last-stop.json lock");
   try {
-    // Atomic temp+rename so a crash mid-write cannot leave torn JSON
-    // that makes `readLastStop()` silently return `null` and lose the
-    // restore prompt for sessions the user just stopped.
-    atomicWriteFileSync(LAST_STOP_FILE, JSON.stringify(state, null, 2));
+    atomicWriteFileSyncDurable(LAST_STOP_FILE, JSON.stringify(state, null, 2));
   } finally {
     release();
   }
@@ -350,4 +387,21 @@ export async function clearLastStop(): Promise<void> {
   } finally {
     release();
   }
+}
+
+/**
+ * Write an empty `last-stop.json` to record that the user has already
+ * seen / decided on the previous stop. We leave the file on disk
+ * (rather than unlinking it) so `ao start`'s fallback scan does not
+ * re-surface the same recently-killed sessions on the next invocation
+ * within the 10-minute window. Without this, declining a restore and
+ * then re-running `ao start` would re-prompt for the same sessions —
+ * see Greptile P1 review on PR #1780 (issue #1743 follow-up).
+ */
+export async function markLastStopAcknowledged(projectId: string): Promise<void> {
+  await writeLastStop({
+    stoppedAt: new Date().toISOString(),
+    projectId,
+    sessionIds: [],
+  });
 }

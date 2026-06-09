@@ -348,6 +348,51 @@ describe("update command", () => {
       await program.parseAsync(["node", "test", "update"]);
       expect(mockInvalidateCache).toHaveBeenCalledTimes(1);
     });
+
+    // Regression for issue #1743: `ao update` must NOT touch
+    // ~/.agent-orchestrator/last-stop.json. Without this guarantee,
+    // the `ao stop` → `ao update` → `ao start` flow loses the restore
+    // record. We exercise the full update code path with a real
+    // last-stop.json on disk in a temp HOME and assert it survives.
+    it("does not touch ~/.agent-orchestrator/last-stop.json (issue #1743)", async () => {
+      // The test file mocks `node:fs` so `existsSync` defaults to `false`
+      // for the active-session-guard tests. We need real fs to assert
+      // on-disk state, so import the unmocked module directly.
+      const fs = (await vi.importActual<typeof FsType>("node:fs"));
+      const { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } = fs;
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+
+      const fakeHome = mkdtempSync(join(tmpdir(), "ao-update-home-"));
+      const stateDir = join(fakeHome, ".agent-orchestrator");
+      mkdirSync(stateDir, { recursive: true });
+      const lastStopPath = join(stateDir, "last-stop.json");
+      const before = JSON.stringify({
+        stoppedAt: "2026-05-08T17:53:15.909Z",
+        projectId: "my-app",
+        sessionIds: ["app-1", "app-2"],
+      });
+      writeFileSync(lastStopPath, before, "utf-8");
+
+      const origHome = process.env["HOME"];
+      const origUserprofile = process.env["USERPROFILE"];
+      process.env["HOME"] = fakeHome;
+      process.env["USERPROFILE"] = fakeHome;
+
+      try {
+        await program.parseAsync(["node", "test", "update"]);
+
+        expect(existsSync(lastStopPath)).toBe(true);
+        expect(readFileSync(lastStopPath, "utf-8")).toBe(before);
+        expect(mockRunRepoScript).toHaveBeenCalledWith("ao-update.sh", []);
+      } finally {
+        if (origHome === undefined) delete process.env["HOME"];
+        else process.env["HOME"] = origHome;
+        if (origUserprofile === undefined) delete process.env["USERPROFILE"];
+        else process.env["USERPROFILE"] = origUserprofile;
+        rmSync(fakeHome, { recursive: true, force: true });
+      }
+    });
   });
 
   // -----------------------------------------------------------------------
