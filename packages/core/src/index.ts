@@ -66,6 +66,7 @@ export type {
   ListCodeReviewRunsFilter,
 } from "./code-review-store.js";
 export {
+  CodeReviewInvalidReviewerOutputError,
   CodeReviewInvalidSessionError,
   CodeReviewNoOpenFindingsError,
   CodeReviewRunNotExecutableError,

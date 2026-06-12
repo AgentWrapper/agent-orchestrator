@@ -506,6 +506,59 @@ describe("executeCodeReviewRun", () => {
     expect(failedSummary.status).toBe("failed");
     expect(failedSummary.terminationReason).toBe("review command crashed");
   });
+
+  it("fails reviewer executions that produce no structured JSON output", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+    });
+
+    const summary = await executeCodeReviewRun(
+      {
+        config,
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({ rawOutput: "" }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(summary.status).toBe("failed");
+    expect(summary.findingCount).toBe(0);
+    expect(summary.terminationReason).toContain("Reviewer produced no JSON output");
+  });
+
+  it("repairs noisy reviewer output when it contains a valid JSON findings object", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+    });
+
+    const summary = await executeCodeReviewRun(
+      {
+        config,
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({
+          rawOutput: [
+            "warning: tool output before the final answer",
+            "{",
+            '  "findings": []',
+            "}",
+            "ignored trailing process text",
+          ].join("\n"),
+        }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(summary.status).toBe("clean");
+    expect(summary.findingCount).toBe(0);
+  });
 });
 
 describe("sendCodeReviewFindingsToAgent", () => {
@@ -628,12 +681,21 @@ describe("sendCodeReviewFindingsToAgent", () => {
 
 describe("runCodexCodeReview", () => {
   it("uses generic codex exec instead of the review subcommand base/prompt combination", () => {
-    const args = buildCodexCodeReviewArgs("/tmp/review-output.json", "Return JSON only.");
+    const args = buildCodexCodeReviewArgs(
+      "/tmp/review-output.json",
+      "/tmp/review-output.schema.json",
+      "Return JSON only.",
+    );
 
     expect(args).toEqual([
       "exec",
+      "--ignore-user-config",
+      "--config",
+      'approval_policy="never"',
       "--sandbox",
       "read-only",
+      "--output-schema",
+      "/tmp/review-output.schema.json",
       "--output-last-message",
       "/tmp/review-output.json",
       "Return JSON only.",
@@ -720,6 +782,26 @@ describe("parseReviewerOutput", () => {
     expect(parseReviewerOutput("Unexpected reviewer text")).toMatchObject([
       { severity: "warning", title: "Reviewer output", body: "Unexpected reviewer text" },
     ]);
+  });
+
+  it("extracts a pretty-printed JSON findings object from noisy process output", () => {
+    expect(
+      parseReviewerOutput(
+        [
+          "warning: setup log",
+          "{",
+          '  "findings": [',
+          "    {",
+          '      "severity": "warning",',
+          '      "title": "Risk",',
+          '      "body": "A concrete issue."',
+          "    }",
+          "  ]",
+          "}",
+          "trailing log",
+        ].join("\n"),
+      ),
+    ).toMatchObject([{ severity: "warning", title: "Risk", body: "A concrete issue." }]);
   });
 
   it("does not drop structured findings whose text mentions no findings", () => {
