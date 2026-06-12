@@ -202,6 +202,7 @@ async function spawnSession(
   issueId?: string,
   openTab?: boolean,
   agent?: string,
+  model?: string,
   claimOptions?: SpawnClaimOptions,
   prompt?: string,
 ): Promise<void> {
@@ -235,6 +236,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      model,
       prompt: sanitizedPrompt,
     });
 
@@ -302,6 +304,7 @@ export function registerSpawn(program: Command): void {
     .allowExcessArguments()
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option("--model <name>", "Override the model for the spawned session")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option(
@@ -314,6 +317,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          model?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           prompt?: string;
@@ -379,6 +383,7 @@ export function registerSpawn(program: Command): void {
             issueId,
             opts.open,
             opts.agent,
+            opts.model,
             claimOptions,
             opts.prompt,
           );
