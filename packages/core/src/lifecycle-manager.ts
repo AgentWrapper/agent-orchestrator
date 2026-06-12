@@ -1521,9 +1521,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
     }
 
+    // Orchestrator sessions are human-driven and idle by design while waiting
+    // for user input — never escalate them to stuck via idle decay. Same
+    // authoritative `lifecycle.session.kind` check as the agent-report branch
+    // above (string-matching role/id suffixes misses numbered orchestrator IDs).
     if (
       detectedIdleTimestamp &&
       hasPositiveIdleEvidence(activitySignal) &&
+      lifecycle.session.kind !== "orchestrator" &&
       isIdleBeyondThreshold(session, detectedIdleTimestamp)
     ) {
       return commit({
