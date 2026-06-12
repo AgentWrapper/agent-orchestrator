@@ -26,6 +26,8 @@ export interface UseXtermTerminalOptions {
   projectId?: string;
   /** Actual tmux session name. When provided, the terminal server uses it directly instead of resolving from sessionId. */
   tmuxName?: string;
+  /** Called after every copy attempt (OSC 52 or Cmd+C) with the outcome. */
+  onCopyResult?: (ok: boolean) => void;
 }
 
 export interface UseXtermTerminalResult {
@@ -35,6 +37,8 @@ export interface UseXtermTerminalResult {
   muxStatus: ReturnType<typeof useMux>["status"];
   terminalInstance: RefObject<TerminalType | null>;
   fitAddon: RefObject<FitAddonType | null>;
+  /** True while the running app has mouse reporting enabled (drags go to the app, not selection). */
+  mouseReporting: boolean;
 }
 
 /**
@@ -49,7 +53,7 @@ export function useXtermTerminal(
   sessionId: string,
   options: UseXtermTerminalOptions,
 ): UseXtermTerminalResult {
-  const { appearance, variant, fontSize, autoFocus, projectId, tmuxName } = options;
+  const { appearance, variant, fontSize, autoFocus, projectId, tmuxName, onCopyResult } = options;
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
   const {
@@ -66,6 +70,13 @@ export function useXtermTerminal(
   const [error, setError] = useState<string | null>(null);
   const followOutputRef = useRef(true);
   const [followOutput, setFollowOutput] = useState(true);
+  const mouseReportingRef = useRef(false);
+  const [mouseReporting, setMouseReporting] = useState(false);
+
+  // Ref-stable copy-result callback so a changing identity doesn't tear down
+  // and recreate the terminal (the main effect below depends on its inputs).
+  const onCopyResultRef = useRef(onCopyResult);
+  onCopyResultRef.current = onCopyResult;
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -134,7 +145,22 @@ export function useXtermTerminal(
         const webLinks = new WebLinksAddon();
         terminal.loadAddon(webLinks);
 
-        registerClipboardHandlers(terminal);
+        registerClipboardHandlers(terminal, (ok) => onCopyResultRef.current?.(ok));
+
+        // Mouse-reporting detection — agent TUIs (e.g. Claude Code) enable
+        // mouse tracking via tmux, which makes xterm forward drags to the app
+        // instead of selecting text. Surface that so the UI can hint
+        // "hold Shift to select". Checked after each parsed write; setState
+        // only fires on transitions.
+        const syncMouseReporting = () => {
+          if (!mounted) return;
+          const mode = terminal.modes?.mouseTrackingMode;
+          const active = !!mode && mode !== "none";
+          if (active !== mouseReportingRef.current) {
+            mouseReportingRef.current = active;
+            setMouseReporting(active);
+          }
+        };
 
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
@@ -295,7 +321,7 @@ export function useXtermTerminal(
             safetyTimer = null;
           }
           if (writeBuffer.length > 0) {
-            terminal.write(writeBuffer.join(""));
+            terminal.write(writeBuffer.join(""), syncMouseReporting);
             writeBuffer.length = 0;
             bufferBytes = 0;
           }
@@ -336,7 +362,7 @@ export function useXtermTerminal(
                 flushWriteBuffer();
               }
             } else {
-              terminal.write(data);
+              terminal.write(data, syncMouseReporting);
               if (followOutputRef.current) {
                 programmaticScroll = true;
                 terminal.scrollToBottom();
@@ -494,5 +520,6 @@ export function useXtermTerminal(
     muxStatus,
     terminalInstance,
     fitAddon,
+    mouseReporting,
   };
 }

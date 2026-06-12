@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as TerminalType } from "@xterm/xterm";
-import { registerClipboardHandlers } from "../terminal-clipboard";
+import { registerClipboardHandlers, writeClipboardText } from "../terminal-clipboard";
 
 type CsiHandler = () => boolean | Promise<boolean>;
 type OscHandler = (data: string) => boolean | Promise<boolean>;
@@ -51,6 +51,29 @@ function encodeOsc52(text: string, target = "c"): string {
   return `${target};${btoa(binary)}`;
 }
 
+/** Let pending clipboard promises (writeText → .then chains) settle. */
+function flushPromises(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** jsdom has no execCommand — define a configurable mock for fallback tests. */
+function defineExecCommand(impl: () => boolean) {
+  const mock = vi.fn(impl);
+  Object.defineProperty(document, "execCommand", {
+    configurable: true,
+    value: mock,
+  });
+  return mock;
+}
+
+/** Simulate a non-secure origin where navigator.clipboard is undefined. */
+function removeClipboardApi() {
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: {},
+  });
+}
+
 describe("registerClipboardHandlers", () => {
   let writeText: ReturnType<typeof vi.fn>;
 
@@ -63,6 +86,7 @@ describe("registerClipboardHandlers", () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(document, "execCommand");
     vi.restoreAllMocks();
   });
 
@@ -228,5 +252,146 @@ describe("registerClipboardHandlers", () => {
       expect(result).toBe(true);
       expect(writeText).not.toHaveBeenCalled();
     });
+  });
+
+  describe("onCopyResult feedback", () => {
+    it("reports success after an OSC 52 copy", async () => {
+      const onCopyResult = vi.fn();
+      const { terminal, captured } = makeMockTerminal();
+      registerClipboardHandlers(terminal, onCopyResult);
+
+      await captured.osc!.handler(encodeOsc52("hello"));
+      await flushPromises();
+
+      expect(onCopyResult).toHaveBeenCalledWith(true);
+    });
+
+    it("reports failure when clipboard rejects and execCommand is unavailable", async () => {
+      writeText.mockReturnValue(Promise.reject(new Error("denied")));
+      const onCopyResult = vi.fn();
+      const { terminal, captured } = makeMockTerminal();
+      registerClipboardHandlers(terminal, onCopyResult);
+
+      await captured.osc!.handler(encodeOsc52("hello"));
+      await flushPromises();
+
+      expect(onCopyResult).toHaveBeenCalledWith(false);
+    });
+
+    it("reports success when clipboard rejects but the execCommand fallback works", async () => {
+      writeText.mockReturnValue(Promise.reject(new Error("denied")));
+      defineExecCommand(() => true);
+      const onCopyResult = vi.fn();
+      const { terminal, captured } = makeMockTerminal();
+      registerClipboardHandlers(terminal, onCopyResult);
+
+      await captured.osc!.handler(encodeOsc52("hello"));
+      await flushPromises();
+
+      expect(onCopyResult).toHaveBeenCalledWith(true);
+    });
+
+    it("reports failure when the OSC 52 payload cannot be decoded", async () => {
+      const onCopyResult = vi.fn();
+      const { terminal, captured } = makeMockTerminal();
+      registerClipboardHandlers(terminal, onCopyResult);
+
+      await captured.osc!.handler("c;not_valid_base64!!!");
+
+      expect(onCopyResult).toHaveBeenCalledWith(false);
+    });
+
+    it("reports the outcome of a Cmd+C copy", async () => {
+      const onCopyResult = vi.fn();
+      const { terminal, captured } = makeMockTerminal("selected text");
+      registerClipboardHandlers(terminal, onCopyResult);
+
+      captured.key!({
+        type: "keydown",
+        code: "KeyC",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+      } as KeyboardEvent);
+      await flushPromises();
+
+      expect(onCopyResult).toHaveBeenCalledWith(true);
+    });
+  });
+});
+
+describe("writeClipboardText", () => {
+  let writeText: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { clipboard: { writeText } },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, "execCommand");
+    vi.restoreAllMocks();
+  });
+
+  it("resolves true via navigator.clipboard on secure origins", async () => {
+    await expect(writeClipboardText("hello")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("hello");
+  });
+
+  it("falls back to execCommand when navigator.clipboard is undefined (non-secure origin)", async () => {
+    removeClipboardApi();
+    let copiedValue = "";
+    const exec = defineExecCommand(() => {
+      copiedValue = document.querySelector("textarea")?.value ?? "";
+      return true;
+    });
+
+    await expect(writeClipboardText("lan copy")).resolves.toBe(true);
+
+    expect(exec).toHaveBeenCalledWith("copy");
+    expect(copiedValue).toBe("lan copy");
+  });
+
+  it("falls back to execCommand when writeText is permission-denied", async () => {
+    writeText.mockReturnValue(Promise.reject(new Error("NotAllowedError")));
+    const exec = defineExecCommand(() => true);
+
+    await expect(writeClipboardText("denied")).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledWith("copy");
+  });
+
+  it("resolves false when clipboard is missing and execCommand is unavailable", async () => {
+    removeClipboardApi();
+    // jsdom has no document.execCommand by default — both layers fail.
+    await expect(writeClipboardText("nope")).resolves.toBe(false);
+  });
+
+  it("resolves false when execCommand reports failure", async () => {
+    removeClipboardApi();
+    defineExecCommand(() => false);
+
+    await expect(writeClipboardText("nope")).resolves.toBe(false);
+  });
+
+  it("resolves false when execCommand throws", async () => {
+    removeClipboardApi();
+    defineExecCommand(() => {
+      throw new Error("blocked");
+    });
+
+    await expect(writeClipboardText("nope")).resolves.toBe(false);
+  });
+
+  it("removes the temporary textarea after the fallback runs", async () => {
+    removeClipboardApi();
+    defineExecCommand(() => true);
+
+    await writeClipboardText("cleanup");
+
+    expect(document.querySelector("textarea")).toBeNull();
   });
 });

@@ -18,6 +18,8 @@ interface TerminalControlsProps {
   muxStatus: MuxStatus;
   /** Reserved for callers; the mockup header surfaces no connection state. */
   error?: string | null;
+  /** True while the running app captures mouse drags (so plain drag-select doesn't work). */
+  mouseReporting?: boolean;
 }
 
 export function TerminalControls({
@@ -30,6 +32,7 @@ export function TerminalControls({
   fullscreen,
   toggleFullscreen,
   muxStatus,
+  mouseReporting = false,
 }: TerminalControlsProps) {
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -72,6 +75,18 @@ export function TerminalControls({
       setReloading(false);
     }
   }
+
+  // Agent TUIs enable mouse reporting, which routes drags to the app instead
+  // of selecting text — users need to hold Shift to select. Only shown while
+  // mouse reporting is actually active to keep the chrome quiet otherwise.
+  const selectionHint = mouseReporting ? (
+    <span
+      className="cursor-help whitespace-nowrap text-[10px] text-[var(--color-text-tertiary)]"
+      title="The running app is capturing mouse input. Hold ⇧ (Shift) while dragging to select text."
+    >
+      ⇧+drag to select
+    </span>
+  ) : null;
 
   const fontSizeControls = (
     <div className="terminal-chrome-zoom flex items-center">
@@ -181,6 +196,7 @@ export function TerminalControls({
   if (chromeless) {
     return (
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-[6px] border border-[var(--color-border-subtle)] bg-[color-mix(in_srgb,var(--color-bg-elevated)_92%,transparent)] px-1.5 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+        {selectionHint}
         {reloadButton}
         {fullscreenButton}
       </div>
@@ -193,6 +209,7 @@ export function TerminalControls({
       <span className="terminal-chrome-pane-label">Terminal</span>
       <span className="terminal-chrome-session-id">{sessionId}</span>
       <div className="flex-1" />
+      {selectionHint}
       {fontSizeControls}
       {reloadButton}
       {reloadError ? (
