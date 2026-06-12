@@ -857,6 +857,69 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 
+  it("does not mark orchestrator sessions stuck when idle exceeds agent-stuck threshold", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "1m", priority: "urgent" },
+    };
+
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+
+    const session = makeSession({ status: "working", metadata: { agent: "mock-agent" } });
+    session.lifecycle.session.kind = "orchestrator";
+
+    const lm = setupCheck("app-1", {
+      session,
+      metaOverrides: { agent: "mock-agent" },
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(notifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("still marks worker sessions stuck and fires the agent-stuck reaction when idle exceeds threshold", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "1m", priority: "urgent" },
+    };
+
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
+      metaOverrides: { agent: "mock-agent" },
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.triggered" }),
+    );
+  });
+
   it("still auto-detects PR before marking idle sessions as stuck", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
