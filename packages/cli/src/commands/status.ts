@@ -533,8 +533,18 @@ export function registerStatus(program: Command): void {
           const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");
           const workers = sessionInfos.filter((info) => info.role === "worker");
 
-          totalWorkers += workers.length;
-          totalOrchestrators += orchestrators.length;
+          // Summary totals count only non-terminal sessions — --include-terminated
+          // affects visibility, never what counts as "active" in the footer.
+          // sessionInfos[i] corresponds to projectSessions[i] (parallel map above).
+          sessionInfos.forEach((info, i) => {
+            const session = projectSessions[i];
+            if (session && isTerminalSession(session)) return;
+            if (info.role === "orchestrator") {
+              totalOrchestrators++;
+            } else {
+              totalWorkers++;
+            }
+          });
 
           for (const info of sessionInfos) {
             if (opts.json) {

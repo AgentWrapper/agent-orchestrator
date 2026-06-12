@@ -1287,6 +1287,68 @@ describe("status command", () => {
     expect(output).not.toContain("terminated sessions hidden");
   });
 
+  it("excludes terminated sessions from the active count in the summary by default", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=killed\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("1 active session across");
+    expect(output).toContain("2 terminated sessions hidden");
+  });
+
+  it("does not count terminated sessions as active when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=killed\n");
+    writeFileSync(join(sessionsDir, "app-3"), "branch=feat/c\nstatus=merged\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "status",
+      "--include-terminated",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // Terminated sessions are displayed...
+    expect(output).toContain("app-2");
+    expect(output).toContain("app-3");
+    // ...but never counted as active in the summary.
+    expect(output).toContain("1 active session across");
+    expect(output).not.toContain("3 active sessions");
+  });
+
+  it("does not count terminated orchestrators in the summary when --include-terminated is passed", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
+    writeFileSync(
+      join(sessionsDir, "app-orchestrator"),
+      "branch=main\nstatus=killed\nrole=orchestrator\n",
+    );
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "status",
+      "--include-terminated",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("1 active session across");
+    // The "· N orchestrator(s)" suffix only renders when the count is > 0.
+    expect(output).not.toContain("· 1 orchestrator");
+  });
+
   it("reports hiddenTerminatedCount in JSON output when filtering terminal sessions", async () => {
     writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=working\n");
     writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=merged\n");
