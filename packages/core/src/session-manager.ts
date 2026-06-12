@@ -1273,6 +1273,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
       spawnAgentOverride: spawnConfig.agent,
+      spawnModelOverride: spawnConfig.model,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
