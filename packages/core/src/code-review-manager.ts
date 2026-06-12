@@ -39,6 +39,32 @@ const REVIEW_RUN_EXECUTION_LOCK_PREFIX = ".execute-run-";
 const REVIEW_RUN_CREATION_LOCK_WAIT_MS = 5_000;
 const REVIEW_RUN_CREATION_LOCK_STALE_MS = 30_000;
 const REVIEW_LOCK_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const CODE_REVIEW_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["findings"],
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["body"],
+        properties: {
+          severity: { type: "string", enum: ["warning", "error", "info"] },
+          title: { type: "string" },
+          body: { type: "string" },
+          filePath: { type: "string" },
+          startLine: { type: "number", minimum: 1 },
+          endLine: { type: "number", minimum: 1 },
+          category: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          fingerprint: { type: "string" },
+        },
+      },
+    },
+  },
+};
 
 async function execFileAsync(
   file: string,
@@ -282,6 +308,13 @@ export class CodeReviewNoOpenFindingsError extends Error {
   }
 }
 
+export class CodeReviewInvalidReviewerOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CodeReviewInvalidReviewerOutputError";
+  }
+}
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -349,7 +382,53 @@ function stripMarkdownJsonFence(value: string): string {
   return match?.[1]?.trim() ?? trimmed;
 }
 
-function tryParseJsonCandidate(value: string): unknown | null {
+function extractBalancedJsonAt(value: string, start: number): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index++) {
+    const char = value[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      stack.push("}");
+      continue;
+    }
+
+    if (char === "[") {
+      stack.push("]");
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      if (stack.at(-1) !== char) return null;
+      stack.pop();
+      if (stack.length === 0) {
+        return value.slice(start, index + 1).trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function collectJsonCandidates(value: string): string[] {
   const candidates = [stripMarkdownJsonFence(value)];
   const fenced = value.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenced?.[1]) candidates.push(fenced[1].trim());
@@ -364,15 +443,26 @@ function tryParseJsonCandidate(value: string): unknown | null {
     }
   }
 
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate) as unknown;
-    } catch {
-      // Keep trying looser candidates.
+  const starts = new Set<number>();
+  for (const match of value.matchAll(/\{[\s\r\n]*"findings"[\s\r\n]*:/g)) {
+    starts.add(match.index);
+  }
+  for (const match of value.matchAll(/\[[\s\r\n]*\{/g)) {
+    starts.add(match.index);
+  }
+
+  for (let index = value.length - 1; index >= 0 && starts.size < 64; index--) {
+    if (value[index] === "{" || value[index] === "[") {
+      starts.add(index);
     }
   }
 
-  return null;
+  for (const start of [...starts].sort((a, b) => b - a)) {
+    const candidate = extractBalancedJsonAt(value, start);
+    if (candidate) candidates.push(candidate);
+  }
+
+  return [...new Set(candidates)];
 }
 
 function normalizeFinding(value: unknown, fallbackIndex: number): CodeReviewRunnerFinding | null {
@@ -412,23 +502,42 @@ function normalizeFinding(value: unknown, fallbackIndex: number): CodeReviewRunn
   };
 }
 
-export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
-  const trimmed = output.trim();
-  if (!trimmed) return [];
-
-  const parsed = tryParseJsonCandidate(trimmed);
+function getRawFindings(parsed: unknown): unknown[] | null {
   const parsedRecord = asRecord(parsed);
-  const rawFindings = Array.isArray(parsed)
+  return Array.isArray(parsed)
     ? parsed
     : Array.isArray(parsedRecord?.["findings"])
       ? parsedRecord["findings"]
       : null;
+}
 
-  if (rawFindings) {
+function parseFindingsFromJsonOutput(output: string): CodeReviewRunnerFinding[] | null {
+  for (const candidate of collectJsonCandidates(output)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate) as unknown;
+    } catch {
+      // Keep trying looser candidates.
+      continue;
+    }
+
+    const rawFindings = getRawFindings(parsed);
+    if (!rawFindings) continue;
+
     return rawFindings
       .map((finding, index) => normalizeFinding(finding, index + 1))
       .filter((finding): finding is CodeReviewRunnerFinding => finding !== null);
   }
+
+  return null;
+}
+
+export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
+  const trimmed = output.trim();
+  if (!trimmed) return [];
+
+  const findings = parseFindingsFromJsonOutput(trimmed);
+  if (findings) return findings;
 
   if (/^no findings?\.?$/i.test(trimmed)) return [];
 
@@ -439,6 +548,22 @@ export function parseReviewerOutput(output: string): CodeReviewRunnerFinding[] {
       body: truncate(trimmed, 12_000),
     },
   ];
+}
+
+function parseRequiredReviewerOutput(output: string): CodeReviewRunnerFinding[] {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    throw new CodeReviewInvalidReviewerOutputError(
+      "Reviewer produced no JSON output; failing the review run instead of marking it clean.",
+    );
+  }
+
+  const findings = parseFindingsFromJsonOutput(trimmed);
+  if (findings) return findings;
+
+  throw new CodeReviewInvalidReviewerOutputError(
+    "Reviewer output did not contain a valid JSON findings array.",
+  );
 }
 
 function allocateReviewerSessionId(existingRuns: CodeReviewRun[], sessionPrefix: string): string {
@@ -695,11 +820,14 @@ function buildDefaultReviewPrompt(context: CodeReviewRunnerContext): string {
   return [
     "You are an AO reviewer agent. Review this repository snapshot for concrete bugs only.",
     "Do not modify files. Do not publish comments anywhere.",
+    "Use only local read-only shell commands in this workspace, such as git diff/status/log/show, rg, sed, cat, and ls.",
+    "Do not call MCP tools, GitHub tools, Agent Mail, web search, network services, or external APIs. The local git checkout is the source of truth.",
     `Review the changes against base ref "${context.baseRef}". Start with: git diff --merge-base ${context.baseRef} HEAD -- .`,
     "If that diff command fails, inspect git status/log and compare this detached reviewer workspace to the base ref using read-only commands.",
     `Linked coding worker: ${context.session.id}`,
     `Reviewer run: ${context.run.reviewerSessionId}`,
     `Base ref: ${context.baseRef}`,
+    "Your final answer must be exactly one JSON object. Do not include Markdown fences, prose, logs, or diagnostics.",
     "Return only JSON using this schema:",
     '{"findings":[{"severity":"warning|error|info","title":"short title","body":"specific issue and fix","filePath":"optional/path","startLine":1,"endLine":1,"confidence":0.8}]}',
     'If there are no concrete bugs, return {"findings":[]}.',
@@ -728,16 +856,34 @@ export function createShellCodeReviewRunner(command: string): CodeReviewRunner {
   };
 }
 
-export function buildCodexCodeReviewArgs(outputFile: string, prompt: string): string[] {
-  return ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, prompt];
+export function buildCodexCodeReviewArgs(
+  outputFile: string,
+  outputSchemaFile: string,
+  prompt: string,
+): string[] {
+  return [
+    "exec",
+    "--ignore-user-config",
+    "--config",
+    'approval_policy="never"',
+    "--sandbox",
+    "read-only",
+    "--output-schema",
+    outputSchemaFile,
+    "--output-last-message",
+    outputFile,
+    prompt,
+  ];
 }
 
 export async function runCodexCodeReview(
   context: CodeReviewRunnerContext,
 ): Promise<CodeReviewRunnerResult> {
   const outputFile = join(context.workspacePath, ".ao-code-review-output.json");
+  const outputSchemaFile = join(context.workspacePath, ".ao-code-review-output.schema.json");
   const prompt = buildDefaultReviewPrompt(context);
-  const args = buildCodexCodeReviewArgs(outputFile, prompt);
+  writeFileSync(outputSchemaFile, `${JSON.stringify(CODE_REVIEW_OUTPUT_SCHEMA, null, 2)}\n`);
+  const args = buildCodexCodeReviewArgs(outputFile, outputSchemaFile, prompt);
 
   try {
     const { stdout, stderr } = await execFileWithClosedStdin("codex", args, {
@@ -751,12 +897,11 @@ export async function runCodexCodeReview(
     const rawOutput = outputFileContents ?? (stdout.trim() || stderr.trim());
     return { rawOutput };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     const details =
       error instanceof Error && "stderr" in error && typeof error.stderr === "string"
-        ? error.stderr.trim()
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        ? [message, error.stderr.trim()].filter(Boolean).join("\n")
+        : message;
     throw new Error(`Codex review failed: ${details}`, { cause: error });
   }
 }
@@ -947,7 +1092,7 @@ export async function executeCodeReviewRun(
     );
     const baseRef = session.pr?.baseBranch?.trim() || project.defaultBranch;
     const result = await runReviewer({ config, project, session, run, workspacePath, baseRef });
-    const findings = result.findings ?? parseReviewerOutput(result.rawOutput ?? "");
+    const findings = result.findings ?? parseRequiredReviewerOutput(result.rawOutput ?? "");
 
     for (const finding of findings) {
       store.createFinding(
