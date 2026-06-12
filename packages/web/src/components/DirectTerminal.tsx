@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
@@ -59,15 +59,39 @@ export function DirectTerminal({
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [fontSize, setFontSize] = useState(getStoredFontSize());
 
-  const { error, followOutput, scrollToLatest, muxStatus, terminalInstance, fitAddon } =
-    useXtermTerminal(terminalRef, sessionId, {
-      appearance,
-      variant,
-      fontSize,
-      autoFocus,
-      projectId,
-      tmuxName,
-    });
+  // Transient copy feedback — clipboard writes fail silently on non-secure
+  // origins (LAN IP instead of localhost), so every copy attempt reports
+  // its outcome here and we flash a small pill over the terminal.
+  const [copyStatus, setCopyStatus] = useState<"copied" | "failed" | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopyResult = useCallback((ok: boolean) => {
+    setCopyStatus(ok ? "copied" : "failed");
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopyStatus(null), 2000);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const {
+    error,
+    followOutput,
+    scrollToLatest,
+    muxStatus,
+    terminalInstance,
+    fitAddon,
+    mouseReporting,
+  } = useXtermTerminal(terminalRef, sessionId, {
+    appearance,
+    variant,
+    fontSize,
+    autoFocus,
+    projectId,
+    tmuxName,
+    onCopyResult: handleCopyResult,
+  });
 
   useFullscreenResize(fullscreen, sessionId, projectId, terminalInstance, fitAddon, terminalRef);
 
@@ -105,9 +129,23 @@ export function DirectTerminal({
         toggleFullscreen={() => setFullscreen((prev) => !prev)}
         muxStatus={muxStatus}
         error={error}
+        mouseReporting={mouseReporting}
       />
       {/* Terminal area — flex:1 so it fills remaining space after the chrome bar */}
       <div className="relative flex-1 min-h-0 flex flex-col">
+        {copyStatus ? (
+          <div
+            role="status"
+            className={cn(
+              "pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-[6px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[11px] font-medium shadow-md",
+              copyStatus === "copied"
+                ? "text-[var(--color-text-secondary)]"
+                : "text-[var(--color-status-error)]",
+            )}
+          >
+            {copyStatus === "copied" ? "Copied" : "Copy failed"}
+          </div>
+        ) : null}
         {!followOutput ? (
           <button
             type="button"
