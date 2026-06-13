@@ -12,7 +12,7 @@ vi.mock("node:child_process", () => {
   return { execFile };
 });
 
-import { create, manifest } from "../src/index.js";
+import { create, manifest, deriveBranchName } from "../src/index.js";
 import {
   _clearProcessCacheForTests,
   type PreflightContext,
@@ -96,6 +96,7 @@ describe("tracker-github plugin", () => {
         state: "open",
         labels: ["bug", "priority-high"],
         assignee: "alice",
+        branchName: "fix/123-fix-login-bug",
       });
     });
 
@@ -310,6 +311,40 @@ describe("tracker-github plugin", () => {
 
     it("strips # prefix", () => {
       expect(tracker.branchName("#42", project)).toBe("feat/issue-42");
+    });
+  });
+
+  // ---- deriveBranchName (type/issue-slug from labels + title) -------------
+
+  describe("deriveBranchName", () => {
+    it("defaults to feat with a title slug", () => {
+      expect(
+        deriveBranchName({ id: "27", title: "Property detail page", labels: ["enhancement"] }),
+      ).toBe("feat/27-property-detail-page");
+    });
+
+    it("maps the bug label to fix", () => {
+      expect(deriveBranchName({ id: "8", title: "Map crash on load", labels: ["bug"] })).toBe(
+        "fix/8-map-crash-on-load",
+      );
+    });
+
+    it("maps documentation to docs", () => {
+      expect(
+        deriveBranchName({ id: "30", title: "Update README", labels: ["documentation"] }),
+      ).toBe("docs/30-update-readme");
+    });
+
+    it("strips a leading conventional-commit prefix from the title", () => {
+      expect(deriveBranchName({ id: "5", title: "feat: Add login flow", labels: [] })).toBe(
+        "feat/5-add-login-flow",
+      );
+    });
+
+    it("falls back to a 'change' slug when the title has no word chars", () => {
+      expect(deriveBranchName({ id: "9", title: "!!!", labels: ["chore"] })).toBe(
+        "chore/9-change",
+      );
     });
   });
 

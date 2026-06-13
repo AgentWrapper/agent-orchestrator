@@ -151,6 +151,39 @@ function issueCacheKey(repo: string, identifier: string): string {
   return `${repo}#${identifier.replace(/^#/, "")}`;
 }
 
+/** Map a GitHub issue's labels to a conventional-commit branch type. */
+export function branchTypeFromLabels(labels: string[]): string {
+  const lower = labels.map((l) => l.toLowerCase());
+  if (lower.includes("bug")) return "fix";
+  if (lower.some((l) => l === "documentation" || l === "docs")) return "docs";
+  if (lower.includes("chore")) return "chore";
+  if (lower.some((l) => l === "refactor" || l === "refactoring")) return "refactor";
+  return "feat";
+}
+
+/** Build a short, git-safe slug from an issue title (max ~6 words). */
+export function slugFromTitle(title: string): string {
+  const slug = title
+    .toLowerCase()
+    // drop a leading conventional-commit prefix if the title already has one
+    .replace(/^\s*(feat|fix|docs|chore|refactor|test|perf|style|build|ci)(\([^)]*\))?!?:\s*/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .split("-")
+    .filter(Boolean)
+    .slice(0, 6)
+    .join("-");
+  return slug || "change";
+}
+
+/**
+ * Derive a conventional `<type>/<issue>-<slug>` branch name from an issue,
+ * e.g. `feat/27-property-detail-page`. Type is inferred from the issue labels.
+ */
+export function deriveBranchName(issue: Pick<Issue, "id" | "title" | "labels">): string {
+  return `${branchTypeFromLabels(issue.labels)}/${issue.id}-${slugFromTitle(issue.title)}`;
+}
+
 function createGitHubTracker(): Tracker {
   const issueCache = new Map<string, CachedIssue>();
   const inflight = new Map<string, Promise<Issue>>();
@@ -217,6 +250,7 @@ function createGitHubTracker(): Tracker {
           labels: data.labels.map((l) => l.name),
           assignee: data.assignees[0]?.login,
         };
+        issue.branchName = deriveBranchName(issue);
 
         writeCachedIssue(repo, identifier, issue);
         return issue;
