@@ -135,6 +135,9 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+
+[![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/agentwrapper-agent-orchestrator)
+
 $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 # Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
