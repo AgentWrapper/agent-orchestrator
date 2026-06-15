@@ -1923,19 +1923,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     // Get agent launch config — uses systemPromptFile, no issue/tracker interaction.
-    // Orchestrator ALWAYS gets permissionless mode — it must run ao CLI commands autonomously.
+    // Orchestrator defaults to permissionless mode to run ao CLI commands autonomously,
+    // but can be overridden via orchestrator.agentConfig.permissions in config.
+    const orchestratorPermissions = selection.permissions ?? ("permissionless" as const);
     const agentLaunchConfig = {
       sessionId,
       projectConfig: {
         ...project,
         agentConfig: {
           ...selection.agentConfig,
-          permissions: "permissionless" as const,
+          permissions: orchestratorPermissions,
           ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
         },
       },
       workspacePath,
-      permissions: "permissionless" as const,
+      permissions: orchestratorPermissions,
       model: selection.model,
       systemPromptFile,
       subagent: selection.subagent,
@@ -3540,11 +3542,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    const orchestratorRestorePermissions = selection.role === "orchestrator"
+      ? (selection.permissions ?? ("permissionless" as const))
+      : undefined;
     const projectConfigForLaunch: ProjectConfig = {
       ...project,
       agentConfig: {
         ...selection.agentConfig,
-        ...(selection.role === "orchestrator" ? { permissions: "permissionless" as const } : {}),
+        ...(orchestratorRestorePermissions ? { permissions: orchestratorRestorePermissions } : {}),
         ...(session.metadata?.opencodeSessionId
           ? { opencodeSessionId: session.metadata.opencodeSessionId }
           : {}),
@@ -3571,7 +3576,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       projectConfig: projectConfigForLaunch,
       workspacePath,
       issueId: session.issueId ?? undefined,
-      permissions: selection.role === "orchestrator" ? "permissionless" : selection.permissions,
+      permissions: selection.role === "orchestrator"
+        ? (selection.permissions ?? ("permissionless" as const))
+        : selection.permissions,
       model: selection.model,
       subagent: selection.subagent,
       ...(orchestratorSystemPromptFile && { systemPromptFile: orchestratorSystemPromptFile }),
