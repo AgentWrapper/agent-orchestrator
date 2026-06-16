@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -68,5 +72,20 @@ describe("activity-events DB unavailable warning", () => {
     process.argv = ["node", "ao", "events", "stats"];
     emitActivityEventsDbUnavailableWarning(err);
     expect(console.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createRequire source pattern", () => {
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "events-db.ts"),
+    "utf8",
+  );
+
+  // When events-db is bundled into the Next.js server, the bundler's createRequire
+  // shim rejects file:// URL strings with ERR_INVALID_ARG_VALUE. The URL must be
+  // converted to a filesystem path first. See #2051.
+  it("converts import.meta.url to a path before calling createRequire", () => {
+    expect(source).not.toContain("createRequire(import.meta.url)");
+    expect(source).toContain("createRequire(fileURLToPath(import.meta.url))");
   });
 });
