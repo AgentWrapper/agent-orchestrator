@@ -9,10 +9,14 @@
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAoBaseDir } from "./paths.js";
 
 // Use createRequire so we can try/catch on native module load without top-level await.
-const _require = createRequire(import.meta.url);
+// Pass a filesystem path, not import.meta.url directly: when this module is bundled
+// into the Next.js server the bundler's createRequire shim only accepts absolute path
+// strings and rejects file:// URLs with ERR_INVALID_ARG_VALUE.
+const _require = createRequire(fileURLToPath(import.meta.url));
 
 type BetterSqlite3Database = {
   pragma(source: string, options?: { simple?: boolean }): unknown;

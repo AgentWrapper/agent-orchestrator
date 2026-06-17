@@ -69,3 +69,6 @@ agent-orchestrator.yaml
 .DS_Store
 Thumbs.db
 package-lock.json
+
+# Personal developer notes (not for repo)
+.developer/

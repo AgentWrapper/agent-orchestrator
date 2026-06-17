@@ -673,7 +673,7 @@ function DashboardInner({
                   <path d="M12 8v4M12 16h.01" />
                 </svg>
                 <span className="flex-1">
-                  GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
+                  SCM API rate limited — PR data (CI status, review state, sizes) may be stale.
                   Will retry automatically on next refresh.
                 </span>
                 <button

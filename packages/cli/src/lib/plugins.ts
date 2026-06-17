@@ -18,9 +18,19 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   opencode: opencodePlugin,
 };
 
-const scmPlugins: Record<string, { create(): SCM }> = {
+// SCM plugins — loaded lazily to avoid import errors when credentials are not set
+const scmPlugins: Record<string, { create(config?: Record<string, unknown>): SCM }> = {
   github: githubSCMPlugin,
 };
+
+// Register optional SCM plugins (they may fail if package is not installed)
+try {
+  const bitbucketPlugin = await import("@aoagents/ao-plugin-scm-bitbucket");
+  scmPlugins.bitbucket = bitbucketPlugin.default ?? bitbucketPlugin;
+} catch {
+  // Bitbucket plugin not available
+}
+
 
 /**
  * Resolve the Agent plugin for a project (or fall back to the config default).

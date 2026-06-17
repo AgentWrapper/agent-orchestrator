@@ -247,7 +247,16 @@ describe("parsePrFromUrl", () => {
     });
   });
 
-  it("falls back to trailing number for non-GitHub URLs", () => {
+  it("parses Bitbucket Cloud PR URLs", () => {
+    expect(parsePrFromUrl("https://bitbucket.org/myworkspace/myrepo/pull-requests/789")).toEqual({
+      owner: "myworkspace",
+      repo: "myrepo",
+      number: 789,
+      url: "https://bitbucket.org/myworkspace/myrepo/pull-requests/789",
+    });
+  });
+
+  it("parses GitLab merge request URLs", () => {
     expect(parsePrFromUrl("https://gitlab.com/foo/bar/-/merge_requests/456")).toEqual({
       owner: "foo",
       repo: "bar",
@@ -271,6 +280,15 @@ describe("parsePrFromUrl", () => {
       repo: "bar",
       number: 123,
       url: "https://github.com/foo/bar/pull/123/files",
+    });
+  });
+
+  it("falls back to trailing number for unknown SCM URLs", () => {
+    expect(parsePrFromUrl("https://custom-git.example.com/project/123")).toEqual({
+      owner: "",
+      repo: "",
+      number: 123,
+      url: "https://custom-git.example.com/project/123",
     });
   });
 

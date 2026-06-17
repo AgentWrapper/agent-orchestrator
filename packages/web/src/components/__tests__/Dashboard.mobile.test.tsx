@@ -181,9 +181,9 @@ describe("Dashboard unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(screen.getByText(/GitHub API rate limited/i)).toBeInTheDocument();
+    expect(screen.getByText(/SCM API rate limited/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText(/GitHub API rate limited/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SCM API rate limited/i)).not.toBeInTheDocument();
   });
 
   it("opens the done bar and restores completed sessions", async () => {

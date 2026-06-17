@@ -38,15 +38,21 @@ function inferScmPlugin(project: {
   repo?: string;
   scm?: Record<string, unknown>;
   tracker?: Record<string, unknown>;
-}): "github" | "gitlab" {
+}): "github" | "gitlab" | "bitbucket" {
   const scmPlugin = project.scm?.["plugin"];
   if (scmPlugin === "gitlab") {
     return "gitlab";
+  }
+  if (scmPlugin === "bitbucket") {
+    return "bitbucket";
   }
 
   const scmHost = project.scm?.["host"];
   if (typeof scmHost === "string" && scmHost.toLowerCase().includes("gitlab")) {
     return "gitlab";
+  }
+  if (typeof scmHost === "string" && scmHost.toLowerCase().includes("bitbucket")) {
+    return "bitbucket";
   }
 
   const trackerPlugin = project.tracker?.["plugin"];
@@ -605,9 +611,10 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.scm = { plugin: inferredPlugin };
     }
 
-    // Infer tracker from repo if not set (default to github issues)
+    // Infer tracker from repo if not set (default to github issues).
+    // Bitbucket uses Jira for issue tracking (both Atlassian products).
     if (!project.tracker && project.repo?.includes("/")) {
-      project.tracker = { plugin: inferredPlugin };
+      project.tracker = { plugin: inferredPlugin === "bitbucket" ? "jira" : inferredPlugin };
     }
   }
 

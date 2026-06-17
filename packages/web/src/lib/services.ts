@@ -43,7 +43,9 @@ import pluginAgentGrok from "@aoagents/ao-plugin-agent-grok";
 import pluginAgentOpencode from "@aoagents/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@aoagents/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@aoagents/ao-plugin-scm-github";
+import pluginScmBitbucket from "@aoagents/ao-plugin-scm-bitbucket";
 import pluginTrackerGithub from "@aoagents/ao-plugin-tracker-github";
+import pluginTrackerJira from "@aoagents/ao-plugin-tracker-jira";
 import pluginTrackerLinear from "@aoagents/ao-plugin-tracker-linear";
 
 export interface Services {
@@ -118,6 +120,12 @@ async function initServices(): Promise<Services> {
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
+
+  // Optional plugins — register with try/catch because create() throws
+  // if credentials are not set (env vars missing). Without the catch,
+  // a missing BITBUCKET_API_TOKEN would break the dashboard for ALL users.
+  try { registry.register(pluginScmBitbucket); } catch { /* credentials not configured */ }
+  try { registry.register(pluginTrackerJira); } catch { /* credentials not configured */ }
 
   const sessionManager = createSessionManager({ config, registry });
 

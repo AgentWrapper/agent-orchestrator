@@ -23,6 +23,22 @@ export function parsePrFromUrl(prUrl: string): ParsedPrUrl | null {
     }
   }
 
+  // Bitbucket Cloud: bitbucket.org/{workspace}/{repo}/pull-requests/{id}
+  const bitbucketPullIndex = pathSegments.findIndex((segment) => segment === "pull-requests");
+  if (bitbucketPullIndex >= 2 && bitbucketPullIndex + 1 < pathSegments.length) {
+    const owner = pathSegments[bitbucketPullIndex - 2];
+    const repo = pathSegments[bitbucketPullIndex - 1];
+    const prNumber = pathSegments[bitbucketPullIndex + 1];
+    if (owner && repo && prNumber && /^\d+$/.test(prNumber)) {
+      return {
+        owner,
+        repo,
+        number: Number.parseInt(prNumber, 10),
+        url: prUrl,
+      };
+    }
+  }
+
   const gitlabMergeRequestIndex = pathSegments.findIndex(
     (segment, index) =>
       segment === "-" &&
@@ -46,12 +62,7 @@ export function parsePrFromUrl(prUrl: string): ParsedPrUrl | null {
 
   const trailingNumberMatch = prUrl.match(TRAILING_NUMBER_REGEX);
   if (trailingNumberMatch) {
-    return {
-      owner: "",
-      repo: "",
-      number: parseInt(trailingNumberMatch[1], 10),
-      url: prUrl,
-    };
+    return { owner: "", repo: "", number: parseInt(trailingNumberMatch[1], 10), url: prUrl };
   }
 
   return null;

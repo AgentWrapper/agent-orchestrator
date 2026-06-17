@@ -55,9 +55,11 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "tracker", name: "github", pkg: "@aoagents/ao-plugin-tracker-github" },
   { slot: "tracker", name: "linear", pkg: "@aoagents/ao-plugin-tracker-linear" },
   { slot: "tracker", name: "gitlab", pkg: "@aoagents/ao-plugin-tracker-gitlab" },
+  { slot: "tracker", name: "jira", pkg: "@aoagents/ao-plugin-tracker-jira" },
   // SCM
   { slot: "scm", name: "github", pkg: "@aoagents/ao-plugin-scm-github" },
   { slot: "scm", name: "gitlab", pkg: "@aoagents/ao-plugin-scm-gitlab" },
+  { slot: "scm", name: "bitbucket", pkg: "@aoagents/ao-plugin-scm-bitbucket" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@aoagents/ao-plugin-notifier-composio" },
   { slot: "notifier", name: "dashboard", pkg: "@aoagents/ao-plugin-notifier-dashboard" },
