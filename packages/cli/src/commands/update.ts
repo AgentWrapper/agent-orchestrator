@@ -404,12 +404,21 @@ interface MigrationResult {
  * from stdout — the contract is documented on {@link MigrationSummary}.
  */
 async function runMigration(): Promise<MigrationResult> {
-  const result = await runCommandCapture("ao", ["migrate", "--json"], { echo: true });
+  // No echo: `--json` emits a machine-readable blob, not human progress. We
+  // surface a readable summary on success and the raw output on failure.
+  const result = await runCommandCapture("ao", ["migrate", "--json"]);
   return {
     exitCode: result.exitCode,
     summary: parseMigrationSummary(result.output),
     output: result.output,
   };
+}
+
+/** One-line human summary of a migration result, for the success path. */
+function formatMigrationSummary(summary: MigrationSummary | null): string {
+  if (!summary) return "Migration complete.";
+  const { projects, orchestrators } = summary;
+  return `Migration complete: ${projects.created} project(s), ${orchestrators.created} orchestrator(s) migrated.`;
 }
 
 function parseMigrationSummary(output: string): MigrationSummary | null {
@@ -513,13 +522,15 @@ async function handleCutover(method: InstallMethod, target: string): Promise<voi
     console.error(
       chalk.red(`\nMigration failed (exit ${migration.exitCode}). AO was NOT updated.`),
     );
+    if (migration.output.trim()) console.error(chalk.dim(migration.output.trim()));
     console.error(
       chalk.yellow(
-        "You are still on the legacy version. Resolve the migration error above and retry `ao update`.",
+        "You are still on the legacy version. Resolve the migration error and retry `ao update`.",
       ),
     );
     process.exit(migration.exitCode);
   }
+  console.log(chalk.dim(formatMigrationSummary(migration.summary)));
 
   // 5. Install the rewrite at the target.
   const cmd = getCutoverInstallCommand(method, target);
