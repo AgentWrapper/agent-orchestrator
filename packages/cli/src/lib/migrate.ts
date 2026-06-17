@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "@aoagents/ao-core";
+import type { ProjectRow } from "./migrate-db.js";
 
 /**
  * `ao migrate` — pure project mappers (#2129).
@@ -243,4 +244,55 @@ export function buildProjectPlan(id: string, pc: ProjectConfig): ProjectPlan {
   }
   const config = buildRewriteConfig(pc, notes);
   return { id, add, config, notes };
+}
+
+// ---------------------------------------------------------------------------
+// Project DB row (server-side fields migrate now computes itself — §7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Environment-dependent inputs for a project row, injected so the row builder
+ * stays pure (no child_process / fs of its own).
+ */
+export interface ProjectRowDeps {
+  /** `git -C <path> remote get-url origin` trimmed, `''` on any failure. */
+  repoOriginUrl: (path: string) => string;
+  /** registered.json `addedAt` (ISO) for this project, or null if unregistered. */
+  registeredAt: (id: string, path: string) => string | null;
+  /** Project config file mtime (ISO), or null if it cannot be stat'd. */
+  configFileMtime: (path: string) => string | null;
+  /** Fallback "now" ISO timestamp (last resort for registered_at). */
+  now: string;
+}
+
+/**
+ * Build the rewrite `projects` row for one legacy project (§7). The rewrite no
+ * longer fills the server-side fields (we write SQL directly), so migrate
+ * computes them: repo_origin_url, registered_at, kind, display_name, config.
+ */
+export function buildProjectRow(
+  id: string,
+  pc: ProjectConfig,
+  deps: ProjectRowDeps,
+): { row: ProjectRow; notes: string[] } {
+  const notes: string[] = [];
+  const config = buildRewriteConfig(pc, notes);
+
+  // display_name: the rewrite falls back to id on read, so only persist a real name.
+  const displayName =
+    typeof pc.name === "string" && pc.name.length > 0 && pc.name !== id ? pc.name : "";
+
+  const registeredAt =
+    deps.registeredAt(id, pc.path) ?? deps.configFileMtime(pc.path) ?? deps.now;
+
+  const row: ProjectRow = {
+    id,
+    path: pc.path,
+    repo_origin_url: deps.repoOriginUrl(pc.path),
+    display_name: displayName,
+    registered_at: registeredAt,
+    kind: "single_repo",
+    config: config ? JSON.stringify(config) : null,
+  };
+  return { row, notes };
 }

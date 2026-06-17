@@ -14,8 +14,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { ProjectConfig } from "@aoagents/ao-core";
-import { getOrchestratorPath, getProjectSessionsDir } from "@aoagents/ao-core";
+import { getOrchestratorPath, getProjectSessionsDir, type ProjectConfig } from "@aoagents/ao-core";
 import type { SessionRow } from "./migrate-db.js";
 
 /** Harnesses whose orchestrator we migrate. aider (and anything else) is skipped. */

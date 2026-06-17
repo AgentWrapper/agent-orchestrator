@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import type { ProjectConfig } from "@aoagents/ao-core";
 import {
   buildProjectPlan,
+  buildProjectRow,
   buildRewriteConfig,
   isValidRewriteProjectId,
   mapHarness,
   mapPermission,
+  type ProjectRowDeps,
 } from "../../src/lib/migrate.js";
 
 // ---------------------------------------------------------------------------
@@ -172,5 +174,48 @@ describe("buildProjectPlan", () => {
     const plan = buildProjectPlan("p", project({ defaultBranch: "develop" }));
     expect(plan.config).toEqual({ defaultBranch: "develop" });
     expect(plan.notes).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildProjectRow (server-side fields — §7)
+// ---------------------------------------------------------------------------
+
+describe("buildProjectRow", () => {
+  const deps: ProjectRowDeps = {
+    repoOriginUrl: () => "https://example.com/repo.git",
+    registeredAt: () => "2026-01-02T03:04:05.000Z",
+    configFileMtime: () => "2026-02-02T00:00:00.000Z",
+    now: "2026-06-18T00:00:00.000Z",
+  };
+
+  it("computes the server-side fields and serializes a non-null config", () => {
+    const { row } = buildProjectRow("app", project({ name: "App", defaultBranch: "develop" }), deps);
+    expect(row).toEqual({
+      id: "app",
+      path: "/repos/my-project",
+      repo_origin_url: "https://example.com/repo.git",
+      display_name: "App",
+      registered_at: "2026-01-02T03:04:05.000Z",
+      kind: "single_repo",
+      config: JSON.stringify({ defaultBranch: "develop" }),
+    });
+  });
+
+  it("stores NULL config and empty display_name when there is nothing to persist", () => {
+    const { row } = buildProjectRow("app", project({ name: "app", defaultBranch: "main" }), deps);
+    expect(row.config).toBeNull();
+    expect(row.display_name).toBe(""); // name === id falls back to id on read
+  });
+
+  it("falls back registered_at: registry -> config mtime -> now", () => {
+    const noRegistry: ProjectRowDeps = { ...deps, registeredAt: () => null };
+    expect(buildProjectRow("p", project(), noRegistry).row.registered_at).toBe(
+      "2026-02-02T00:00:00.000Z",
+    );
+    const noneAtAll: ProjectRowDeps = { ...deps, registeredAt: () => null, configFileMtime: () => null };
+    expect(buildProjectRow("p", project(), noneAtAll).row.registered_at).toBe(
+      "2026-06-18T00:00:00.000Z",
+    );
   });
 });

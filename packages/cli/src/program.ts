@@ -17,6 +17,7 @@ import { registerPlugin } from "./commands/plugin.js";
 import { registerNotify } from "./commands/notify.js";
 import { registerProjectCommand } from "./commands/project.js";
 import { registerMigrateStorage } from "./commands/migrate-storage.js";
+import { registerMigrate } from "./commands/migrate.js";
 import { registerCompletion } from "./commands/completion.js";
 import { registerEvents } from "./commands/events.js";
 import { registerConfig } from "./commands/config.js";
@@ -52,6 +53,7 @@ export function createProgram(): Command {
   registerNotify(program);
   registerProjectCommand(program);
   registerMigrateStorage(program);
+  registerMigrate(program);
   registerCompletion(program);
   registerEvents(program);
   registerConfig(program);
