@@ -199,7 +199,14 @@ export function findProjectOrchestrator(
 	projectId: string,
 ): WorkspaceSession | undefined {
 	const workspace = workspaces.find((w) => w.id === projectId);
-	return workspace?.sessions.find((session) => isOrchestratorSession(session) && sessionIsActive(session));
+	if (!workspace) return undefined;
+	for (let i = workspace.sessions.length - 1; i >= 0; i -= 1) {
+		const session = workspace.sessions[i];
+		if (isOrchestratorSession(session) && sessionIsActive(session)) {
+			return session;
+		}
+	}
+	return undefined;
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {

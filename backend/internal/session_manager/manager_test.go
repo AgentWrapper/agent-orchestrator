@@ -150,6 +150,8 @@ type fakeRuntime struct {
 	aliveByHandle map[string]bool
 	aliveErr      error
 	destroyedIDs  []string
+	alive         bool
+	probeErr      error
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -166,8 +168,14 @@ func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
+	if r.probeErr != nil {
+		return false, r.probeErr
+	}
 	if r.aliveErr != nil {
 		return false, r.aliveErr
+	}
+	if r.alive {
+		return true, nil
 	}
 	return r.aliveByHandle[handle.ID], nil
 }
@@ -570,6 +578,44 @@ func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
 		t.Fatalf("kill err = %v, want workspace error surfaced", err)
 	}
 }
+
+func TestRetireOrchestrator_TerminatesOldOrchestratorWhenDestroySucceeds(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("destroyed runtime/workspace = %d/%d, want 1/1", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated", st.sessions["mer-1"])
+	}
+}
+
+func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	rt.alive = true
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrSessionStillAlive) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrSessionStillAlive", err)
+	}
+	if rt.destroyed != orchestratorRetireAttempts {
+		t.Fatalf("destroy attempts = %d, want %d", rt.destroyed, orchestratorRetireAttempts)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("retired session = %+v, want still live after failed retirement", got)
+	}
+}
+
+func TestRetireOrchestrator_ReturnsIncompleteHandleWhenHandleMissing(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrIncompleteHandle", err)
+	}
+}
+
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})

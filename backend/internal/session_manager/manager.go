@@ -42,6 +42,9 @@ var (
 	// with the system prompt only). Workers without a task and without a native
 	// session id have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
+	// ErrSessionStillAlive means teardown could not prove the runtime is gone
+	// even after destroy was attempted.
+	ErrSessionStillAlive = errors.New("session: runtime still alive after destroy")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -51,6 +54,9 @@ const (
 	EnvIssueID   = "AO_ISSUE_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// Replacement cutover gets one retry after the initial destroy attempt
+	// before the old orchestrator retirement fails hard.
+	orchestratorRetireAttempts = 2
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -466,6 +472,54 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		freed = true
 	}
 	return freed, nil
+}
+
+// RetireOrchestrator tears down an old orchestrator during replacement cutover.
+// It retries destroy and requires a clean liveness probe before marking the old
+// orchestrator terminated.
+func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("retire %s: %w", id, err)
+	}
+	if !ok || rec.IsTerminated {
+		return nil
+	}
+	handle := runtimeHandle(rec.Metadata)
+	ws := workspaceInfo(rec)
+	if handle.ID == "" || ws.Path == "" {
+		return fmt.Errorf("retire %s: %w", id, ErrIncompleteHandle)
+	}
+	for attempt := 0; attempt < orchestratorRetireAttempts; attempt++ {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			if attempt == orchestratorRetireAttempts-1 {
+				return fmt.Errorf("retire %s: destroy: %w", id, err)
+			}
+			continue
+		}
+		alive, err := m.runtime.IsAlive(ctx, handle)
+		if err != nil {
+			if attempt == orchestratorRetireAttempts-1 {
+				return fmt.Errorf("retire %s: probe: %w", id, err)
+			}
+			continue
+		}
+		if alive {
+			if attempt == orchestratorRetireAttempts-1 {
+				return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
+			}
+			continue
+		}
+		if err := m.workspace.Destroy(ctx, ws); err != nil && !errors.Is(err, ports.ErrWorkspaceDirty) {
+			m.logger.Warn("session manager: old orchestrator workspace destroy failed after runtime exit",
+				"session", id, "err", err)
+		}
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			return fmt.Errorf("retire %s: %w", id, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs

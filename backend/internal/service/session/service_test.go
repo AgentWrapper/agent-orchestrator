@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,12 +202,15 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
 	killed          []domain.SessionID
+	retired         []domain.SessionID
 	cleanupProjects []domain.ProjectID
 	killErr         error
+	retireErr       error
 	cleanupErr      error
 	spawnErr        error
 	spawned         bool
 	killsAtSpawn    int
+	retiredAtSpawn  int
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -215,6 +219,7 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	f.spawned = true
 	f.killsAtSpawn = len(f.killed)
+	f.retiredAtSpawn = len(f.retired)
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
@@ -226,6 +231,13 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 	}
 	f.killed = append(f.killed, id)
 	return true, nil
+}
+func (f *fakeCommander) RetireOrchestrator(_ context.Context, id domain.SessionID) error {
+	if f.retireErr != nil {
+		return f.retireErr
+	}
+	f.retired = append(f.retired, id)
+	return nil
 }
 func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
@@ -293,7 +305,7 @@ func TestTeardownProjectStopsOnKillError(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
+func TestSpawnOrchestratorCleanSpawnsBeforeRetiringActiveOrchestrators(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	// Two active orchestrators plus an unrelated worker and a terminated
@@ -310,11 +322,43 @@ func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T)
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 
-	if len(fc.killed) != 2 {
-		t.Fatalf("killed = %v, want the two active orchestrators", fc.killed)
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want the two active orchestrators", fc.retired)
 	}
-	if !fc.spawned || fc.killsAtSpawn != 2 {
-		t.Fatalf("spawn must run after both kills: spawned=%v killsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	if !fc.spawned || fc.retiredAtSpawn != 0 {
+		t.Fatalf("spawn must run before old orchestrators are retired: spawned=%v retiredAtSpawn=%d", fc.spawned, fc.retiredAtSpawn)
+	}
+}
+
+func TestSpawnOrchestratorCleanSpawnFailureKeepsExistingOrchestrators(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{spawnErr: errors.New("boom")}
+	svc := &Service{manager: fc, store: st}
+
+	err := fc.spawnErr
+	if _, got := svc.SpawnOrchestrator(context.Background(), "mer", true); !errors.Is(got, err) {
+		t.Fatalf("SpawnOrchestrator err = %v, want %v", got, err)
+	}
+	if len(fc.retired) != 0 {
+		t.Fatalf("retired = %v, want none when replacement spawn fails", fc.retired)
+	}
+}
+
+func TestSpawnOrchestratorCleanRetireFailureReturnsCutoverError(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{retireErr: errors.New("cannot retire")}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+	if err == nil || !strings.Contains(err.Error(), "Replacement orchestrator started") {
+		t.Fatalf("err = %v, want cutover failure message", err)
+	}
+	if !fc.spawned || len(fc.retired) != 0 {
+		t.Fatalf("spawned=%v retired=%v, want replacement spawned and retire attempted but failed", fc.spawned, fc.retired)
 	}
 }
 

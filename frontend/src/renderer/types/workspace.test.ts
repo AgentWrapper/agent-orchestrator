@@ -115,6 +115,12 @@ describe("findProjectOrchestrator", () => {
 		expect(findProjectOrchestrator([workspaceWith([dead, live, worker])], "skills")).toBe(live);
 	});
 
+	it("prefers the newest live orchestrator when multiple replacements overlap", () => {
+		const older = sessionWith({ id: "skills-4", kind: "orchestrator", status: "idle", provider: "claude-code" });
+		const newer = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working", provider: "codex" });
+		expect(findProjectOrchestrator([workspaceWith([older, newer])], "skills")).toBe(newer);
+	});
+
 	it("returns undefined when every orchestrator is terminated", () => {
 		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
 		expect(findProjectOrchestrator([workspaceWith([dead])], "skills")).toBeUndefined();
