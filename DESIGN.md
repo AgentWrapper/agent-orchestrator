@@ -1,6 +1,6 @@
-# Design System — Agent Orchestrator
+# Design System — AgentMesh
 
-> **This document supersedes the previous "Warm Terminal" system.** AO's design
+> **This document supersedes the previous "Warm Terminal" system.** AgentMesh's design
 > language is **Mission Control**: a calm, high-signal control room for
 > supervising a fleet of autonomous agents. The earlier warm-neutral direction
 > (Geist Sans, amber/orange orchestrator CTA, brown-tinted surfaces) is retired.

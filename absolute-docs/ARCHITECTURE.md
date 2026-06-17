@@ -1,6 +1,6 @@
-# Agent Orchestrator — Technical Architecture
+# AgentMesh — Technical Architecture
 
-This document explains how the various parts of the Agent Orchestrator communicate with each other: where HTTP is used, where WebSocket is used, and what each carries.
+This document explains how the various parts of AgentMesh communicate with each other: where HTTP is used, where WebSocket is used, and what each carries.
 
 ---
 
@@ -72,6 +72,15 @@ graph TB
 ### 1. HTTP / REST — `/api/*` on port 3000
 
 Used for all request-response interactions. The browser calls these on demand; the CLI and the WebSocket server also use them.
+
+**Implementation Status:** ✅ All documented endpoints are now implemented. New endpoints added: `/api/sessions/light`, `/api/sessions/:id/files`, `/api/sessions/:id/diff/**`, `/api/sessions/:id/sub-sessions`, `/api/agents`
+
+**Recently Added Endpoints:**
+- `/api/sessions/light` - Lightweight session list for performance optimization
+- `/api/sessions/:id/files` - Browse workspace files with directory traversal
+- `/api/sessions/:id/diff/**` - Git diff viewing with flexible path support
+- `/api/sessions/:id/sub-sessions` - Manage forked sub-sessions for specialized tasks
+- `/api/agents` - List all registered agent plugins with metadata
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -331,3 +340,114 @@ Args are inferred from the basename: `cmd` → `/c`, `bash`/`sh`/`zsh` → `-c`,
 - **Agent plugins** — `setupPathWrapperWorkspace()` generates `.cjs` + `.cmd` wrapper pairs (instead of bash scripts) for `gh`/`git` interception. `formatLaunchCommand` for codex / kimicode prepends `& ` so PowerShell parses the quoted binary path as a call expression. `agent-claude-code` ships a Node.js metadata-updater (`.cjs`) hook in place of the bash version; system-prompt files are inlined rather than `$(cat …)`-substituted.
 - **Path-equality** — `packages/cli/src/lib/path-equality.ts` (`pathsEqual`, `canonicalCompareKey`) handles NTFS case-insensitivity and drive-letter case differences when comparing project paths in `ao start`.
 - **`stopStaleWindowsPtyHosts(projectDir)`** in `packages/web/src/lib/windows-pty-cleanup.ts` is a defensive sweeper used by the dashboard to clean up orphan pty-hosts found via a PowerShell `Get-CimInstance Win32_Process` query.
+
+---
+
+## AgentMesh Coordination Layer
+
+AgentMesh is the product layer built on top of AO. AO solves the infrastructure problem (running agents in parallel, isolating workspaces, tracking PRs, reacting to CI). AgentMesh solves the coordination problem (making agents work together like an engineering team).
+
+See [`AGENTMESH.md`](AGENTMESH.md) for the full engineering reference. This section covers how AgentMesh integrates with the AO architecture described above.
+
+### High-level system diagram
+
+```
+User
+ ↓
+agentmesh CLI  ←→  AO CLI (ao commands still work independently)
+ ↓
+AgentMesh Core
+ ├── Task board (SQLite, .agentmesh/db.sqlite)
+ ├── Message bus (typed, logged, replayable)
+ ├── Role manager (builder, qa, planner, …)
+ ├── QA loop engine (state machine: building → qa_running → rework → pr_opening)
+ ├── Policy engine (blocks dangerous diffs before PR)
+ ├── PR gate (PR opens only after QA passes)
+ └── Timeline logger (every step as structured JSONL)
+ ↓
+AO Core Infrastructure (unchanged)
+ ├── Session Manager (CRUD, worktree isolation, metadata files)
+ ├── Lifecycle Manager (state machine, polling loop, reactions)
+ ├── Plugin Registry (8 slots: runtime, agent, workspace, tracker, SCM, notifier, terminal)
+ └── Config Loader (Zod-validated agent-orchestrator.yaml)
+ ↓
+Agent Adapters
+ ├── Claude Code (builder role — local terminal, ConPTY on Windows)
+ ├── Codex (QA role — local terminal)
+ ├── Devin (external — via GitHub issues/PRs/webhooks)
+ ├── Gemini CLI, OpenCode, Cursor Agent, Aider (V1)
+ └── future agents
+ ↓
+Git / GitHub / CI / PRs
+```
+
+### AgentMesh data flow for a single task
+
+```
+agentmesh run "Add password reset flow" --builder claude-code --qa codex
+  ↓
+AgentMesh: create TASK-001 in SQLite
+AgentMesh: call AO session.spawn() → Claude Code builder session
+  ↓
+AO: create worktree, set up branch, write system prompt, start Claude Code
+  ↓
+AgentMesh: poll builder output via AO session APIs
+AgentMesh: detect completion_claim from builder
+AgentMesh: capture diff, builder-summary.md, test logs
+  ↓
+AgentMesh: call AO session.spawn() → Codex QA session
+AgentMesh: send QA prompt (task + diff + builder_summary + builder_commands)
+  ↓
+AO: create worktree, set up branch, start Codex
+  ↓
+AgentMesh: poll QA output
+AgentMesh: parse verdict (PASS / FAIL / BLOCKED) from QA output
+  ↓
+PASS path:
+  AgentMesh: run policy engine against diff
+  AgentMesh: call AO SCM plugin → open PR
+  AgentMesh: wait for CI via AO lifecycle reactions
+  AgentMesh: mark task merge_ready
+FAIL path:
+  AgentMesh: save structured QA report
+  AgentMesh: send rework_request message to builder session
+  AgentMesh: builder fixes → QA retests (up to max_retries)
+  AgentMesh: if max_retries exhausted → task blocked
+```
+
+### What AgentMesh adds to AO's storage
+
+AO stores session metadata in `~/.agent-orchestrator/{hash}-{project}/sessions/`. AgentMesh stores task-level data inside the repo:
+
+```
+~/.agent-orchestrator/{hash}-{project}/   ← AO (unchanged)
+  sessions/{id}
+  worktrees/{id}/
+  archive/{id}_{ts}/
+
+.agentmesh/                               ← AgentMesh (new, inside repo)
+  db.sqlite                               ← task board, messages, QA reports
+  tasks/TASK-001/
+    attempts/attempt-1/
+      builder-output.log
+      diff.patch
+      qa-report.json
+    timeline.jsonl
+    messages.jsonl
+```
+
+### Integration contract: AgentMesh → AO
+
+AgentMesh calls these AO interfaces and must not break them:
+
+| AO API | AgentMesh use |
+|--------|--------------|
+| `SessionManager.spawn()` | Start builder and QA sessions |
+| `SessionManager.send()` | Deliver prompts and rework requests |
+| `SessionManager.kill()` | Stop sessions on task completion or block |
+| `SessionManager.list()` | Poll session status and activity state |
+| `SCM.createPullRequest()` | Open PR after QA pass |
+| `Lifecycle` reactions | Receive CI failures and review comments back |
+| `Tracker.getIssue()` | Seed task descriptions from GitHub/Linear issues |
+
+AgentMesh never modifies `session-manager.ts` or `lifecycle-manager.ts` internals in the MVP. It wraps them from outside.

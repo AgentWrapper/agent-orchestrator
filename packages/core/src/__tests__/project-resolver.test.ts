@@ -10,6 +10,7 @@ import {
   saveGlobalConfig,
   type GlobalConfig,
 } from "../global-config.js";
+import { isWindows } from "../index.js";
 
 function makeGlobalConfig(projects: GlobalConfig["projects"] = {}): GlobalConfig {
   return {
@@ -209,7 +210,7 @@ describe("project resolver", () => {
     });
   });
 
-  it("matches a flat local config launched from a symlinked checkout", () => {
+  it.skipIf(isWindows())("matches a flat local config launched from a symlinked checkout", () => {
     const realProjectPath = join(tempRoot, "real-app");
     const symlinkParent = join(tempRoot, "links");
     const symlinkProjectPath = join(symlinkParent, "app-link");

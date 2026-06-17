@@ -1,4 +1,4 @@
-# Contributing to Agent Orchestrator
+# Contributing to AgentMesh
 
 Thanks for your interest in contributing. This guide covers how to report bugs, submit PRs, and build new plugins.
 

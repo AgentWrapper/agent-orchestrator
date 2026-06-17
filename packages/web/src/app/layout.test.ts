@@ -20,12 +20,12 @@ describe("app layout metadata", () => {
     await expect(generateMetadata()).resolves.toMatchObject({
       title: {
         template: "%s | Agent Orchestrator",
-        default: "ao | Agent Orchestrator",
+        default: "AgentMesh | Agent Orchestrator",
       },
       appleWebApp: {
         capable: true,
         statusBarStyle: "black-translucent",
-        title: "ao | Agent Orchestrator",
+        title: "AgentMesh | Agent Orchestrator",
       },
     });
   });

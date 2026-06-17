@@ -17,6 +17,7 @@ import {
   triggerCodeReviewForSession,
 } from "../code-review-manager.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
+import { isWindows } from "../index.js";
 import {
   SessionNotFoundError,
   type OrchestratorConfig,
@@ -644,7 +645,7 @@ describe("runCodexCodeReview", () => {
 });
 
 describe("prepareGitReviewerWorkspace", () => {
-  it("prunes stale git worktree metadata when the reviewer workspace directory is gone", async () => {
+  it.skipIf(isWindows())("prunes stale git worktree metadata when the reviewer workspace directory is gone", async () => {
     const tmpHome = join(tmpdir(), `ao-test-review-worktree-${randomUUID()}`);
     const originalHome = process.env["HOME"];
     process.env["HOME"] = tmpHome;

@@ -1,7 +1,7 @@
 import type { ObservabilityLevel } from "./observability.js";
 
 /**
- * Agent Orchestrator — Core Type Definitions
+ * AgentMesh — Core Type Definitions
  *
  * This file defines ALL interfaces and types that the system uses.
  * Every plugin, CLI command, and web API route builds against these.

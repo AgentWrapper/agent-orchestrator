@@ -1,6 +1,6 @@
-# Agent Orchestrator Setup Guide
+# AgentMesh Setup Guide
 
-Comprehensive guide to installing, configuring, and troubleshooting Agent Orchestrator.
+Comprehensive guide to installing, configuring, and troubleshooting AgentMesh.
 
 ## Prerequisites
 
@@ -98,7 +98,7 @@ npm install -g @aoagents/ao
 
 ### Build from Source (for contributors)
 
-If you want to develop or contribute to Agent Orchestrator:
+If you want to develop or contribute to AgentMesh:
 
 ```bash
 # Clone the repository
@@ -199,7 +199,7 @@ See [agent-orchestrator.yaml.example](./agent-orchestrator.yaml.example) for a f
 
 ### Plugin Slots
 
-Agent Orchestrator has 8 plugin slots. All are swappable:
+AgentMesh has 8 plugin slots. All are swappable:
 
 | Slot          | Purpose              | Default       | Alternatives                                    |
 | ------------- | -------------------- | ------------- | ----------------------------------------------- |
@@ -389,7 +389,7 @@ echo $LINEAR_API_KEY  # Should print your key
 ```bash
 # Send test message
 curl -X POST -H 'Content-type: application/json' \
-  --data '{"text":"Agent Orchestrator test"}' \
+  --data '{"text":"AgentMesh test"}' \
   $SLACK_WEBHOOK_URL
 ```
 

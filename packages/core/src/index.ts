@@ -1,7 +1,7 @@
 /**
  * @aoagents/ao-core
  *
- * Core library for the Agent Orchestrator.
+ * Core library for AgentMesh.
  * Exports all types, config loader, and service implementations.
  */
 
@@ -235,6 +235,7 @@ export {
   getActivityFallbackState,
   classifyTerminalActivity,
   recordTerminalActivity,
+  getActivityLogPath,
 } from "./activity-log.js";
 export {
   ACTIVITY_STRONG_WINDOW_MS,

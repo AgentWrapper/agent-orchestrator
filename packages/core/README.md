@@ -1,6 +1,6 @@
 # @aoagents/ao-core
 
-Core services, types, and configuration for the Agent Orchestrator system.
+Core services, types, and configuration for the AgentMesh system.
 
 ## What's Here
 
@@ -184,7 +184,7 @@ Storage format:
 
 Migration notes:
 
-- No migration needed for existing AO installs
+- No migration needed for existing AgentMesh installs
 - The `feedback-reports` directory is created lazily on first persisted report
 
 ## Testing

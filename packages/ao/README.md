@@ -1,6 +1,6 @@
 <div align="center">
 
-# Agent Orchestrator (`ao`)
+# AgentMesh (`ao`)
 
 **The orchestration layer for parallel AI coding agents.**
 
@@ -9,7 +9,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/UZv7JjxbwG)
 
-<img width="800" alt="Agent Orchestrator" src="https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/docs/assets/agent_orchestrator_banner.png">
+<img width="800" alt="AgentMesh" src="https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/docs/assets/agent_orchestrator_banner.png">
 
 </div>
 
@@ -28,7 +28,7 @@ npm install -g @aoagents/ao
 **Prerequisites:** [Node.js 20.18.3+](https://nodejs.org), [Git 2.25+](https://git-scm.com), the [`gh` CLI](https://cli.github.com), and at least one coding-agent CLI (e.g. [Claude Code](https://www.anthropic.com/claude-code)).
 
 - **macOS / Linux:** [tmux](https://github.com/tmux/tmux/wiki/Installing) — `brew install tmux` or `sudo apt install tmux`.
-- **Windows:** PowerShell 7+ recommended; tmux is **not** required (AO uses native ConPTY via the `process` runtime).
+- **Windows:** PowerShell 7+ recommended; tmux is **not** required (AgentMesh uses native ConPTY via the `process` runtime).
 
 ## Quick start
 
@@ -74,11 +74,11 @@ Seven plugin slots; the lifecycle state machine stays in core:
 | Notifier | desktop | slack, discord, composio, webhook, openclaw |
 | Terminal | iterm2 | web |
 
-## Why Agent Orchestrator?
+## Why AgentMesh?
 
 Running one AI agent in a terminal is easy. Running 30 across different issues, branches, and PRs is a coordination problem: creating branches, detecting stuck agents, reading CI failures, forwarding review comments, tracking which PRs are ready, and cleaning up afterward.
 
-Agent Orchestrator handles the isolation, feedback routing, and status tracking. You `ao start` and walk away — then review PRs and make decisions. The rest is automated.
+AgentMesh handles the isolation, feedback routing, and status tracking. You `ao start` and walk away — then review PRs and make decisions. The rest is automated.
 
 ## Documentation
 

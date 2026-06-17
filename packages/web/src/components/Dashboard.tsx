@@ -560,6 +560,9 @@ function DashboardInner({
                     <Link href={reviewHref} className="workspace-mode-switch__item">
                       Reviews
                     </Link>
+                    <Link href="/agentmesh" className="workspace-mode-switch__item">
+                      AgentMesh
+                    </Link>
                   </nav>
                 </div>
                 {!allProjectsView && projectSessions.length > 0 ? (

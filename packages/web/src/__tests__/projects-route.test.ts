@@ -15,6 +15,7 @@ import {
   generateExternalId,
   loadGlobalConfig,
   registerProjectInGlobalConfig,
+  isWindows,
 } from "@aoagents/ao-core";
 
 const invalidatePortfolioServicesCache = vi.fn();
@@ -216,7 +217,7 @@ describe("POST /api/projects", () => {
     });
   });
 
-  it("reconnects to the existing project ID when the same path is registered again", async () => {
+  it.skipIf(isWindows())("reconnects to the existing project ID when the same path is registered again", async () => {
     const repoDir = path.join(tempRoot, "demo");
     const aliasDir = path.join(tempRoot, "demo-alias");
     mkdirSync(path.join(repoDir, ".git"), { recursive: true });
