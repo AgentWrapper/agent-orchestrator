@@ -2460,12 +2460,9 @@ describe("start command — autoCreateConfig", () => {
 
     writeFileSync(
       process.env["AO_GLOBAL_CONFIG"]!,
-      [
-        "projects:",
-        `  ${basename(tmpDir)}:`,
-        `    path: ${join(tmpDir, "other-repo")}`,
-        "",
-      ].join("\n"),
+      ["projects:", `  ${basename(tmpDir)}:`, `    path: ${join(tmpDir, "other-repo")}`, ""].join(
+        "\n",
+      ),
     );
 
     await expect(autoCreateConfig(tmpDir)).rejects.toThrow("already registered");
@@ -2845,10 +2842,7 @@ describe("start command — already-running detection", () => {
     const localConfigPath = join(repoDir, "agent-orchestrator.yaml");
     writeFileSync(localConfigPath, "agent: claude-code\n");
 
-    const projectId = generateExternalId(
-      repoDir,
-      "https://github.com/org/agent-orchestrator.git",
-    );
+    const projectId = generateExternalId(repoDir, "https://github.com/org/agent-orchestrator.git");
     const globalConfigPath = process.env["AO_GLOBAL_CONFIG"]!;
     const { stringify: yamlStringify } = await import("yaml");
     writeFileSync(

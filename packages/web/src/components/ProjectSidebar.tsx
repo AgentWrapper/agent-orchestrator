@@ -107,7 +107,6 @@ function loadExpandedProjects(): Set<string> | null {
   }
 }
 
-
 /**
  * Brand row at the top of the sidebar: blue mascot mark + wordmark with the
  * " / " separator dimmed. Mirrors the mockup `.brand`. When a toggle handler is
@@ -514,7 +513,6 @@ function ProjectSidebarInner({
     return map;
   }, [sessionsKey, prefixByProject, allPrefixes, visibleProjects, showKilled, showDone]);
 
-
   // Clear an optimistic rename once the prop session.displayName catches up.
   // Without this, we'd keep masking the server value forever after a save.
   useEffect(() => {
@@ -534,20 +532,17 @@ function ProjectSidebarInner({
   const pendingRenamesRef = useRef(pendingRenames);
   pendingRenamesRef.current = pendingRenames;
 
-  const startRename = useCallback(
-    (session: DashboardSession, currentTitle: string) => {
-      // Prefer the in-flight optimistic value over the prop — if the user opens
-      // rename while a previous PATCH is still propagating, the prop still shows
-      // the pre-rename value but we want the input to start from the latest.
-      // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
-      // from the live title so the user types over the visible label.
-      const pending = pendingRenamesRef.current.get(session.id);
-      const initial = pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "");
-      setEditingSessionId(session.id);
-      setEditingValue(initial || currentTitle);
-    },
-    [],
-  );
+  const startRename = useCallback((session: DashboardSession, currentTitle: string) => {
+    // Prefer the in-flight optimistic value over the prop — if the user opens
+    // rename while a previous PATCH is still propagating, the prop still shows
+    // the pre-rename value but we want the input to start from the latest.
+    // Auto-derived displayName isn't pre-filled (user-set flag absent) — start
+    // from the live title so the user types over the visible label.
+    const pending = pendingRenamesRef.current.get(session.id);
+    const initial = pending ?? (session.displayNameUserSet ? (session.displayName ?? "") : "");
+    setEditingSessionId(session.id);
+    setEditingValue(initial || currentTitle);
+  }, []);
 
   const cancelRename = () => {
     setEditingSessionId(null);
@@ -894,141 +889,141 @@ function ProjectSidebarInner({
                 {/* Row actions — absolutely positioned over the count slot; the
                     count shows at rest, these reveal on hover (frees name space). */}
                 <div className="project-sidebar__proj-actions">
-                {/* Dashboard button */}
-                {!isDegraded ? (
-                  <Link
-                    href={projectHref}
-                    prefetch={false}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onMobileClose?.();
-                    }}
-                    className="project-sidebar__proj-action"
-                    aria-label={`Open ${project.name} dashboard`}
-                    title="Dashboard"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
+                  {/* Dashboard button */}
+                  {!isDegraded ? (
+                    <Link
+                      href={projectHref}
+                      prefetch={false}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMobileClose?.();
+                      }}
+                      className="project-sidebar__proj-action"
+                      aria-label={`Open ${project.name} dashboard`}
+                      title="Dashboard"
                     >
-                      <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
-                    </svg>
-                  </Link>
-                ) : null}
+                      <svg
+                        width="12"
+                        height="12"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-10h8V3h-8z" />
+                      </svg>
+                    </Link>
+                  ) : null}
 
-                {!isDegraded && orchestratorLink && (
-                  <a
-                    href={projectSessionPath(project.id, orchestratorLink.id)}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigate(
-                        projectSessionPath(project.id, orchestratorLink.id),
-                        orchestratorSession ?? undefined,
-                      );
-                    }}
-                    className="project-sidebar__proj-action"
-                    aria-label={`Open ${project.name} orchestrator`}
-                    title="Orchestrator"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      viewBox="0 0 24 24"
+                  {!isDegraded && orchestratorLink && (
+                    <a
+                      href={projectSessionPath(project.id, orchestratorLink.id)}
+                      onClick={(e) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigate(
+                          projectSessionPath(project.id, orchestratorLink.id),
+                          orchestratorSession ?? undefined,
+                        );
+                      }}
+                      className="project-sidebar__proj-action"
+                      aria-label={`Open ${project.name} orchestrator`}
+                      title="Orchestrator"
                     >
-                      <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                      <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                      <circle cx="6" cy="17" r="2" />
-                      <circle cx="12" cy="17" r="2" />
-                      <circle cx="18" cy="17" r="2" />
-                    </svg>
-                  </a>
-                )}
+                      <svg
+                        width="12"
+                        height="12"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                        <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                        <circle cx="6" cy="17" r="2" />
+                        <circle cx="12" cy="17" r="2" />
+                        <circle cx="18" cy="17" r="2" />
+                      </svg>
+                    </a>
+                  )}
 
-                <div
-                  className="project-sidebar__proj-menu"
-                  ref={projectMenuOpenId === project.id ? projectMenuRef : undefined}
-                >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setProjectMenuOpenId((current) =>
-                        current === project.id ? null : project.id,
-                      );
-                    }}
-                    className="project-sidebar__proj-action project-sidebar__proj-action--menu"
-                    aria-label={`Project actions for ${project.name}`}
-                    aria-expanded={projectMenuOpenId === project.id}
-                    aria-haspopup="menu"
-                    title="Project actions"
+                  <div
+                    className="project-sidebar__proj-menu"
+                    ref={projectMenuOpenId === project.id ? projectMenuRef : undefined}
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setProjectMenuOpenId((current) =>
+                          current === project.id ? null : project.id,
+                        );
+                      }}
+                      className="project-sidebar__proj-action project-sidebar__proj-action--menu"
+                      aria-label={`Project actions for ${project.name}`}
+                      aria-expanded={projectMenuOpenId === project.id}
+                      aria-haspopup="menu"
+                      title="Project actions"
                     >
-                      <circle cx="12" cy="5" r="1.75" />
-                      <circle cx="12" cy="12" r="1.75" />
-                      <circle cx="12" cy="19" r="1.75" />
-                    </svg>
-                  </button>
-                  {projectMenuOpenId === project.id ? (
-                    <div
-                      ref={projectMenuPopoverRef}
-                      className="project-sidebar__proj-menu-popover"
-                      role="menu"
-                      aria-label={`${project.name} actions`}
-                    >
-                      {orchestratorLink ? (
+                      <svg
+                        width="12"
+                        height="12"
+                        fill="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <circle cx="12" cy="5" r="1.75" />
+                        <circle cx="12" cy="12" r="1.75" />
+                        <circle cx="12" cy="19" r="1.75" />
+                      </svg>
+                    </button>
+                    {projectMenuOpenId === project.id ? (
+                      <div
+                        ref={projectMenuPopoverRef}
+                        className="project-sidebar__proj-menu-popover"
+                        role="menu"
+                        aria-label={`${project.name} actions`}
+                      >
+                        {orchestratorLink ? (
+                          <button
+                            type="button"
+                            className="project-sidebar__proj-menu-item"
+                            role="menuitem"
+                            onClick={() => {
+                              setProjectMenuOpenId(null);
+                              navigate(
+                                projectSessionPath(project.id, orchestratorLink.id),
+                                orchestratorSession ?? undefined,
+                              );
+                            }}
+                          >
+                            Open orchestrator
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="project-sidebar__proj-menu-item"
                           role="menuitem"
                           onClick={() => {
                             setProjectMenuOpenId(null);
-                            navigate(
-                              projectSessionPath(project.id, orchestratorLink.id),
-                              orchestratorSession ?? undefined,
-                            );
+                            setProjectSettingsProjectId(project.id);
                           }}
                         >
-                          Open orchestrator
+                          Project settings
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="project-sidebar__proj-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          setProjectMenuOpenId(null);
-                          setProjectSettingsProjectId(project.id);
-                        }}
-                      >
-                        Project settings
-                      </button>
-                      <button
-                        type="button"
-                        className="project-sidebar__proj-menu-item project-sidebar__proj-menu-item--danger"
-                        role="menuitem"
-                        onClick={() => void handleRemoveProject(project)}
-                        disabled={deletingProjectId === project.id}
-                      >
-                        {deletingProjectId === project.id ? "Removing..." : "Remove project"}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
+                        <button
+                          type="button"
+                          className="project-sidebar__proj-menu-item project-sidebar__proj-menu-item--danger"
+                          role="menuitem"
+                          onClick={() => void handleRemoveProject(project)}
+                          disabled={deletingProjectId === project.id}
+                        >
+                          {deletingProjectId === project.id ? "Removing..." : "Remove project"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -1116,9 +1111,7 @@ function ProjectSidebarInner({
                       </button>
                     </div>
                   ) : (
-                    <div className="project-sidebar__empty">
-                      No active sessions
-                    </div>
+                    <div className="project-sidebar__empty">No active sessions</div>
                   )}
                 </div>
               )}

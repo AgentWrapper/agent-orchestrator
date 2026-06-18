@@ -19,7 +19,11 @@ interface DirectoryBrowserProps {
 function isTextEditingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
 }
 
 function isFolderRowTarget(target: EventTarget | null): boolean {
@@ -88,7 +92,8 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
               : browser.directoryEntries.length - 1
             : Math.min(Math.max(selectedIndex + offset, 0), browser.directoryEntries.length - 1);
         const nextEntry = browser.directoryEntries[nextIndex];
-        if (nextEntry) browser.setSelectedBrowsePath(joinBrowsePath(browser.browsePath, nextEntry.name));
+        if (nextEntry)
+          browser.setSelectedBrowsePath(joinBrowsePath(browser.browsePath, nextEntry.name));
         return;
       }
 
@@ -146,7 +151,12 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
           >
             <ArrowUpIcon />
           </button>
-          <button type="button" onClick={browser.refresh} className="add-project-modal__toolbtn" aria-label="Refresh">
+          <button
+            type="button"
+            onClick={browser.refresh}
+            className="add-project-modal__toolbtn"
+            aria-label="Refresh"
+          >
             <RefreshIcon />
           </button>
           {browser.roots.length > 0 ? (
@@ -212,7 +222,9 @@ export function DirectoryBrowser({ browser }: DirectoryBrowserProps) {
           ) : browser.loading ? (
             <div className="add-project-browser__state">
               <p className="add-project-browser__state-title">Loading folders</p>
-              <p className="add-project-browser__state-copy">Fetching directories for this location.</p>
+              <p className="add-project-browser__state-copy">
+                Fetching directories for this location.
+              </p>
             </div>
           ) : (
             <div className="add-project-browser__rows">

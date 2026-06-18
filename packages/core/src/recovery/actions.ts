@@ -30,9 +30,16 @@ import type { RecoveryAssessment, RecoveryResult, RecoveryContext } from "./type
  */
 function buildLifecycleRecoveryPatch(
   rawMetadata: Record<string, string>,
-  next: { state: CanonicalSessionLifecycle["session"]["state"]; reason: CanonicalSessionLifecycle["session"]["reason"]; terminatedAt?: string },
+  next: {
+    state: CanonicalSessionLifecycle["session"]["state"];
+    reason: CanonicalSessionLifecycle["session"]["reason"];
+    terminatedAt?: string;
+  },
 ): Partial<Record<string, string>> {
-  if (!rawMetadata["lifecycle"] && !(rawMetadata["statePayload"] && rawMetadata["stateVersion"] === "2")) {
+  if (
+    !rawMetadata["lifecycle"] &&
+    !(rawMetadata["statePayload"] && rawMetadata["stateVersion"] === "2")
+  ) {
     return {};
   }
   const current = parseCanonicalLifecycle(rawMetadata);
@@ -44,9 +51,7 @@ function buildLifecycleRecoveryPatch(
     reason: next.reason,
     lastTransitionAt: nowIso,
     terminatedAt:
-      next.state === "terminated"
-        ? (next.terminatedAt ?? nowIso)
-        : updated.session.terminatedAt,
+      next.state === "terminated" ? (next.terminatedAt ?? nowIso) : updated.session.terminatedAt,
   };
   return buildLifecycleMetadataPatch(updated);
 }

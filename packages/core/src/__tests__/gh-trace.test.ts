@@ -17,22 +17,31 @@ describe("extractOperation", () => {
   });
 
   it("skips leading flags to find first positional", () => {
-    expect(extractOperation(["api", "--method", "GET", "repos/acme/repo/pulls"])).toBe("gh.api.repos");
+    expect(extractOperation(["api", "--method", "GET", "repos/acme/repo/pulls"])).toBe(
+      "gh.api.repos",
+    );
   });
 
   it("extracts first path segment from REST URL", () => {
-    expect(extractOperation(["api", "repos/acme/repo/pulls/123/comments?per_page=1"])).toBe("gh.api.repos");
+    expect(extractOperation(["api", "repos/acme/repo/pulls/123/comments?per_page=1"])).toBe(
+      "gh.api.repos",
+    );
   });
 
   it("handles -H flag pairs", () => {
-    expect(extractOperation(["api", "-H", "Accept: application/json", "graphql"])).toBe("gh.api.graphql");
+    expect(extractOperation(["api", "-H", "Accept: application/json", "graphql"])).toBe(
+      "gh.api.graphql",
+    );
   });
 });
 
 describe("redactArgs", () => {
   it("passes through normal args unchanged", () => {
     expect(redactArgs(["api", "graphql", "-f", "query={...}"])).toEqual([
-      "api", "graphql", "-f", "query={...}",
+      "api",
+      "graphql",
+      "-f",
+      "query={...}",
     ]);
   });
 
@@ -72,14 +81,14 @@ describe("parseIncludedHttpResponse", () => {
   it("parses status line and headers", () => {
     const output = [
       "HTTP/2 200",
-      "etag: W/\"abc123\"",
+      'etag: W/"abc123"',
       "x-ratelimit-remaining: 4999",
       "",
       '{"data":{}}',
     ].join("\n");
     const result = parseIncludedHttpResponse(output);
     expect(result.statusLine).toBe("HTTP/2 200");
-    expect(result.headers["etag"]).toBe("W/\"abc123\"");
+    expect(result.headers["etag"]).toBe('W/"abc123"');
     expect(result.headers["x-ratelimit-remaining"]).toBe("4999");
   });
 
@@ -89,12 +98,12 @@ describe("parseIncludedHttpResponse", () => {
       "location: https://example.com",
       "",
       "HTTP/1.1 200 OK",
-      "etag: W/\"final\"",
+      'etag: W/"final"',
       "",
       '{"data":{}}',
     ].join("\n");
     const result = parseIncludedHttpResponse(output);
     expect(result.statusLine).toBe("HTTP/1.1 200 OK");
-    expect(result.headers["etag"]).toBe("W/\"final\"");
+    expect(result.headers["etag"]).toBe('W/"final"');
   });
 });

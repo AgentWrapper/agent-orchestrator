@@ -1,5 +1,49 @@
 # Troubleshooting
 
+## Node version is too old
+
+**Symptom**: commands fail early with an engines error, unexpected startup crashes, or a local
+Node version older than `20.18.3`.
+
+**Root Cause**: AgentMesh requires Node `>=20.18.3`. A common failure mode on Windows is having an
+older globally installed `node` while the repo and published packages expect a newer runtime.
+
+**Fix**: upgrade Node, or run the repo with Node `20.18.3` explicitly.
+
+```powershell
+node --version
+
+# If this is lower than v20.18.3, use Node 20.18.3 for repo-local commands:
+npx -y node@20.18.3 "$env:APPDATA\npm\node_modules\pnpm\bin\pnpm.cjs" install
+npx -y node@20.18.3 "$env:APPDATA\npm\node_modules\pnpm\bin\pnpm.cjs" build
+npx -y node@20.18.3 packages/ao/bin/ao.js doctor
+npx -y node@20.18.3 packages/ao/bin/ao.js start
+```
+
+## Legacy storage directory warning
+
+**Symptom**: `ao start` succeeds but prints a warning that a legacy storage directory is present.
+
+**Root Cause**: AgentMesh detected older runtime state that has not been migrated to the current
+storage layout yet.
+
+**Fix**: this warning is non-blocking. You can keep testing, then migrate when convenient:
+
+```bash
+ao migrate-storage
+```
+
+## Notifier credential warnings
+
+**Symptom**: startup prints warnings for notifiers such as `discord`, `slack`, `webhook`,
+`openclaw`, or `composio`.
+
+**Root Cause**: those notifier plugins are enabled or discoverable, but their credentials are not
+configured in the current environment.
+
+**Fix**: this is also non-blocking for local dashboard and AgentMesh testing. Either ignore the
+warnings during local validation, or configure only the notifiers you actually plan to use.
+
 ## DirectTerminal: posix_spawnp failed error
 
 **Symptom**: Terminal in browser shows "Connected" but blank. WebSocket logs show:

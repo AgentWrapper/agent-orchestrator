@@ -24,58 +24,58 @@
 
 @theme {
   /* ── Base surfaces (background stepping, no shadows in dark mode) ── */
-  --color-bg-base:     #0C0C11;   /* Page / app background. L≈5%. near-pure black, blue cast */
-  --color-bg-surface:  #141419;   /* Card backgrounds, nav bar, status strip. L≈8% */
-  --color-bg-elevated: #1C1C25;   /* Hover states, terminal chrome, dropdowns. L≈12% */
-  --color-bg-subtle:   #23232F;   /* Input backgrounds, inline code, kbd. L≈15% */
+  --color-bg-base: #0c0c11; /* Page / app background. L≈5%. near-pure black, blue cast */
+  --color-bg-surface: #141419; /* Card backgrounds, nav bar, status strip. L≈8% */
+  --color-bg-elevated: #1c1c25; /* Hover states, terminal chrome, dropdowns. L≈12% */
+  --color-bg-subtle: #23232f; /* Input backgrounds, inline code, kbd. L≈15% */
 
   /* Legacy aliases — keep for backward compat with existing components */
-  --color-bg-primary:   var(--color-bg-base);
+  --color-bg-primary: var(--color-bg-base);
   --color-bg-secondary: var(--color-bg-surface);
-  --color-bg-tertiary:  var(--color-bg-elevated);
+  --color-bg-tertiary: var(--color-bg-elevated);
 
   /* ── Borders ─────────────────────────────────────────────────────── */
-  --color-border-subtle:   #22222E;  /* Lowest-visibility borders */
-  --color-border-default:  #2E2E3E;  /* Standard card borders */
-  --color-border-strong:   #3E3E52;  /* Focus rings, active borders, emphasis */
+  --color-border-subtle: #22222e; /* Lowest-visibility borders */
+  --color-border-default: #2e2e3e; /* Standard card borders */
+  --color-border-strong: #3e3e52; /* Focus rings, active borders, emphasis */
 
   /* Legacy alias */
-  --color-border-muted:    var(--color-border-subtle);
+  --color-border-muted: var(--color-border-subtle);
   --color-border-emphasis: var(--color-border-strong);
 
   /* ── Text hierarchy (4-tier, modeled on Linear's verified system) ─ */
-  --color-text-primary:   #EEEEF5;  /* Main content, titles, session names */
-  --color-text-secondary: #8888A6;  /* Metadata, timestamps, labels */
-  --color-text-tertiary:  #50506A;  /* Disabled, de-emphasized */
-  --color-text-muted:     #50506A;  /* Alias for tertiary */
-  --color-text-inverse:   #0C0C11;  /* Text on solid colored buttons */
+  --color-text-primary: #eeeef5; /* Main content, titles, session names */
+  --color-text-secondary: #8888a6; /* Metadata, timestamps, labels */
+  --color-text-tertiary: #50506a; /* Disabled, de-emphasized */
+  --color-text-muted: #50506a; /* Alias for tertiary */
+  --color-text-inverse: #0c0c11; /* Text on solid colored buttons */
 
   /* ── Interactive accent ──────────────────────────────────────────── */
   /* Derived from Linear #4EA7FC blue + #7070FF brand — split at blue-indigo */
-  --color-accent:          #5B7EF8;  /* Links, focus rings, active nav, working state */
-  --color-accent-hover:    #7B9CFB;  /* Hover state */
-  --color-accent-subtle:   rgba(91, 126, 248, 0.12);  /* Highlight backgrounds */
+  --color-accent: #5b7ef8; /* Links, focus rings, active nav, working state */
+  --color-accent-hover: #7b9cfb; /* Hover state */
+  --color-accent-subtle: rgba(91, 126, 248, 0.12); /* Highlight backgrounds */
 
   /* Aliases used in current components */
-  --color-accent-blue:   var(--color-accent);
+  --color-accent-blue: var(--color-accent);
 
   /* ── Status colors — semantic only, never decorative ────────────── */
   /* Verified against Linear's palette: green #27A644, red #EB5757, etc.  */
   /* ao uses higher-saturation equivalents for better dark-bg contrast.   */
-  --color-status-working:   #5B7EF8;  /* Agent actively running — animated pulse */
-  --color-status-ready:     #22C55E;  /* Merge-ready / success — highest priority */
-  --color-status-attention: #F59E0B;  /* Blocked, CI failing, review needed */
-  --color-status-idle:      #6B6B8A;  /* Agent idle / paused — low visual weight */
-  --color-status-done:      #3E3E54;  /* Complete — visually recedes */
-  --color-status-error:     #EF4444;  /* Crash, hard failure — urgent */
+  --color-status-working: #5b7ef8; /* Agent actively running — animated pulse */
+  --color-status-ready: #22c55e; /* Merge-ready / success — highest priority */
+  --color-status-attention: #f59e0b; /* Blocked, CI failing, review needed */
+  --color-status-idle: #6b6b8a; /* Agent idle / paused — low visual weight */
+  --color-status-done: #3e3e54; /* Complete — visually recedes */
+  --color-status-error: #ef4444; /* Crash, hard failure — urgent */
 
   /* Semantic aliases for components */
-  --color-accent-green:  var(--color-status-ready);
+  --color-accent-green: var(--color-status-ready);
   --color-accent-yellow: var(--color-status-attention);
-  --color-accent-orange: #d18616;     /* review zone (between yellow and red) */
-  --color-accent-red:    var(--color-status-error);
-  --color-accent-violet: #a371f7;     /* Orchestrator identity / merged PR state */
-  --color-accent-purple: #bc8cff;     /* Additional purple variant */
+  --color-accent-orange: #d18616; /* review zone (between yellow and red) */
+  --color-accent-red: var(--color-status-error);
+  --color-accent-violet: #a371f7; /* Orchestrator identity / merged PR state */
+  --color-accent-purple: #bc8cff; /* Additional purple variant */
 
   /* ── Typography ──────────────────────────────────────────────────── */
   /* Set via next/font/google CSS variables in layout.tsx              */
@@ -85,30 +85,30 @@
   /* Linear uses "Berkeley Mono" — verified via Playwright CSS extraction        */
 
   /* ── Type scale (derived from Linear's verified CSS token system) ─ */
-  --text-tiny:    0.625rem;   /* 10px — zone headers (uppercase + 0.10em tracking) */
-  --text-micro:   0.75rem;    /* 12px — timestamps, secondary metadata (mono) */
-  --text-mini:    0.8125rem;  /* 13px — status badges, card metadata rows */
-  --text-small:   0.875rem;   /* 14px — card titles, primary labels */
-  --text-regular: 0.9375rem;  /* 15px — body copy within panels */
-  --text-large:   1.0625rem;  /* 17px — section headings, zone names */
+  --text-tiny: 0.625rem; /* 10px — zone headers (uppercase + 0.10em tracking) */
+  --text-micro: 0.75rem; /* 12px — timestamps, secondary metadata (mono) */
+  --text-mini: 0.8125rem; /* 13px — status badges, card metadata rows */
+  --text-small: 0.875rem; /* 14px — card titles, primary labels */
+  --text-regular: 0.9375rem; /* 15px — body copy within panels */
+  --text-large: 1.0625rem; /* 17px — section headings, zone names */
 
   /* ── Spacing / border-radius (Linear's verified --radius-* values) ─ */
-  --radius-4:  4px;   /* Inputs, small badges, meta chips */
-  --radius-6:  6px;   /* Buttons, session cards */
-  --radius-8:  8px;   /* Modals, PR card, larger panels */
-  --radius-12: 12px;  /* Larger surfaces */
-  --radius-16: 16px;  /* Overlays, fullscreen elements */
+  --radius-4: 4px; /* Inputs, small badges, meta chips */
+  --radius-6: 6px; /* Buttons, session cards */
+  --radius-8: 8px; /* Modals, PR card, larger panels */
+  --radius-12: 12px; /* Larger surfaces */
+  --radius-16: 16px; /* Overlays, fullscreen elements */
 
   /* ── Transitions (Linear's verified --speed-* values) ───────────── */
-  --transition-quick:   0.1s;   /* Hover states */
-  --transition-regular: 0.25s;  /* State changes (bg, border, color) */
+  --transition-quick: 0.1s; /* Hover states */
+  --transition-regular: 0.25s; /* State changes (bg, border, color) */
 
   /* ── Scrollbar ───────────────────────────────────────────────────── */
   /* Based on Linear's verified scrollbar token values */
   --scrollbar-width: 6px;
-  --scrollbar-color-default: rgba(255, 255, 255, 0.10);
-  --scrollbar-color-hover:   rgba(255, 255, 255, 0.20);
-  --scrollbar-color-active:  rgba(255, 255, 255, 0.40);
+  --scrollbar-color-default: rgba(255, 255, 255, 0.1);
+  --scrollbar-color-hover: rgba(255, 255, 255, 0.2);
+  --scrollbar-color-active: rgba(255, 255, 255, 0.4);
 }
 
 /* ── Base styles ─────────────────────────────────────────────────────── */
@@ -161,26 +161,46 @@ a:hover {
 
 /* Working state: ring pulse on the activity dot — the ONLY continuous animation */
 @keyframes activity-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 126, 248, 0.4); }
-  50%       { box-shadow: 0 0 0 4px rgba(91, 126, 248, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(91, 126, 248, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(91, 126, 248, 0);
+  }
 }
 
 /* CI pending spinner */
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Generic opacity pulse (for loading/connecting states) */
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* Card entrance — used when new session appears */
 @keyframes slide-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Utility classes ─────────────────────────────────────────────────── */
@@ -192,13 +212,29 @@ a:hover {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.activity-dot--working   { background: var(--color-status-working); animation: activity-pulse 2s ease-in-out infinite; }
-.activity-dot--ready     { background: var(--color-status-ready); }
-.activity-dot--attention { background: var(--color-status-attention); }
-.activity-dot--idle      { background: var(--color-status-idle); }
-.activity-dot--error     { background: var(--color-status-error); }
-.activity-dot--done      { background: var(--color-status-done); }
-.activity-dot--exited    { background: var(--color-status-done); border: 1px solid var(--color-status-idle); }
+.activity-dot--working {
+  background: var(--color-status-working);
+  animation: activity-pulse 2s ease-in-out infinite;
+}
+.activity-dot--ready {
+  background: var(--color-status-ready);
+}
+.activity-dot--attention {
+  background: var(--color-status-attention);
+}
+.activity-dot--idle {
+  background: var(--color-status-idle);
+}
+.activity-dot--error {
+  background: var(--color-status-error);
+}
+.activity-dot--done {
+  background: var(--color-status-done);
+}
+.activity-dot--exited {
+  background: var(--color-status-done);
+  border: 1px solid var(--color-status-idle);
+}
 
 /*
  * ── Reference: xterm.js terminal theme ───────────────────────────────

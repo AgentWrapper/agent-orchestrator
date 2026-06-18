@@ -192,9 +192,10 @@ export function createInitialCanonicalLifecycle(
   };
 }
 
-function synthesizeSessionState(
-  status: SessionStatus,
-): { state: CanonicalSessionState; reason: CanonicalSessionReason } {
+function synthesizeSessionState(status: SessionStatus): {
+  state: CanonicalSessionState;
+  reason: CanonicalSessionReason;
+} {
   switch (status) {
     case "spawning":
       return { state: "not_started", reason: "spawn_requested" };
@@ -219,7 +220,10 @@ function synthesizeSessionState(
   }
 }
 
-function synthesizePRState(meta: Record<string, string>, status: SessionStatus): {
+function synthesizePRState(
+  meta: Record<string, string>,
+  status: SessionStatus,
+): {
   state: CanonicalPRState;
   reason: CanonicalPRReason;
   number: number | null;
@@ -248,10 +252,16 @@ function synthesizePRState(meta: Record<string, string>, status: SessionStatus):
 function synthesizeRuntimeState(
   meta: Record<string, string>,
   runtimeHandle: RuntimeHandle | null,
-): { state: CanonicalRuntimeState; reason: CanonicalRuntimeReason; handle: RuntimeHandle | null; tmuxName: string | null } {
+): {
+  state: CanonicalRuntimeState;
+  reason: CanonicalRuntimeReason;
+  handle: RuntimeHandle | null;
+  tmuxName: string | null;
+} {
   const tmuxName = meta["tmuxName"]?.trim() || null;
   const handle =
-    runtimeHandle ?? (meta["runtimeHandle"] ? safeJsonParse<RuntimeHandle>(meta["runtimeHandle"]) : null);
+    runtimeHandle ??
+    (meta["runtimeHandle"] ? safeJsonParse<RuntimeHandle>(meta["runtimeHandle"]) : null);
   if (handle || tmuxName) {
     return {
       state: "unknown",
@@ -351,12 +361,13 @@ function normalizePayloadLifecycle(
           : "worker"
         : synthesized.session.kind,
       state: hasPayloadSessionState
-        ? (payloadSession?.state as CanonicalSessionState | undefined) ?? synthesized.session.state
+        ? ((payloadSession?.state as CanonicalSessionState | undefined) ??
+          synthesized.session.state)
         : synthesized.session.state,
-      reason:
-        hasPayloadSessionReason
-          ? (payloadSession?.reason as CanonicalSessionReason | undefined) ?? synthesized.session.reason
-          : synthesized.session.reason,
+      reason: hasPayloadSessionReason
+        ? ((payloadSession?.reason as CanonicalSessionReason | undefined) ??
+          synthesized.session.reason)
+        : synthesized.session.reason,
       startedAt: hasPayloadSessionStartedAt
         ? normalizeTimestamp(payloadSession?.startedAt)
         : synthesized.session.startedAt,
@@ -367,36 +378,42 @@ function normalizePayloadLifecycle(
         ? normalizeTimestamp(payloadSession?.terminatedAt)
         : synthesized.session.terminatedAt,
       lastTransitionAt: hasPayloadSessionLastTransitionAt
-        ? normalizeTimestamp(payloadSession?.lastTransitionAt, synthesized.session.lastTransitionAt) ??
-          synthesized.session.lastTransitionAt
+        ? (normalizeTimestamp(
+            payloadSession?.lastTransitionAt,
+            synthesized.session.lastTransitionAt,
+          ) ?? synthesized.session.lastTransitionAt)
         : synthesized.session.lastTransitionAt,
     },
     pr: {
       state: hasPayloadPrState
-        ? (payloadPr?.state as CanonicalPRState | undefined) ?? synthesized.pr.state
+        ? ((payloadPr?.state as CanonicalPRState | undefined) ?? synthesized.pr.state)
         : synthesized.pr.state,
       reason: hasPayloadPrReason
-        ? (payloadPr?.reason as CanonicalPRReason | undefined) ?? synthesized.pr.reason
+        ? ((payloadPr?.reason as CanonicalPRReason | undefined) ?? synthesized.pr.reason)
         : synthesized.pr.reason,
       number: hasPayloadPrNumber
         ? typeof payloadPr?.number === "number"
           ? payloadPr.number
           : null
         : synthesized.pr.number,
-      url: hasPayloadPrUrl ? (typeof payloadPr?.url === "string" ? payloadPr.url : null) : synthesized.pr.url,
+      url: hasPayloadPrUrl
+        ? typeof payloadPr?.url === "string"
+          ? payloadPr.url
+          : null
+        : synthesized.pr.url,
       lastObservedAt: hasPayloadPrLastObservedAt
         ? normalizeTimestamp(payloadPr?.lastObservedAt)
         : synthesized.pr.lastObservedAt,
     },
     runtime: {
       state: hasPayloadRuntimeState
-        ? (payloadRuntime?.state as CanonicalRuntimeState | undefined) ?? synthesized.runtime.state
+        ? ((payloadRuntime?.state as CanonicalRuntimeState | undefined) ??
+          synthesized.runtime.state)
         : synthesized.runtime.state,
-      reason:
-        hasPayloadRuntimeReason
-          ? (payloadRuntime?.reason as CanonicalRuntimeReason | undefined) ??
-            synthesized.runtime.reason
-          : synthesized.runtime.reason,
+      reason: hasPayloadRuntimeReason
+        ? ((payloadRuntime?.reason as CanonicalRuntimeReason | undefined) ??
+          synthesized.runtime.reason)
+        : synthesized.runtime.reason,
       lastObservedAt: hasPayloadRuntimeLastObservedAt
         ? normalizeTimestamp(payloadRuntime?.lastObservedAt)
         : synthesized.runtime.lastObservedAt,
@@ -416,12 +433,11 @@ export function parseCanonicalLifecycle(
   meta: Record<string, string>,
   options: ParseCanonicalLifecycleOptions = {},
 ): CanonicalSessionLifecycle {
-  const parsed =
-    meta["lifecycle"]
-      ? safeJsonParse<unknown>(meta["lifecycle"])
-      : meta["statePayload"] && meta["stateVersion"] === "2"
-        ? safeJsonParse<unknown>(meta["statePayload"])
-        : null;
+  const parsed = meta["lifecycle"]
+    ? safeJsonParse<unknown>(meta["lifecycle"])
+    : meta["statePayload"] && meta["stateVersion"] === "2"
+      ? safeJsonParse<unknown>(meta["statePayload"])
+      : null;
   const validated = CanonicalSessionLifecycleSchema.safeParse(parsed);
   if (validated.success) {
     return normalizePayloadLifecycle(validated.data, meta, options);
@@ -429,9 +445,7 @@ export function parseCanonicalLifecycle(
   return synthesizeCanonicalLifecycle(meta, options);
 }
 
-export function deriveLegacyStatus(
-  lifecycle: CanonicalSessionLifecycle,
-): SessionStatus {
+export function deriveLegacyStatus(lifecycle: CanonicalSessionLifecycle): SessionStatus {
   switch (lifecycle.session.state) {
     case "not_started":
       return "spawning";

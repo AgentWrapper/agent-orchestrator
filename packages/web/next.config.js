@@ -18,12 +18,7 @@ const nextConfig = {
     "@aoagents/ao-plugin-tracker-linear",
     "@aoagents/ao-plugin-workspace-worktree",
   ],
-  serverExternalPackages: [
-    "yaml",
-    "zod",
-    "@aoagents/ao-core",
-    "better-sqlite3",
-  ],
+  serverExternalPackages: ["yaml", "zod", "@aoagents/ao-core", "better-sqlite3"],
   webpack: (config, { isServer }) => {
     if (process.platform === "win32") {
       config.snapshot = {
@@ -36,13 +31,10 @@ const nextConfig = {
       // (e.g. C:\Users\<user>\Application Data).
       if (isServer) {
         const tracePlugin = config.plugins.find(
-          (p) => p.constructor?.name === "TraceEntryPointsPlugin"
+          (p) => p.constructor?.name === "TraceEntryPointsPlugin",
         );
         if (tracePlugin) {
-          tracePlugin.traceIgnores = [
-            ...(tracePlugin.traceIgnores ?? []),
-            `${homeDir}/**`,
-          ];
+          tracePlugin.traceIgnores = [...(tracePlugin.traceIgnores ?? []), `${homeDir}/**`];
         }
       }
     }

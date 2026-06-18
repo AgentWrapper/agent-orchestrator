@@ -14,11 +14,23 @@ const {
   mockExec: vi.fn(),
   mockSpawn: vi.fn(),
   mockConfigRef: { current: null as Record<string, unknown> | null },
-  mockListRef: { current: [] as Array<{ id: string; projectId: string; lifecycle: { session: { state: string } } }> },
+  mockListRef: {
+    current: [] as Array<{
+      id: string;
+      projectId: string;
+      lifecycle: { session: { state: string } };
+    }>,
+  },
   mockOpenUrl: vi.fn(),
   mockIsMacRef: { current: true },
   mockIsWindowsRef: { current: false },
-  mockRunningRef: { current: { pid: 1, port: 3000, projects: [] } as { pid: number; port: number; projects: string[] } | null },
+  mockRunningRef: {
+    current: { pid: 1, port: 3000, projects: [] } as {
+      pid: number;
+      port: number;
+      projects: string[];
+    } | null,
+  },
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -333,10 +345,19 @@ describe("open command (Windows)", () => {
     const [cmd, args] = mockSpawn.mock.calls[0];
     expect(cmd).toBe("wt.exe");
     expect(args).toEqual([
-      "-w", "0", "new-tab",
-      "--title", "ao:tr-orchestrator",
-      "-d", TEST_REPO_PATH,
-      "cmd.exe", "/k", "ao", "session", "attach", "tr-orchestrator",
+      "-w",
+      "0",
+      "new-tab",
+      "--title",
+      "ao:tr-orchestrator",
+      "-d",
+      TEST_REPO_PATH,
+      "cmd.exe",
+      "/k",
+      "ao",
+      "session",
+      "attach",
+      "tr-orchestrator",
     ]);
     expect(mockOpenUrl).not.toHaveBeenCalled();
   });
@@ -353,9 +374,17 @@ describe("open command (Windows)", () => {
     expect(mockSpawn).toHaveBeenCalledTimes(2);
     expect(mockSpawn.mock.calls[1][0]).toBe("cmd.exe");
     expect(mockSpawn.mock.calls[1][1]).toEqual([
-      "/c", "start", "ao:tr-orchestrator",
-      "/d", TEST_REPO_PATH,
-      "cmd.exe", "/k", "ao", "session", "attach", "tr-orchestrator",
+      "/c",
+      "start",
+      "ao:tr-orchestrator",
+      "/d",
+      TEST_REPO_PATH,
+      "cmd.exe",
+      "/k",
+      "ao",
+      "session",
+      "attach",
+      "tr-orchestrator",
     ]);
   });
 

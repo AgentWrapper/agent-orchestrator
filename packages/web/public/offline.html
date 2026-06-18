@@ -1,86 +1,94 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Offline | ao</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0a0d12;
-      color: #e6edf3;
-      min-height: 100dvh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      padding-top: env(safe-area-inset-top, 24px);
-      padding-bottom: env(safe-area-inset-bottom, 24px);
-    }
-    .container {
-      text-align: center;
-      max-width: 400px;
-    }
-    .icon {
-      width: 64px;
-      height: 64px;
-      margin: 0 auto 24px;
-      border-radius: 12px;
-      background: hsl(220, 15%, 20%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .icon svg {
-      width: 32px;
-      height: 32px;
-      stroke: #8b949e;
-      fill: none;
-      stroke-width: 1.5;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-    h1 {
-      font-size: 20px;
-      font-weight: 600;
-      margin-bottom: 8px;
-      color: #e6edf3;
-    }
-    p {
-      font-size: 14px;
-      color: #8b949e;
-      line-height: 1.5;
-      margin-bottom: 24px;
-    }
-    button {
-      background: hsl(220, 15%, 18%);
-      color: #e6edf3;
-      border: 1px solid hsl(220, 15%, 25%);
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      min-height: 44px;
-      min-width: 44px;
-      transition: background 0.15s ease;
-    }
-    button:active {
-      background: hsl(220, 15%, 22%);
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">
-      <svg viewBox="0 0 24 24">
-        <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01" />
-      </svg>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Offline | ao</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0a0d12;
+        color: #e6edf3;
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        padding-top: env(safe-area-inset-top, 24px);
+        padding-bottom: env(safe-area-inset-bottom, 24px);
+      }
+      .container {
+        text-align: center;
+        max-width: 400px;
+      }
+      .icon {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 24px;
+        border-radius: 12px;
+        background: hsl(220, 15%, 20%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .icon svg {
+        width: 32px;
+        height: 32px;
+        stroke: #8b949e;
+        fill: none;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      h1 {
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 8px;
+        color: #e6edf3;
+      }
+      p {
+        font-size: 14px;
+        color: #8b949e;
+        line-height: 1.5;
+        margin-bottom: 24px;
+      }
+      button {
+        background: hsl(220, 15%, 18%);
+        color: #e6edf3;
+        border: 1px solid hsl(220, 15%, 25%);
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        min-height: 44px;
+        min-width: 44px;
+        transition: background 0.15s ease;
+      }
+      button:active {
+        background: hsl(220, 15%, 22%);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="icon">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"
+          />
+        </svg>
+      </div>
+      <h1>You are offline</h1>
+      <p>
+        The ao dashboard requires a network connection. Please check your connection and try again.
+      </p>
+      <button onclick="location.reload()">Retry</button>
     </div>
-    <h1>You are offline</h1>
-    <p>The ao dashboard requires a network connection. Please check your connection and try again.</p>
-    <button onclick="location.reload()">Retry</button>
-  </div>
-</body>
+  </body>
 </html>

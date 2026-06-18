@@ -27,7 +27,10 @@ vi.mock("../../src/lib/shell.js", () => ({
   execSilent: vi.fn(),
 }));
 
-import { clearStaleCacheIfNeeded, isInstalledUnderNodeModules } from "../../src/lib/dashboard-rebuild.js";
+import {
+  clearStaleCacheIfNeeded,
+  isInstalledUnderNodeModules,
+} from "../../src/lib/dashboard-rebuild.js";
 
 beforeEach(() => {
   mockExistsSync.mockReset();
@@ -78,10 +81,10 @@ describe("clearStaleCacheIfNeeded", () => {
     });
 
     await clearStaleCacheIfNeeded("/web");
-    expect(mockRmSync).toHaveBeenCalledWith(
-      expect.stringContaining("cache"),
-      { recursive: true, force: true },
-    );
+    expect(mockRmSync).toHaveBeenCalledWith(expect.stringContaining("cache"), {
+      recursive: true,
+      force: true,
+    });
     expect(mockWriteFileSync).toHaveBeenCalledWith(
       expect.stringContaining("AO_VERSION"),
       "0.3.0",
@@ -100,10 +103,10 @@ describe("clearStaleCacheIfNeeded", () => {
     });
 
     await clearStaleCacheIfNeeded("/web");
-    expect(mockRmSync).toHaveBeenCalledWith(
-      expect.stringContaining("cache"),
-      { recursive: true, force: true },
-    );
+    expect(mockRmSync).toHaveBeenCalledWith(expect.stringContaining("cache"), {
+      recursive: true,
+      force: true,
+    });
     expect(mockWriteFileSync).toHaveBeenCalledWith(
       expect.stringContaining("AO_VERSION"),
       "0.3.0",

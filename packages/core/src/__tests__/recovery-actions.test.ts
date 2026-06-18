@@ -156,7 +156,6 @@ describe("recoverSession", () => {
   });
 
   it("persists restoredAt and returns a session with restoredAt", async () => {
-
     const config = makeConfig(rootDir);
     const registry = makeRegistry();
     const assessment = makeAssessment();
@@ -468,8 +467,20 @@ describe("recovery actions update lifecycle for V2 sessions", () => {
         terminatedAt: null,
         lastTransitionAt: "2026-04-28T10:00:00.000Z",
       },
-      pr: { state: "none", reason: "no_pr", url: null, number: null, lastTransitionAt: "2026-04-28T10:00:00.000Z" },
-      runtime: { state: "alive", reason: "spawned", handle: null, tmuxName: null, lastTransitionAt: "2026-04-28T10:00:00.000Z" },
+      pr: {
+        state: "none",
+        reason: "no_pr",
+        url: null,
+        number: null,
+        lastTransitionAt: "2026-04-28T10:00:00.000Z",
+      },
+      runtime: {
+        state: "alive",
+        reason: "spawned",
+        handle: null,
+        tmuxName: null,
+        lastTransitionAt: "2026-04-28T10:00:00.000Z",
+      },
     });
   }
 
@@ -626,7 +637,8 @@ describe("recovery manager and scanner", () => {
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       join(sessionsDir, "app-1.json"),
-      JSON.stringify({ project: "app", status: "terminated", worktree: "/tmp/worktree" }, null, 2) + "\n",
+      JSON.stringify({ project: "app", status: "terminated", worktree: "/tmp/worktree" }, null, 2) +
+        "\n",
       "utf-8",
     );
 
@@ -654,9 +666,21 @@ describe("recovery manager and scanner", () => {
     const sessionsDir = getProjectSessionsDir(PROJECT_ID);
     mkdirSync(sessionsDir, { recursive: true });
 
-    writeFileSync(join(sessionsDir, "app-1.json"), JSON.stringify({ project: "app", status: "working" }, null, 2) + "\n", "utf-8");
-    writeFileSync(join(sessionsDir, ".tmp"), JSON.stringify({ project: "app" }, null, 2) + "\n", "utf-8");
-    writeFileSync(join(sessionsDir, "bad.session"), JSON.stringify({ project: "app" }, null, 2) + "\n", "utf-8");
+    writeFileSync(
+      join(sessionsDir, "app-1.json"),
+      JSON.stringify({ project: "app", status: "working" }, null, 2) + "\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(sessionsDir, ".tmp"),
+      JSON.stringify({ project: "app" }, null, 2) + "\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(sessionsDir, "bad.session"),
+      JSON.stringify({ project: "app" }, null, 2) + "\n",
+      "utf-8",
+    );
 
     const scanned = scanAllSessions(config);
 

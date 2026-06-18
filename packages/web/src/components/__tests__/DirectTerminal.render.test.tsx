@@ -235,7 +235,11 @@ describe("DirectTerminal render", () => {
 
   it("enforces a dark-mode contrast floor so low-contrast agent output stays legible", async () => {
     render(
-      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+      <DirectTerminal
+        sessionId="ao-orchestrator"
+        tmuxName="ao-orchestrator"
+        variant="orchestrator"
+      />,
     );
 
     // useTheme is mocked to "dark"; the terminal must enforce a contrast floor > 1
@@ -249,26 +253,32 @@ describe("DirectTerminal render", () => {
 
   it("loads the Unicode 11 addon so emoji widths match modern terminals", async () => {
     render(
-      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+      <DirectTerminal
+        sessionId="ao-orchestrator"
+        tmuxName="ao-orchestrator"
+        variant="orchestrator"
+      />,
     );
 
     await waitFor(() =>
-      expect(
-        MockTerminal.loadedAddons.some((addon) => addon instanceof MockUnicode11Addon),
-      ).toBe(true),
+      expect(MockTerminal.loadedAddons.some((addon) => addon instanceof MockUnicode11Addon)).toBe(
+        true,
+      ),
     );
   });
 
   it("loads the WebGL renderer addon for crisp box-drawing", async () => {
     render(
-      <DirectTerminal sessionId="ao-orchestrator" tmuxName="ao-orchestrator" variant="orchestrator" />,
+      <DirectTerminal
+        sessionId="ao-orchestrator"
+        tmuxName="ao-orchestrator"
+        variant="orchestrator"
+      />,
     );
 
     // The addon is loaded rAF-deferred after open(), so wait for it to attach.
     await waitFor(() =>
-      expect(
-        MockTerminal.loadedAddons.some((addon) => addon instanceof MockWebglAddon),
-      ).toBe(true),
+      expect(MockTerminal.loadedAddons.some((addon) => addon instanceof MockWebglAddon)).toBe(true),
     );
   });
 

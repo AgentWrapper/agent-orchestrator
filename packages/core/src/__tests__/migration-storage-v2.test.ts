@@ -290,30 +290,27 @@ describe("convertKeyValueToJson", () => {
   // stringifies nested objects as a single JSON blob and does NOT unfold
   // them back to flat keys. So nesting these during migration silently
   // dropped the state for migrated sessions.
-  it(
-    "round-trips agent-report and report-watcher flat keys through readMetadataRaw",
-    () => {
-      const kv = [
-        "agentReportedState=needs_input",
-        "agentReportedAt=2026-04-21T12:00:00.000Z",
-        "agentReportedNote=please clarify",
-        "reportWatcherTriggerCount=5",
-        "reportWatcherActiveTrigger=stale_report",
-      ].join("\n");
+  it("round-trips agent-report and report-watcher flat keys through readMetadataRaw", () => {
+    const kv = [
+      "agentReportedState=needs_input",
+      "agentReportedAt=2026-04-21T12:00:00.000Z",
+      "agentReportedNote=please clarify",
+      "reportWatcherTriggerCount=5",
+      "reportWatcherActiveTrigger=stale_report",
+    ].join("\n");
 
-      const migrated = convertKeyValueToJson(kv);
-      // After migration, the flat keys must be present at the top level
-      // of the V2 JSON record.
-      expect(migrated["agentReportedState"]).toBe("needs_input");
-      expect(migrated["agentReportedAt"]).toBe("2026-04-21T12:00:00.000Z");
-      expect(migrated["agentReportedNote"]).toBe("please clarify");
-      expect(migrated["reportWatcherTriggerCount"]).toBe("5");
-      expect(migrated["reportWatcherActiveTrigger"]).toBe("stale_report");
-      // No nested wrapper objects — those would be lost by flattenToStringRecord.
-      expect(migrated["agentReport"]).toBeUndefined();
-      expect(migrated["reportWatcher"]).toBeUndefined();
-    },
-  );
+    const migrated = convertKeyValueToJson(kv);
+    // After migration, the flat keys must be present at the top level
+    // of the V2 JSON record.
+    expect(migrated["agentReportedState"]).toBe("needs_input");
+    expect(migrated["agentReportedAt"]).toBe("2026-04-21T12:00:00.000Z");
+    expect(migrated["agentReportedNote"]).toBe("please clarify");
+    expect(migrated["reportWatcherTriggerCount"]).toBe("5");
+    expect(migrated["reportWatcherActiveTrigger"]).toBe("stale_report");
+    // No nested wrapper objects — those would be lost by flattenToStringRecord.
+    expect(migrated["agentReport"]).toBeUndefined();
+    expect(migrated["reportWatcher"]).toBeUndefined();
+  });
 });
 
 // Skipped on Windows: tests migrate FROM the legacy hash-dir layout that
@@ -341,66 +338,69 @@ describe.skipIf(process.platform === "win32")("migrateStorage", () => {
   // shipped only on Linux/macOS in V1 (Windows wasn't supported). On Windows
   // the legacy layout never exists, so this code path can't be exercised, and
   // some fixtures use ':' in filenames or rely on POSIX rename semantics.
-  it.skipIf(process.platform === "win32")("migrates a single project with one session", async () => {
-    // Setup: hash dir with one worker session and worktree
-    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
-    mkdirSync(join(hashDir, "sessions"), { recursive: true });
-    mkdirSync(join(hashDir, "worktrees", "ao-1"), { recursive: true });
-    writeFileSync(
-      join(hashDir, "sessions", "ao-1"),
-      [
-        "project=myproject",
-        "agent=claude-code",
-        "status=working",
-        "createdAt=2026-04-21T12:00:00.000Z",
-        "branch=session/ao-1",
-        "worktree=/home/user/.agent-orchestrator/aaaaaa000000-myproject/worktrees/ao-1",
-      ].join("\n"),
-    );
+  it.skipIf(process.platform === "win32")(
+    "migrates a single project with one session",
+    async () => {
+      // Setup: hash dir with one worker session and worktree
+      const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+      mkdirSync(join(hashDir, "sessions"), { recursive: true });
+      mkdirSync(join(hashDir, "worktrees", "ao-1"), { recursive: true });
+      writeFileSync(
+        join(hashDir, "sessions", "ao-1"),
+        [
+          "project=myproject",
+          "agent=claude-code",
+          "status=working",
+          "createdAt=2026-04-21T12:00:00.000Z",
+          "branch=session/ao-1",
+          "worktree=/home/user/.agent-orchestrator/aaaaaa000000-myproject/worktrees/ao-1",
+        ].join("\n"),
+      );
 
-    // Setup: config with storageKey
-    writeFileSync(
-      configPath,
-      [
-        "projects:",
-        "  myproject:",
-        "    path: /home/user/myproject",
-        "    storageKey: aaaaaa000000",
-        "    defaultBranch: main",
-        "",
-      ].join("\n"),
-    );
+      // Setup: config with storageKey
+      writeFileSync(
+        configPath,
+        [
+          "projects:",
+          "  myproject:",
+          "    path: /home/user/myproject",
+          "    storageKey: aaaaaa000000",
+          "    defaultBranch: main",
+          "",
+        ].join("\n"),
+      );
 
-    const logs: string[] = [];
-    const result = await migrateStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      force: true,
-      log: (msg) => logs.push(msg),
-    });
+      const logs: string[] = [];
+      const result = await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        force: true,
+        log: (msg) => logs.push(msg),
+      });
 
-    expect(result.projects).toBe(1);
-    expect(result.sessions).toBe(1);
+      expect(result.projects).toBe(1);
+      expect(result.sessions).toBe(1);
 
-    // Session file should exist in new location
-    const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json");
-    expect(existsSync(sessionPath)).toBe(true);
+      // Session file should exist in new location
+      const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-1.json");
+      expect(existsSync(sessionPath)).toBe(true);
 
-    const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
-    expect(session.project).toBe("myproject");
-    expect(session.agent).toBe("claude-code");
-    expect(session.worktree).toBe(join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1"));
-    // status preserved for pre-lifecycle sessions (no statePayload)
-    expect(session.status).toBe("working");
+      const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
+      expect(session.project).toBe("myproject");
+      expect(session.agent).toBe("claude-code");
+      expect(session.worktree).toBe(join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1"));
+      // status preserved for pre-lifecycle sessions (no statePayload)
+      expect(session.status).toBe("working");
 
-    // Old dir should be renamed to .migrated
-    expect(existsSync(`${hashDir}.migrated`)).toBe(true);
-    expect(existsSync(hashDir)).toBe(false);
+      // Old dir should be renamed to .migrated
+      expect(existsSync(`${hashDir}.migrated`)).toBe(true);
+      expect(existsSync(hashDir)).toBe(false);
 
-    // Config should have storageKey stripped
-    const configContent = readFileSync(configPath, "utf-8");
-    expect(configContent).not.toContain("storageKey");
-  });
+      // Config should have storageKey stripped
+      const configContent = readFileSync(configPath, "utf-8");
+      expect(configContent).not.toContain("storageKey");
+    },
+  );
 
   it("writes orchestrator sessions to sessions/ alongside workers", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
@@ -579,43 +579,48 @@ describe.skipIf(process.platform === "win32")("migrateStorage", () => {
     expect(result.sessions).toBe(0);
   });
 
-  it.skipIf(process.platform === "win32")("flattens archives into sessions/ as terminated records", async () => {
-    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
-    mkdirSync(join(hashDir, "sessions", "archive"), { recursive: true });
+  it.skipIf(process.platform === "win32")(
+    "flattens archives into sessions/ as terminated records",
+    async () => {
+      const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+      mkdirSync(join(hashDir, "sessions", "archive"), { recursive: true });
 
-    // Regular session so the hash dir is not considered empty
-    writeFileSync(
-      join(hashDir, "sessions", "ao-1"),
-      "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
-    );
+      // Regular session so the hash dir is not considered empty
+      writeFileSync(
+        join(hashDir, "sessions", "ao-1"),
+        "project=myproject\ncreatedAt=2026-04-21T12:00:00.000Z\nbranch=b1\nworktree=/tmp/w1",
+      );
 
-    // Old archive with colon-containing timestamp
-    writeFileSync(
-      join(hashDir, "sessions", "archive", "ao-83_2026-04-20T14:30:52.000Z"),
-      "project=myproject\ncreatedAt=2026-04-20T14:30:52.000Z\nbranch=b\nworktree=/tmp/w",
-    );
+      // Old archive with colon-containing timestamp
+      writeFileSync(
+        join(hashDir, "sessions", "archive", "ao-83_2026-04-20T14:30:52.000Z"),
+        "project=myproject\ncreatedAt=2026-04-20T14:30:52.000Z\nbranch=b\nworktree=/tmp/w",
+      );
 
-    const result = await migrateStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      force: true,
-      log: () => {},
-    });
+      const result = await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        force: true,
+        log: () => {},
+      });
 
-    // 2 sessions: ao-1 (regular) + ao-83 (flattened from archive)
-    expect(result.sessions).toBe(2);
+      // 2 sessions: ao-1 (regular) + ao-83 (flattened from archive)
+      expect(result.sessions).toBe(2);
 
-    // Archive should be flattened into sessions/ as a JSON file (not into sessions/archive/)
-    const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json");
-    expect(existsSync(sessionPath)).toBe(true);
-    const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
-    expect(session.project).toBe("myproject");
-    // Flat metadata — should have terminated status
-    expect(session.status).toBe("terminated");
+      // Archive should be flattened into sessions/ as a JSON file (not into sessions/archive/)
+      const sessionPath = join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json");
+      expect(existsSync(sessionPath)).toBe(true);
+      const session = JSON.parse(readFileSync(sessionPath, "utf-8"));
+      expect(session.project).toBe("myproject");
+      // Flat metadata — should have terminated status
+      expect(session.status).toBe("terminated");
 
-    // No archive directory should exist in new location
-    expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "archive"))).toBe(false);
-  });
+      // No archive directory should exist in new location
+      expect(existsSync(join(aoBaseDir, "projects", "myproject", "sessions", "archive"))).toBe(
+        false,
+      );
+    },
+  );
 
   it("converts key=value format to JSON during migration", async () => {
     const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
@@ -829,67 +834,73 @@ describe.skipIf(process.platform === "win32")("migrateStorage", () => {
     expect(existsSync(`${hashDir}.migrated`)).toBe(true);
   });
 
-  it.skipIf(process.platform === "win32")("handles ENOTEMPTY when .migrated target already exists from interrupted run", async () => {
-    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
-    mkdirSync(join(hashDir, "sessions"), { recursive: true });
-    writeFileSync(
-      join(hashDir, "sessions", "ao-1"),
-      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
-    );
+  it.skipIf(process.platform === "win32")(
+    "handles ENOTEMPTY when .migrated target already exists from interrupted run",
+    async () => {
+      const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+      mkdirSync(join(hashDir, "sessions"), { recursive: true });
+      writeFileSync(
+        join(hashDir, "sessions", "ao-1"),
+        "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+      );
 
-    // Simulate interrupted previous run: .migrated already exists with leftover content
-    const migratedDir = `${hashDir}.migrated`;
-    mkdirSync(join(migratedDir, "sessions"), { recursive: true });
-    writeFileSync(join(migratedDir, "sessions", "ao-1"), "leftover");
+      // Simulate interrupted previous run: .migrated already exists with leftover content
+      const migratedDir = `${hashDir}.migrated`;
+      mkdirSync(join(migratedDir, "sessions"), { recursive: true });
+      writeFileSync(join(migratedDir, "sessions", "ao-1"), "leftover");
 
-    const logs: string[] = [];
-    const result = await migrateStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      force: true,
-      log: (msg) => logs.push(msg),
-    });
+      const logs: string[] = [];
+      const result = await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        force: true,
+        log: (msg) => logs.push(msg),
+      });
 
-    expect(result.projects).toBe(1);
-    // Source dir should be removed, .migrated should remain
-    expect(existsSync(hashDir)).toBe(false);
-    expect(existsSync(migratedDir)).toBe(true);
-    expect(logs.some((l) => l.includes("already exists"))).toBe(true);
-  });
+      expect(result.projects).toBe(1);
+      // Source dir should be removed, .migrated should remain
+      expect(existsSync(hashDir)).toBe(false);
+      expect(existsSync(migratedDir)).toBe(true);
+      expect(logs.some((l) => l.includes("already exists"))).toBe(true);
+    },
+  );
 
-  it.skipIf(process.platform === "win32")("preserves config and migration marker when retiring a legacy dir fails", async () => {
-    const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
-    mkdirSync(join(hashDir, "sessions"), { recursive: true });
-    writeFileSync(
-      join(hashDir, "sessions", "ao-1"),
-      "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
-    );
-    writeFileSync(`${hashDir}.migrated`, "not a directory");
-    writeFileSync(
-      configPath,
-      [
-        "projects:",
-        "  myproject:",
-        "    path: /home/user/myproject",
-        "    storageKey: aaaaaa000000",
-        "",
-      ].join("\n"),
-    );
+  it.skipIf(process.platform === "win32")(
+    "preserves config and migration marker when retiring a legacy dir fails",
+    async () => {
+      const hashDir = join(aoBaseDir, "aaaaaa000000-myproject");
+      mkdirSync(join(hashDir, "sessions"), { recursive: true });
+      writeFileSync(
+        join(hashDir, "sessions", "ao-1"),
+        "project=myproject\nstatus=working\ncreatedAt=2026-04-21T12:00:00.000Z",
+      );
+      writeFileSync(`${hashDir}.migrated`, "not a directory");
+      writeFileSync(
+        configPath,
+        [
+          "projects:",
+          "  myproject:",
+          "    path: /home/user/myproject",
+          "    storageKey: aaaaaa000000",
+          "",
+        ].join("\n"),
+      );
 
-    const logs: string[] = [];
-    await migrateStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      force: true,
-      log: (msg) => logs.push(msg),
-    });
+      const logs: string[] = [];
+      await migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        force: true,
+        log: (msg) => logs.push(msg),
+      });
 
-    expect(existsSync(hashDir)).toBe(true);
-    expect(existsSync(join(aoBaseDir, ".migration-in-progress"))).toBe(true);
-    expect(readFileSync(configPath, "utf-8")).toContain("storageKey");
-    expect(logs.some((l) => l.includes("Failed to rename"))).toBe(true);
-    expect(logs.some((l) => l.includes("Skipping config update"))).toBe(true);
-  });
+      expect(existsSync(hashDir)).toBe(true);
+      expect(existsSync(join(aoBaseDir, ".migration-in-progress"))).toBe(true);
+      expect(readFileSync(configPath, "utf-8")).toContain("storageKey");
+      expect(logs.some((l) => l.includes("Failed to rename"))).toBe(true);
+      expect(logs.some((l) => l.includes("Skipping config update"))).toBe(true);
+    },
+  );
 
   it("continues migrating other projects when one project fails", async () => {
     // Project A — will succeed
@@ -991,42 +1002,45 @@ describe.skipIf(process.platform === "win32")("rollbackStorage", () => {
     expect(configContent).toContain("aaaaaa000000-myproject");
   });
 
-  it.skipIf(process.platform === "win32")("does not treat flattened archive records as post-migration sessions", async () => {
-    mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "archive"), {
-      recursive: true,
-    });
-    writeFileSync(
-      join(
+  it.skipIf(process.platform === "win32")(
+    "does not treat flattened archive records as post-migration sessions",
+    async () => {
+      mkdirSync(join(aoBaseDir, "aaaaaa000000-myproject.migrated", "sessions", "archive"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(
+          aoBaseDir,
+          "aaaaaa000000-myproject.migrated",
+          "sessions",
+          "archive",
+          "ao-83_2026-04-20T14:30:52.000Z",
+        ),
+        "project=myproject",
+      );
+      mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
+      writeFileSync(
+        join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json"),
+        '{"project":"myproject","status":"terminated","reason":"migrated_from_archive"}',
+      );
+
+      writeFileSync(
+        configPath,
+        ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
+      );
+
+      const logs: string[] = [];
+      await rollbackStorage({
         aoBaseDir,
-        "aaaaaa000000-myproject.migrated",
-        "sessions",
-        "archive",
-        "ao-83_2026-04-20T14:30:52.000Z",
-      ),
-      "project=myproject",
-    );
-    mkdirSync(join(aoBaseDir, "projects", "myproject", "sessions"), { recursive: true });
-    writeFileSync(
-      join(aoBaseDir, "projects", "myproject", "sessions", "ao-83.json"),
-      '{"project":"myproject","status":"terminated","reason":"migrated_from_archive"}',
-    );
+        globalConfigPath: configPath,
+        log: (msg) => logs.push(msg),
+      });
 
-    writeFileSync(
-      configPath,
-      ["projects:", "  myproject:", "    path: /home/user/myproject", ""].join("\n"),
-    );
-
-    const logs: string[] = [];
-    await rollbackStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      log: (msg) => logs.push(msg),
-    });
-
-    expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject"))).toBe(true);
-    expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
-    expect(logs.some((l) => l.includes("created after migration"))).toBe(false);
-  });
+      expect(existsSync(join(aoBaseDir, "aaaaaa000000-myproject"))).toBe(true);
+      expect(existsSync(join(aoBaseDir, "projects", "myproject"))).toBe(false);
+      expect(logs.some((l) => l.includes("created after migration"))).toBe(false);
+    },
+  );
 
   it("writes storageKey in original directory name format", async () => {
     mkdirSync(join(aoBaseDir, "a3b4c5d6e7f8-myapp.migrated"), { recursive: true });
@@ -1639,8 +1653,7 @@ describe.skipIf(process.platform === "win32")("migration edge cases", () => {
 
         // Encode the old workspace path the way Claude Code does
         // (replace `/` and `.` with `-`, strip `:`).
-        const encode = (p: string) =>
-          p.replace(/\\/g, "/").replace(/:/g, "").replace(/[/.]/g, "-");
+        const encode = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "").replace(/[/.]/g, "-");
         const oldEncoded = encode(oldWorktreePath);
         const claudeProjectsDir = join(fakeHome, ".claude", "projects");
         const oldClaudeDir = join(claudeProjectsDir, oldEncoded);
@@ -1666,9 +1679,7 @@ describe.skipIf(process.platform === "win32")("migration edge cases", () => {
 
         // Old Claude dir should be gone, new one should have the JSONL.
         expect(existsSync(oldClaudeDir)).toBe(false);
-        expect(
-          existsSync(join(claudeProjectsDir, newEncoded, "session-uuid.jsonl")),
-        ).toBe(true);
+        expect(existsSync(join(claudeProjectsDir, newEncoded, "session-uuid.jsonl"))).toBe(true);
         expect(result.claudeSessionsRelinked).toBe(1);
       } finally {
         if (origHome === undefined) delete process.env["HOME"];
@@ -1701,8 +1712,7 @@ describe.skipIf(process.platform === "win32")("migration edge cases", () => {
         ].join("\n"),
       );
 
-      const encode = (p: string) =>
-        p.replace(/\\/g, "/").replace(/:/g, "").replace(/[/.]/g, "-");
+      const encode = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "").replace(/[/.]/g, "-");
       const oldEncoded = encode(oldWorktreePath);
       const newWorktreePath = join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1");
       const newEncoded = encode(newWorktreePath);
@@ -1787,13 +1797,7 @@ describe.skipIf(process.platform === "win32")("migration edge cases", () => {
           log: () => {},
         });
 
-        const newWorktreePath = join(
-          aoBaseDir,
-          "projects",
-          "myproject",
-          "worktrees",
-          "ao-1",
-        );
+        const newWorktreePath = join(aoBaseDir, "projects", "myproject", "worktrees", "ao-1");
 
         const rewritten = readFileSync(rolloutPath, "utf-8");
         const lines = rewritten.split("\n").filter(Boolean);

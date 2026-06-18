@@ -425,7 +425,8 @@ async function resolveInteractiveSetup(
     const resolvedWebhookUrl = await resolveInteractiveWebhookUrl(clack, opts, existingWebhookUrl);
 
     const channelInput = await clack.text({
-      message: "Channel name (optional; must match the channel selected when creating the webhook):",
+      message:
+        "Channel name (optional; must match the channel selected when creating the webhook):",
       placeholder: "#agents",
       initialValue: stringValue(opts.channel) ?? stringValue(existingSlack["channel"]),
     });
@@ -478,7 +479,8 @@ function resolveNonInteractiveSetup(
   const channel = stringValue(opts.channel) ?? stringValue(existingSlack["channel"]);
   const username =
     stringValue(opts.username) ?? stringValue(existingSlack["username"]) ?? DEFAULT_USERNAME;
-  const routingPreset = resolveSlackRoutingPreset(opts.routingPreset) ?? (opts.refresh ? undefined : "all");
+  const routingPreset =
+    resolveSlackRoutingPreset(opts.routingPreset) ?? (opts.refresh ? undefined : "all");
   return buildResolvedSetup(webhookUrl, channel, username, routingPreset, opts);
 }
 
@@ -574,7 +576,9 @@ async function printStatus(): Promise<void> {
   if (plugin !== "slack" || !webhookUrl) return;
 
   try {
-    await sendSetupProbe(buildResolvedSetup(webhookUrl, channel, username, undefined, { test: true }));
+    await sendSetupProbe(
+      buildResolvedSetup(webhookUrl, channel, username, undefined, { test: true }),
+    );
     console.log(chalk.green("  Probe: PASS"));
   } catch (error) {
     console.log(

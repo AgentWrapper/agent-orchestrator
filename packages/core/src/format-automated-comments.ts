@@ -38,9 +38,7 @@ function excerpt(body: string): string {
     .replace(/^([*_]{1,3})(.+?)\1$/, "$2"); // bold/italic wrapping the whole line
   // Strip all backticks so the excerpt can't break out of its wrapping code span.
   const sanitized = demarkdowned.replace(/`/g, "");
-  return sanitized.length > EXCERPT_MAX
-    ? `${sanitized.slice(0, EXCERPT_MAX)}…`
-    : sanitized;
+  return sanitized.length > EXCERPT_MAX ? `${sanitized.slice(0, EXCERPT_MAX)}…` : sanitized;
 }
 
 export function formatAutomatedCommentsMessage(
@@ -68,7 +66,7 @@ export function formatAutomatedCommentsMessage(
   }
   lines.push(
     "",
-    "Fix each issue, push your changes, and reply to the inline comment acknowledging the fix so the reviewer (human or bot) can resolve the thread. Note that replying alone does not resolve the thread on GitHub — resolution is a separate \"Resolve conversation\" action.",
+    'Fix each issue, push your changes, and reply to the inline comment acknowledging the fix so the reviewer (human or bot) can resolve the thread. Note that replying alone does not resolve the thread on GitHub — resolution is a separate "Resolve conversation" action.',
     "",
     "To verify you have covered the latest bot review (avoid relying on `gh pr checks`, which can be stale, or on `gh api repos/" +
       repoSlug +

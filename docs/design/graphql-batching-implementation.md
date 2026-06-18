@@ -14,6 +14,7 @@ The orchestrator runs a status loop that polls GitHub for ALL active sessions ev
 4. Merge readiness (optional, for approved PRs) - `getMergeability()`
 
 With the current implementation:
+
 - 10 active PRs = 30 API calls per poll = 3,600 calls/hour
 - 20 active PRs = 60+ API calls per poll = 7,200+ calls/hour
 
@@ -83,6 +84,7 @@ export interface SCM {
 ### 2. GraphQL Batch Module (`packages/plugins/scm-github/src/graphql-batch.ts`)
 
 New module with:
+
 - `generateBatchQuery()` - Dynamically generates GraphQL queries with aliases
 - `enrichSessionsPRBatch()` - Main entry point that:
   - Deduplicates PRs by key
@@ -91,6 +93,7 @@ New module with:
   - Returns Map<key, PREnrichmentData>
 
 Key features:
+
 - Batch size limit of 25 PRs per query (well under GitHub's complexity limit)
 - Graceful handling of missing/deleted PRs
 - Error handling at batch level (one failed PR doesn't break the batch)
@@ -134,6 +137,7 @@ if (cachedData) {
 ### 5. Unit Tests (`packages/plugins/scm-github/test/graphql-batch.test.ts`)
 
 Added comprehensive tests for:
+
 - Single PR query generation
 - Multiple PR query generation with different aliases
 - Empty PR array handling
@@ -146,19 +150,19 @@ Added comprehensive tests for:
 ### API Call Reduction
 
 | Active PRs | Before | After (Batch) | Reduction |
-|-------------|---------|-----------------|------------|
-| 5           | 15      | 1               | 93%        |
-| 10          | 30      | 1               | 97%        |
-| 20          | 60      | 1               | 98%        |
-| 50          | 150     | 2               | 99%        |
+| ---------- | ------ | ------------- | --------- |
+| 5          | 15     | 1             | 93%       |
+| 10         | 30     | 1             | 97%       |
+| 20         | 60     | 1             | 98%       |
+| 50         | 150    | 2             | 99%       |
 
 ### Hourly Rate Limit Usage (30s polling)
 
 | Active PRs | Before (calls) | After (calls) | % of 5,000 Limit |
-|-------------|----------------|-----------------|-------------------|
-| 10         | 3,600          | 120             | 2.4% ✅           |
-| 20         | 7,200 ❌       | 240             | 4.8% ✅           |
-| 50         | 18,000 ❌      | 600             | 12% ✅            |
+| ---------- | -------------- | ------------- | ---------------- |
+| 10         | 3,600          | 120           | 2.4% ✅          |
+| 20         | 7,200 ❌       | 240           | 4.8% ✅          |
+| 50         | 18,000 ❌      | 600           | 12% ✅           |
 
 ## Backward Compatibility
 
@@ -170,17 +174,18 @@ The implementation maintains full backward compatibility:
 
 ## Edge Cases Handled
 
-| Case | Handling |
-|------|----------|
-| PR deleted during polling | Returns enrichment data with state "closed" and appropriate blockers |
-| GraphQL query failure | Falls back to individual API calls |
-| Mixed SCM plugins | Groups PRs by plugin and calls batch enrichment for each group |
-| Batch size > MAX_BATCH_SIZE | Splits into multiple batches |
-| Cache miss | Falls back to individual API calls |
+| Case                        | Handling                                                             |
+| --------------------------- | -------------------------------------------------------------------- |
+| PR deleted during polling   | Returns enrichment data with state "closed" and appropriate blockers |
+| GraphQL query failure       | Falls back to individual API calls                                   |
+| Mixed SCM plugins           | Groups PRs by plugin and calls batch enrichment for each group       |
+| Batch size > MAX_BATCH_SIZE | Splits into multiple batches                                         |
+| Cache miss                  | Falls back to individual API calls                                   |
 
 ## GraphQL Rate Limits
 
 GitHub GraphQL uses a points-based system. Our implementation:
+
 - Uses ~50 points per PR (estimated)
 - Allows ~100 PRs per hour within the 5,000 point limit
 - Stays well under complexity limits with MAX_BATCH_SIZE=25
@@ -204,6 +209,7 @@ npm test graphql-batch.test.ts
 ```
 
 Integration testing should verify:
+
 - Batch queries work with real GitHub repos
 - PR state detection is accurate
 - CI status parsing matches individual calls

@@ -18,12 +18,7 @@ import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
-const ACTIVE_STATUSES = new Set([
-  "working",
-  "idle",
-  "needs_input",
-  "stuck",
-]);
+const ACTIVE_STATUSES = new Set(["working", "idle", "needs_input", "stuck"]);
 
 interface UpdateResponse {
   ok: boolean;

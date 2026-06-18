@@ -328,9 +328,9 @@ describe("getAttentionLevel", () => {
     });
 
     it("collapses stuck/errored statuses into action", () => {
-      expect(
-        getAttentionLevel(makeSession({ status: "stuck", activity: "idle" }), "simple"),
-      ).toBe("action");
+      expect(getAttentionLevel(makeSession({ status: "stuck", activity: "idle" }), "simple")).toBe(
+        "action",
+      );
       expect(
         getAttentionLevel(makeSession({ status: "errored", activity: "idle" }), "simple"),
       ).toBe("action");

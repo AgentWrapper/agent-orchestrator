@@ -11,8 +11,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAoBaseDir } from "./paths.js";
 
-// Use createRequire so we can try/catch on native module load without top-level await.
-const _require = createRequire(import.meta.url);
+const requireLoaders = [
+  createRequire(import.meta.url),
+  // Next.js can inline this module into .next/server/chunks, which makes
+  // import.meta.url point at the bundled chunk instead of the package root.
+  createRequire(join(process.cwd(), "package.json")),
+];
 
 type BetterSqlite3Database = {
   pragma(source: string, options?: { simple?: boolean }): unknown;
@@ -99,8 +103,22 @@ function pruneOldEvents(db: BetterSqlite3Database, cutoff: number): void {
   ).run(cutoff, PRUNE_BATCH_SIZE);
 }
 
+function loadBetterSqlite3(): new (path: string) => BetterSqlite3Database {
+  let lastError: unknown;
+
+  for (const requireFn of requireLoaders) {
+    try {
+      return requireFn("better-sqlite3") as new (path: string) => BetterSqlite3Database;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError ?? new Error("Could not load better-sqlite3");
+}
+
 function openDb(): BetterSqlite3Database {
-  const Database = _require("better-sqlite3") as new (path: string) => BetterSqlite3Database;
+  const Database = loadBetterSqlite3();
   mkdirSync(getAoBaseDir(), { recursive: true });
   const db = new Database(getEventsDbPath());
 
@@ -120,7 +138,6 @@ function openDb(): BetterSqlite3Database {
     _ftsEnabled = true;
   } catch (err) {
     _ftsEnabled = false;
-    // eslint-disable-next-line no-console
     console.warn(
       "[ao] activity-events FTS unavailable — writes will continue and search will use a bounded LIKE fallback:",
       err instanceof Error ? err.message : String(err),
@@ -188,7 +205,6 @@ export function emitActivityEventsDbUnavailableWarning(err: unknown): void {
   if (_dbUnavailableWarningEmitted) return;
   if (process.env["AO_DEBUG"] !== "1" && !isAoEventsInvocation()) return;
   _dbUnavailableWarningEmitted = true;
-  // eslint-disable-next-line no-console
   console.warn(formatActivityEventsDbUnavailableWarning(err));
 }
 

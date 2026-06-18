@@ -145,9 +145,7 @@ describe("UpdateBanner", () => {
     const button = await screen.findByRole("button", { name: "Update" });
     fireEvent.click(button);
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/update", { method: "POST" }),
-    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/update", { method: "POST" }));
     await waitFor(() => expect(container.firstChild).toBeNull());
   });
 

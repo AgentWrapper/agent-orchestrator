@@ -73,7 +73,10 @@ export function Terminal({ sessionId }: TerminalProps) {
           {fullscreen ? "exit fullscreen" : "fullscreen"}
         </button>
       </div>
-      <div className="w-full" style={{ height: fullscreen ? "calc(100dvh - 40px)" : "max(440px, calc(100dvh - 440px))" }}>
+      <div
+        className="w-full"
+        style={{ height: fullscreen ? "calc(100dvh - 40px)" : "max(440px, calc(100dvh - 440px))" }}
+      >
         {terminalUrl ? (
           <iframe
             src={terminalUrl}

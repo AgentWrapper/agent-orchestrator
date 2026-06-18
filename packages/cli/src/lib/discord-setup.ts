@@ -696,9 +696,18 @@ async function printStatus(): Promise<void> {
 
   try {
     await sendSetupProbe(
-      buildResolvedSetup(webhookUrl, username, avatarUrl, threadId, retries, retryDelayMs, undefined, {
-        test: true,
-      }),
+      buildResolvedSetup(
+        webhookUrl,
+        username,
+        avatarUrl,
+        threadId,
+        retries,
+        retryDelayMs,
+        undefined,
+        {
+          test: true,
+        },
+      ),
     );
     console.log(chalk.green("  Probe: PASS"));
   } catch (error) {

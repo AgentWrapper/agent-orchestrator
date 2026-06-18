@@ -140,7 +140,8 @@ export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string):
     } else if (bareHashMatch) {
       hash = bareHashMatch[1];
       // Derive projectId: config lookup → session metadata → fallback to hash
-      const rawId = storageKeyToProject.get(hash) ?? deriveProjectIdFromDir(join(aoBaseDir, name)) ?? hash;
+      const rawId =
+        storageKeyToProject.get(hash) ?? deriveProjectIdFromDir(join(aoBaseDir, name)) ?? hash;
       projectId = sanitizeLegacyProjectId(rawId);
     } else {
       continue;
@@ -156,9 +157,9 @@ export function inventoryHashDirs(aoBaseDir: string, globalConfigPath?: string):
     // A directory is empty if it has no session files and no worktrees
     const sessionsDir = join(dirPath, "sessions");
     const worktreesDir = join(dirPath, "worktrees");
-    const hasSessions = existsSync(sessionsDir) && readdirSync(sessionsDir).some(
-      (f) => !f.startsWith(".") && f !== "archive",
-    );
+    const hasSessions =
+      existsSync(sessionsDir) &&
+      readdirSync(sessionsDir).some((f) => !f.startsWith(".") && f !== "archive");
     const hasWorktrees = existsSync(worktreesDir) && readdirSync(worktreesDir).length > 0;
     entries.push({
       path: dirPath,
@@ -209,15 +210,23 @@ function extractProjectPrefixes(globalConfigPath?: string): string[] {
     const projects = parsed?.["projects"] as Record<string, Record<string, unknown>> | undefined;
     if (!projects || typeof projects !== "object") return [];
 
-    return Array.from(new Set(Object.entries(projects).map(([projectId, entry]) => {
-      if (entry && typeof entry["sessionPrefix"] === "string" && entry["sessionPrefix"].trim()) {
-        return entry["sessionPrefix"].trim();
-      }
-      if (entry && typeof entry["path"] === "string" && entry["path"].trim()) {
-        return generateSessionPrefix(basename(entry["path"].trim()));
-      }
-      return generateSessionPrefix(projectId);
-    })));
+    return Array.from(
+      new Set(
+        Object.entries(projects).map(([projectId, entry]) => {
+          if (
+            entry &&
+            typeof entry["sessionPrefix"] === "string" &&
+            entry["sessionPrefix"].trim()
+          ) {
+            return entry["sessionPrefix"].trim();
+          }
+          if (entry && typeof entry["path"] === "string" && entry["path"].trim()) {
+            return generateSessionPrefix(basename(entry["path"].trim()));
+          }
+          return generateSessionPrefix(projectId);
+        }),
+      ),
+    );
   } catch {
     return [];
   }
@@ -329,9 +338,19 @@ export function convertKeyValueToJson(kvContent: string): Record<string, unknown
 
   // Direct string fields
   const stringFields = [
-    "project", "agent", "createdAt", "branch", "tmuxName",
-    "issue", "pr", "summary", "restoredAt", "role",
-    "opencodeSessionId", "pinnedSummary", "userPrompt",
+    "project",
+    "agent",
+    "createdAt",
+    "branch",
+    "tmuxName",
+    "issue",
+    "pr",
+    "summary",
+    "restoredAt",
+    "role",
+    "opencodeSessionId",
+    "pinnedSummary",
+    "userPrompt",
   ];
   for (const field of stringFields) {
     if (kv[field]) result[field] = kv[field];
@@ -419,11 +438,21 @@ export function convertKeyValueToJson(kvContent: string): Record<string, unknown
   // Preserve unknown fields that weren't handled above.
   // This prevents data loss for custom or future metadata fields.
   const handledKeys = new Set([
-    ...stringFields, "worktree", "prAutoDetect", "runtimeHandle",
-    "statePayload", "stateVersion", "status",
-    "dashboardPort", "terminalWsPort", "directTerminalWsPort",
+    ...stringFields,
+    "worktree",
+    "prAutoDetect",
+    "runtimeHandle",
+    "statePayload",
+    "stateVersion",
+    "status",
+    "dashboardPort",
+    "terminalWsPort",
+    "directTerminalWsPort",
     ...flatPassthroughKeys,
-    "lifecycleEvidence", "detectingAttempts", "detectingStartedAt", "detectingEvidenceHash",
+    "lifecycleEvidence",
+    "detectingAttempts",
+    "detectingStartedAt",
+    "detectingEvidenceHash",
   ]);
   for (const [key, value] of Object.entries(kv)) {
     if (!handledKeys.has(key) && !(key in result)) {
@@ -477,10 +506,10 @@ function sanitizeLegacyProjectId(projectId: string): string {
     return projectId;
   }
   let sanitized = projectId
-    .replace(/[^a-zA-Z0-9._-]/g, "-")  // replace unsafe chars with hyphens
-    .replace(/-{2,}/g, "-")              // collapse consecutive hyphens
-    .replace(/^[-._]+/, "")              // strip leading non-alphanumeric
-    .replace(/[-._]+$/, "");             // strip trailing non-alphanumeric
+    .replace(/[^a-zA-Z0-9._-]/g, "-") // replace unsafe chars with hyphens
+    .replace(/-{2,}/g, "-") // collapse consecutive hyphens
+    .replace(/^[-._]+/, "") // strip leading non-alphanumeric
+    .replace(/[-._]+$/, ""); // strip trailing non-alphanumeric
   if (!sanitized || !/^[a-zA-Z0-9]/.test(sanitized)) {
     sanitized = `project-${sanitized || "unknown"}`;
   }
@@ -599,11 +628,16 @@ function migrateProject(
       // the most recent record keeps the canonical id.
       const existing = allSessions.get(sessionId);
       if (existing) {
-        const existingCreated = new Date(String(existing.metadata["createdAt"] ?? "")).getTime() || 0;
+        const existingCreated =
+          new Date(String(existing.metadata["createdAt"] ?? "")).getTime() || 0;
         const newCreated = new Date(String(metadata["createdAt"] ?? "")).getTime() || 0;
-        const newIsNewer = newCreated > existingCreated
-          || (newCreated === existingCreated && fileMtime(filePath) > fileMtime(existing.sourcePath))
-          || (newCreated === existingCreated && fileMtime(filePath) === fileMtime(existing.sourcePath) && filePath > existing.sourcePath);
+        const newIsNewer =
+          newCreated > existingCreated ||
+          (newCreated === existingCreated &&
+            fileMtime(filePath) > fileMtime(existing.sourcePath)) ||
+          (newCreated === existingCreated &&
+            fileMtime(filePath) === fileMtime(existing.sourcePath) &&
+            filePath > existing.sourcePath);
 
         if (newIsNewer) {
           // The new record wins the canonical id. Park the previous
@@ -617,9 +651,13 @@ function migrateProject(
               sourceHash: existing.sourceHash,
               renamedFrom: sessionId,
             });
-            log?.(`  [rename] duplicate session ${sessionId} from hash ${loserHash} → ${loserAlias}`);
+            log?.(
+              `  [rename] duplicate session ${sessionId} from hash ${loserHash} → ${loserAlias}`,
+            );
           } else {
-            log?.(`  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`);
+            log?.(
+              `  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`,
+            );
           }
           allSessions.set(sessionId, { metadata, sourcePath: filePath, sourceHash: hashDir.hash });
         } else {
@@ -632,9 +670,13 @@ function migrateProject(
               sourceHash: hashDir.hash,
               renamedFrom: sessionId,
             });
-            log?.(`  [rename] duplicate session ${sessionId} from hash ${hashDir.hash} → ${loserAlias}`);
+            log?.(
+              `  [rename] duplicate session ${sessionId} from hash ${hashDir.hash} → ${loserAlias}`,
+            );
           } else {
-            log?.(`  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`);
+            log?.(
+              `  [warn] could not park duplicate ${sessionId} under ${loserAlias}: alias already taken`,
+            );
           }
         }
       } else {
@@ -703,7 +745,9 @@ function migrateProject(
           atomicWriteFileSync(targetPath, JSON.stringify(metadata, null, 2) + "\n");
           result.sessions++;
         } catch (err) {
-          log?.(`  [warn] failed to flatten archive ${archiveFile}: ${err instanceof Error ? err.message : String(err)}`);
+          log?.(
+            `  [warn] failed to flatten archive ${archiveFile}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -735,11 +779,7 @@ function migrateProject(
     // move (workspace dirs are keyed on the un-aliased sessionId). Keep
     // the metadata pointing at the V1 worktree path so the user can
     // still locate the original directory under its `.migrated` parent.
-    if (
-      !renamedFrom &&
-      typeof metadata["worktree"] === "string" &&
-      metadata["worktree"]
-    ) {
+    if (!renamedFrom && typeof metadata["worktree"] === "string" && metadata["worktree"]) {
       const oldWorktreePath = metadata["worktree"];
       const newWorktreePath = join(worktreesDir, sessionId);
       if (existsSync(newWorktreePath) || dryRun) {
@@ -777,7 +817,11 @@ function migrateProject(
  * (.git/worktrees/{id}/gitdir) still point to the old location.
  * Run `git worktree repair` from each project's repo root to fix them.
  */
-async function repairGitWorktrees(aoBaseDir: string, globalConfigPath: string, log: (message: string) => void): Promise<void> {
+async function repairGitWorktrees(
+  aoBaseDir: string,
+  globalConfigPath: string,
+  log: (message: string) => void,
+): Promise<void> {
   // Build projectId → repo path lookup from global config
   const repoPathByProject = new Map<string, string>();
   try {
@@ -823,7 +867,11 @@ async function repairGitWorktrees(aoBaseDir: string, globalConfigPath: string, l
 // Config update — strip storageKey
 // ---------------------------------------------------------------------------
 
-function stripStorageKeysFromConfig(configPath: string, dryRun: boolean, log: (message: string) => void): void {
+function stripStorageKeysFromConfig(
+  configPath: string,
+  dryRun: boolean,
+  log: (message: string) => void,
+): void {
   if (!existsSync(configPath)) return;
 
   const content = readFileSync(configPath, "utf-8");
@@ -868,10 +916,7 @@ function stripStorageKeysFromConfig(configPath: string, dryRun: boolean, log: (m
  * plugin into core/migration just for this string transformation.
  */
 function encodeClaudeProjectPath(workspacePath: string): string {
-  return workspacePath
-    .replace(/\\/g, "/")
-    .replace(/:/g, "")
-    .replace(/[/.]/g, "-");
+  return workspacePath.replace(/\\/g, "/").replace(/:/g, "").replace(/[/.]/g, "-");
 }
 
 /**
@@ -987,7 +1032,11 @@ function rewriteCodexSessionStorage(
     for (const entry of entries) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.isFile() && entry.name.startsWith("rollout-") && entry.name.endsWith(".jsonl")) {
+      else if (
+        entry.isFile() &&
+        entry.name.startsWith("rollout-") &&
+        entry.name.endsWith(".jsonl")
+      ) {
         jsonlFiles.push(full);
       }
     }
@@ -1145,7 +1194,9 @@ function moveStrayWorktrees(
         continue;
       }
       // If any child matches a session in any project, treat parent as a projectId dir
-      if (tryMoveWorktree(child, childPath, projectsDir, dryRun, log, workspaceMoves, skipProjects)) {
+      if (
+        tryMoveWorktree(child, childPath, projectsDir, dryRun, log, workspaceMoves, skipProjects)
+      ) {
         moved++;
         isProjectDir = true;
       }
@@ -1170,7 +1221,9 @@ function moveStrayWorktrees(
     if (tryMoveWorktree(name, srcPath, projectsDir, dryRun, log, workspaceMoves, skipProjects)) {
       moved++;
     } else {
-      log(`  Warning: stray worktree ${name} in ~/.worktrees/ has no matching session — left in place.`);
+      log(
+        `  Warning: stray worktree ${name} in ~/.worktrees/ has no matching session — left in place.`,
+      );
     }
   }
 
@@ -1185,8 +1238,13 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   const aoBaseDir = options.aoBaseDir ?? join(homedir(), ".agent-orchestrator");
   const dryRun = options.dryRun ?? false;
   const log = options.log ?? console.log;
-  const globalConfigPath = options.globalConfigPath ??
-    join(process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config"), "agent-orchestrator", "config.yaml");
+  const globalConfigPath =
+    options.globalConfigPath ??
+    join(
+      process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config"),
+      "agent-orchestrator",
+      "config.yaml",
+    );
 
   // Use the actual global config path if it exists at the standard location
   const effectiveConfigPath = existsSync(globalConfigPath)
@@ -1202,7 +1260,9 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   // Crash-safety: detect incomplete previous migration
   const markerPath = join(aoBaseDir, MIGRATION_MARKER);
   if (existsSync(markerPath)) {
-    log("WARNING: Previous migration was interrupted. Re-running — already-migrated directories will be skipped.\n");
+    log(
+      "WARNING: Previous migration was interrupted. Re-running — already-migrated directories will be skipped.\n",
+    );
   }
 
   // Pre-flight: detect active sessions (include V2 prefix patterns from config)
@@ -1222,7 +1282,7 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
       });
       throw new Error(
         `Found ${activeSessions.length} active AO tmux session(s): ${activeSessions.slice(0, 5).join(", ")}${activeSessions.length > 5 ? "..." : ""}. ` +
-        `Kill active sessions first (ao session kill --all) or use --force to migrate anyway.`,
+          `Kill active sessions first (ao session kill --all) or use --force to migrate anyway.`,
       );
     }
   }
@@ -1237,7 +1297,11 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   if (hashDirs.length === 0) {
     log("No legacy hash-based directories found. Nothing to migrate.");
     if (!dryRun && existsSync(markerPath)) {
-      try { unlinkSync(markerPath); } catch { /* best-effort */ }
+      try {
+        unlinkSync(markerPath);
+      } catch {
+        /* best-effort */
+      }
     }
     const totals: MigrationResult = {
       projects: 0,
@@ -1288,7 +1352,9 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
   }
   for (const [lower, ids] of lowerCaseIndex) {
     if (ids.length > 1) {
-      log(`\nWARNING: Case-insensitive collision detected for projectIds: ${ids.join(", ")} (resolve to "${lower}" on case-insensitive filesystems).`);
+      log(
+        `\nWARNING: Case-insensitive collision detected for projectIds: ${ids.join(", ")} (resolve to "${lower}" on case-insensitive filesystems).`,
+      );
       log(`  Skipping colliding projects — rename them manually before re-running migration.`);
       for (const id of ids) {
         projectGroups.delete(id);
@@ -1376,7 +1442,9 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
           } catch (err) {
             // .migrated target may already exist from a previous interrupted run
             if ((err as NodeJS.ErrnoException).code === "ENOTEMPTY" && existsSync(migratedPath)) {
-              log(`  WARNING: ${basename(migratedPath)} already exists — removing source directory`);
+              log(
+                `  WARNING: ${basename(migratedPath)} already exists — removing source directory`,
+              );
               rmSync(dir.path, { recursive: true, force: true });
             } else {
               const msg = err instanceof Error ? err.message : String(err);
@@ -1437,23 +1505,35 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 
   // Summary
   log("\n--- Migration Summary ---");
-  log(`Migrated ${totals.projects} project${totals.projects !== 1 ? "s" : ""}, ` +
-    `${totals.sessions} session${totals.sessions !== 1 ? "s" : ""}, ` +
-    `${totals.worktrees} worktree${totals.worktrees !== 1 ? "s" : ""}.`);
+  log(
+    `Migrated ${totals.projects} project${totals.projects !== 1 ? "s" : ""}, ` +
+      `${totals.sessions} session${totals.sessions !== 1 ? "s" : ""}, ` +
+      `${totals.worktrees} worktree${totals.worktrees !== 1 ? "s" : ""}.`,
+  );
   if (totals.strayWorktreesMoved > 0) {
-    log(`Moved ${totals.strayWorktreesMoved} stray worktree${totals.strayWorktreesMoved !== 1 ? "s" : ""} from ~/.worktrees/.`);
+    log(
+      `Moved ${totals.strayWorktreesMoved} stray worktree${totals.strayWorktreesMoved !== 1 ? "s" : ""} from ~/.worktrees/.`,
+    );
   }
   if (totals.claudeSessionsRelinked > 0) {
-    log(`Relinked ${totals.claudeSessionsRelinked} Claude session director${totals.claudeSessionsRelinked !== 1 ? "ies" : "y"} to new worktree paths.`);
+    log(
+      `Relinked ${totals.claudeSessionsRelinked} Claude session director${totals.claudeSessionsRelinked !== 1 ? "ies" : "y"} to new worktree paths.`,
+    );
   }
   if (totals.codexSessionsRewritten > 0) {
-    log(`Rewrote ${totals.codexSessionsRewritten} Codex rollout file${totals.codexSessionsRewritten !== 1 ? "s" : ""} to new worktree paths.`);
+    log(
+      `Rewrote ${totals.codexSessionsRewritten} Codex rollout file${totals.codexSessionsRewritten !== 1 ? "s" : ""} to new worktree paths.`,
+    );
   }
   if (totals.emptyDirsDeleted > 0) {
-    log(`Deleted ${totals.emptyDirsDeleted} empty director${totals.emptyDirsDeleted !== 1 ? "ies" : "y"}.`);
+    log(
+      `Deleted ${totals.emptyDirsDeleted} empty director${totals.emptyDirsDeleted !== 1 ? "ies" : "y"}.`,
+    );
   }
   if (projectErrors.length > 0) {
-    log(`\nFailed to migrate ${projectErrors.length} project${projectErrors.length !== 1 ? "s" : ""}:`);
+    log(
+      `\nFailed to migrate ${projectErrors.length} project${projectErrors.length !== 1 ? "s" : ""}:`,
+    );
     for (const { projectId, error } of projectErrors) {
       log(`  - ${projectId}: ${error}`);
     }
@@ -1464,7 +1544,11 @@ export async function migrateStorage(options: MigrationOptions = {}): Promise<Mi
 
   // Remove crash-safety marker only on full success
   if (!dryRun && existsSync(markerPath) && projectErrors.length === 0) {
-    try { unlinkSync(markerPath); } catch { /* best-effort */ }
+    try {
+      unlinkSync(markerPath);
+    } catch {
+      /* best-effort */
+    }
   }
 
   recordActivityEvent({
@@ -1524,9 +1608,7 @@ function countPostMigrationSessions(
       // Same anchor-on-timestamp pattern as the archive flattening loop;
       // the lazy `[a-zA-Z0-9_-]+?_\d` mismatched any sessionId containing
       // `_<digit>` (e.g. `team_1-7`).
-      const match = file.match(
-        /^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.-]+Z)(?:\.json)?$/,
-      );
+      const match = file.match(/^(.+)_(\d{8}T\d{6}Z|\d{4}-\d{2}-\d{2}T[\d:.-]+Z)(?:\.json)?$/);
       if (match?.[1]) {
         migratedSessionIds.add(match[1]);
       }
@@ -1559,7 +1641,11 @@ function collectSessionIds(dirPath: string): Set<string> {
   return sessionIds;
 }
 
-function resolveRollbackProjectId(aoBaseDir: string, migratedDirPath: string, hash: string): string {
+function resolveRollbackProjectId(
+  aoBaseDir: string,
+  migratedDirPath: string,
+  hash: string,
+): string {
   const derivedProjectId = deriveProjectIdFromDir(migratedDirPath);
   if (derivedProjectId) return derivedProjectId;
 
@@ -1590,8 +1676,13 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
   const aoBaseDir = options.aoBaseDir ?? join(homedir(), ".agent-orchestrator");
   const dryRun = options.dryRun ?? false;
   const log = options.log ?? console.log;
-  const globalConfigPath = options.globalConfigPath ??
-    join(process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config"), "agent-orchestrator", "config.yaml");
+  const globalConfigPath =
+    options.globalConfigPath ??
+    join(
+      process.env["XDG_CONFIG_HOME"] ?? join(homedir(), ".config"),
+      "agent-orchestrator",
+      "config.yaml",
+    );
 
   const effectiveConfigPath = existsSync(globalConfigPath)
     ? globalConfigPath
@@ -1656,11 +1747,16 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
       if (!existsSync(projectDir)) continue;
 
       const postMigrationSessions = countPostMigrationSessions(
-        projectDir, migratedDirs.filter((d) => d.projectId === projectId),
+        projectDir,
+        migratedDirs.filter((d) => d.projectId === projectId),
       );
       if (postMigrationSessions > 0) {
-        log(`  Warning: projects/${projectId} has ${postMigrationSessions} session(s) created after migration — skipping deletion.`);
-        log(`    These sessions exist only in projects/${projectId}/ and would be lost. Remove manually after verifying.`);
+        log(
+          `  Warning: projects/${projectId} has ${postMigrationSessions} session(s) created after migration — skipping deletion.`,
+        );
+        log(
+          `    These sessions exist only in projects/${projectId}/ and would be lost. Remove manually after verifying.`,
+        );
         recordActivityEvent({
           projectId,
           source: "migration",
@@ -1681,7 +1777,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
   for (const dir of migratedDirs) {
     const originalPath = dir.path.replace(/\.migrated$/, "");
     if (existsSync(originalPath)) {
-      log(`  Warning: ${basename(originalPath)} already exists — skipping restore of ${basename(dir.path)}. Resolve manually.`);
+      log(
+        `  Warning: ${basename(originalPath)} already exists — skipping restore of ${basename(dir.path)}. Resolve manually.`,
+      );
       safeToDeleteProjects.delete(dir.projectId);
       continue;
     }
@@ -1720,7 +1818,9 @@ export async function rollbackStorage(options: RollbackOptions = {}): Promise<vo
             const src = join(v2WorktreesDir, wt);
             const dest = join(oldWorktreesDir, wt);
             if (!existsSync(dest)) {
-              log(`  Moving worktree back: projects/${projectId}/worktrees/${wt} → ${basename(targetHashDir)}/worktrees/${wt}`);
+              log(
+                `  Moving worktree back: projects/${projectId}/worktrees/${wt} → ${basename(targetHashDir)}/worktrees/${wt}`,
+              );
               if (!dryRun) crossDeviceMove(src, dest, log);
               rollbackWorktreesMoved = true;
               // For Claude relink-reverse: source dir's encoded path moves

@@ -290,7 +290,7 @@ export function getActionChipLabel(session: DashboardSession): string {
   if (session.status === "ci_failed") return "ci failed";
   if (session.status === "changes_requested") return "changes";
   // Review-class: PR signals — aggregate across all PRs
-  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  const prs = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
   if (prs.some((p) => p.ciStatus === "failing")) return "ci failed";
   if (prs.some((p) => p.reviewDecision === "changes_requested")) return "changes";
   if (prs.some((p) => !p.mergeability.noConflicts)) return "conflicts";
@@ -306,7 +306,7 @@ function SessionStateChip({
 }) {
   let label = zoneConfig[level].label.toLowerCase();
 
-  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  const prs = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
   if (level === "merge" && prs.length > 0 && prs.every((p) => isPRMergeReady(p))) {
     label = "ready";
   } else if (level === "action") {

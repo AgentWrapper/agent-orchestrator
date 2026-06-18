@@ -71,7 +71,9 @@ describe("getStatusSpec — the one mission-control status spectrum", () => {
   });
 
   it("maps a mergeable PR to green 'Mergeable'", () => {
-    const spec = getStatusSpec(makeSession({ id: "m", status: "working", pr: makePR({ number: 3 }) }));
+    const spec = getStatusSpec(
+      makeSession({ id: "m", status: "working", pr: makePR({ number: 3 }) }),
+    );
     expect(spec).toEqual({ tone: "ready", label: "Mergeable", breathing: false });
   });
 

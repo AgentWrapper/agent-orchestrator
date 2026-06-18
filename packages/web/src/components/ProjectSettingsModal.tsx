@@ -74,7 +74,9 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
       })
       .catch((fetchError) => {
         if (!cancelled) {
-          setError(fetchError instanceof Error ? fetchError.message : "Failed to load project settings.");
+          setError(
+            fetchError instanceof Error ? fetchError.message : "Failed to load project settings.",
+          );
         }
       })
       .finally(() => {
@@ -134,9 +136,14 @@ export function ProjectSettingsModal({ open, projectId, onClose }: ProjectSettin
         </div>
 
         <div className="project-settings-modal__body">
-          {loading ? <div className="project-settings-modal__state">Loading project settings…</div> : null}
+          {loading ? (
+            <div className="project-settings-modal__state">Loading project settings…</div>
+          ) : null}
           {!loading && error ? (
-            <div role="alert" className="project-settings-modal__state project-settings-modal__state--error">
+            <div
+              role="alert"
+              className="project-settings-modal__state project-settings-modal__state--error"
+            >
               {error}
             </div>
           ) : null}

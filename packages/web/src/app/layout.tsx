@@ -26,13 +26,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: {
       template: `%s | ${projectName}`,
-      default: `ao | ${projectName}`,
+      default: `AgentMesh | ${projectName}`,
     },
-    description: "Dashboard for managing parallel AI coding agents",
+    description: "AgentMesh Dashboard for managing parallel AI coding agents",
     appleWebApp: {
       capable: true,
       statusBarStyle: "black-translucent",
-      title: `ao | ${projectName}`,
+      title: `AgentMesh | ${projectName}`,
     },
   };
 }

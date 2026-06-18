@@ -1,8 +1,8 @@
-<h1 align="center">Agent Orchestrator — The Orchestration Layer for Parallel AI Agents</h1>
+<h1 align="center">AgentMesh — The Orchestration Layer for Parallel AI Agents</h1>
 
 <p align="center">
 <a href="https://github.com/ComposioHQ/agent-orchestrator">
-  <img width="800" alt="Agent Orchestrator banner" src="docs/assets/agent_orchestrator_banner.png">
+  <img width="800" alt="AgentMesh banner" src="docs/assets/agent_orchestrator_banner.png">
 </a>
 </p>
 
@@ -21,7 +21,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 ---
 
-Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
+AgentMesh manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
 **Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, ConPTY/process, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
@@ -30,7 +30,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 ## See it in action
 
 <a href="https://x.com/agent_wrapper/status/2026329204405723180">
-  <img src="docs/assets/demo-video-tweet.png" alt="Agent Orchestrator demo — AI agents building their own orchestrator" width="560">
+  <img src="docs/assets/demo-video-tweet.png" alt="AgentMesh demo — AI agents building their own orchestrator" width="560">
 </a>
 <br><br>
 <a href="https://x.com/agent_wrapper/status/2026329204405723180"><img src="docs/assets/btn-watch-demo.png" alt="Watch the Demo on X" height="48"></a>
@@ -46,8 +46,9 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 ## Quick Start
 
 > **Prerequisites:** [Node.js 20.18.3+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [`gh` CLI](https://cli.github.com), and:
+>
 > - **macOS / Linux:** [tmux](https://github.com/tmux/tmux/wiki/Installing) — install via `brew install tmux` or `sudo apt install tmux`.
-> - **Windows:** PowerShell 7+ recommended. tmux is **not** required — AO uses native ConPTY via the `runtime-process` plugin (the default on Windows). Set `AO_SHELL=bash` if you have Git Bash and prefer it.
+> - **Windows:** PowerShell 7+ recommended. tmux is **not** required — AgentMesh uses native ConPTY via the `runtime-process` plugin (the default on Windows). Set `AO_SHELL=bash` if you have Git Bash and prefer it.
 
 ### Install
 
@@ -69,6 +70,7 @@ To install from source (for contributors):
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+
 </details>
 
 ### Zsh Completion
@@ -111,7 +113,9 @@ Or from inside an existing local repo:
 cd ~/your-project && ao start
 ```
 
-That's it. The dashboard opens at `http://localhost:3000` and the orchestrator agent starts managing your project.
+That's it. The dashboard opens at `http://localhost:3000` and the AgentMesh orchestrator agent starts managing your project.
+If you are running this repository locally, see [Quick-start.md](Quick-start.md) for the
+repo-specific install, run, and smoke-test steps that were verified on Windows.
 
 ### Add more projects
 
@@ -127,7 +131,14 @@ ao start ~/path/to/another-repo
 4. **Reactions handle feedback** — CI failures and review comments are automatically routed back to the agent
 5. **You review and merge** — you only get pulled in when human judgment is needed
 
-The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessions. You don't need to learn or use the CLI — the dashboard and orchestrator handle everything.
+The orchestrator agent uses the [AgentMesh CLI](docs/CLI.md) internally to manage sessions. You don't need to learn or use the CLI — the dashboard and orchestrator handle everything.
+
+**Coordination layer (optional):** enabling `agentmesh:` in your config adds a quality-gated
+task workflow on top of the basic flow — a builder agent's work is automatically reviewed by a
+QA agent with bounded retries and policy checks. Tasks are managed on a dedicated board at
+`http://localhost:3000/agentmesh`. See the [AgentMesh Coordination Layer](SETUP.md#agentmesh-coordination-layer)
+section for setup. The shortest smoke test is: create a task on `/agentmesh`, leave the branch
+blank to auto-generate one, and click `Start` to move it into `Building`.
 
 ## Configuration
 
@@ -140,7 +151,7 @@ $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/sc
 port: 3000
 
 defaults:
-  runtime: tmux       # default on macOS / Linux; on Windows the default is `process` (ConPTY)
+  runtime: tmux # default on macOS / Linux; on Windows the default is `process` (ConPTY)
   agent: claude-code
   workspace: worktree
   notifiers: [desktop]
@@ -174,46 +185,46 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 ## Remote Access
 
-AO keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
+AgentMesh keeps your Mac awake while running, so you can access the dashboard remotely (e.g., via Tailscale from your phone) without the machine going to sleep.
 
-**How it works:** On macOS, AO automatically holds an idle-sleep prevention assertion using `caffeinate`. When AO exits, the assertion is released.
+**How it works:** On macOS, AgentMesh automatically holds an idle-sleep prevention assertion using `caffeinate`. When AgentMesh exits, the assertion is released.
 
 ```yaml
 # agent-orchestrator.yaml
 $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/schema/config.schema.json
 power:
-  preventIdleSleep: true  # Default on macOS; no-op on Linux and Windows
+  preventIdleSleep: true # Default on macOS; no-op on Linux and Windows
 ```
 
-Set to `false` if you want to allow idle sleep while AO runs.
+Set to `false` if you want to allow idle sleep while AgentMesh runs.
 
 **Lid-close limitation:** macOS enforces lid-close sleep at the hardware level — no userspace assertion can override it. If you need remote access while traveling with the lid closed, use [clamshell mode](https://support.apple.com/en-us/102505) (external power + display + input device).
 
-**Linux / Windows:** AO does not currently hold a wake assertion on these platforms. On Linux, idle-sleep behaviour is governed by your desktop environment / `systemd-logind`; configure that directly. On Windows, set the OS power plan if remote access matters while idle.
+**Linux / Windows:** AgentMesh does not currently hold a wake assertion on these platforms. On Linux, idle-sleep behaviour is governed by your desktop environment / `systemd-logind`; configure that directly. On Windows, set the OS power plan if remote access matters while idle.
 
 ## Plugin Architecture
 
-Seven plugin slots. Lifecycle stays in core.
+Eight plugin slots — seven swappable (below) plus Lifecycle, which is managed by core and not pluggable.
 
-| Slot      | Default     | Alternatives             |
-| --------- | ----------- | ------------------------ |
-| Runtime   | tmux (macOS/Linux) / process (Windows) | process, docker |
-| Agent     | claude-code | codex, aider, cursor, opencode, kimicode |
-| Workspace | worktree    | clone                    |
-| Tracker   | github      | linear, gitlab           |
-| SCM       | github      | gitlab                   |
-| Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
-| Terminal  | iterm2      | web                      |
+| Slot      | Default                                | Alternatives                                   |
+| --------- | -------------------------------------- | ---------------------------------------------- |
+| Runtime   | tmux (macOS/Linux) / process (Windows) | process                                        |
+| Agent     | claude-code                            | codex, aider, cursor, opencode, kimicode, grok |
+| Workspace | worktree                               | clone                                          |
+| Tracker   | github                                 | linear, gitlab                                 |
+| SCM       | github                                 | gitlab                                         |
+| Notifier  | desktop                                | slack, discord, composio, webhook, openclaw    |
+| Terminal  | iterm2                                 | web                                            |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
-## Why Agent Orchestrator?
+## Why AgentMesh?
 
 Running one AI agent in a terminal is easy. Running 30 across different issues, branches, and PRs is a coordination problem.
 
 **Without orchestration**, you manually: create branches, start agents, check if they're stuck, read CI failures, forward review comments, track which PRs are ready to merge, clean up when done.
 
-**With Agent Orchestrator**, you: `ao start` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
+**With AgentMesh**, you: `ao start` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
 
 ## Documentation
 

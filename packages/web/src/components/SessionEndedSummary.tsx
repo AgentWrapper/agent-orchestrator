@@ -124,11 +124,7 @@ export function SessionEndedSummary({
 
           <div className="session-ended-summary__links">
             {isRestorable ? (
-              <button
-                type="button"
-                onClick={onRestore}
-                className="session-ended-summary__primary"
-              >
+              <button type="button" onClick={onRestore} className="session-ended-summary__primary">
                 Restore session
               </button>
             ) : null}

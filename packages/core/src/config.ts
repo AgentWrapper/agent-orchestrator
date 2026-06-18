@@ -595,7 +595,7 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     // This preserves the long-standing semantics on this branch, where
     // `/repos/integrator` becomes `int` regardless of the config key.
     if (!project.sessionPrefix) {
-      project.sessionPrefix = generateSessionPrefix(basename(project.path));
+      project.sessionPrefix = generateSessionPrefix(basename(resolve(project.path)));
     }
 
     const inferredPlugin = inferScmPlugin(project);
@@ -684,8 +684,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "changes-requested": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "There are new review comments on your PR requesting changes.",
+      message: "There are new review comments on your PR requesting changes.",
       escalateAfter: "30m",
     },
     "bugbot-comments": {

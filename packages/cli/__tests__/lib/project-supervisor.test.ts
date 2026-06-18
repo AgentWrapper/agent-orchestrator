@@ -38,9 +38,8 @@ vi.mock("@aoagents/ao-core", () => ({
       );
     }
     return (
-      ["done", "killed", "terminated", "errored", "merged", "cleanup"].includes(
-        session.status,
-      ) || session.activity === "exited"
+      ["done", "killed", "terminated", "errored", "merged", "cleanup"].includes(session.status) ||
+      session.activity === "exited"
     );
   },
 }));
@@ -191,11 +190,7 @@ describe("project-supervisor", () => {
 
     await reconcileProjectSupervisor();
 
-    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
-      expect.anything(),
-      "healthy",
-      undefined,
-    );
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(expect.anything(), "healthy", undefined);
     expect(mockSetHealth).toHaveBeenCalledWith(
       expect.objectContaining({
         surface: "project-supervisor.reconcile",

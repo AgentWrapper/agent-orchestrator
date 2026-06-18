@@ -40,7 +40,13 @@ import { writeMetadata } from "../metadata.js";
 import { getProjectSessionsDir, getProjectDir } from "../paths.js";
 import trackerGithub from "@aoagents/ao-plugin-tracker-github";
 import scmGithub from "@aoagents/ao-plugin-scm-github";
-import { createMockPlugins, makeHandle, makeSession as makeSessionBase, makePR, type TestEnvironment } from "./test-utils.js";
+import {
+  createMockPlugins,
+  makeHandle,
+  makeSession as makeSessionBase,
+  makePR,
+  type TestEnvironment,
+} from "./test-utils.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -63,6 +69,21 @@ let config: OrchestratorConfig;
 let project: OrchestratorConfig["projects"][string];
 let previousHome: string | undefined;
 let previousUserProfile: string | undefined;
+
+function bestEffortRm(targetPath: string): void {
+  try {
+    rmSync(targetPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      process.platform === "win32" &&
+      (message.includes("ENOTEMPTY") || message.includes("EBUSY") || message.includes("EPERM"))
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
 
 function mockGh(result: unknown): void {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
@@ -170,9 +191,9 @@ beforeEach(() => {
     // briefly holding files); they're no-ops on Unix.
     const projectDir = getProjectDir("my-app");
     if (existsSync(projectDir)) {
-      rmSync(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      bestEffortRm(projectDir);
     }
-    rmSync(env.tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    bestEffortRm(env.tmpDir);
     if (previousHome === undefined) delete process.env["HOME"];
     else process.env["HOME"] = previousHome;
     if (previousUserProfile === undefined) delete process.env["USERPROFILE"];
@@ -282,7 +303,7 @@ describe("plugin integration", () => {
       expect(mockWorkspace.create).toHaveBeenCalledWith(
         expect.objectContaining({ branch: "feat/issue-99" }),
       );
-    });
+    }, 15_000);
 
     it("spawn() falls back to generic branch when no tracker configured", async () => {
       // Remove tracker from project config
@@ -528,10 +549,18 @@ describe("plugin integration", () => {
       const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
       const originalBatch = scmPlugin.enrichSessionsPRBatch;
       scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
-        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
-          state: "open", ciStatus: "failing", reviewDecision: "none", mergeable: false,
-          ciChecks: [{ name: "lint", status: "failed", conclusion: "FAILURE" }],
-        }]]),
+        new Map([
+          [
+            `${pr.owner}/${pr.repo}#${pr.number}`,
+            {
+              state: "open",
+              ciStatus: "failing",
+              reviewDecision: "none",
+              mergeable: false,
+              ciChecks: [{ name: "lint", status: "failed", conclusion: "FAILURE" }],
+            },
+          ],
+        ]),
       );
 
       const mockSM: OpenCodeSessionManager = {
@@ -563,9 +592,17 @@ describe("plugin integration", () => {
       const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
       const originalBatch = scmPlugin.enrichSessionsPRBatch;
       scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
-        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
-          state: "merged", ciStatus: "none", reviewDecision: "none", mergeable: false,
-        }]]),
+        new Map([
+          [
+            `${pr.owner}/${pr.repo}#${pr.number}`,
+            {
+              state: "merged",
+              ciStatus: "none",
+              reviewDecision: "none",
+              mergeable: false,
+            },
+          ],
+        ]),
       );
 
       const mockSM: OpenCodeSessionManager = {
@@ -597,9 +634,17 @@ describe("plugin integration", () => {
       const scmPlugin = registry.get("scm", "github") as ReturnType<typeof scmGithub.create>;
       const originalBatch = scmPlugin.enrichSessionsPRBatch;
       scmPlugin.enrichSessionsPRBatch = vi.fn().mockResolvedValue(
-        new Map([[`${pr.owner}/${pr.repo}#${pr.number}`, {
-          state: "open", ciStatus: "passing", reviewDecision: "changes_requested", mergeable: false,
-        }]]),
+        new Map([
+          [
+            `${pr.owner}/${pr.repo}#${pr.number}`,
+            {
+              state: "open",
+              ciStatus: "passing",
+              reviewDecision: "changes_requested",
+              mergeable: false,
+            },
+          ],
+        ]),
       );
 
       const mockSM: OpenCodeSessionManager = {

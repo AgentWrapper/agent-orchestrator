@@ -78,15 +78,7 @@ async function ghIssueViewJson(identifier: string, project: ProjectConfig): Prom
   const repo = requireRepo(project);
   const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
   try {
-    return await gh([
-      "issue",
-      "view",
-      identifier,
-      "--repo",
-      repo,
-      "--json",
-      fieldsWithStateReason,
-    ]);
+    return await gh(["issue", "view", identifier, "--repo", repo, "--json", fieldsWithStateReason]);
   } catch (err) {
     if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
     return gh([
@@ -379,28 +371,12 @@ function createGitHubTracker(): Tracker {
 
       // Handle assignee changes
       if (update.assignee) {
-        await gh([
-          "issue",
-          "edit",
-          identifier,
-          "--repo",
-          repo,
-          "--add-assignee",
-          update.assignee,
-        ]);
+        await gh(["issue", "edit", identifier, "--repo", repo, "--add-assignee", update.assignee]);
       }
 
       // Handle comment
       if (update.comment) {
-        await gh([
-          "issue",
-          "comment",
-          identifier,
-          "--repo",
-          repo,
-          "--body",
-          update.comment,
-        ]);
+        await gh(["issue", "comment", identifier, "--repo", repo, "--body", update.comment]);
       }
     },
 

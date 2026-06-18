@@ -143,9 +143,7 @@ export function registerSend(program: Command): void {
         // way to identify who's writing. Humans running ao send from their
         // own terminal have no AO_SESSION_ID and stay unprefixed.
         const senderSessionId = process.env["AO_SESSION_ID"];
-        const message = senderSessionId
-          ? `[from ${senderSessionId}] ${rawMessage}`
-          : rawMessage;
+        const message = senderSessionId ? `[from ${senderSessionId}] ${rawMessage}` : rawMessage;
 
         const parsedTimeout = parseInt(opts.timeout || "600", 10);
         const timeoutMs = (isNaN(parsedTimeout) || parsedTimeout <= 0 ? 600 : parsedTimeout) * 1000;

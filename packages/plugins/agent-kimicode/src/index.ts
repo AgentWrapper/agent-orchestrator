@@ -117,10 +117,7 @@ export const manifest = {
  * Append approval flags — kimi uses `--yolo` (aka `-y`, `--yes`, `--auto-approve`).
  * Suggest/ask modes have no dedicated flag; kimi prompts inline by default.
  */
-function appendApprovalFlags(
-  parts: string[],
-  permissions: AgentPermissionInput | undefined,
-): void {
+function appendApprovalFlags(parts: string[], permissions: AgentPermissionInput | undefined): void {
   const mode = normalizeAgentPermissionMode(permissions);
   if (mode === "permissionless" || mode === "auto-edit") {
     parts.push("--yolo");
@@ -186,9 +183,7 @@ function createKimicodeAgent(): Agent {
       let combinedPrompt = config.prompt ?? "";
       if (config.systemPromptFile) {
         const sysContent = readFileSync(config.systemPromptFile, "utf-8");
-        combinedPrompt = combinedPrompt
-          ? `${sysContent}\n\n---\n\n${combinedPrompt}`
-          : sysContent;
+        combinedPrompt = combinedPrompt ? `${sysContent}\n\n---\n\n${combinedPrompt}` : sysContent;
       }
       if (combinedPrompt) {
         parts.push("--prompt", shellEscape(combinedPrompt));
@@ -234,7 +229,8 @@ function createKimicodeAgent(): Agent {
       // 2. blocked — hard errors surfaced to the terminal. Line-anchored to
       //    skip narration ("Earlier I failed to connect, then retried").
       if (/^\s*error:/im.test(tail)) return "blocked";
-      if (/^\s*(?:error:\s*)?failed to (connect|authenticate|load)\b/im.test(tail)) return "blocked";
+      if (/^\s*(?:error:\s*)?failed to (connect|authenticate|load)\b/im.test(tail))
+        return "blocked";
 
       // 3. idle — only when nothing actionable is visible and the tail is a
       //    bare prompt. Generic shell/REPL prompt…

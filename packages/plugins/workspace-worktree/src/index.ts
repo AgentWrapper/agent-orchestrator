@@ -181,10 +181,7 @@ async function clearStaleWorktreePath(repoPath: string, worktreePath: string): P
  * would silently destroy the user's work. The entry-point `worktree prune`
  * in restore() already ran, so we don't prune again here.
  */
-async function cleanupStaleWorkspacePath(
-  repoPath: string,
-  workspacePath: string,
-): Promise<void> {
+async function cleanupStaleWorkspacePath(repoPath: string, workspacePath: string): Promise<void> {
   // Force-remove any registered worktree at this path. Best-effort — the
   // path may not be registered, in which case git errors and we fall
   // through to the dir cleanup.

@@ -53,7 +53,7 @@ export function registerDashboard(program: Command): void {
       );
 
       const startScript = resolve(webDir, "dist-server", "start-all.js");
-      const child = spawn("node", [startScript], {
+      const child = spawn(process.execPath, [startScript], {
         cwd: webDir,
         stdio: ["inherit", "inherit", "pipe"],
         detached: !isWindows(),

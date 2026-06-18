@@ -39,8 +39,8 @@ async function resolveGhBinary(): Promise<string> {
   // PATHEXT so we match whatever the user actually installed.
   const exts =
     process.platform === "win32"
-      ? (process.env["PATHEXT"]?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT"]).map(
-          (e) => e.toLowerCase(),
+      ? (process.env["PATHEXT"]?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT"]).map((e) =>
+          e.toLowerCase(),
         )
       : [""];
 
@@ -136,9 +136,19 @@ function extractOperation(args: string[]): string {
     const arg = args[i];
     if (!arg || arg.startsWith("-")) {
       // Skip flags and their values (--method GET, -X POST, -H "...", etc.)
-      if (arg === "--method" || arg === "-X" || arg === "-H" || arg === "--header" ||
-          arg === "-f" || arg === "--raw-field" || arg === "-F" || arg === "--field" ||
-          arg === "--input" || arg === "-t" || arg === "--template") {
+      if (
+        arg === "--method" ||
+        arg === "-X" ||
+        arg === "-H" ||
+        arg === "--header" ||
+        arg === "-f" ||
+        arg === "--raw-field" ||
+        arg === "-F" ||
+        arg === "--field" ||
+        arg === "--input" ||
+        arg === "-t" ||
+        arg === "--template"
+      ) {
         i++; // skip the flag's value too
       }
       continue;
@@ -251,7 +261,6 @@ async function writeTrace(entry: GhTraceEntry): Promise<void> {
     if (!warnedTargets.has(target)) {
       warnedTargets.add(target);
       const msg = err instanceof Error ? err.message : String(err);
-      // eslint-disable-next-line no-console -- surface trace write failures once
       console.warn(`[gh-trace] Failed to write trace to ${target}: ${msg}`);
     }
   }
@@ -369,21 +378,18 @@ export async function execGhObserved(
       maxBuffer: 10 * 1024 * 1024,
       timeout,
     });
-    const entry = buildTraceEntry(
-      args,
-      ctx,
-      { ok: true, stdout, stderr },
-      Date.now() - startedAt,
-    );
+    const entry = buildTraceEntry(args, ctx, { ok: true, stdout, stderr }, Date.now() - startedAt);
     await writeTrace(entry);
     return stdout.trim();
   } catch (err) {
-    const stdout = typeof (err as { stdout?: unknown }).stdout === "string"
-      ? (err as { stdout: string }).stdout
-      : "";
-    const stderr = typeof (err as { stderr?: unknown }).stderr === "string"
-      ? (err as { stderr: string }).stderr
-      : "";
+    const stdout =
+      typeof (err as { stdout?: unknown }).stdout === "string"
+        ? (err as { stdout: string }).stdout
+        : "";
+    const stderr =
+      typeof (err as { stderr?: unknown }).stderr === "string"
+        ? (err as { stderr: string }).stderr
+        : "";
     const entry = buildTraceEntry(
       args,
       ctx,

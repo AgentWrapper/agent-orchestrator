@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync, renameSync } from "node:fs";
+import {
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  readdirSync,
+  renameSync,
+} from "node:fs";
 import type * as NodeFs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -72,9 +80,23 @@ describe("writeMetadata + readMetadata", () => {
       runtimeHandle: { id: "tmux-1", runtimeName: "tmux", data: {} },
       lifecycle: {
         version: 2,
-        session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2025-01-01T00:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2025-01-01T00:00:00.000Z" },
+        session: {
+          kind: "worker",
+          state: "working",
+          reason: "task_in_progress",
+          startedAt: "2025-01-01T00:00:00.000Z",
+          completedAt: null,
+          terminatedAt: null,
+          lastTransitionAt: "2025-01-01T00:00:00.000Z",
+        },
         pr: { state: "none", reason: "not_created", number: null, url: null, lastObservedAt: null },
-        runtime: { state: "alive", reason: "process_running", lastObservedAt: "2025-01-01T00:00:00.000Z", handle: { id: "tmux-1", runtimeName: "tmux", data: {} }, tmuxName: null },
+        runtime: {
+          state: "alive",
+          reason: "process_running",
+          lastObservedAt: "2025-01-01T00:00:00.000Z",
+          handle: { id: "tmux-1", runtimeName: "tmux", data: {} },
+          tmuxName: null,
+        },
       },
     });
 
@@ -384,9 +406,7 @@ describe("mutateMetadata corrupt-file handling", () => {
     expect(result!["branch"]).toBe("feat/x");
 
     // Forensic copy must exist with the original corrupt bytes.
-    const corruptCopies = readdirSync(dataDir).filter((f) =>
-      f.startsWith("ao-1.json.corrupt-"),
-    );
+    const corruptCopies = readdirSync(dataDir).filter((f) => f.startsWith("ao-1.json.corrupt-"));
     expect(corruptCopies).toHaveLength(1);
     const corruptContent = readFileSync(join(dataDir, corruptCopies[0]), "utf-8");
     expect(corruptContent).toBe("{ this is not json");
@@ -473,12 +493,10 @@ describe("mutateMetadata corrupt-file handling", () => {
     const sessionPath = join(dataDir, "ao-api-source.json");
     writeFileSync(sessionPath, "{ broken json", "utf-8");
 
-    mutateMetadata(
-      dataDir,
-      "ao-api-source",
-      (existing) => ({ ...existing, branch: "feat/api" }),
-      { createIfMissing: true, activityEventSource: "api" },
-    );
+    mutateMetadata(dataDir, "ao-api-source", (existing) => ({ ...existing, branch: "feat/api" }), {
+      createIfMissing: true,
+      activityEventSource: "api",
+    });
 
     expect(recordActivityEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -496,12 +514,9 @@ describe("mutateMetadata corrupt-file handling", () => {
     const huge = "x".repeat(250);
     writeFileSync(sessionPath, huge, "utf-8");
 
-    mutateMetadata(
-      dataDir,
-      "ao-4",
-      (existing) => ({ ...existing, branch: "feat/y" }),
-      { createIfMissing: true },
-    );
+    mutateMetadata(dataDir, "ao-4", (existing) => ({ ...existing, branch: "feat/y" }), {
+      createIfMissing: true,
+    });
 
     const call = vi
       .mocked(recordActivityEvent)
@@ -535,9 +550,29 @@ describe("readCanonicalLifecycle", () => {
       status: "working",
       lifecycle: {
         version: 2,
-        session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2025-01-01T00:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2025-01-01T00:00:00.000Z" },
-        pr: { state: "open", reason: "in_progress", number: 42, url: "https://github.com/org/repo/pull/42", lastObservedAt: "2025-01-01T00:00:00.000Z" },
-        runtime: { state: "alive", reason: "process_running", lastObservedAt: "2025-01-01T00:00:00.000Z", handle: { id: "tmux-1", runtimeName: "tmux", data: {} }, tmuxName: "tmux-1" },
+        session: {
+          kind: "worker",
+          state: "working",
+          reason: "task_in_progress",
+          startedAt: "2025-01-01T00:00:00.000Z",
+          completedAt: null,
+          terminatedAt: null,
+          lastTransitionAt: "2025-01-01T00:00:00.000Z",
+        },
+        pr: {
+          state: "open",
+          reason: "in_progress",
+          number: 42,
+          url: "https://github.com/org/repo/pull/42",
+          lastObservedAt: "2025-01-01T00:00:00.000Z",
+        },
+        runtime: {
+          state: "alive",
+          reason: "process_running",
+          lastObservedAt: "2025-01-01T00:00:00.000Z",
+          handle: { id: "tmux-1", runtimeName: "tmux", data: {} },
+          tmuxName: "tmux-1",
+        },
       },
     });
 
@@ -723,9 +758,29 @@ describe("status derivation from lifecycle", () => {
         project: "myproject",
         lifecycle: {
           version: 2,
-          session: { kind: "worker", state: "working", reason: "task_in_progress", startedAt: "2025-01-01T00:00:00.000Z", completedAt: null, terminatedAt: null, lastTransitionAt: "2025-01-01T00:00:00.000Z" },
-          pr: { state: "open", reason: "review_pending", number: 42, url: "https://github.com/org/repo/pull/42", lastObservedAt: "2025-01-01T00:00:00.000Z" },
-          runtime: { state: "alive", reason: "process_running", lastObservedAt: "2025-01-01T00:00:00.000Z", handle: null, tmuxName: null },
+          session: {
+            kind: "worker",
+            state: "working",
+            reason: "task_in_progress",
+            startedAt: "2025-01-01T00:00:00.000Z",
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: "2025-01-01T00:00:00.000Z",
+          },
+          pr: {
+            state: "open",
+            reason: "review_pending",
+            number: 42,
+            url: "https://github.com/org/repo/pull/42",
+            lastObservedAt: "2025-01-01T00:00:00.000Z",
+          },
+          runtime: {
+            state: "alive",
+            reason: "process_running",
+            lastObservedAt: "2025-01-01T00:00:00.000Z",
+            handle: null,
+            tmuxName: null,
+          },
         },
       }),
     );
@@ -743,9 +798,29 @@ describe("status derivation from lifecycle", () => {
         branch: "main",
         lifecycle: {
           version: 2,
-          session: { kind: "worker", state: "done", reason: "research_complete", startedAt: "2025-01-01T00:00:00.000Z", completedAt: "2025-01-01T01:00:00.000Z", terminatedAt: null, lastTransitionAt: "2025-01-01T01:00:00.000Z" },
-          pr: { state: "merged", reason: "merge_complete", number: 42, url: null, lastObservedAt: null },
-          runtime: { state: "dead", reason: "process_exited", lastObservedAt: null, handle: null, tmuxName: null },
+          session: {
+            kind: "worker",
+            state: "done",
+            reason: "research_complete",
+            startedAt: "2025-01-01T00:00:00.000Z",
+            completedAt: "2025-01-01T01:00:00.000Z",
+            terminatedAt: null,
+            lastTransitionAt: "2025-01-01T01:00:00.000Z",
+          },
+          pr: {
+            state: "merged",
+            reason: "merge_complete",
+            number: 42,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "dead",
+            reason: "process_exited",
+            lastObservedAt: null,
+            handle: null,
+            tmuxName: null,
+          },
         },
       }),
     );
@@ -775,9 +850,29 @@ describe("status derivation from lifecycle", () => {
         status: "working",
         lifecycle: {
           version: 2,
-          session: { kind: "worker", state: "done", reason: "research_complete", startedAt: null, completedAt: null, terminatedAt: null, lastTransitionAt: null },
-          pr: { state: "none", reason: "not_created", number: null, url: null, lastObservedAt: null },
-          runtime: { state: "unknown", reason: "not_checked", lastObservedAt: null, handle: null, tmuxName: null },
+          session: {
+            kind: "worker",
+            state: "done",
+            reason: "research_complete",
+            startedAt: null,
+            completedAt: null,
+            terminatedAt: null,
+            lastTransitionAt: null,
+          },
+          pr: {
+            state: "none",
+            reason: "not_created",
+            number: null,
+            url: null,
+            lastObservedAt: null,
+          },
+          runtime: {
+            state: "unknown",
+            reason: "not_checked",
+            lastObservedAt: null,
+            handle: null,
+            tmuxName: null,
+          },
         },
       }),
     );
@@ -801,7 +896,7 @@ describe("corrupt JSON handling", () => {
   });
 
   it("readMetadata returns null for JSON array (not an object)", () => {
-    writeFileSync(join(dataDir, "corrupt-3.json"), '[1, 2, 3]', "utf-8");
+    writeFileSync(join(dataDir, "corrupt-3.json"), "[1, 2, 3]", "utf-8");
     expect(readMetadata(dataDir, "corrupt-3")).toBeNull();
   });
 
@@ -824,9 +919,14 @@ describe("corrupt JSON handling", () => {
   it("mutateMetadata treats corrupt file as empty record", () => {
     writeFileSync(join(dataDir, "corrupt-mut.json"), "{{bad json", "utf-8");
 
-    mutateMetadata(dataDir, "corrupt-mut", (existing) => {
-      return { ...existing, status: "working", worktree: "/tmp/w", branch: "main" };
-    }, { createIfMissing: true });
+    mutateMetadata(
+      dataDir,
+      "corrupt-mut",
+      (existing) => {
+        return { ...existing, status: "working", worktree: "/tmp/w", branch: "main" };
+      },
+      { createIfMissing: true },
+    );
 
     const meta = readMetadata(dataDir, "corrupt-mut");
     expect(meta).not.toBeNull();

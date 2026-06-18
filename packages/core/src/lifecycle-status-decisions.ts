@@ -53,10 +53,7 @@ function normalizeEvidenceForHash(evidence: string): string {
 }
 
 export function hashEvidence(evidence: string): string {
-  return createHash("sha256")
-    .update(normalizeEvidenceForHash(evidence))
-    .digest("hex")
-    .slice(0, 12);
+  return createHash("sha256").update(normalizeEvidenceForHash(evidence)).digest("hex").slice(0, 12);
 }
 
 interface OpenPRDecisionInput {
@@ -118,10 +115,12 @@ export function isDetectingTimedOut(
 }
 
 export function createDetectingDecision(
-  input: DetectingDecisionInput | (Pick<ProbeDecisionInput, "currentAttempts" | "idleWasBlocked"> & {
-    evidence: string;
-    reason?: LifecycleSessionReason;
-  }),
+  input:
+    | DetectingDecisionInput
+    | (Pick<ProbeDecisionInput, "currentAttempts" | "idleWasBlocked"> & {
+        evidence: string;
+        reason?: LifecycleSessionReason;
+      }),
 ): LifecycleDecision {
   const now = "now" in input && input.now ? input.now : new Date();
   const nowIso = now.toISOString();
@@ -130,13 +129,15 @@ export function createDetectingDecision(
   // Determine the starting time for detecting
   // If we have a previous startedAt AND evidence is unchanged, preserve it
   // Otherwise, start fresh
-  const previousEvidenceHash = "previousEvidenceHash" in input ? input.previousEvidenceHash : undefined;
+  const previousEvidenceHash =
+    "previousEvidenceHash" in input ? input.previousEvidenceHash : undefined;
   const previousStartedAt = "detectingStartedAt" in input ? input.detectingStartedAt : undefined;
 
   // Evidence is considered unchanged if:
   // 1. We have a previous hash AND it matches, OR
   // 2. We have no previous hash (first time entering detecting)
-  const evidenceChanged = previousEvidenceHash !== undefined && previousEvidenceHash !== evidenceHash;
+  const evidenceChanged =
+    previousEvidenceHash !== undefined && previousEvidenceHash !== evidenceHash;
   const detectingStartedAt = evidenceChanged ? nowIso : (previousStartedAt ?? nowIso);
 
   // Calculate attempts: reset if evidence changed, otherwise increment

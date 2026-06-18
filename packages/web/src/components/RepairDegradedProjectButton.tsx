@@ -3,11 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function RepairDegradedProjectButton({
-  projectId,
-}: {
-  projectId: string;
-}) {
+export function RepairDegradedProjectButton({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,9 +38,7 @@ export function RepairDegradedProjectButton({
       >
         {submitting ? "Repairing..." : "Repair config"}
       </button>
-      {error ? (
-        <p className="mt-3 text-sm text-[var(--color-status-error)]">{error}</p>
-      ) : null}
+      {error ? <p className="mt-3 text-sm text-[var(--color-status-error)]">{error}</p> : null}
     </div>
   );
 }

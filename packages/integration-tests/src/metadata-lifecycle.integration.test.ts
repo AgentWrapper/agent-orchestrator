@@ -173,7 +173,11 @@ describe("metadata lifecycle (real filesystem)", () => {
     const sessionsDir = join(tmpDir, "test-archive");
     mkdirSync(sessionsDir, { recursive: true });
 
-    writeMetadata(sessionsDir, "session-del", { status: "working", worktree: "/tmp/w", branch: "main" });
+    writeMetadata(sessionsDir, "session-del", {
+      status: "working",
+      worktree: "/tmp/w",
+      branch: "main",
+    });
     expect(readMetadataRaw(sessionsDir, "session-del")).not.toBeNull();
     deleteMetadata(sessionsDir, "session-del");
     expect(readMetadataRaw(sessionsDir, "session-del")).toBeNull();

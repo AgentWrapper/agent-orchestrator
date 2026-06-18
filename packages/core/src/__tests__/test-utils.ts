@@ -23,6 +23,21 @@ import type {
   PRInfo,
 } from "../types.js";
 
+function bestEffortRm(targetPath: string): void {
+  try {
+    rmSync(targetPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      process.platform === "win32" &&
+      (message.includes("ENOTEMPTY") || message.includes("EBUSY") || message.includes("EPERM"))
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Data factories
 // ---------------------------------------------------------------------------
@@ -364,9 +379,9 @@ export function createTestEnvironment(): TestEnvironment {
     closeDb();
     const projectDir = getProjectDir("my-app");
     if (existsSync(projectDir)) {
-      rmSync(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      bestEffortRm(projectDir);
     }
-    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    bestEffortRm(tmpDir);
   };
 
   return { tmpDir, configPath, sessionsDir, config, cleanup };
@@ -479,9 +494,9 @@ export function teardownTestContext(ctx: TestContext): void {
   // V2 storage: getProjectDir(projectId). Retry options handle Windows EBUSY.
   const projectDir = getProjectDir("my-app");
   if (existsSync(projectDir)) {
-    rmSync(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    bestEffortRm(projectDir);
   }
-  rmSync(ctx.tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  bestEffortRm(ctx.tmpDir);
 }
 
 // ---------------------------------------------------------------------------

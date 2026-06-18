@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createActivitySignal, type Session, type RuntimeHandle, type AgentLaunchConfig } from "@aoagents/ao-core";
+import {
+  createActivitySignal,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@aoagents/ao-core";
 
 // Mock fs/promises for getSessionInfo tests
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -468,10 +473,13 @@ describe("getRestoreCommand", () => {
   const agent = create();
 
   it("returns null (cursor does not support session resume)", async () => {
-    const result = await agent.getRestoreCommand!(
-      makeSession(),
-      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
-    );
+    const result = await agent.getRestoreCommand!(makeSession(), {
+      name: "proj",
+      repo: "o/r",
+      path: "/p",
+      defaultBranch: "main",
+      sessionPrefix: "p",
+    });
     expect(result).toBeNull();
   });
 });

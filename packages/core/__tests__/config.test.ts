@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, findConfigFile, validateConfig } from "../src/config.js";
 import { ConfigNotFoundError } from "../src/types.js";
+import { generateSessionPrefix } from "../src/paths.js";
 
 describe("Config Loading", () => {
   let testDir: string;
@@ -134,6 +135,25 @@ projects:
 
       const config = loadConfig(configPath);
       expect(config.port).toBe(5000);
+    });
+
+    it("derives sessionPrefix from the resolved project directory when path is '.'", () => {
+      const configPath = join(testDir, "relative-path-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  demo-app:
+    repo: test/repo
+    path: .
+    defaultBranch: main
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.projects["demo-app"]?.sessionPrefix).toBe(
+        generateSessionPrefix(basename(testDir)),
+      );
     });
 
     it("should throw error if config not found", () => {
@@ -307,6 +327,5 @@ projects:
 
       expect(() => loadConfig(configPath)).toThrow(/Map keys must be unique|Duplicate project ID/);
     });
-
   });
 });

@@ -1,8 +1,4 @@
-import {
-  chmodSync,
-  mkdirSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -201,17 +197,12 @@ process.exit(1);
   return binDir;
 }
 
-export function installMockGit(
-  tmpDir: string,
-  remoteBranches: string[],
-): string {
+export function installMockGit(tmpDir: string, remoteBranches: string[]): string {
   const binDir = join(tmpDir, "mock-git-bin");
   mkdirSync(binDir, { recursive: true });
 
   if (isWin) {
-    const refs = remoteBranches
-      .map((branch) => `deadbeef\trefs/heads/${branch}`)
-      .join("\n");
+    const refs = remoteBranches.map((branch) => `deadbeef\trefs/heads/${branch}`).join("\n");
     const jsPath = join(binDir, "git.js");
     writeFileSync(
       jsPath,

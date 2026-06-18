@@ -77,9 +77,14 @@ describe("PullRequestsPage", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /#634 mobile dashboard density pass/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /#634 mobile dashboard density pass/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/projects/my-app");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/projects/my-app",
+    );
     expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
       "href",
       "/projects/my-app/sessions/my-app-orchestrator",
@@ -105,7 +110,10 @@ describe("PullRequestsPage", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=all");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/?project=all",
+    );
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
   });
 

@@ -132,7 +132,8 @@ async function gatherSessionInfo(
   projectConfig: ReturnType<typeof loadConfig>,
   reportsLimit: number = 0,
 ): Promise<SessionInfo> {
-  const sessionPrefix = projectConfig.projects[session.projectId]?.sessionPrefix ?? session.projectId;
+  const sessionPrefix =
+    projectConfig.projects[session.projectId]?.sessionPrefix ?? session.projectId;
   const allSessionPrefixes = Object.entries(projectConfig.projects).map(
     ([id, p]) => p.sessionPrefix ?? id,
   );
@@ -234,7 +235,9 @@ async function gatherSessionInfo(
 
   return {
     name: session.id,
-    role: isOrchestratorSession(session, sessionPrefix, allSessionPrefixes) ? "orchestrator" : "worker",
+    role: isOrchestratorSession(session, sessionPrefix, allSessionPrefixes)
+      ? "orchestrator"
+      : "worker",
     branch,
     status,
     summary,
@@ -352,11 +355,8 @@ function printReviewStatus(summary: ProjectReviewStatus): void {
   if (summary.runCount === 0) return;
 
   const findings =
-    summary.openFindingCount === 1
-      ? "1 open finding"
-      : `${summary.openFindingCount} open findings`;
-  const active =
-    summary.activeRunCount === 1 ? "1 active" : `${summary.activeRunCount} active`;
+    summary.openFindingCount === 1 ? "1 open finding" : `${summary.openFindingCount} open findings`;
+  const active = summary.activeRunCount === 1 ? "1 active" : `${summary.activeRunCount} active`;
 
   console.log(
     `  ${chalk.magenta("Reviews:")} ${summary.runCount} run${summary.runCount !== 1 ? "s" : ""} · ${active} · ${findings}`,
@@ -368,9 +368,7 @@ function printReviewStatus(summary: ProjectReviewStatus): void {
 
   for (const run of visibleRuns) {
     const findingText =
-      run.openFindingCount === 1
-        ? "1 open finding"
-        : `${run.openFindingCount} open findings`;
+      run.openFindingCount === 1 ? "1 open finding" : `${run.openFindingCount} open findings`;
     console.log(
       `    ${chalk.green(run.reviewerSessionId)} ${chalk.dim(run.status)} → ${chalk.cyan(run.linkedSessionId)} ${chalk.dim(findingText)}`,
     );
@@ -465,9 +463,7 @@ export function registerStatus(program: Command): void {
           console.log(banner("AGENT ORCHESTRATOR STATUS"));
           if (opts.watch) {
             console.log(
-              chalk.dim(
-                `Refreshing every ${watchIntervalSeconds}s. Press Ctrl+C to exit.`,
-              ),
+              chalk.dim(`Refreshing every ${watchIntervalSeconds}s. Press Ctrl+C to exit.`),
             );
             console.log();
           } else {

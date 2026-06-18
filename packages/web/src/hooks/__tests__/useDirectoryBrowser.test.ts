@@ -7,8 +7,14 @@ function mockBrowse(entries: unknown[]) {
 }
 
 function deferredResponse() {
-  let resolve!: (value: { ok: true; json: () => Promise<{ entries: never[]; roots: never[] }> }) => void;
-  const promise = new Promise<{ ok: true; json: () => Promise<{ entries: never[]; roots: never[] }> }>((res) => {
+  let resolve!: (value: {
+    ok: true;
+    json: () => Promise<{ entries: never[]; roots: never[] }>;
+  }) => void;
+  const promise = new Promise<{
+    ok: true;
+    json: () => Promise<{ entries: never[]; roots: never[] }>;
+  }>((res) => {
     resolve = res;
   });
   return {
@@ -19,7 +25,10 @@ function deferredResponse() {
 
 describe("useDirectoryBrowser", () => {
   it("loads the initial path on reset and tracks history", async () => {
-    vi.stubGlobal("fetch", mockBrowse([{ name: "a", isDirectory: true, isGitRepo: false, hasLocalConfig: false }]));
+    vi.stubGlobal(
+      "fetch",
+      mockBrowse([{ name: "a", isDirectory: true, isGitRepo: false, hasLocalConfig: false }]),
+    );
     const { result } = renderHook(() => useDirectoryBrowser());
     act(() => result.current.reset());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -37,7 +46,10 @@ describe("useDirectoryBrowser", () => {
   });
 
   it("surfaces a browse error when the API fails", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: "path is restricted" }) }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: "path is restricted" }) }),
+    );
     const { result } = renderHook(() => useDirectoryBrowser());
     await act(async () => {
       await result.current.browse("~/secret");

@@ -36,7 +36,10 @@ export default async function ProjectSettingsPage(props: {
     <div className="min-h-screen bg-[var(--color-bg-canvas)] px-6 py-10 text-[var(--color-text-primary)]">
       <div className="mx-auto max-w-5xl">
         <nav className="mb-6 flex items-center gap-2 text-sm text-[var(--color-text-tertiary)]">
-          <Link href={`/projects/${encodeURIComponent(projectId)}`} className="hover:text-[var(--color-text-primary)]">
+          <Link
+            href={`/projects/${encodeURIComponent(projectId)}`}
+            className="hover:text-[var(--color-text-primary)]"
+          >
             {project.name}
           </Link>
           <span>/</span>
@@ -50,7 +53,8 @@ export default async function ProjectSettingsPage(props: {
             </p>
             <h1 className="mt-2 text-3xl font-semibold">{project.name}</h1>
             <p className="mt-2 max-w-3xl text-sm text-[var(--color-text-secondary)]">
-              Edit behavior fields for this project without changing which repository identity it points at.
+              Edit behavior fields for this project without changing which repository identity it
+              points at.
             </p>
           </div>
           <Link

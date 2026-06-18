@@ -5,11 +5,7 @@ import {
   type NotifyAction,
   type NotifyContext,
 } from "@aoagents/ao-core";
-import {
-  isRetryableHttpStatus,
-  normalizeRetryConfig,
-  validateUrl,
-} from "@aoagents/ao-core/utils";
+import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@aoagents/ao-core/utils";
 
 export const manifest = {
   name: "webhook",

@@ -28,7 +28,11 @@ vi.mock("@/hooks/useSessionEvents", () => ({
 
 vi.mock("@/components/ProjectSidebar", () => ({
   ProjectSidebar: (props: { activeProjectId?: string; orchestrators?: unknown[] }) => (
-    <div data-testid="sidebar" data-project={props.activeProjectId} data-orchestrators={JSON.stringify(props.orchestrators ?? [])} />
+    <div
+      data-testid="sidebar"
+      data-project={props.activeProjectId}
+      data-orchestrators={JSON.stringify(props.orchestrators ?? [])}
+    />
   ),
 }));
 

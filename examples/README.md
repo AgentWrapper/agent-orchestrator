@@ -1,4 +1,4 @@
-# Agent Orchestrator Config Examples
+# AgentMesh Config Examples
 
 This directory contains example configurations for common use cases.
 
@@ -78,13 +78,27 @@ Use this if:
 - You need agent-specific configuration
 - You're evaluating different AI coding assistants
 
+### [agentmesh-coordination.yaml](./agentmesh-coordination.yaml)
+
+**AgentMesh coordination layer**
+
+Shows how to enable and configure the AgentMesh coordination layer with QA loops, policy gates, and role-based agent management.
+
+Use this if:
+
+- You want to use the AgentMesh coordination layer
+- You need QA loops with automatic rework
+- You want policy-based code validation
+- You need role-based agent assignment (builder, qa, planner, etc.)
+
 ## Configuration Tips
 
 1. **Start simple** - Use `simple-github.yaml` as a starting point
-2. **Add complexity incrementally** - Enable features as you need them
-3. **Test with one project first** - Get comfortable before adding multiple projects
-4. **Review defaults** - Most sensible defaults are already configured
-5. **Use environment variables** - Store API keys in env vars, not config files
+2. **Add AgentMesh coordination** - Enable `agentmesh-coordination.yaml` for QA loops and policy gates
+3. **Add complexity incrementally** - Enable features as you need them
+4. **Test with one project first** - Get comfortable before adding multiple projects
+5. **Review defaults** - Most sensible defaults are already configured
+6. **Use environment variables** - Store API keys in env vars, not config files
 
 ## Environment Variables
 

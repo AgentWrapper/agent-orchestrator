@@ -100,7 +100,9 @@ export function useDirectoryBrowser(): UseDirectoryBrowser {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/filesystem/browse?path=${encodeURIComponent(path)}`).catch(() => null);
+        const response = await fetch(
+          `/api/filesystem/browse?path=${encodeURIComponent(path)}`,
+        ).catch(() => null);
         if (requestId !== browseRequestIdRef.current) return;
         if (!response) {
           clearBrowseResults(path, options?.selectedPath);
@@ -155,7 +157,10 @@ export function useDirectoryBrowser(): UseDirectoryBrowser {
     [browse],
   );
 
-  const directoryEntries = useMemo(() => browseEntries.filter((entry) => entry.isDirectory), [browseEntries]);
+  const directoryEntries = useMemo(
+    () => browseEntries.filter((entry) => entry.isDirectory),
+    [browseEntries],
+  );
   const parentPath = getParentBrowsePath(browsePath);
   const selectedRootPath = roots.find((root) => browsePath.startsWith(root.path))?.path ?? "";
   const canGoBack = browseHistoryIndex > 0;

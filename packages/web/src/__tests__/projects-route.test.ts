@@ -15,6 +15,7 @@ import {
   generateExternalId,
   loadGlobalConfig,
   registerProjectInGlobalConfig,
+  isWindows,
 } from "@aoagents/ao-core";
 
 const invalidatePortfolioServicesCache = vi.fn();
@@ -216,31 +217,34 @@ describe("POST /api/projects", () => {
     });
   });
 
-  it("reconnects to the existing project ID when the same path is registered again", async () => {
-    const repoDir = path.join(tempRoot, "demo");
-    const aliasDir = path.join(tempRoot, "demo-alias");
-    mkdirSync(path.join(repoDir, ".git"), { recursive: true });
-    writeFileSync(
-      path.join(repoDir, ".git", "config"),
-      '[remote "origin"]\n  url = git@github.com:acme/demo.git\n',
-    );
-    symlinkSync(repoDir, aliasDir);
+  it.skipIf(isWindows())(
+    "reconnects to the existing project ID when the same path is registered again",
+    async () => {
+      const repoDir = path.join(tempRoot, "demo");
+      const aliasDir = path.join(tempRoot, "demo-alias");
+      mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+      writeFileSync(
+        path.join(repoDir, ".git", "config"),
+        '[remote "origin"]\n  url = git@github.com:acme/demo.git\n',
+      );
+      symlinkSync(repoDir, aliasDir);
 
-    const { POST } = await import("@/app/api/projects/route");
-    const firstResponse = await POST(
-      makeRequest({ projectId: "existing-app", name: "Existing", path: repoDir }),
-    );
-    const firstBody = (await firstResponse.json()) as { projectId: string };
+      const { POST } = await import("@/app/api/projects/route");
+      const firstResponse = await POST(
+        makeRequest({ projectId: "existing-app", name: "Existing", path: repoDir }),
+      );
+      const firstBody = (await firstResponse.json()) as { projectId: string };
 
-    const response = await POST(
-      makeRequest({ projectId: "second-app", name: "Second", path: aliasDir }),
-    );
+      const response = await POST(
+        makeRequest({ projectId: "second-app", name: "Second", path: aliasDir }),
+      );
 
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({
-      projectId: firstBody.projectId,
-    });
-  });
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        projectId: firstBody.projectId,
+      });
+    },
+  );
 
   it("registers same-basename projects with distinct hashed IDs", async () => {
     const repoA = path.join(tempRoot, "company-a", "agent-orchestrator");

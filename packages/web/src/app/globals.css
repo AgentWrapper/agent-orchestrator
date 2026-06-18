@@ -1,5 +1,5 @@
 /**
- * Design System Tokens — Agent Orchestrator Dashboard
+ * Design System Tokens — AgentMesh Dashboard
  * =====================================================
  * All tokens are defined in @theme using Tailwind v4 CSS custom properties.
  * Reference tokens in components via: bg-[var(--color-bg-surface)], etc.
@@ -9307,4 +9307,11 @@ body.is-resizing-x .resize-handle::after {
 body.is-resizing-x {
   cursor: col-resize;
   user-select: none;
+}
+
+/* AgentMesh QA loop progress bars — width is data-driven via the --progress
+   custom property set inline; the literal width stays out of the JSX style. */
+.qa-progress-bar__fill {
+  width: var(--progress, 0%);
+  transition: width 0.3s ease;
 }

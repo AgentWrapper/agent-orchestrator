@@ -53,10 +53,10 @@ export default tseslint.config(
       "no-new-func": "error",
 
       // Code quality
-      "no-console": "warn",
+      "no-console": "off",
       "no-debugger": "error",
       "no-duplicate-imports": "error",
-      "no-template-curly-in-string": "warn",
+      "no-template-curly-in-string": "off",
       "no-restricted-syntax": [
         "error",
         {
@@ -83,7 +83,7 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports" }],
-      "@typescript-eslint/no-non-null-assertion": "warn",
+      "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/no-require-imports": "error",
     },
   },

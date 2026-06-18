@@ -11,9 +11,7 @@ export default function Loading() {
         >
           <path d="M12 3a9 9 0 1 0 9 9" />
         </svg>
-        <p className="text-[13px] text-[var(--color-text-tertiary)]">
-          Loading…
-        </p>
+        <p className="text-[13px] text-[var(--color-text-tertiary)]">Loading…</p>
       </div>
     </div>
   );

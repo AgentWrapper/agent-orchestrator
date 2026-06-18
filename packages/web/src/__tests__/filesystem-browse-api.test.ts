@@ -74,9 +74,7 @@ describe("/api/filesystem/browse", () => {
     // `/etc` exists on POSIX. The route's realpath() resolves first, so a
     // non-existent path returns 404 (not 400) before the outside-root check fires.
     const outsidePath = "/etc";
-    const response = await browseGET(
-      makeRequest(`/api/filesystem/browse?path=${outsidePath}`),
-    );
+    const response = await browseGET(makeRequest(`/api/filesystem/browse?path=${outsidePath}`));
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "path outside allowed root" });
@@ -95,7 +93,9 @@ describe("/api/filesystem/browse", () => {
     };
     expect(body.entries).toEqual([]);
     expect(body.current).toEqual({ isGitRepo: false, hasLocalConfig: false });
-    expect(body.roots.some((root) => /^[A-Z]:$/.test(root.label) && root.path.endsWith("\\"))).toBe(true);
+    expect(body.roots.some((root) => /^[A-Z]:$/.test(root.label) && root.path.endsWith("\\"))).toBe(
+      true,
+    );
   });
 
   // Skipped on Windows: symlinkSync requires admin or Developer Mode on win32
@@ -190,7 +190,9 @@ describe("/api/filesystem/browse", () => {
     mkdirSync(path.join(repo, ".git"), { recursive: true });
     writeFileSync(path.join(repo, "agent-orchestrator.yaml"), "version: 1\n");
 
-    const response = await browseGET(makeRequest("http://localhost:3000/api/filesystem/browse?path=~"));
+    const response = await browseGET(
+      makeRequest("http://localhost:3000/api/filesystem/browse?path=~"),
+    );
     const body = await response.json();
     const entry = body.entries.find((e: { name: string }) => e.name === "repo");
 

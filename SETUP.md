@@ -1,15 +1,15 @@
-# Agent Orchestrator Setup Guide
+# AgentMesh Setup Guide
 
-Comprehensive guide to installing, configuring, and troubleshooting Agent Orchestrator.
+Comprehensive guide to installing, configuring, and troubleshooting AgentMesh.
 
 ## Prerequisites
 
 ### Required
 
-- **Node.js 20+** - Runtime for the orchestrator and CLI
+- **Node.js 20.18.3+** - Runtime for the orchestrator and CLI
 
   ```bash
-  node --version  # Should be v20.0.0 or higher
+  node --version  # Should be v20.18.3 or higher
   ```
 
 - **Git 2.25+** - For repository management and worktrees
@@ -98,7 +98,7 @@ npm install -g @aoagents/ao
 
 ### Build from Source (for contributors)
 
-If you want to develop or contribute to Agent Orchestrator:
+If you want to develop or contribute to AgentMesh:
 
 ```bash
 # Clone the repository
@@ -117,6 +117,10 @@ The setup script handles pnpm installation, dependency resolution, building all 
 ## First-Time Setup
 
 ### `ao start` — the only command you need
+
+If you are validating this repository itself rather than installing from npm, use
+[Quick-start.md](./Quick-start.md) for the shortest contributor path and the exact smoke test that
+was verified on Windows.
 
 `ao start` handles everything: auto-detecting your project, generating config, and launching the dashboard + orchestrator. There are three ways to use it:
 
@@ -199,18 +203,82 @@ See [agent-orchestrator.yaml.example](./agent-orchestrator.yaml.example) for a f
 
 ### Plugin Slots
 
-Agent Orchestrator has 8 plugin slots. All are swappable:
+AgentMesh has **eight plugin slots — seven swappable (Runtime, Agent, Workspace, Tracker, SCM, Notifier, Terminal) plus Lifecycle, which is managed by core and not pluggable.** Only plugins shipped in `packages/plugins/` are listed below; additional integrations come from the [community plugin registry](packages/cli/src/assets/plugin-registry.json).
 
-| Slot          | Purpose              | Default       | Alternatives                                    |
-| ------------- | -------------------- | ------------- | ----------------------------------------------- |
-| **Runtime**   | How sessions run     | `tmux` (macOS/Linux) / `process` (Windows; ConPTY via node-pty) | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
-| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
-| **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
-| **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
-| **SCM**       | Source control       | `github`      | GitLab, Bitbucket (future)                      |
-| **Notifier**  | Notifications        | `desktop`     | `slack`, `discord`, `webhook`, `email`          |
-| **Terminal**  | Terminal integration | `iterm2`      | `web`, custom                                   |
-| **Lifecycle** | Session lifecycle    | (core)        | Non-pluggable                                   |
+| Slot          | Purpose              | Default                                                         | Alternatives                                               |
+| ------------- | -------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| **Runtime**   | How sessions run     | `tmux` (macOS/Linux) / `process` (Windows; ConPTY via node-pty) | `process` (community plugins for others)                   |
+| **Agent**     | AI coding assistant  | `claude-code`                                                   | `codex`, `aider`, `cursor`, `opencode`, `kimicode`, `grok` |
+| **Workspace** | Workspace isolation  | `worktree`                                                      | `clone`                                                    |
+| **Tracker**   | Issue tracking       | `github`                                                        | `linear`, `gitlab`                                         |
+| **SCM**       | Source control       | `github`                                                        | `gitlab`                                                   |
+| **Notifier**  | Notifications        | `desktop`                                                       | `slack`, `discord`, `webhook`, `composio`, `openclaw`      |
+| **Terminal**  | Terminal integration | `iterm2`                                                        | `web`                                                      |
+| **Lifecycle** | Session lifecycle    | (core)                                                          | Non-pluggable                                              |
+
+### AgentMesh Coordination Layer
+
+The **AgentMesh coordination layer** is an optional layer on top of normal session
+orchestration. Where the base orchestrator spawns one agent per issue, the coordination
+layer organizes work into **tasks** that move through a quality-gated lifecycle
+(`created → building → qa_running → qa_passed / rework → done`), assigns each task a
+**role**, and runs an automated **QA loop** with **policy** checks before a PR is opened.
+
+**When to enable it:** turn it on when you want more than "one agent, one PR" — e.g. a
+builder agent whose output is automatically reviewed by a QA agent, with bounded retries
+and policy enforcement, all visible on a task board. For simple single-agent flows you can
+leave it disabled.
+
+Enable it in `agent-orchestrator.yaml`:
+
+```yaml
+agentmesh:
+  enabled: true
+
+  qa:
+    maxRetries: 3 # how many rework cycles before the task escalates to a human
+    autoRework: true # automatically send failing tasks back to the builder
+    escalateAfterRetries: true # once maxRetries is hit, stop and ask a human
+
+  policy:
+    enabled: true
+    blockOnPolicyViolation: true
+    rules: # named checks run against the diff before a PR is allowed
+      - no-hardcoded-secrets
+      - no-console-log
+      - require-tests
+      - no-destructive-ops
+
+  roles:
+    builder: { agent: claude-code, enabled: true } # implements features / fixes bugs
+    qa: { agent: codex, enabled: true } # tests and validates the builder's work
+    planner: { agent: claude-code, enabled: false } # breaks large tasks down (optional)
+```
+
+**Key fields:**
+
+- `qa.maxRetries` — maximum rework attempts before a failing task is escalated rather than retried again.
+- `policy.rules` — a list of named policy checks (strings) evaluated against each task's diff; with `blockOnPolicyViolation: true` a violation blocks the PR gate.
+- **Roles** — who does what. Built-in roles are `builder`, `qa`, `planner`, `security_reviewer`, `docs_writer`, and `release_manager`. Each role maps to an agent adapter and a prompt template.
+
+See [examples/agentmesh-coordination.yaml](./examples/agentmesh-coordination.yaml) for a full example.
+
+#### Dashboard pages
+
+- `http://localhost:3000` — the main kanban dashboard (sessions across all projects).
+- `http://localhost:3000/agentmesh` — the **AgentMesh Task Board**: create tasks, watch
+  them move through the QA loop, and inspect per-task QA findings. This page is only
+  meaningful when the coordination layer is enabled.
+
+#### Smoke test
+
+After `ao start` succeeds, the smallest useful validation is:
+
+1. Open `http://localhost:3000/agentmesh`.
+2. Create a task with a title and description.
+3. Leave the branch field blank so AgentMesh auto-generates a worker branch.
+4. Click `Start`.
+5. Confirm the task leaves `Created` and enters `Building`.
 
 ### Reactions
 
@@ -299,12 +367,12 @@ Override defaults per project:
 ```yaml
 projects:
   frontend:
-    runtime: tmux       # default on macOS/Linux; on Windows use `process`
+    runtime: tmux # default on macOS/Linux; on Windows use `process`
     agent: claude-code
     workspace: worktree
 
   backend:
-    runtime: docker # Use Docker for backend
+    runtime: process # Use the process runtime for backend
     agent: codex # Use Codex instead of Claude
 ```
 
@@ -389,7 +457,7 @@ echo $LINEAR_API_KEY  # Should print your key
 ```bash
 # Send test message
 curl -X POST -H 'Content-type: application/json' \
-  --data '{"text":"Agent Orchestrator test"}' \
+  --data '{"text":"AgentMesh test"}' \
   $SLACK_WEBHOOK_URL
 ```
 
@@ -652,27 +720,11 @@ Create custom plugins for:
 
 See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
 
-### Docker Runtime
+### Containerized / Remote Runtimes (planned)
 
-Run agents in Docker containers:
-
-```yaml
-defaults:
-  runtime: docker
-
-# Plugin will use official images or build from Dockerfile
-```
-
-### Kubernetes Runtime
-
-Run agents in Kubernetes pods:
-
-```yaml
-defaults:
-  runtime: kubernetes
-
-# Requires kubectl configured with cluster access
-```
+> **Not shipped yet.** AgentMesh ships only the `tmux` and `process` runtimes today.
+> Docker, Kubernetes, SSH, and cloud-VM runtimes are on the roadmap and can be built
+> as custom Runtime plugins in the meantime — see the [Development Guide](./docs/DEVELOPMENT.md).
 
 ### Custom Notifiers
 

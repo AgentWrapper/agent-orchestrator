@@ -95,9 +95,7 @@ describe("readLastJsonlEntry", () => {
   it("extracts payloadType from nested payload.type", async () => {
     // Real Codex writes records like {"type":"event_msg","payload":{"type":"error",...}}
     // Consumers need the inner payload.type to classify activity correctly.
-    const path = setup(
-      '{"type":"event_msg","payload":{"type":"error","message":"bad"}}\n',
-    );
+    const path = setup('{"type":"event_msg","payload":{"type":"error","message":"bad"}}\n');
     const result = await readLastJsonlEntry(path);
     expect(result!.lastType).toBe("event_msg");
     expect(result!.payloadType).toBe("error");

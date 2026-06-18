@@ -55,16 +55,23 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   }, [open, reset]);
 
   const selectedEntry = useMemo(
-    () => directoryEntries.find((entry) => joinBrowsePath(browsePath, entry.name) === selectedBrowsePath) ?? null,
+    () =>
+      directoryEntries.find(
+        (entry) => joinBrowsePath(browsePath, entry.name) === selectedBrowsePath,
+      ) ?? null,
     [browsePath, directoryEntries, selectedBrowsePath],
   );
   const selectedCurrentDirectory = selectedBrowsePath === browsePath ? currentDirectory : null;
   const projectIdValue =
     projectIdInput.trim() ||
-    (selectedBrowsePath.trim() && selectedBrowsePath !== "~" ? deriveProjectIdFromPath(selectedBrowsePath) : "");
+    (selectedBrowsePath.trim() && selectedBrowsePath !== "~"
+      ? deriveProjectIdFromPath(selectedBrowsePath)
+      : "");
   const projectNameValue =
     projectNameInput.trim() ||
-    (selectedBrowsePath.trim() && selectedBrowsePath !== "~" ? deriveProjectNameFromPath(selectedBrowsePath) : "");
+    (selectedBrowsePath.trim() && selectedBrowsePath !== "~"
+      ? deriveProjectNameFromPath(selectedBrowsePath)
+      : "");
   const canSubmit =
     selectedBrowsePath.trim() !== "" &&
     selectedBrowsePath !== "~" &&
@@ -99,16 +106,19 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId, name, path: resolvedPath, useDefaultProjectId }),
         });
-        const body = (await response.json().catch(() => null)) as
-          | {
-              error?: string;
-              projectId?: string;
-              existingProjectId?: string;
-              suggestedProjectId?: string;
-              suggestion?: "choose-project-id";
-            }
-          | null;
-        if (response.status === 409 && body?.existingProjectId && body?.suggestedProjectId && body?.suggestion) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+          projectId?: string;
+          existingProjectId?: string;
+          suggestedProjectId?: string;
+          suggestion?: "choose-project-id";
+        } | null;
+        if (
+          response.status === 409 &&
+          body?.existingProjectId &&
+          body?.suggestedProjectId &&
+          body?.suggestion
+        ) {
           setCollision({
             error: body.error ?? "A project with that ID already exists.",
             existingProjectId: body.existingProjectId,
@@ -140,7 +150,11 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!modalRef.current?.contains(document.activeElement) && document.activeElement !== document.body) return;
+      if (
+        !modalRef.current?.contains(document.activeElement) &&
+        document.activeElement !== document.body
+      )
+        return;
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -159,7 +173,9 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
   const selectedIsKnownNonRepo =
     Boolean(selectedEntry && !selectedEntry.isGitRepo) ||
-    Boolean(selectedCurrentDirectory && selectedBrowsePath !== "~" && !selectedCurrentDirectory.isGitRepo);
+    Boolean(
+      selectedCurrentDirectory && selectedBrowsePath !== "~" && !selectedCurrentDirectory.isGitRepo,
+    );
 
   const selectedNotice = collision ? (
     <div className="add-project-modal__notice add-project-modal__notice--warning">
@@ -181,10 +197,16 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         >
           Open existing
         </button>
-        <button type="button" onClick={() => void submit(true)} className="add-project-modal__ghostbtn">
+        <button
+          type="button"
+          onClick={() => void submit(true)}
+          className="add-project-modal__ghostbtn"
+        >
           Use suggested ID
         </button>
-        <span className="add-project-modal__notice-hint">Edit the Project ID field or accept the suggested suffix.</span>
+        <span className="add-project-modal__notice-hint">
+          Edit the Project ID field or accept the suggested suffix.
+        </span>
       </div>
     </div>
   ) : inlineError ? (
@@ -211,7 +233,12 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
       >
         <div className="add-project-modal__titlebar">
           <h2 className="add-project-modal__windowtitle">add project</h2>
-          <button type="button" aria-label="Close" onClick={onClose} className="add-project-modal__iconbtn">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="add-project-modal__iconbtn"
+          >
             ×
           </button>
         </div>
@@ -220,7 +247,9 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
         <div className="add-project-modal__pathbar add-project-modal__pathbar--selection">
           <span className="add-project-modal__selection-label">Selected</span>
-          <span className="add-project-modal__selection-path">{selectedBrowsePath || "No directory selected"}</span>
+          <span className="add-project-modal__selection-path">
+            {selectedBrowsePath || "No directory selected"}
+          </span>
         </div>
         <div className="add-project-modal__pathbar add-project-modal__formrow">
           <div className="add-project-modal__field">

@@ -39,7 +39,6 @@ export type TransitionSource =
   | "cleanup" // Session cleanup
   | "claim_pr"; // PR claim
 
-
 /**
  * Result of a lifecycle transition attempt.
  */
@@ -174,9 +173,7 @@ export function buildTransitionMetadataPatch(
  * 4. Persists the updated lifecycle and metadata
  * 5. Returns before/after state for observability
  */
-export function applyLifecycleDecision(
-  input: ApplyDecisionInput,
-): TransitionResult {
+export function applyLifecycleDecision(input: ApplyDecisionInput): TransitionResult {
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
 
@@ -232,10 +229,7 @@ export function applyLifecycleDecision(
   }
 
   // Apply lifecycle patch second (overwrites any conflicting keys from additionalMetadata)
-  const lifecyclePatch = buildTransitionMetadataPatch(
-    nextLifecycle,
-    input.decision,
-  );
+  const lifecyclePatch = buildTransitionMetadataPatch(nextLifecycle, input.decision);
   for (const [key, value] of Object.entries(lifecyclePatch)) {
     metadataPatch[key] = value;
   }

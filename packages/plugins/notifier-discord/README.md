@@ -22,14 +22,14 @@ notifiers:
 
 ## Config options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `webhookUrl` | (required) | Discord webhook URL |
-| `username` | "Agent Orchestrator" | Bot display name |
-| `avatarUrl` | (none) | Bot avatar image URL |
-| `threadId` | (none) | Post to a specific thread |
-| `retries` | 2 | Retry attempts on 5xx |
-| `retryDelayMs` | 1000 | Base retry delay (exponential backoff) |
+| Option         | Default              | Description                            |
+| -------------- | -------------------- | -------------------------------------- |
+| `webhookUrl`   | (required)           | Discord webhook URL                    |
+| `username`     | "Agent Orchestrator" | Bot display name                       |
+| `avatarUrl`    | (none)               | Bot avatar image URL                   |
+| `threadId`     | (none)               | Post to a specific thread              |
+| `retries`      | 2                    | Retry attempts on 5xx                  |
+| `retryDelayMs` | 1000                 | Base retry delay (exponential backoff) |
 
 ## Features
 

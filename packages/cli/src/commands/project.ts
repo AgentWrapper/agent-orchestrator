@@ -151,7 +151,11 @@ export function registerProjectCommand(program: Command): void {
         projectId = basename(resolvedPath) || "project";
       }
 
-      const effectiveId = registerProject(resolvedPath, projectId, basename(resolvedPath) || projectId);
+      const effectiveId = registerProject(
+        resolvedPath,
+        projectId,
+        basename(resolvedPath) || projectId,
+      );
       console.log(chalk.green(`Registered project "${effectiveId}" at ${resolvedPath}`));
     });
 
