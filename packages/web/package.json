@@ -26,7 +26,8 @@
     ".next/*.json",
     ".next/BUILD_ID",
     "dist-server",
-    "next.config.js"
+    "next.config.js",
+    "public"
   ],
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:direct-terminal\"",
