@@ -9,6 +9,8 @@ coverage/
 *-context.md
 packages/web/screenshots/
 .playwright-cli/
+.ao-live-run/
+user-run-report.md
 
 # Environment files (secrets)
 .env
