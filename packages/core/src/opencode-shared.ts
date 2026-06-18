@@ -69,9 +69,7 @@ export function ensureOpenCodeTmpDir(): string {
  * Setting both `TMPDIR` and `TMP`/`TEMP` covers POSIX (TMPDIR) and Windows
  * fallbacks. Bun honors `TMPDIR` for its embedded shared-library extraction.
  */
-export function getOpenCodeChildEnv(
-  extra?: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
+export function getOpenCodeChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const dir = ensureOpenCodeTmpDir();
   return {
     ...process.env,
@@ -144,9 +142,7 @@ function parseSessionListStdout(stdout: string): OpenCodeSessionListEntry[] {
     const title = typeof record["title"] === "string" ? record["title"] : "";
     const rawUpdated = record["updated"];
     const updated =
-      typeof rawUpdated === "string" || typeof rawUpdated === "number"
-        ? rawUpdated
-        : undefined;
+      typeof rawUpdated === "string" || typeof rawUpdated === "number" ? rawUpdated : undefined;
     const updatedAt = parseUpdatedToEpochMs(rawUpdated);
     return [
       {
@@ -180,10 +176,7 @@ export async function getCachedOpenCodeSessionList(options?: {
       // they wanted a refresh.
       return sessionListCache.promise;
     }
-    if (
-      !forceRefresh &&
-      now - sessionListCache.timestamp < OPENCODE_SESSION_LIST_CACHE_TTL_MS
-    ) {
+    if (!forceRefresh && now - sessionListCache.timestamp < OPENCODE_SESSION_LIST_CACHE_TTL_MS) {
       return sessionListCache.entries;
     }
   }

@@ -46,7 +46,9 @@ describe("buildBlockerChips", () => {
   it("emits a CI pending chip when ciStatus is pending and not failing", () => {
     const pr = makePR({ ciStatus: "pending" });
     const chips = buildBlockerChips(pr, {});
-    expect(chips.find((chip) => chip.text === "CI pending" && chip.variant === "warn")).toBeTruthy();
+    expect(
+      chips.find((chip) => chip.text === "CI pending" && chip.variant === "warn"),
+    ).toBeTruthy();
   });
 
   it("emits a Changes requested chip when reviewDecision is changes_requested", () => {

@@ -15,7 +15,9 @@ export function DegradedProjectState({
   projectPath,
   heading = "This project's config failed to load",
 }: DegradedProjectStateProps) {
-  const matchedConfigPath = resolveError.match(/Local config at (.+?) (?:still uses|failed validation|must parse to an object|:)/)?.[1];
+  const matchedConfigPath = resolveError.match(
+    /Local config at (.+?) (?:still uses|failed validation|must parse to an object|:)/,
+  )?.[1];
   const yamlPath = matchedConfigPath ?? `${projectPath}/agent-orchestrator.yaml or .yml`;
   const canAutoRepair = resolveError.includes("wrapped projects: format");
 
@@ -24,7 +26,14 @@ export function DegradedProjectState({
       <div className="mx-auto max-w-3xl rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-8 shadow-sm">
         <div className="flex items-start gap-4">
           <div className="mt-1 rounded-full bg-[var(--color-tint-yellow)] p-2 text-[var(--color-status-attention)]">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
               <path d="M12 8v4m0 4h.01" />
               <path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.72 3h16.92a2 2 0 0 0 1.72-3L13.7 3.86a2 2 0 0 0-3.4 0Z" />
             </svg>
@@ -35,8 +44,9 @@ export function DegradedProjectState({
             </p>
             <h1 className="mt-2 text-2xl font-semibold">{heading}</h1>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-              Project <span className="font-medium text-[var(--color-text-primary)]">{projectId}</span> could not be
-              resolved into an effective runtime config.
+              Project{" "}
+              <span className="font-medium text-[var(--color-text-primary)]">{projectId}</span>{" "}
+              could not be resolved into an effective runtime config.
             </p>
           </div>
         </div>

@@ -228,13 +228,15 @@ describe("workspace.create()", () => {
     // First call: git remote get-url origin
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["remote", "get-url", "origin"], {
       cwd: "/repo/path",
-      windowsHide: true, timeout: 30_000,
+      windowsHide: true,
+      timeout: 30_000,
     });
 
     // Second call: git fetch origin --quiet
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/repo/path",
-      windowsHide: true, timeout: 30_000,
+      windowsHide: true,
+      timeout: 30_000,
     });
 
     // Third call: git rev-parse --verify --quiet origin/main
@@ -385,16 +387,14 @@ describe("workspace.create()", () => {
     const ws = create();
 
     mockGitSuccess(
-      [
-        "worktree /tmp/manual-worktree",
-        "HEAD deadbeef",
-        "branch refs/heads/feat/TEST-1",
-      ].join("\n"),
+      ["worktree /tmp/manual-worktree", "HEAD deadbeef", "branch refs/heads/feat/TEST-1"].join(
+        "\n",
+      ),
     );
     mockExistsSync.mockReturnValueOnce(true);
 
     await expect(ws.findManagedWorkspace?.(makeCreateConfig())).rejects.toThrow(
-      'outside AO-managed worktree directories',
+      "outside AO-managed worktree directories",
     );
   });
 
@@ -683,7 +683,8 @@ describe("workspace.create()", () => {
     // fetch should use expanded path
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/mock-home/my-repo",
-      windowsHide: true, timeout: 30_000,
+      windowsHide: true,
+      timeout: 30_000,
     });
   });
 
@@ -844,9 +845,7 @@ describe("workspace.restore()", () => {
 
     mockGitSuccess(""); // git worktree prune (entry-point)
     mockOriginRemote();
-    mockGitError(
-      "fatal: '/mock-home/.worktrees/myproject/session-1' already exists",
-    ); // first worktree add fails because dir exists
+    mockGitError("fatal: '/mock-home/.worktrees/myproject/session-1' already exists"); // first worktree add fails because dir exists
     mockGitSuccess(""); // refExists → true
     mockGitError("fatal: not a working tree"); // worktree remove --force fails (path not registered)
     mockExistsSync.mockReturnValueOnce(true); // dir exists
@@ -1004,9 +1003,7 @@ describe("workspace.restore()", () => {
 
     mockGitSuccess(""); // entry-point prune
     mockOriginRemote();
-    mockGitError(
-      "fatal: '/mock-home/.worktrees/myproject/session-1' already exists",
-    ); // first worktree add fails
+    mockGitError("fatal: '/mock-home/.worktrees/myproject/session-1' already exists"); // first worktree add fails
     mockGitError("fatal: bad ref"); // refExists → false (branch missing)
     // createBranchFromBase → cleanupStaleWorkspacePath
     mockGitError("fatal: not registered"); // worktree remove --force fails

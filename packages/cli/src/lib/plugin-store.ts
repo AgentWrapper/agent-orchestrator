@@ -93,7 +93,9 @@ export async function installPackageIntoStore(
 
   const installedVersion = readInstalledPackageVersion(packageName);
   if (!installedVersion) {
-    throw new Error(`Package ${packageName} was installed into the AO plugin store but no version was resolved afterwards.`);
+    throw new Error(
+      `Package ${packageName} was installed into the AO plugin store but no version was resolved afterwards.`,
+    );
   }
 
   return installedVersion;

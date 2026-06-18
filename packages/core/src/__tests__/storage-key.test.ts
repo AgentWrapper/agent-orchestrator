@@ -14,9 +14,9 @@ describe("storage-key", () => {
     });
 
     it("strips credentials, query strings, and fragments", () => {
-      expect(normalizeOriginUrl("https://user:pass@GitHub.com/OpenAI/Agent-Orchestrator.git?x=1#frag")).toBe(
-        "https://github.com/OpenAI/Agent-Orchestrator",
-      );
+      expect(
+        normalizeOriginUrl("https://user:pass@GitHub.com/OpenAI/Agent-Orchestrator.git?x=1#frag"),
+      ).toBe("https://github.com/OpenAI/Agent-Orchestrator");
     });
 
     it("lowercases only the hostname and preserves path case", () => {

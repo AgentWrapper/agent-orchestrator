@@ -6,10 +6,18 @@ import { getProjectSessionsDir } from "../paths.js";
 import { getPortfolioSessionCounts, listPortfolioSessions } from "../portfolio-session-service.js";
 import type { PortfolioProject } from "../types.js";
 
-function writeSessionFile(projectId: string, sessionId: string, data: Record<string, string>): void {
+function writeSessionFile(
+  projectId: string,
+  sessionId: string,
+  data: Record<string, string>,
+): void {
   const sessionsDir = getProjectSessionsDir(projectId);
   mkdirSync(sessionsDir, { recursive: true });
-  writeFileSync(join(sessionsDir, `${sessionId}.json`), JSON.stringify(data, null, 2) + "\n", "utf-8");
+  writeFileSync(
+    join(sessionsDir, `${sessionId}.json`),
+    JSON.stringify(data, null, 2) + "\n",
+    "utf-8",
+  );
 }
 
 describe("portfolio-session-service", () => {
@@ -18,7 +26,10 @@ describe("portfolio-session-service", () => {
   let oldUserProfile: string | undefined;
 
   beforeEach(() => {
-    tempRoot = join(tmpdir(), `ao-portfolio-sessions-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    tempRoot = join(
+      tmpdir(),
+      `ao-portfolio-sessions-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     mkdirSync(tempRoot, { recursive: true });
     oldHome = process.env["HOME"];
     oldUserProfile = process.env["USERPROFILE"];
@@ -116,7 +127,11 @@ describe("portfolio-session-service", () => {
 
     writeSessionFile("docs", "docs-1", { status: "working", project: "docs" });
     writeSessionFile("docs", "docs-2", { status: "done", project: "docs" });
-    writeSessionFile("docs", "docs-orchestrator-1", { status: "working", project: "docs", role: "orchestrator" });
+    writeSessionFile("docs", "docs-orchestrator-1", {
+      status: "working",
+      project: "docs",
+      role: "orchestrator",
+    });
 
     const counts = await getPortfolioSessionCounts([project, degraded]);
 

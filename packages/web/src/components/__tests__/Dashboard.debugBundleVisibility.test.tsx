@@ -46,12 +46,16 @@ describe("Dashboard debug bundle visibility", () => {
 
   it("hides debug bundle button by default", () => {
     render(<Dashboard initialSessions={[]} />);
-    expect(screen.queryByRole("button", { name: /Copy debug bundle for issue reports/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Copy debug bundle for issue reports/i }),
+    ).toBeNull();
   });
 
   it("shows debug bundle button when debug query flag is enabled", () => {
     search = "debug=1";
     render(<Dashboard initialSessions={[]} />);
-    expect(screen.getByRole("button", { name: /Copy debug bundle for issue reports/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Copy debug bundle for issue reports/i }),
+    ).toBeInTheDocument();
   });
 });

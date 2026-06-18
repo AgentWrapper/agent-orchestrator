@@ -64,11 +64,7 @@ function toRequestedAbsolutePath(rawPath: string, rootPath: string): string {
 
 export class PathSecurityError extends Error {
   constructor(
-    public readonly kind:
-      | "outside_root"
-      | "restricted"
-      | "not_found"
-      | "not_directory",
+    public readonly kind: "outside_root" | "restricted" | "not_found" | "not_directory",
     message: string,
   ) {
     super(message);
@@ -134,7 +130,9 @@ export function shouldHideBrowseEntry(entryPath: string, rootPath: string): bool
     }
     const resolvedEntryPath = realpathSync(entryPath);
     if (shouldConstrainToHome() && !isWithinRoot(rootPath, resolvedEntryPath)) return true;
-    const restrictedRootPath = shouldConstrainToHome() ? rootPath : path.parse(resolvedEntryPath).root;
+    const restrictedRootPath = shouldConstrainToHome()
+      ? rootPath
+      : path.parse(resolvedEntryPath).root;
     return containsRestrictedSegments(resolvedEntryPath, restrictedRootPath);
   } catch {
     return true;

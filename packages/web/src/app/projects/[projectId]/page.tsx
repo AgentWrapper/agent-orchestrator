@@ -6,9 +6,7 @@ import { getProjectRouteData } from "@/lib/project-route-data";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProjectPage(props: {
-  params: Promise<{ projectId: string }>;
-}) {
+export default async function ProjectPage(props: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await props.params;
   const routeData = await getProjectRouteData(projectId);
 

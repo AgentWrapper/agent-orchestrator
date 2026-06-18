@@ -21,9 +21,9 @@ describe("summarizeActivityFreshness", () => {
     expect(
       summarizeActivityFreshness(new Date(now.getTime() - ACTIVITY_STRONG_WINDOW_MS), now),
     ).toBe("strong");
-    expect(
-      summarizeActivityFreshness(new Date(now.getTime() - ACTIVITY_WEAK_WINDOW_MS), now),
-    ).toBe("weak");
+    expect(summarizeActivityFreshness(new Date(now.getTime() - ACTIVITY_WEAK_WINDOW_MS), now)).toBe(
+      "weak",
+    );
   });
 
   it("treats future timestamps as strong instead of going negative", () => {
@@ -125,7 +125,9 @@ describe("activity signal helpers", () => {
       ),
     ).toBe(true);
     expect(
-      hasPositiveIdleEvidence(createActivitySignal("valid", { activity: "idle", source: "native" })),
+      hasPositiveIdleEvidence(
+        createActivitySignal("valid", { activity: "idle", source: "native" }),
+      ),
     ).toBe(false);
     expect(
       hasPositiveIdleEvidence(

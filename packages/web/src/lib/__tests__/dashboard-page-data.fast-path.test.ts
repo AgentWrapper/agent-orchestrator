@@ -56,7 +56,9 @@ describe("getDashboardPageData fast path", () => {
     hoisted.getPrimaryProjectIdMock.mockReturnValue("docs");
     hoisted.getProjectNameMock.mockReturnValue("Docs");
     hoisted.resolveGlobalPauseMock.mockReturnValue({ reason: "paused" });
-    hoisted.listDashboardOrchestratorsMock.mockReturnValue([{ id: "orch-1", projectId: "docs", projectName: "Docs" }]);
+    hoisted.listDashboardOrchestratorsMock.mockReturnValue([
+      { id: "orch-1", projectId: "docs", projectName: "Docs" },
+    ]);
     hoisted.enrichSessionsMetadataFastMock.mockResolvedValue(undefined);
   });
 
@@ -82,9 +84,7 @@ describe("getDashboardPageData fast path", () => {
       .mockReturnValueOnce(dashboardClosed)
       .mockReturnValueOnce(dashboardMerged);
     hoisted.resolveProjectMock.mockImplementation((core) => ({ id: core.id }));
-    hoisted.getSCMMock
-      .mockReturnValueOnce(undefined)
-      .mockReturnValueOnce({ provider: "github" });
+    hoisted.getSCMMock.mockReturnValueOnce(undefined).mockReturnValueOnce({ provider: "github" });
 
     const pageData = await getDashboardPageData("docs");
 
@@ -115,9 +115,7 @@ describe("getDashboardPageData fast path", () => {
       hoisted.filterProjectSessionsMock.mockReturnValue([core]);
       hoisted.filterWorkerSessionsMock.mockReturnValue([core]);
       hoisted.sessionToDashboardMock.mockReturnValue(dashboard);
-      hoisted.enrichSessionsMetadataFastMock.mockImplementation(
-        () => new Promise(() => {}),
-      );
+      hoisted.enrichSessionsMetadataFastMock.mockImplementation(() => new Promise(() => {}));
 
       const pageDataPromise = getDashboardPageData("mono");
       await vi.advanceTimersByTimeAsync(3_000);
@@ -205,6 +203,8 @@ describe("getDashboardPageData fast path", () => {
 
     expect(pageData.dashboardLoadError).toBeUndefined();
     expect(pageData.sessions).toEqual([dashboardSession]);
-    expect(pageData.orchestrators).toEqual([{ id: "orch-1", projectId: "docs", projectName: "Docs" }]);
+    expect(pageData.orchestrators).toEqual([
+      { id: "orch-1", projectId: "docs", projectName: "Docs" },
+    ]);
   });
 });

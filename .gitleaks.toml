@@ -28,4 +28,7 @@ regexes = [
   "your-token-here",
   "example\\.com",
 
+  # Model identifiers that can resemble generic keys
+  "claude-3-5-sonnet",
+
 ]

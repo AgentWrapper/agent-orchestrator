@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { createInitialCanonicalLifecycle, createActivitySignal, type Session } from "@aoagents/ao-core";
+import {
+  createInitialCanonicalLifecycle,
+  createActivitySignal,
+  type Session,
+} from "@aoagents/ao-core";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),

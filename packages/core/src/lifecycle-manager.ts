@@ -755,7 +755,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             (p) =>
               p.owner === detectedPR.owner &&
               p.repo === detectedPR.repo &&
-              p.number === detectedPR.number
+              p.number === detectedPR.number,
           );
           if (!alreadyTracked) {
             // Remove any closed PRs on the same repo before adding the new one.
@@ -768,7 +768,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                     p.repo === detectedPR.repo &&
                     p.number !== detectedPR.number &&
                     prEnrichmentCache.get(`${p.owner}/${p.repo}#${p.number}`)?.state === "closed"
-                  )
+                  ),
               )
               .concat(detectedPR);
           }
@@ -1374,9 +1374,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                   : allEnrichments.every((e) => e.ciStatus === "passing" || e.ciStatus === "none")
                     ? "passing"
                     : "pending",
-                reviewDecision: allEnrichments.some(
-                  (e) => e.reviewDecision === "changes_requested",
-                )
+                reviewDecision: allEnrichments.some((e) => e.reviewDecision === "changes_requested")
                   ? "changes_requested"
                   : allEnrichments.every((e) => e.reviewDecision === "approved")
                     ? "approved"
@@ -3264,6 +3262,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
+      }
+    },
+
+    async waitForIdle(): Promise<void> {
+      while (polling) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
     },
 

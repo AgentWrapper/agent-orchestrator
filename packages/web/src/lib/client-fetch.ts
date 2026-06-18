@@ -80,7 +80,10 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-async function readResponseText(response: Response, signal: AbortSignal | undefined): Promise<string> {
+async function readResponseText(
+  response: Response,
+  signal: AbortSignal | undefined,
+): Promise<string> {
   throwIfAborted(signal);
 
   if (!response.body) {
@@ -112,10 +115,7 @@ async function readResponseText(response: Response, signal: AbortSignal | undefi
             });
 
       try {
-        const result = await Promise.race([
-          reader.read(),
-          ...(abortPromise ? [abortPromise] : []),
-        ]);
+        const result = await Promise.race([reader.read(), ...(abortPromise ? [abortPromise] : [])]);
         if (result.done) break;
         chunks.push(decoder.decode(result.value, { stream: true }));
       } finally {
@@ -155,13 +155,15 @@ export function dedupFetch(input: RequestInfo | URL, init?: RequestInit): Promis
       promise: request,
       settled: false,
     };
-    request.finally(() => {
-      newEntry.settled = true;
-      inflightFetches.delete(key);
-    }).catch(() => {
-      // The original request promise is returned to callers; this side-effect
-      // chain only prevents an unhandled rejection from the cleanup branch.
-    });
+    request
+      .finally(() => {
+        newEntry.settled = true;
+        inflightFetches.delete(key);
+      })
+      .catch(() => {
+        // The original request promise is returned to callers; this side-effect
+        // chain only prevents an unhandled rejection from the cleanup branch.
+      });
     entry = newEntry;
     inflightFetches.set(key, entry);
   }
@@ -202,9 +204,7 @@ export function dedupFetch(input: RequestInfo | URL, init?: RequestInit): Promis
           removeAbortListener = () => callerSignal.removeEventListener("abort", abort);
         });
 
-  return Promise.race([responsePromise, ...(abortPromise ? [abortPromise] : [])]).finally(
-    release,
-  );
+  return Promise.race([responsePromise, ...(abortPromise ? [abortPromise] : [])]).finally(release);
 }
 
 export function __clearInflightFetchesForTest(): void {

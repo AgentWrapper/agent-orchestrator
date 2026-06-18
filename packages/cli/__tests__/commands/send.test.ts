@@ -153,22 +153,20 @@ describe("send command", () => {
       );
     });
 
-    it(
-      "detects busy session and waits via agent plugin",
-      async () => {
-        mockTmux.mockImplementation(async (...args: string[]) => {
-          if (args[0] === "has-session") return "";
-          if (args[0] === "capture-pane") return "some output";
-          return "";
-        });
+    it("detects busy session and waits via agent plugin", async () => {
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "some output";
+        return "";
+      });
 
-        // First call: active (busy), second call: idle, third call: active (verification)
-        mockDetectActivity
-          .mockReturnValueOnce("active") // busy
-          .mockReturnValueOnce("idle") // now idle
-          .mockReturnValueOnce("active"); // verification: processing
+      // First call: active (busy), second call: idle, third call: active (verification)
+      mockDetectActivity
+        .mockReturnValueOnce("active") // busy
+        .mockReturnValueOnce("idle") // now idle
+        .mockReturnValueOnce("active"); // verification: processing
 
-        await program.parseAsync(["node", "test", "send", "my-session", "fix", "the", "bug"]);
+      await program.parseAsync(["node", "test", "send", "my-session", "fix", "the", "bug"]);
 
       // Should have eventually sent the message
       expect(mockExec).toHaveBeenCalledWith("tmux", [
@@ -316,13 +314,7 @@ describe("send command", () => {
 
       await program.parseAsync(["node", "test", "send", "app-1", "hi", "there"]);
 
-      expect(mockExec).toHaveBeenCalledWith("tmux", [
-        "send-keys",
-        "-t",
-        "app-1",
-        "-l",
-        "hi there",
-      ]);
+      expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "app-1", "-l", "hi there"]);
     });
 
     it("auto-prefixes when delivering through SessionManager.send too", async () => {
@@ -530,9 +522,9 @@ describe("send command", () => {
         new Error("Cannot send to session app-1: session is not running (restore timed out)"),
       );
 
-      await expect(
-        program.parseAsync(["node", "test", "send", "app-1", "hello"]),
-      ).rejects.toThrow("process.exit(1)");
+      await expect(program.parseAsync(["node", "test", "send", "app-1", "hello"])).rejects.toThrow(
+        "process.exit(1)",
+      );
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Cannot send to session app-1: session is not running"),

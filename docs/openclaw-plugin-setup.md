@@ -157,27 +157,27 @@ openclaw agent --agent main -m "List your tools"
 
 ## Why These Settings Matter
 
-| Setting | Why |
-|---------|-----|
-| `tools.profile: "full"` | The `coding` profile only includes built-in tools. Plugin tools require `full`. |
-| `tools.allow: ["group:plugins"]` | OpenClaw treats ALL plugin tools as optional. Without this, they're invisible to the AI. |
-| `tools.deny: [exec, write, ...]` | Without this, the bot will write code directly instead of delegating to AO. |
-| `skills.entries.coding-agent.enabled: false` | This built-in skill tells the bot to use Codex/Claude Code. It overrides AO. |
-| `skills.entries.gh-issues.enabled: false` | This built-in skill spawns OpenClaw sub-agents. It bypasses AO. |
-| `aoCwd` | `ao spawn` must run from the directory containing `agent-orchestrator.yaml`. |
+| Setting                                      | Why                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `tools.profile: "full"`                      | The `coding` profile only includes built-in tools. Plugin tools require `full`.          |
+| `tools.allow: ["group:plugins"]`             | OpenClaw treats ALL plugin tools as optional. Without this, they're invisible to the AI. |
+| `tools.deny: [exec, write, ...]`             | Without this, the bot will write code directly instead of delegating to AO.              |
+| `skills.entries.coding-agent.enabled: false` | This built-in skill tells the bot to use Codex/Claude Code. It overrides AO.             |
+| `skills.entries.gh-issues.enabled: false`    | This built-in skill spawns OpenClaw sub-agents. It bypasses AO.                          |
+| `aoCwd`                                      | `ao spawn` must run from the directory containing `agent-orchestrator.yaml`.             |
 
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Bot says "no ao_* tools available" | `tools.profile` is not `full` or `tools.allow` missing `group:plugins` | Run `/ao setup` |
-| Bot writes code directly | `coding-agent` skill is active or `exec`/`write` not denied | Run `/ao setup` |
-| `ao spawn` returns "No config found" | `aoCwd` not set or wrong path | Set `plugins.entries.agent-orchestrator.config.aoCwd` |
-| `ao: not found` | `ao` not in PATH | Create symlink or set `aoPath` in plugin config |
-| Only 2-3 issues shown (not all) | Bot answering from stale session memory | Clear sessions: `rm ~/.openclaw/agents/main/sessions/sessions.json` |
-| Bot only responds in DMs | `groupPolicy` is `allowlist` | Set `channels.discord.groupPolicy` to `open` |
-| Bot responds to every message | `mentionPatterns` too broad | Remove patterns, rely on native @mentions |
-| Sessions show "exited" immediately | Agent (Claude Code) won't run as root | Run AO as non-root user |
+| Problem                              | Cause                                                                  | Fix                                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Bot says "no ao\_\* tools available" | `tools.profile` is not `full` or `tools.allow` missing `group:plugins` | Run `/ao setup`                                                     |
+| Bot writes code directly             | `coding-agent` skill is active or `exec`/`write` not denied            | Run `/ao setup`                                                     |
+| `ao spawn` returns "No config found" | `aoCwd` not set or wrong path                                          | Set `plugins.entries.agent-orchestrator.config.aoCwd`               |
+| `ao: not found`                      | `ao` not in PATH                                                       | Create symlink or set `aoPath` in plugin config                     |
+| Only 2-3 issues shown (not all)      | Bot answering from stale session memory                                | Clear sessions: `rm ~/.openclaw/agents/main/sessions/sessions.json` |
+| Bot only responds in DMs             | `groupPolicy` is `allowlist`                                           | Set `channels.discord.groupPolicy` to `open`                        |
+| Bot responds to every message        | `mentionPatterns` too broad                                            | Remove patterns, rely on native @mentions                           |
+| Sessions show "exited" immediately   | Agent (Claude Code) won't run as root                                  | Run AO as non-root user                                             |
 
 ## Architecture
 

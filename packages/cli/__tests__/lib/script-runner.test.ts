@@ -65,8 +65,7 @@ describe("script-runner", () => {
   it.skipIf(process.platform === "win32")(
     "uses the package root for packaged installs inside node_modules",
     () => {
-      const modulePath =
-        "/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/script-runner.js";
+      const modulePath = "/usr/local/lib/node_modules/@aoagents/ao-cli/dist/lib/script-runner.js";
 
       expect(resolveScriptLayoutFromPath(modulePath)).toBe("package-install");
       expect(resolveDefaultRepoRootFromPath(modulePath)).toBe(
@@ -76,13 +75,10 @@ describe("script-runner", () => {
   );
 
   it.skipIf(process.platform === "win32")("uses the repository root for source checkouts", () => {
-    const modulePath =
-      "/Users/test/agent-orchestrator/packages/cli/src/lib/script-runner.ts";
+    const modulePath = "/Users/test/agent-orchestrator/packages/cli/src/lib/script-runner.ts";
 
     expect(resolveScriptLayoutFromPath(modulePath)).toBe("source-checkout");
-    expect(resolveDefaultRepoRootFromPath(modulePath)).toBe(
-      "/Users/test/agent-orchestrator",
-    );
+    expect(resolveDefaultRepoRootFromPath(modulePath)).toBe("/Users/test/agent-orchestrator");
   });
 
   it("includes the expected scripts path in missing-script errors", () => {
@@ -216,36 +212,39 @@ describe("script-runner", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")("pins script execution cwd to the resolved install root", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "script-runner-cwd-"));
-    mkdirSync(join(tempRoot, ".git"), { recursive: true });
-    mkdirSync(join(tempRoot, "packages", "ao"), { recursive: true });
-    writeFileSync(
-      join(tempRoot, "packages", "ao", "package.json"),
-      JSON.stringify({ name: "@aoagents/ao" }),
-    );
+  it.skipIf(process.platform === "win32")(
+    "pins script execution cwd to the resolved install root",
+    async () => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "script-runner-cwd-"));
+      mkdirSync(join(tempRoot, ".git"), { recursive: true });
+      mkdirSync(join(tempRoot, "packages", "ao"), { recursive: true });
+      writeFileSync(
+        join(tempRoot, "packages", "ao", "package.json"),
+        JSON.stringify({ name: "@aoagents/ao" }),
+      );
 
-    process.env["AO_REPO_ROOT"] = tempRoot;
-    const child = new EventEmitter();
-    mockSpawn.mockReturnValue(child);
-    setTimeout(() => child.emit("exit", 0, null), 0);
+      process.env["AO_REPO_ROOT"] = tempRoot;
+      const child = new EventEmitter();
+      mockSpawn.mockReturnValue(child);
+      setTimeout(() => child.emit("exit", 0, null), 0);
 
-    await runRepoScript("ao-doctor.sh", []);
+      await runRepoScript("ao-doctor.sh", []);
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      // On Windows the resolved bash is an absolute path (e.g. Git Bash);
-      // on POSIX it is the literal "bash" passed through to the shell.
-      expect.stringMatching(/(^bash$|bash(\.exe)?$)/),
-      [expect.stringContaining("ao-doctor.sh")],
-      expect.objectContaining({
-        cwd: tempRoot,
-        env: expect.objectContaining({
-          AO_REPO_ROOT: tempRoot,
-          AO_SCRIPT_LAYOUT: "source-checkout",
+      expect(mockSpawn).toHaveBeenCalledWith(
+        // On Windows the resolved bash is an absolute path (e.g. Git Bash);
+        // on POSIX it is the literal "bash" passed through to the shell.
+        expect.stringMatching(/(^bash$|bash(\.exe)?$)/),
+        [expect.stringContaining("ao-doctor.sh")],
+        expect.objectContaining({
+          cwd: tempRoot,
+          env: expect.objectContaining({
+            AO_REPO_ROOT: tempRoot,
+            AO_SCRIPT_LAYOUT: "source-checkout",
+          }),
         }),
-      }),
-    );
+      );
 
-    rmSync(tempRoot, { recursive: true, force: true });
-  });
+      rmSync(tempRoot, { recursive: true, force: true });
+    },
+  );
 });

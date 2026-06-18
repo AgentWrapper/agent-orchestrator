@@ -248,9 +248,7 @@ for (const variant of variants) {
       expect(rawJsonl.split("\n").filter((l) => l.trim())).toHaveLength(1);
       // Parsed entry round-trips the original string
       expect(lastEntry!.state).toBe("blocked");
-      expect(lastEntry!.trigger).toBe(
-        'StopFailure (multi\nline\twith\rmixed\\\\and"quotes)',
-      );
+      expect(lastEntry!.trigger).toBe('StopFailure (multi\nline\twith\rmixed\\\\and"quotes)');
     });
   });
 }

@@ -85,7 +85,9 @@ describe("DirectoryBrowser", () => {
       browsePath: "~/workspace",
       selectedBrowsePath: "~/workspace/alpha",
       setSelectedBrowsePath: vi.fn(),
-      directoryEntries: [{ name: "alpha", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+      directoryEntries: [
+        { name: "alpha", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+      ],
       currentDirectory: null,
       roots: [],
       selectedRootPath: "",
@@ -174,7 +176,9 @@ describe("DirectoryBrowser", () => {
       browsePath: "~/workspace/app",
       selectedBrowsePath: "~/workspace/app/sub",
       setSelectedBrowsePath: vi.fn(),
-      directoryEntries: [{ name: "sub", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+      directoryEntries: [
+        { name: "sub", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+      ],
       currentDirectory: { isGitRepo: true, hasLocalConfig: false },
       roots: [],
       selectedRootPath: "",
@@ -288,7 +292,9 @@ describe("DirectoryBrowser", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          entries: [{ name: "workspace", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+          entries: [
+            { name: "workspace", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+          ],
           roots: [],
         }),
       })

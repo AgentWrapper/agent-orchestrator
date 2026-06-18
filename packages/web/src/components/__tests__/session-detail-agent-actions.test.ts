@@ -31,9 +31,7 @@ describe("buildAgentFixMessage", () => {
       ...baseComment,
       body: `### Big one\n<!-- DESCRIPTION START -->${longDescription}<!-- DESCRIPTION END -->`,
     });
-    const descriptionLine = message
-      .split("\n")
-      .find((line) => line.startsWith("Description: "))!;
+    const descriptionLine = message.split("\n").find((line) => line.startsWith("Description: "))!;
     const value = descriptionLine.replace("Description: ", "");
     expect(value.length).toBeLessThanOrEqual(7_500);
     expect(value.endsWith("…")).toBe(true);

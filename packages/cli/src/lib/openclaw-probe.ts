@@ -35,9 +35,7 @@ const HOOKS_PATH = "/hooks/agent";
 
 function normalizeGatewayBaseUrl(url: string): string {
   const normalized = url.trim().replace(/\/+$/, "");
-  return normalized.endsWith(HOOKS_PATH)
-    ? normalized.slice(0, -HOOKS_PATH.length)
-    : normalized;
+  return normalized.endsWith(HOOKS_PATH) ? normalized.slice(0, -HOOKS_PATH.length) : normalized;
 }
 
 function resolveOpenClawBinaryPath(): string | undefined {

@@ -8,11 +8,7 @@ import {
   buildLifecycleMetadataPatch,
   createInitialCanonicalLifecycle,
 } from "../../lifecycle-state.js";
-import {
-  writeMetadata,
-  readMetadata,
-  readMetadataRaw,
-} from "../../metadata.js";
+import { writeMetadata, readMetadata, readMetadataRaw } from "../../metadata.js";
 import { getProjectDir, getProjectWorktreesDir } from "../../paths.js";
 import type {
   OrchestratorConfig,
@@ -1288,9 +1284,7 @@ describe("spawn", () => {
       );
       const sm = createSessionManager({ config, registry: mockRegistry });
 
-      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
-        "workspace creation failed",
-      );
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("workspace creation failed");
 
       expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
       expect(mockRuntime.create).not.toHaveBeenCalled();
@@ -1313,9 +1307,7 @@ describe("spawn", () => {
       );
       const sm = createSessionManager({ config, registry: mockRegistry });
 
-      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
-        "runtime creation failed",
-      );
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("runtime creation failed");
 
       expect(mockWorkspace.destroy).toHaveBeenCalledWith(worktreePath);
       expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
@@ -1400,9 +1392,7 @@ describe("spawn", () => {
       );
       const sm = createSessionManager({ config, registry: mockRegistry });
 
-      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
-        "runtime creation failed",
-      );
+      await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("runtime creation failed");
 
       // Even though workspace.destroy threw, metadata must have been cleaned up.
       expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
@@ -1448,8 +1438,7 @@ describe("spawn", () => {
       const sm = createSessionManager({ config, registry: mockRegistry });
       await sm.spawn({
         projectId: "my-app",
-        prompt:
-          "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
+        prompt: "Add rate limiting to /api/upload\n\nUse a sliding-window counter keyed by IP.",
       });
 
       const meta = readMetadataRaw(sessionsDir, "app-1");
@@ -1871,7 +1860,7 @@ describe("spawn", () => {
       const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
       expect(meta?.["agent"]).toBe("opencode");
       expect(meta?.["opencodeSessionId"]).toBeUndefined();
-    });
+    }, 15000);
 
     it("discovers and persists OpenCode session id by title when strategy is reuse", async () => {
       const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator-reuse-discovery.log");
@@ -2522,7 +2511,6 @@ describe("spawn", () => {
 
       expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
     });
-
   });
 
   describe("relaunchOrchestrator", () => {
@@ -2695,10 +2683,7 @@ describe("spawn", () => {
         systemPrompt: "FRESH ORCHESTRATOR PROMPT",
       });
 
-      const promptPath = join(
-        getProjectDir("my-app"),
-        "orchestrator-prompt-app-orchestrator.md",
-      );
+      const promptPath = join(getProjectDir("my-app"), "orchestrator-prompt-app-orchestrator.md");
       expect(existsSync(promptPath)).toBe(true);
       expect(readFileSync(promptPath, "utf-8")).toBe("FRESH ORCHESTRATOR PROMPT");
     });

@@ -6,10 +6,8 @@ import { parse as parseYaml } from "yaml";
 import { loadConfig } from "../config.js";
 import { ProjectResolveError } from "../types.js";
 import { iterateAllProjects, loadEffectiveProjectConfig } from "../project-resolver.js";
-import {
-  saveGlobalConfig,
-  type GlobalConfig,
-} from "../global-config.js";
+import { saveGlobalConfig, type GlobalConfig } from "../global-config.js";
+import { isWindows } from "../index.js";
 
 function makeGlobalConfig(projects: GlobalConfig["projects"] = {}): GlobalConfig {
   return {
@@ -31,7 +29,10 @@ describe("project resolver", () => {
   let originalGlobalConfig: string | undefined;
 
   beforeEach(() => {
-    tempRoot = join(tmpdir(), `ao-project-resolver-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    tempRoot = join(
+      tmpdir(),
+      `ao-project-resolver-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     configPath = join(tempRoot, ".agent-orchestrator", "config.yaml");
     mkdirSync(tempRoot, { recursive: true });
     originalHome = process.env["HOME"];
@@ -139,7 +140,14 @@ describe("project resolver", () => {
     mkdirSync(projectPath, { recursive: true });
     writeFileSync(
       join(projectPath, "agent-orchestrator.yaml"),
-      ["agent: codex", "runtime: docker", "workspace: clone", "tracker:", "  plugin: github", ""].join("\n"),
+      [
+        "agent: codex",
+        "runtime: docker",
+        "workspace: clone",
+        "tracker:",
+        "  plugin: github",
+        "",
+      ].join("\n"),
     );
 
     saveGlobalConfig(
@@ -162,7 +170,9 @@ describe("project resolver", () => {
       workspace: "clone",
     });
 
-    const raw = parseYaml(readFileSync(configPath, "utf-8")) as { projects: Record<string, Record<string, unknown>> };
+    const raw = parseYaml(readFileSync(configPath, "utf-8")) as {
+      projects: Record<string, Record<string, unknown>>;
+    };
     expect(raw.projects.app).not.toHaveProperty("agent");
     expect(raw.projects.app).not.toHaveProperty("runtime");
     expect(raw.projects.app).not.toHaveProperty("workspace");
@@ -174,7 +184,10 @@ describe("project resolver", () => {
     const brokenPath = join(tempRoot, "broken");
     mkdirSync(cleanPath, { recursive: true });
     mkdirSync(brokenPath, { recursive: true });
-    writeFileSync(join(cleanPath, "agent-orchestrator.yaml"), "agent: codex\nruntime: tmux\nworkspace: worktree\n");
+    writeFileSync(
+      join(cleanPath, "agent-orchestrator.yaml"),
+      "agent: codex\nruntime: tmux\nworkspace: worktree\n",
+    );
     writeFileSync(join(brokenPath, "agent-orchestrator.yaml"), "tracker: [\n");
 
     saveGlobalConfig(
@@ -209,7 +222,7 @@ describe("project resolver", () => {
     });
   });
 
-  it("matches a flat local config launched from a symlinked checkout", () => {
+  it.skipIf(isWindows())("matches a flat local config launched from a symlinked checkout", () => {
     const realProjectPath = join(tempRoot, "real-app");
     const symlinkParent = join(tempRoot, "links");
     const symlinkProjectPath = join(symlinkParent, "app-link");

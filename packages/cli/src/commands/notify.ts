@@ -100,7 +100,10 @@ function printHumanResult(result: NotifyTestResult, sinkRequests?: unknown[]): v
   }
 }
 
-function commandRequest(opts: NotifyTestCommandOptions, forceSinkTarget: boolean): NotifyTestRequest {
+function commandRequest(
+  opts: NotifyTestCommandOptions,
+  forceSinkTarget: boolean,
+): NotifyTestRequest {
   const request: NotifyTestRequest = {
     templateName: opts.template,
     to: forceSinkTarget ? ["sink"] : parseNotifyRefs(opts.to),
@@ -150,7 +153,9 @@ export function registerNotify(program: Command): void {
 
         const configPath = findConfigFile();
         if (!configPath) {
-          throw new Error("No config file found. Cannot test notifiers without agent-orchestrator.yaml");
+          throw new Error(
+            "No config file found. Cannot test notifiers without agent-orchestrator.yaml",
+          );
         }
 
         let config: OrchestratorConfig = loadConfig(configPath);

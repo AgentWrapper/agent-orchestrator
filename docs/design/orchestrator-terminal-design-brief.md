@@ -1,6 +1,7 @@
 # Orchestrator Terminal Page — Design Brief
-*Design specification for `/sessions/[orchestrator-id]` (the orchestrator session)*
-*Companion to `design-brief.md` (main dashboard) and `session-detail-design-brief.md`.*
+
+_Design specification for `/sessions/[orchestrator-id]` (the orchestrator session)_
+_Companion to `design-brief.md` (main dashboard) and `session-detail-design-brief.md`._
 
 ---
 
@@ -9,6 +10,7 @@
 The orchestrator terminal is the **command center**. While agent session pages show one agent's work, the orchestrator session is the parent — the process that spawns, monitors, and auto-handles all agent sessions.
 
 Users open this page to:
+
 1. Watch the orchestrator's decision-making in real-time ("why did it just spawn a new session?")
 2. Issue high-level commands ("spawn sessions for issues 299–305")
 3. Debug orchestrator-level problems (config errors, plugin failures, connectivity issues)
@@ -83,7 +85,7 @@ Same as session detail bar, plus a persistent right-side label:
 .nav-orchestrator-badge {
   font: 11px/1 "Inter Variable" 500;
   letter-spacing: 0.04em;
-  color: var(--accent-violet);   /* #a371f7 */
+  color: var(--accent-violet); /* #a371f7 */
   padding: 2px 8px;
   border-radius: 4px;
   background: rgba(163, 113, 247, 0.08);
@@ -127,13 +129,22 @@ A compact horizontal summary bar. Reads left-to-right by urgency (mirrors dashbo
 }
 
 /* Colors match dashboard zone colors */
-.status-count--merge    { color: var(--status-ready); }      /* green */
-.status-count--respond  { color: var(--status-error); }      /* red */
-.status-count--working  { color: var(--accent); }            /* blue */
-.status-count--done     { color: var(--text-tertiary); }     /* dim */
+.status-count--merge {
+  color: var(--status-ready);
+} /* green */
+.status-count--respond {
+  color: var(--status-error);
+} /* red */
+.status-count--working {
+  color: var(--accent);
+} /* blue */
+.status-count--done {
+  color: var(--text-tertiary);
+} /* dim */
 ```
 
 Right side of the strip shows session identity and uptime:
+
 ```css
 .orchestrator-identity {
   margin-left: auto;
@@ -173,6 +184,7 @@ theme: {
 ```
 
 **Terminal chrome bar** (the header bar with connection status):
+
 ```
 [● violet]  ao-orchestrator  Connected  XDA              [↕ fullscreen]
 ```
@@ -184,6 +196,7 @@ The session ID `ao-orchestrator` is displayed in `--accent-violet` instead of `-
 If the orchestrator emits ANSI escape codes, the terminal will naturally show color-coded output. Even without ANSI, xterm.js renders the raw terminal faithfully. No special handling needed in the UI layer.
 
 Structured orchestrator log prefix pattern (for the orchestrator to implement, not the UI):
+
 ```
 \e[35m[Orchestrator]\e[0m Spawning session for issue #299...   (violet prefix)
 \e[32m[ao-62]\e[0m Session created on branch feat/issue-299    (green for new)
@@ -196,6 +209,7 @@ Structured orchestrator log prefix pattern (for the orchestrator to implement, n
 ## Fullscreen Mode
 
 In fullscreen:
+
 - Nav bar and status strip both hide (fixed position inset-0)
 - Terminal takes full viewport
 - A minimal overlay in the top-right corner maintains context:
@@ -231,12 +245,14 @@ This is a small additive change to `DirectTerminal.tsx` — pass an optional `ov
 The orchestrator terminal currently renders as a standard `SessionDetail` page (same component, orchestrator has no PR so the PR card is absent). The terminal itself is identical.
 
 **Option A — Minimal differentiation** (recommended for v1):
+
 - Detect orchestrator session in `page.tsx` by `id.endsWith("-orchestrator")`
 - Pass a prop `isOrchestrator={true}` to `SessionDetail`
 - `SessionDetail` conditionally renders the status strip + nav badge + violet terminal theme
 - No new components, no routing changes
 
 **Option B — Dedicated page** (better for v2):
+
 - Create `app/orchestrator/page.tsx` and `components/OrchestratorTerminal.tsx`
 - Cleaner separation, allows orchestrator-specific features (command history, session shortcuts) without polluting `SessionDetail`
 
@@ -255,26 +271,26 @@ The orchestrator terminal currently renders as a standard `SessionDetail` page (
 
 ### What's missing
 
-| Gap | Description | Priority |
-|-----|-------------|----------|
-| Visual identity | No distinction between orchestrator and agent session pages | High |
-| Status strip | No live session count summary on the orchestrator page | High |
-| Nav badge | No persistent "orchestrator" label in nav | Medium |
-| Terminal height | Fixed `600px` instead of filling viewport | Medium |
-| Terminal theme | Generic xterm black instead of brand-differentiated theme | Medium |
-| Violet cursor | Cursor not differentiated from agent sessions | Low |
-| Fullscreen overlay | No context overlay in fullscreen mode | Low |
+| Gap                | Description                                                 | Priority |
+| ------------------ | ----------------------------------------------------------- | -------- |
+| Visual identity    | No distinction between orchestrator and agent session pages | High     |
+| Status strip       | No live session count summary on the orchestrator page      | High     |
+| Nav badge          | No persistent "orchestrator" label in nav                   | Medium   |
+| Terminal height    | Fixed `600px` instead of filling viewport                   | Medium   |
+| Terminal theme     | Generic xterm black instead of brand-differentiated theme   | Medium   |
+| Violet cursor      | Cursor not differentiated from agent sessions               | Low      |
+| Fullscreen overlay | No context overlay in fullscreen mode                       | Low      |
 
 ### Design deltas (priority order)
 
-| Priority | Change | File | Notes |
-|----------|--------|------|-------|
-| 1 | Detect orchestrator + pass `isOrchestrator` prop | `packages/web/src/app/page.tsx`, `SessionDetail.tsx` | Enables all other changes |
-| 2 | Status strip: session counts by zone | `SessionDetail.tsx` (conditional) or new `OrchestratorStatus.tsx` | Main UX differentiation |
-| 3 | Terminal height: `calc(100vh - 104px)` | `DirectTerminal.tsx` or wrapper | Full-viewport terminal |
-| 4 | Nav badge: "orchestrator" pill | `SessionDetail.tsx` nav | Identity signal |
-| 5 | Terminal theme: violet cursor + `#0A0A0F` bg | `DirectTerminal.tsx` (via `theme` prop) | Identity + quality |
-| 6 | Fullscreen overlay with context | `DirectTerminal.tsx` (via `overlayContent` prop) | Fullscreen UX |
+| Priority | Change                                           | File                                                              | Notes                     |
+| -------- | ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------- |
+| 1        | Detect orchestrator + pass `isOrchestrator` prop | `packages/web/src/app/page.tsx`, `SessionDetail.tsx`              | Enables all other changes |
+| 2        | Status strip: session counts by zone             | `SessionDetail.tsx` (conditional) or new `OrchestratorStatus.tsx` | Main UX differentiation   |
+| 3        | Terminal height: `calc(100vh - 104px)`           | `DirectTerminal.tsx` or wrapper                                   | Full-viewport terminal    |
+| 4        | Nav badge: "orchestrator" pill                   | `SessionDetail.tsx` nav                                           | Identity signal           |
+| 5        | Terminal theme: violet cursor + `#0A0A0F` bg     | `DirectTerminal.tsx` (via `theme` prop)                           | Identity + quality        |
+| 6        | Fullscreen overlay with context                  | `DirectTerminal.tsx` (via `overlayContent` prop)                  | Fullscreen UX             |
 
 ---
 
@@ -282,18 +298,18 @@ The orchestrator terminal currently renders as a standard `SessionDetail` page (
 
 All three pages share the same design tokens. Use the token names from the main design brief:
 
-| Token | Value | Usage here |
-|-------|-------|-----------|
-| `--bg-base` | `#0C0C11` | Page background |
-| `--bg-surface` | `#141419` | Nav bar, status strip |
-| `--bg-elevated` | `#1C1C25` | Terminal chrome bar |
-| `--accent` | `#5B7EF8` | Agent session links, focus rings |
-| `--accent-violet` | `#a371f7` | Orchestrator identity color |
-| `--status-ready` | `#22C55E` | Merge-ready count |
-| `--status-error` | `#EF4444` | Respond-needed count, crashes |
-| `--font-mono` | JetBrains Mono | Terminal, session IDs, branch names |
+| Token             | Value          | Usage here                          |
+| ----------------- | -------------- | ----------------------------------- |
+| `--bg-base`       | `#0C0C11`      | Page background                     |
+| `--bg-surface`    | `#141419`      | Nav bar, status strip               |
+| `--bg-elevated`   | `#1C1C25`      | Terminal chrome bar                 |
+| `--accent`        | `#5B7EF8`      | Agent session links, focus rings    |
+| `--accent-violet` | `#a371f7`      | Orchestrator identity color         |
+| `--status-ready`  | `#22C55E`      | Merge-ready count                   |
+| `--status-error`  | `#EF4444`      | Respond-needed count, crashes       |
+| `--font-mono`     | JetBrains Mono | Terminal, session IDs, branch names |
 
 ---
 
-*Companion document to `design-brief.md` and `session-detail-design-brief.md`.*
-*Compiled February 2026.*
+_Companion document to `design-brief.md` and `session-detail-design-brief.md`._
+_Compiled February 2026._

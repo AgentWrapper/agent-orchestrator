@@ -216,8 +216,8 @@ export function useXtermTerminal(
         const fontsFace = typeof document !== "undefined" ? document.fonts : undefined;
         const fontsListenerAttached =
           !!fontsFace && typeof fontsFace.addEventListener === "function";
-        if (fontsListenerAttached) {
-          fontsFace!.addEventListener("loadingdone", handleFontsLoadingDone);
+        if (fontsListenerAttached && fontsFace) {
+          fontsFace.addEventListener("loadingdone", handleFontsLoadingDone);
         }
 
         // Touch scroll on mobile — disables follow-output while user scrolls.

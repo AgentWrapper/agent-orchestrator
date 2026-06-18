@@ -77,9 +77,9 @@ describe("lifecycle-service", () => {
   });
 
   it("throws on unknown projects", async () => {
-    await expect(
-      ensureLifecycleWorker(makeConfig(["app"]), "missing"),
-    ).rejects.toThrow(/Unknown project/);
+    await expect(ensureLifecycleWorker(makeConfig(["app"]), "missing")).rejects.toThrow(
+      /Unknown project/,
+    );
   });
 
   it("isolates errors: one project failing to start does not affect another", async () => {

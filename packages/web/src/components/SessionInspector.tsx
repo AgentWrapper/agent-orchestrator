@@ -20,7 +20,13 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
     id: "summary",
     label: "Summary",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        aria-hidden="true"
+      >
         <line x1="8" y1="7" x2="20" y2="7" />
         <line x1="8" y1="12" x2="20" y2="12" />
         <line x1="8" y1="17" x2="16" y2="17" />
@@ -34,7 +40,13 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
     id: "changes",
     label: "Changes",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        aria-hidden="true"
+      >
         <path d="M12 3v6" />
         <path d="M9 6h6" />
         <path d="M11 18H7a2 2 0 0 1-2-2V6" />
@@ -47,7 +59,13 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
     id: "browser",
     label: "Browser",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        aria-hidden="true"
+      >
         <circle cx="12" cy="12" r="9" />
         <line x1="3" y1="12" x2="21" y2="12" />
         <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
@@ -287,7 +305,13 @@ function BrowserView() {
   return (
     <div role="tabpanel">
       <div className="inspector-empty inspector-empty--browser">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          aria-hidden="true"
+        >
           <circle cx="12" cy="12" r="9" />
           <line x1="3" y1="12" x2="21" y2="12" />
           <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />

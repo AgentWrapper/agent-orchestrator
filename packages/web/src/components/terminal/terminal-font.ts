@@ -4,8 +4,7 @@ export const FONT_SIZE_MAX = 18;
 export const FONT_SIZE_DEFAULT = 13;
 
 // Fallback mono stack used when the CSS custom property isn't resolvable yet.
-const MONO_FONT_FALLBACK =
-  '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+const MONO_FONT_FALLBACK = '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
 
 /**
  * Resolve the app's configured mono font token to a concrete font-family string.

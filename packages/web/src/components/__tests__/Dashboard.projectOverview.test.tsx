@@ -114,10 +114,7 @@ describe("Dashboard project overview cards", () => {
       "href",
       "/projects/my-app",
     );
-    expect(screen.getByRole("link", { name: "Coding" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(screen.getByRole("link", { name: "Coding" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Reviews" })).toHaveAttribute(
       "href",
       "/review?project=my-app",

@@ -33,6 +33,10 @@ function setProcessPlatform(value: NodeJS.Platform): void {
   Object.defineProperty(process, "platform", { value, configurable: true });
 }
 
+function normalizePathSeparators(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
   return {
     id: "evt-1",
@@ -320,10 +324,9 @@ describe("notifier-desktop", () => {
       const notifier = create();
       await notifier.notify(makeEvent({ sessionId: "<x>", message: 'a"&b' }));
       const args = mockExecFile.mock.calls[0][1] as string[];
-      const script = Buffer.from(
-        args[args.indexOf("-EncodedCommand") + 1],
-        "base64",
-      ).toString("utf16le");
+      const script = Buffer.from(args[args.indexOf("-EncodedCommand") + 1], "base64").toString(
+        "utf16le",
+      );
       expect(script).toContain("&lt;x&gt;");
       expect(script).toContain("a&quot;&amp;b");
       expect(script).not.toContain("<x>");
@@ -497,7 +500,7 @@ describe("notifier-desktop", () => {
   describe("AO Notifier.app backend", () => {
     beforeEach(() => {
       mockExistsSync.mockImplementation((path: string) =>
-        path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier"),
+        normalizePathSeparators(path).endsWith("AO Notifier.app/Contents/MacOS/ao-notifier"),
       );
     });
 
@@ -506,7 +509,7 @@ describe("notifier-desktop", () => {
       const notifier = create({ dashboardUrl: "http://localhost:3000" });
       await notifier.notify(makeEvent({ message: "native app" }));
 
-      expect(mockExecFile.mock.calls[0][0]).toBe(
+      expect(normalizePathSeparators(mockExecFile.mock.calls[0][0] as string)).toBe(
         "/Users/test/Applications/AO Notifier.app/Contents/MacOS/ao-notifier",
       );
       expect(mockExecFile.mock.calls[0][1][0]).toBe("--notify-base64");
@@ -600,8 +603,10 @@ describe("notifier-desktop", () => {
     it("does not use a placeholder AO Notifier.app in auto mode", async () => {
       mockExistsSync.mockImplementation(
         (path: string) =>
-          path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier") ||
-          path.endsWith("AO Notifier.app/Contents/Resources/ao-notifier-placeholder"),
+          normalizePathSeparators(path).endsWith("AO Notifier.app/Contents/MacOS/ao-notifier") ||
+          normalizePathSeparators(path).endsWith(
+            "AO Notifier.app/Contents/Resources/ao-notifier-placeholder",
+          ),
       );
       const notifier = create();
 

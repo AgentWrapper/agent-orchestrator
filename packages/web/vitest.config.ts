@@ -68,7 +68,10 @@ export default defineConfig({
         find: "@aoagents/ao-plugin-tracker-linear",
         replacement: resolve(__dirname, "../plugins/tracker-linear/src/index.ts"),
       },
-      { find: "server-only", replacement: resolve(__dirname, "./src/__tests__/server-only-mock.ts") },
+      {
+        find: "server-only",
+        replacement: resolve(__dirname, "./src/__tests__/server-only-mock.ts"),
+      },
       {
         find: "next/font/local",
         replacement: resolve(__dirname, "./src/__tests__/next-font-mock.ts"),

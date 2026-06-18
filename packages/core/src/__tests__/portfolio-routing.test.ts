@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { derivePortfolioProjectId, resolvePortfolioProject, resolvePortfolioSession } from "../portfolio-routing.js";
+import {
+  derivePortfolioProjectId,
+  resolvePortfolioProject,
+  resolvePortfolioSession,
+} from "../portfolio-routing.js";
 import type { PortfolioProject } from "../types.js";
 
 const { listPortfolioSessionsMock } = vi.hoisted(() => ({

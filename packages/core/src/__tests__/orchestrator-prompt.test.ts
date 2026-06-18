@@ -126,8 +126,9 @@ describe("generateOrchestratorPrompt", () => {
   });
 
   it("throws when the markdown template contains an unresolved snake_case placeholder", async () => {
-    const generateOrchestratorPrompt =
-      await loadGenerateOrchestratorPromptWithTemplate("Hello {{missing_placeholder}}");
+    const generateOrchestratorPrompt = await loadGenerateOrchestratorPromptWithTemplate(
+      "Hello {{missing_placeholder}}",
+    );
 
     expect(() =>
       generateOrchestratorPrompt({
@@ -165,10 +166,9 @@ describe("generateOrchestratorPrompt", () => {
   });
 
   it("throws when the markdown template contains an unmatched optional-section marker", async () => {
-    const generateOrchestratorPrompt =
-      await loadGenerateOrchestratorPromptWithTemplate(
-        "{{AUTOMATED_REACTIONS_SECTION_START}}\n{{automatedReactionsSection}}",
-      );
+    const generateOrchestratorPrompt = await loadGenerateOrchestratorPromptWithTemplate(
+      "{{AUTOMATED_REACTIONS_SECTION_START}}\n{{automatedReactionsSection}}",
+    );
 
     expect(() =>
       generateOrchestratorPrompt({
@@ -182,10 +182,9 @@ describe("generateOrchestratorPrompt", () => {
   });
 
   it("throws when the markdown template nests the same optional section type", async () => {
-    const generateOrchestratorPrompt =
-      await loadGenerateOrchestratorPromptWithTemplate(
-        "{{REPO_CONFIGURED_SECTION_START}}outer {{REPO_CONFIGURED_SECTION_START}}inner{{REPO_CONFIGURED_SECTION_END}}{{REPO_CONFIGURED_SECTION_END}}",
-      );
+    const generateOrchestratorPrompt = await loadGenerateOrchestratorPromptWithTemplate(
+      "{{REPO_CONFIGURED_SECTION_START}}outer {{REPO_CONFIGURED_SECTION_START}}inner{{REPO_CONFIGURED_SECTION_END}}{{REPO_CONFIGURED_SECTION_END}}",
+    );
 
     expect(() =>
       generateOrchestratorPrompt({

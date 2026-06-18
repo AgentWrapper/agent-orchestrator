@@ -34,9 +34,7 @@ describe("preflight.checkPort", () => {
 
   it("throws when port is in use", async () => {
     mockIsPortAvailable.mockResolvedValue(false);
-    await expect(preflight.checkPort(3000)).rejects.toThrow(
-      "Port 3000 is already in use",
-    );
+    await expect(preflight.checkPort(3000)).rejects.toThrow("Port 3000 is already in use");
   });
 
   it("includes port number in error message", async () => {
@@ -83,31 +81,19 @@ describe("preflight.checkBuilt", () => {
 
   it("throws 'pnpm build' when ao-core exists but dist is missing", async () => {
     // findPackageUp finds ao-core, but dist/index.js is missing
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "Packages not built",
-    );
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow("Packages not built");
   });
 
   it("throws when web production artifacts are missing", async () => {
     // findPackageUp finds ao-core, dist/index.js exists, but .next/BUILD_ID missing
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "Packages not built",
-    );
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow("Packages not built");
   });
 
   it("throws npm hint when web artifacts missing in global install", async () => {
     // ao-core found at first check, dist exists, but .next/BUILD_ID missing
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(false);
     await expect(
       preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
     ).rejects.toThrow("npm install -g @aoagents/ao@latest");
@@ -115,9 +101,7 @@ describe("preflight.checkBuilt", () => {
 
   it("throws npm hint when ao-core dist is missing in global install", async () => {
     // ao-core found, but dist/index.js missing
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    mockExistsSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
     await expect(
       preflight.checkBuilt("/usr/local/lib/node_modules/@aoagents/ao-web"),
     ).rejects.toThrow("npm install -g @aoagents/ao@latest");

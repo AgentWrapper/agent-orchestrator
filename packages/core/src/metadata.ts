@@ -411,7 +411,6 @@ export function mutateMetadata(
             try {
               renameSync(path, corruptPath);
               renamed = true;
-              // eslint-disable-next-line no-console
               console.warn(
                 `[metadata] corrupt JSON at ${path}; preserved as ${corruptPath} before rewriting`,
               );

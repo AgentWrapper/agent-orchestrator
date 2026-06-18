@@ -28,7 +28,8 @@ describe("ProjectSettingsForm", () => {
           runtime: "tmux",
           trackerPlugin: "github",
           scmPlugin: "github",
-          reactions: '{\n  "ci-failed": {\n    "auto": true,\n    "action": "send-to-agent"\n  }\n}',
+          reactions:
+            '{\n  "ci-failed": {\n    "auto": true,\n    "action": "send-to-agent"\n  }\n}',
           identity: {
             projectId: "docs",
             path: "/tmp/docs",

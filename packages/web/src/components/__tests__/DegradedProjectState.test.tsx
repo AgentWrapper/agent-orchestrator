@@ -19,7 +19,8 @@ vi.mock("@/components/RepairDegradedProjectButton", () => ({
 
 const baseProps = {
   projectId: "my-project",
-  resolveError: "Local config at /tmp/my-project/agent-orchestrator.yaml failed validation: bad field",
+  resolveError:
+    "Local config at /tmp/my-project/agent-orchestrator.yaml failed validation: bad field",
   projectPath: "/tmp/my-project",
 };
 
@@ -41,21 +42,12 @@ describe("DegradedProjectState", () => {
 
   it("extracts and displays the config path from the resolve error", () => {
     render(<DegradedProjectState {...baseProps} />);
-    expect(
-      screen.getByText("/tmp/my-project/agent-orchestrator.yaml"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("/tmp/my-project/agent-orchestrator.yaml")).toBeInTheDocument();
   });
 
   it("falls back to the project path when the config path cannot be parsed from the error", () => {
-    render(
-      <DegradedProjectState
-        {...baseProps}
-        resolveError="Something went wrong"
-      />,
-    );
-    expect(
-      screen.getByText("/tmp/my-project/agent-orchestrator.yaml or .yml"),
-    ).toBeInTheDocument();
+    render(<DegradedProjectState {...baseProps} resolveError="Something went wrong" />);
+    expect(screen.getByText("/tmp/my-project/agent-orchestrator.yaml or .yml")).toBeInTheDocument();
   });
 
   it("renders 'Back to dashboard' link pointing to /", () => {

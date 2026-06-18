@@ -42,7 +42,9 @@ describe("Dashboard empty state", () => {
     render(<Dashboard initialSessions={[]} />);
     expect(screen.getByText(/Ready to orchestrate/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Open the main orchestrator to start a session and fan out parallel agents across your codebase/i),
+      screen.getByText(
+        /Open the main orchestrator to start a session and fan out parallel agents across your codebase/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -110,10 +112,7 @@ describe("Dashboard empty state", () => {
 
   it("shows load error banner instead of empty state when SSR services failed", () => {
     render(
-      <Dashboard
-        initialSessions={[]}
-        dashboardLoadError="No agent-orchestrator.yaml found"
-      />,
+      <Dashboard initialSessions={[]} dashboardLoadError="No agent-orchestrator.yaml found" />,
     );
     expect(screen.queryByText(/Ready to orchestrate/i)).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Orchestrator failed to load");
@@ -164,7 +163,6 @@ describe("Dashboard empty state", () => {
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
-
 
   it("mounts the sidebar empty state on a fresh install with zero projects", () => {
     render(<Dashboard initialSessions={[]} projects={[]} />);

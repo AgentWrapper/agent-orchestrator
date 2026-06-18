@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,8 +67,14 @@ describe("withFileLockSync", () => {
     expect(events).toSatisfy((lines: string[]) => {
       const [firstStart, firstEnd, secondStart, secondEnd] = lines;
       return (
-        (firstStart === "start:a" && firstEnd === "end:a" && secondStart === "start:b" && secondEnd === "end:b") ||
-        (firstStart === "start:b" && firstEnd === "end:b" && secondStart === "start:a" && secondEnd === "end:a")
+        (firstStart === "start:a" &&
+          firstEnd === "end:a" &&
+          secondStart === "start:b" &&
+          secondEnd === "end:b") ||
+        (firstStart === "start:b" &&
+          firstEnd === "end:b" &&
+          secondStart === "start:a" &&
+          secondEnd === "end:a")
       );
     });
   });

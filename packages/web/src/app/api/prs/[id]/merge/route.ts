@@ -33,9 +33,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       (s) => (s.pr && prMatches(s.pr)) || (s.prs ?? []).some(prMatches),
     );
     const targetPR =
-      session?.pr && prMatches(session.pr)
-        ? session.pr
-        : (session?.prs ?? []).find(prMatches);
+      session?.pr && prMatches(session.pr) ? session.pr : (session?.prs ?? []).find(prMatches);
     if (!session || !targetPR) {
       return jsonWithCorrelation({ error: "PR not found" }, { status: 404 }, correlationId);
     }

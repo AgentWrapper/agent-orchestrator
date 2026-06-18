@@ -94,9 +94,7 @@ export async function maybePromptForUpdateChannel(deps: PromptDeps = {}): Promis
 
   console.log(chalk.bold("\nHow do you want to receive updates?"));
   console.log(
-    chalk.dim(
-      "  Stable ships every Thursday. Nightly ships daily Fri–Tue. Manual stays put.",
-    ),
+    chalk.dim("  Stable ships every Thursday. Nightly ships daily Fri–Tue. Manual stays put."),
   );
   console.log(
     chalk.dim(
@@ -108,9 +106,17 @@ export async function maybePromptForUpdateChannel(deps: PromptDeps = {}): Promis
   let raw: UpdateChannel | "skip" | undefined;
   try {
     raw = await promptFn("Update channel:", [
-      { value: "stable", label: "Stable — weekly releases. Recommended for most users.", hint: "@latest" },
+      {
+        value: "stable",
+        label: "Stable — weekly releases. Recommended for most users.",
+        hint: "@latest",
+      },
       { value: "nightly", label: "Nightly — daily builds. Bleeding edge.", hint: "@nightly" },
-      { value: "manual", label: "Manual — no checks. Run `ao update` yourself.", hint: "default if dismissed" },
+      {
+        value: "manual",
+        label: "Manual — no checks. Run `ao update` yourself.",
+        hint: "default if dismissed",
+      },
     ]);
   } catch {
     raw = "manual";

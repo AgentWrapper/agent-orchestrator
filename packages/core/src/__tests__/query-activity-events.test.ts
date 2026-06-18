@@ -9,7 +9,11 @@ vi.mock("../activity-events.js", async (importOriginal) => {
   return { ...mod, droppedEventCount: () => 0 };
 });
 
-import { queryActivityEvents, searchActivityEvents, getActivityEventStats } from "../query-activity-events.js";
+import {
+  queryActivityEvents,
+  searchActivityEvents,
+  getActivityEventStats,
+} from "../query-activity-events.js";
 import * as eventsDb from "../events-db.js";
 
 const sampleRow = {

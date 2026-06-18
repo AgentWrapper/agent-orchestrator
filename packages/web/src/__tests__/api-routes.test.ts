@@ -682,12 +682,8 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(enrichSpy).toHaveBeenCalledTimes(2);
-      expect(enrichSpy.mock.calls[0]).toEqual([
-        expect.objectContaining({ id: "worker-live" }),
-      ]);
-      expect(enrichSpy.mock.calls[1]).toEqual([
-        expect.objectContaining({ id: "worker-killed" }),
-      ]);
+      expect(enrichSpy.mock.calls[0]).toEqual([expect.objectContaining({ id: "worker-live" })]);
+      expect(enrichSpy.mock.calls[1]).toEqual([expect.objectContaining({ id: "worker-killed" })]);
 
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();
@@ -739,9 +735,7 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(enrichSpy).toHaveBeenCalledTimes(1);
-      expect(enrichSpy.mock.calls[0]).toEqual([
-        expect.objectContaining({ id: "worker-open-pr" }),
-      ]);
+      expect(enrichSpy.mock.calls[0]).toEqual([expect.objectContaining({ id: "worker-open-pr" })]);
 
       metadataSpy.mockRestore();
       enrichSpy.mockRestore();

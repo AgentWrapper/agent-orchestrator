@@ -16,10 +16,14 @@ const TYPESCRIPT_VERSION = "^5.7.0";
 const NODE_TYPES_VERSION = "^25.2.3";
 
 const SLOT_HINTS: Record<PluginSlot, string> = {
-  runtime: "Implement a Runtime-compatible object from create() and wire up create/destroy/send lifecycle methods.",
-  agent: "Implement an Agent-compatible object from create() so AO can launch, inspect, and restore sessions.",
-  workspace: "Implement a Workspace-compatible object from create() for setup, cleanup, and isolation behavior.",
-  tracker: "Implement a Tracker-compatible object from create() for issue list/read/update operations.",
+  runtime:
+    "Implement a Runtime-compatible object from create() and wire up create/destroy/send lifecycle methods.",
+  agent:
+    "Implement an Agent-compatible object from create() so AO can launch, inspect, and restore sessions.",
+  workspace:
+    "Implement a Workspace-compatible object from create() for setup, cleanup, and isolation behavior.",
+  tracker:
+    "Implement a Tracker-compatible object from create() for issue list/read/update operations.",
   scm: "Implement an SCM-compatible object from create() for branch, PR, CI, and review operations.",
   notifier: "Implement a Notifier-compatible object from create() for notify() delivery logic.",
   terminal: "Implement a Terminal-compatible object from create() for attach/open UX.",
@@ -46,7 +50,9 @@ export function buildDefaultPackageName(slot: PluginSlot, pluginName: string): s
 }
 
 export function resolveScaffoldDirectory(displayName: string, targetDir?: string): string {
-  return resolve(targetDir && targetDir.trim().length > 0 ? targetDir : normalizePluginName(displayName));
+  return resolve(
+    targetDir && targetDir.trim().length > 0 ? targetDir : normalizePluginName(displayName),
+  );
 }
 
 function ensureDirectoryIsWritable(targetDir: string): void {
@@ -119,8 +125,14 @@ function buildTsConfig(): string {
 
 function buildIndexTs(input: PluginScaffoldInput): string {
   const manifestName = normalizePluginName(input.displayName);
-  const displayName = input.displayName.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-  const description = input.description.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const displayName = input.displayName
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n");
+  const description = input.description
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n");
 
   return `import type { PluginModule } from "@aoagents/ao-core";
 

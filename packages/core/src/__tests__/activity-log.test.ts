@@ -13,7 +13,8 @@ import {
 } from "../activity-log.js";
 import type { ActivityDetection, ActivityLogEntry, ActivityState } from "../types.js";
 
-const minutesAgo = (minutes: number): string => new Date(Date.now() - minutes * 60_000).toISOString();
+const minutesAgo = (minutes: number): string =>
+  new Date(Date.now() - minutes * 60_000).toISOString();
 
 const toActivityResult = (
   entry: ActivityLogEntry,
@@ -27,7 +28,10 @@ const detectWithProcessCheck = (
   activityResult: { entry: ActivityLogEntry; modifiedAt: Date } | null,
 ): ActivityDetection | null => {
   if (!isProcessRunning) return { state: "exited", timestamp: new Date() };
-  return checkActivityLogState(activityResult) ?? getActivityFallbackState(activityResult, 30_000, 5 * 60_000);
+  return (
+    checkActivityLogState(activityResult) ??
+    getActivityFallbackState(activityResult, 30_000, 5 * 60_000)
+  );
 };
 
 describe("classifyTerminalActivity", () => {
@@ -226,7 +230,11 @@ describe("readLastActivityEntry", () => {
 
   it("returns null for invalid state value", async () => {
     await mkdir(join(tmpDir, ".ao"), { recursive: true });
-    const bad = JSON.stringify({ ts: new Date().toISOString(), state: "invalid", source: "terminal" });
+    const bad = JSON.stringify({
+      ts: new Date().toISOString(),
+      state: "invalid",
+      source: "terminal",
+    });
     await writeFile(getActivityLogPath(tmpDir), bad + "\n", "utf-8");
     const result = await readLastActivityEntry(tmpDir);
     expect(result).toBeNull();

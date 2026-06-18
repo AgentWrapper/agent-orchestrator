@@ -72,11 +72,15 @@ describe("V2 paths", () => {
   });
 
   it("getOrchestratorPath returns projects/{projectId}/orchestrator.json", () => {
-    expect(getOrchestratorPath("my-app")).toBe(join(aoBase, "projects", "my-app", "orchestrator.json"));
+    expect(getOrchestratorPath("my-app")).toBe(
+      join(aoBase, "projects", "my-app", "orchestrator.json"),
+    );
   });
 
   it("getSessionPath returns projects/{projectId}/sessions/{sessionId}.json", () => {
-    expect(getSessionPath("my-app", "ao-7")).toBe(join(aoBase, "projects", "my-app", "sessions", "ao-7.json"));
+    expect(getSessionPath("my-app", "ao-7")).toBe(
+      join(aoBase, "projects", "my-app", "sessions", "ao-7.json"),
+    );
   });
 
   it("assertSafeProjectId rejects unsafe project IDs", () => {
@@ -118,7 +122,10 @@ describe("parseTmuxNameV2", () => {
     expect(parseTmuxNameV2("ao-84")).toEqual({ prefix: "ao", num: 84 });
     expect(parseTmuxNameV2("my_app-1")).toEqual({ prefix: "my_app", num: 1 });
     expect(parseTmuxNameV2("my-app-1")).toEqual({ prefix: "my-app", num: 1 });
-    expect(parseTmuxNameV2("my-app-orchestrator-5")).toEqual({ prefix: "my-app-orchestrator", num: 5 });
+    expect(parseTmuxNameV2("my-app-orchestrator-5")).toEqual({
+      prefix: "my-app-orchestrator",
+      num: 5,
+    });
     expect(parseTmuxNameV2("123-5")).toEqual({ prefix: "123", num: 5 });
   });
 

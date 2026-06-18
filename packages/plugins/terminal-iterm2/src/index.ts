@@ -135,7 +135,6 @@ export function create(): Terminal {
 
     async openSession(session: Session): Promise<void> {
       if (!isMacOS()) {
-        // eslint-disable-next-line no-console
         console.warn("[terminal-iterm2] iTerm2 is only available on macOS");
         return;
       }

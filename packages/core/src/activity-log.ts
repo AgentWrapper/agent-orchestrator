@@ -45,8 +45,7 @@ export async function appendActivityEntry(
     ts: new Date().toISOString(),
     state,
     source,
-    ...(trigger !== undefined &&
-      (state === "waiting_input" || state === "blocked") && { trigger }),
+    ...(trigger !== undefined && (state === "waiting_input" || state === "blocked") && { trigger }),
   };
 
   await appendFile(logPath, JSON.stringify(entry) + "\n", "utf-8");
@@ -97,7 +96,14 @@ export async function readLastActivityEntry(
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
 
       const record = parsed as Record<string, unknown>;
-      const validStates = new Set(["active", "ready", "idle", "waiting_input", "blocked", "exited"]);
+      const validStates = new Set([
+        "active",
+        "ready",
+        "idle",
+        "waiting_input",
+        "blocked",
+        "exited",
+      ]);
       const validSources = new Set(["terminal", "native", "hook"]);
       if (
         typeof record.ts !== "string" ||

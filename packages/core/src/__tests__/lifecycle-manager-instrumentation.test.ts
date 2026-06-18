@@ -464,7 +464,13 @@ describe("reaction.escalated", () => {
   it("emits AE with escalationCause=max_retries when attempts exceed retries", async () => {
     // retries: 0 → first attempt escalates (attempts=1 > 0)
     config.reactions = {
-      "ci-failed": { auto: true, action: "send-to-agent", message: "fix CI", retries: 0, priority: "urgent" },
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "fix CI",
+        retries: 0,
+        priority: "urgent",
+      },
     };
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
@@ -763,8 +769,9 @@ describe("detecting.escalated", () => {
     // see it non-empty and skip the emit.
     vi.mocked(recordActivityEvent).mockClear();
     await lm.check("app-1");
-    const repeat = vi.mocked(recordActivityEvent).mock.calls
-      .map((c) => c[0])
+    const repeat = vi
+      .mocked(recordActivityEvent)
+      .mock.calls.map((c) => c[0])
       .filter((c) => c.kind === "detecting.escalated");
     expect(repeat).toHaveLength(0);
   });
@@ -850,16 +857,18 @@ describe("report_watcher.triggered", () => {
     try {
       // First check — trigger fires fresh, AE event lands.
       await lm.check("app-1");
-      const firstPass = vi.mocked(recordActivityEvent).mock.calls
-        .map((c) => c[0])
+      const firstPass = vi
+        .mocked(recordActivityEvent)
+        .mock.calls.map((c) => c[0])
         .filter((c) => c.kind === "report_watcher.triggered");
       expect(firstPass).toHaveLength(1);
 
       // Second check — same trigger still active. Must NOT re-emit.
       vi.mocked(recordActivityEvent).mockClear();
       await lm.check("app-1");
-      const secondPass = vi.mocked(recordActivityEvent).mock.calls
-        .map((c) => c[0])
+      const secondPass = vi
+        .mocked(recordActivityEvent)
+        .mock.calls.map((c) => c[0])
         .filter((c) => c.kind === "report_watcher.triggered");
       expect(secondPass).toHaveLength(0);
     } finally {
@@ -886,7 +895,8 @@ describe("report_watcher.triggered", () => {
 
     // Seed a needs_input report whose note contains a credential URL.
     // Per agent-report.ts:560, readAgentReport pulls these out of metadata.
-    const credentialNote = "stuck on git push https://x-oauth-basic:SECRET_NOTE_TOKEN@github.com/foo/bar.git";
+    const credentialNote =
+      "stuck on git push https://x-oauth-basic:SECRET_NOTE_TOKEN@github.com/foo/bar.git";
     const blockedSession = makeSession({
       id: "app-1",
       status: "working",

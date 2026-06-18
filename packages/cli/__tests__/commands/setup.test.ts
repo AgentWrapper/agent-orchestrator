@@ -85,6 +85,10 @@ function testHttpsUrl(hostParts: string[], path: string): string {
   return `https://${hostParts.join(".")}${path}`;
 }
 
+function normalizePathSeparators(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 const EXAMPLE_WEBHOOK_URL = testHttpsUrl(["example", "com"], "/ao-events");
 const NEW_EXAMPLE_WEBHOOK_URL = testHttpsUrl(["new", "example", "com"], "/ao-events");
 const SLACK_SECRET_WEBHOOK_URL = testHttpsUrl(
@@ -2690,7 +2694,7 @@ describe("setup desktop command", () => {
     mockCpSync.mockImplementation(() => undefined);
     mockRmSync.mockImplementation(() => undefined);
     mockExistsSync.mockImplementation((path: string) =>
-      path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier"),
+      normalizePathSeparators(path).endsWith("AO Notifier.app/Contents/MacOS/ao-notifier"),
     );
     mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
       if (args.includes("--permission-status-json")) {
@@ -3076,8 +3080,10 @@ projects:
   it("refuses to install a non-macOS placeholder AO Notifier.app", async () => {
     mockExistsSync.mockImplementation(
       (path: string) =>
-        path.endsWith("AO Notifier.app/Contents/MacOS/ao-notifier") ||
-        path.endsWith("AO Notifier.app/Contents/Resources/ao-notifier-placeholder"),
+        normalizePathSeparators(path).endsWith("AO Notifier.app/Contents/MacOS/ao-notifier") ||
+        normalizePathSeparators(path).endsWith(
+          "AO Notifier.app/Contents/Resources/ao-notifier-placeholder",
+        ),
     );
     const program = createProgram();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
@@ -3090,7 +3096,9 @@ projects:
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("non-macOS placeholder"));
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("non-macOS placeholder and cannot be installed"),
+    );
     expect(mockCpSync).not.toHaveBeenCalled();
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
@@ -3102,11 +3110,14 @@ projects:
 
     expect(mockCpSync).not.toHaveBeenCalled();
     expect(mockWriteFileSync).not.toHaveBeenCalled();
-    expect(mockExecFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-notifier"),
-      ["--version-json"],
-      expect.any(Object),
-    );
+    expect(mockExecFileSync).toHaveBeenCalledWith("terminal-notifier", ["--version"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    expect(mockExecFileSync).toHaveBeenCalledWith("osascript", ["--version"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
   });
 
   it("uninstalls the app without changing config", async () => {

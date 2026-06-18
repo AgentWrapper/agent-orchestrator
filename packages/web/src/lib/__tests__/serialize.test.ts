@@ -434,7 +434,12 @@ describe("enrichSessionPR", () => {
         prReviewComments: createReviewCommentsMetadata({
           unresolvedThreads: 2,
           unresolvedComments: [
-            { url: "https://example.com", path: "src/app.ts", author: "reviewer", body: "Fix this" },
+            {
+              url: "https://example.com",
+              path: "src/app.ts",
+              author: "reviewer",
+              body: "Fix this",
+            },
           ],
         }),
       },

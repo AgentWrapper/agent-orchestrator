@@ -2,16 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
 import type * as CoreModule from "@aoagents/ao-core";
 
-const { mockConfigRef, mockSessionManager, mockApplyAgentReport, mockGetProjectSessionsDir } = vi.hoisted(
-  () => ({
+const { mockConfigRef, mockSessionManager, mockApplyAgentReport, mockGetProjectSessionsDir } =
+  vi.hoisted(() => ({
     mockConfigRef: { current: null as Record<string, unknown> | null },
     mockSessionManager: {
       get: vi.fn(),
     },
     mockApplyAgentReport: vi.fn(),
     mockGetProjectSessionsDir: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof CoreModule;
@@ -138,8 +137,9 @@ describe("report commands", () => {
   it("surfaces session-not-found errors", async () => {
     mockSessionManager.get.mockResolvedValue(null);
 
-    await expect(program.parseAsync(["node", "test", "report", "working", "--session", "app-1"]))
-      .rejects.toThrow("process.exit(1)");
+    await expect(
+      program.parseAsync(["node", "test", "report", "working", "--session", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Session not found"));
   });
@@ -150,8 +150,9 @@ describe("report commands", () => {
       projects: {},
     };
 
-    await expect(program.parseAsync(["node", "test", "report", "working", "--session", "app-1"]))
-      .rejects.toThrow("process.exit(1)");
+    await expect(
+      program.parseAsync(["node", "test", "report", "working", "--session", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Project not found for session"),

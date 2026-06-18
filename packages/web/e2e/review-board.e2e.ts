@@ -465,10 +465,7 @@ function orchestratorReviewExecute(fixture: Fixture, args: string[]): unknown {
   return parseJsonCommandOutput(runAoCli(fixture, ["review", "execute", PROJECT_ID, ...args]));
 }
 
-async function orchestratorReviewExecuteAsync(
-  fixture: Fixture,
-  args: string[],
-): Promise<unknown> {
+async function orchestratorReviewExecuteAsync(fixture: Fixture, args: string[]): Promise<unknown> {
   return parseJsonCommandOutput(
     await runAoCliAsync(fixture, ["review", "execute", PROJECT_ID, ...args]),
   );
@@ -714,7 +711,9 @@ async function main(): Promise<void> {
       });
       const sentCard = reviewCard(page, "todo-rev-1");
       await expectVisible(
-        page.locator('[data-reviewer-session-id="todo-rev-1"][data-review-status="waiting_update"]'),
+        page.locator(
+          '[data-reviewer-session-id="todo-rev-1"][data-review-status="waiting_update"]',
+        ),
         "sent review moved to waiting",
       );
       await expectVisible(
@@ -734,32 +733,35 @@ async function main(): Promise<void> {
       assert.equal(new URL(page.url()).searchParams.get("session"), SESSION_ID);
     });
 
-    await step("orchestrator marks older review runs outdated after a new worker commit", async () => {
-      writeFileSync(join(fixture.projectDir, "todo.txt"), "new worker commit\n");
-      git(fixture.projectDir, ["add", "todo.txt"]);
-      git(fixture.projectDir, ["commit", "-m", "worker update"]);
+    await step(
+      "orchestrator marks older review runs outdated after a new worker commit",
+      async () => {
+        writeFileSync(join(fixture.projectDir, "todo.txt"), "new worker commit\n");
+        git(fixture.projectDir, ["add", "todo.txt"]);
+        git(fixture.projectDir, ["commit", "-m", "worker update"]);
 
-      const requested = orchestratorReviewRun(fixture, [
-        "--summary",
-        "Orchestrator requested review after worker update",
-        "--json",
-      ]) as { run: { reviewerSessionId: string; status: string } };
-      assert.equal(requested.run.status, "queued");
-      assert.equal(requested.run.reviewerSessionId, "todo-rev-3");
+        const requested = orchestratorReviewRun(fixture, [
+          "--summary",
+          "Orchestrator requested review after worker update",
+          "--json",
+        ]) as { run: { reviewerSessionId: string; status: string } };
+        assert.equal(requested.run.status, "queued");
+        assert.equal(requested.run.reviewerSessionId, "todo-rev-3");
 
-      await page.goto(`${server.baseUrl}/review?project=${PROJECT_ID}`, {
-        waitUntil: "networkidle",
-      });
-      await expectVisible(reviewCard(page, "todo-rev-3"), "todo-rev-3 queued review card");
-      await expectVisible(
-        page.locator('[data-reviewer-session-id="todo-rev-1"][data-review-status="outdated"]'),
-        "older triage review marked outdated",
-      );
-      await expectVisible(
-        page.locator('[data-reviewer-session-id="todo-rev-2"][data-review-status="outdated"]'),
-        "second older triage review marked outdated",
-      );
-    });
+        await page.goto(`${server.baseUrl}/review?project=${PROJECT_ID}`, {
+          waitUntil: "networkidle",
+        });
+        await expectVisible(reviewCard(page, "todo-rev-3"), "todo-rev-3 queued review card");
+        await expectVisible(
+          page.locator('[data-reviewer-session-id="todo-rev-1"][data-review-status="outdated"]'),
+          "older triage review marked outdated",
+        );
+        await expectVisible(
+          page.locator('[data-reviewer-session-id="todo-rev-2"][data-review-status="outdated"]'),
+          "second older triage review marked outdated",
+        );
+      },
+    );
 
     await step("orchestrator runs a clean review and the UI observes it", async () => {
       const requested = orchestratorReviewRun(fixture, [

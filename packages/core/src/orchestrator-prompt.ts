@@ -67,15 +67,24 @@ function buildProjectSpecificRulesSection(project: ProjectConfig): string {
   return rules;
 }
 
-function removeOptionalSectionBlocks(
-  template: string,
-  data: OrchestratorPromptRenderData,
-): string {
+function removeOptionalSectionBlocks(template: string, data: OrchestratorPromptRenderData): string {
   const templates = [
     ["REPO_CONFIGURED_SECTION_START", "REPO_CONFIGURED_SECTION_END", data.repoConfiguredSection],
-    ["REPO_NOT_CONFIGURED_SECTION_START", "REPO_NOT_CONFIGURED_SECTION_END", data.repoNotConfiguredSection],
-    ["AUTOMATED_REACTIONS_SECTION_START", "AUTOMATED_REACTIONS_SECTION_END", data.automatedReactionsSection],
-    ["PROJECT_SPECIFIC_RULES_SECTION_START", "PROJECT_SPECIFIC_RULES_SECTION_END", data.projectSpecificRulesSection],
+    [
+      "REPO_NOT_CONFIGURED_SECTION_START",
+      "REPO_NOT_CONFIGURED_SECTION_END",
+      data.repoNotConfiguredSection,
+    ],
+    [
+      "AUTOMATED_REACTIONS_SECTION_START",
+      "AUTOMATED_REACTIONS_SECTION_END",
+      data.automatedReactionsSection,
+    ],
+    [
+      "PROJECT_SPECIFIC_RULES_SECTION_START",
+      "PROJECT_SPECIFIC_RULES_SECTION_END",
+      data.projectSpecificRulesSection,
+    ],
   ] as const;
 
   let interpolated = template;
@@ -193,7 +202,5 @@ export function generateOrchestratorPrompt(opts: OrchestratorPromptConfig): stri
     data,
   );
 
-  return finalizeRenderedPrompt(
-    renderTemplate(templateWithOptionalSections, data),
-  );
+  return finalizeRenderedPrompt(renderTemplate(templateWithOptionalSections, data));
 }

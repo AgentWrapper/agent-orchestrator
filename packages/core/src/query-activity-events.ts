@@ -113,7 +113,11 @@ export function queryActivityEvents(filter: ActivityEventFilter = {}): ActivityE
  * Returns [] if DB is unavailable or search fails.
  * projectId filter is pushed into SQL so it applies before the LIMIT.
  */
-export function searchActivityEvents(rawQuery: string, projectId?: string, limit = 100): ActivityEvent[] {
+export function searchActivityEvents(
+  rawQuery: string,
+  projectId?: string,
+  limit = 100,
+): ActivityEvent[] {
   const db = getDb();
   if (!db) return [];
 

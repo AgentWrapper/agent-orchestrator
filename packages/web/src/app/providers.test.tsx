@@ -3,12 +3,16 @@ import { render, screen } from "@testing-library/react";
 
 // Mock MuxProvider to avoid WebSocket setup
 vi.mock("@/providers/MuxProvider", () => ({
-  MuxProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="mux">{children}</div>,
+  MuxProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="mux">{children}</div>
+  ),
 }));
 
 // Mock next-themes
 vi.mock("next-themes", () => ({
-  ThemeProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="theme">{children}</div>,
+  ThemeProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="theme">{children}</div>
+  ),
 }));
 
 import { Providers } from "./providers";

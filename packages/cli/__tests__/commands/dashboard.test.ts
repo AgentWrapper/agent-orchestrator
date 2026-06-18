@@ -277,38 +277,46 @@ describe("looksLikeStaleBuild pattern matching", () => {
 describe("findRunningDashboardPidsForWebDir", () => {
   // Unix-only: Windows code path skips lsof and uses findPidByPort (no cwd check),
   // by design — see findRunningDashboardPidsForWebDir in dashboard-rebuild.ts.
-  it.skipIf(process.platform === "win32")("returns only listeners whose cwd matches the web directory", async () => {
-    const webDir = join(tmpDir, "packages", "web");
-    mkdirSync(webDir, { recursive: true });
+  it.skipIf(process.platform === "win32")(
+    "returns only listeners whose cwd matches the web directory",
+    async () => {
+      const webDir = join(tmpDir, "packages", "web");
+      mkdirSync(webDir, { recursive: true });
 
-    mockExecSilent
-      .mockResolvedValueOnce("111\n222\n")
-      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
-      .mockResolvedValueOnce("p222\nn/tmp/other\n");
+      mockExecSilent
+        .mockResolvedValueOnce("111\n222\n")
+        .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+        .mockResolvedValueOnce("p222\nn/tmp/other\n");
 
-    const { findRunningDashboardPidsForWebDir } =
-      await import("../../src/lib/dashboard-rebuild.js");
+      const { findRunningDashboardPidsForWebDir } =
+        await import("../../src/lib/dashboard-rebuild.js");
 
-    await expect(findRunningDashboardPidsForWebDir(webDir, [3000])).resolves.toEqual(["111"]);
-    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
-    expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-a", "-p", "111", "-d", "cwd", "-Fn"]);
-  });
+      await expect(findRunningDashboardPidsForWebDir(webDir, [3000])).resolves.toEqual(["111"]);
+      expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-ti", ":3000", "-sTCP:LISTEN"]);
+      expect(mockExecSilent).toHaveBeenCalledWith("lsof", ["-a", "-p", "111", "-d", "cwd", "-Fn"]);
+    },
+  );
 
-  it.skipIf(process.platform === "win32")("deduplicates dashboard pids found on multiple ports", async () => {
-    const webDir = join(tmpDir, "packages", "web");
-    mkdirSync(webDir, { recursive: true });
+  it.skipIf(process.platform === "win32")(
+    "deduplicates dashboard pids found on multiple ports",
+    async () => {
+      const webDir = join(tmpDir, "packages", "web");
+      mkdirSync(webDir, { recursive: true });
 
-    mockExecSilent
-      .mockResolvedValueOnce("111\n")
-      .mockResolvedValueOnce(`p111\nn${webDir}\n`)
-      .mockResolvedValueOnce("111\n")
-      .mockResolvedValueOnce(`p111\nn${webDir}\n`);
+      mockExecSilent
+        .mockResolvedValueOnce("111\n")
+        .mockResolvedValueOnce(`p111\nn${webDir}\n`)
+        .mockResolvedValueOnce("111\n")
+        .mockResolvedValueOnce(`p111\nn${webDir}\n`);
 
-    const { findRunningDashboardPidsForWebDir } =
-      await import("../../src/lib/dashboard-rebuild.js");
+      const { findRunningDashboardPidsForWebDir } =
+        await import("../../src/lib/dashboard-rebuild.js");
 
-    await expect(findRunningDashboardPidsForWebDir(webDir, [3000, 3001])).resolves.toEqual(["111"]);
-  });
+      await expect(findRunningDashboardPidsForWebDir(webDir, [3000, 3001])).resolves.toEqual([
+        "111",
+      ]);
+    },
+  );
 
   // Windows-runif parallels: on Windows, the function intentionally skips the
   // lsof + cwd verification (lsof doesn't exist) and trusts findPidByPort. The

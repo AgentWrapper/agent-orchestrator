@@ -83,10 +83,7 @@ vi.mock("@aoagents/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof AoCore>();
   return {
     ...actual,
-    createCodeReviewStore: (
-      projectId: string,
-      options: AoCore.CodeReviewStoreOptions = {},
-    ) =>
+    createCodeReviewStore: (projectId: string, options: AoCore.CodeReviewStoreOptions = {}) =>
       actual.createCodeReviewStore(projectId, {
         ...options,
         storeDir: options.storeDir ?? `${reviewStoreRootRef.current}/${projectId}`,
@@ -302,7 +299,11 @@ beforeEach(() => {
   mockSessionManager.send.mockReset();
   mockGetPluginRegistry.mockReset();
   // Default registry: no tracker
-  mockGetPluginRegistry.mockResolvedValue({ get: vi.fn().mockReturnValue(null), list: vi.fn(), register: vi.fn() });
+  mockGetPluginRegistry.mockResolvedValue({
+    get: vi.fn().mockReturnValue(null),
+    list: vi.fn(),
+    register: vi.fn(),
+  });
 
   // Default: list reads from sessionsDir
   mockSessionManager.list.mockImplementation(async () => {
@@ -391,8 +392,16 @@ describe("status command", () => {
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls) as {
-      reviews: Array<{ reviewerSessionId: string; linkedSessionId: string; openFindingCount: number }>;
-      meta: { reviewRunCount: number; activeReviewRunCount: number; openReviewFindingCount: number };
+      reviews: Array<{
+        reviewerSessionId: string;
+        linkedSessionId: string;
+        openFindingCount: number;
+      }>;
+      meta: {
+        reviewRunCount: number;
+        activeReviewRunCount: number;
+        openReviewFindingCount: number;
+      };
     };
     expect(parsed.reviews).toHaveLength(1);
     expect(parsed.reviews[0]).toMatchObject({
@@ -662,9 +671,9 @@ describe("status command", () => {
   });
 
   it("rejects --watch with --json", async () => {
-    await expect(program.parseAsync(["node", "test", "status", "--watch", "--json"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(
+      program.parseAsync(["node", "test", "status", "--watch", "--json"]),
+    ).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -674,9 +683,9 @@ describe("status command", () => {
   });
 
   it("rejects non-positive watch intervals", async () => {
-    await expect(program.parseAsync(["node", "test", "status", "--watch", "--interval", "0"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(
+      program.parseAsync(["node", "test", "status", "--watch", "--interval", "0"]),
+    ).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -901,13 +910,7 @@ describe("status command", () => {
     });
     mockGit.mockResolvedValue("feat/dead");
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "status",
-      "--json",
-      "--include-terminated",
-    ]);
+    await program.parseAsync(["node", "test", "status", "--json", "--include-terminated"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls).data;
@@ -1172,9 +1175,7 @@ describe("status command", () => {
       capturedCallback = fn as () => void;
       return 77 as never;
     });
-    clearIntervalSpy = vi
-      .spyOn(globalThis, "clearInterval")
-      .mockImplementation(() => undefined);
+    clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
     processOnceSpy = vi.spyOn(process, "once").mockImplementation((_e, _l) => process);
 
     await program.parseAsync(["node", "test", "status", "--watch", "--interval", "5"]);
@@ -1218,9 +1219,7 @@ describe("status command", () => {
       capturedCallback = fn as () => void;
       return 55 as never;
     });
-    clearIntervalSpy = vi
-      .spyOn(globalThis, "clearInterval")
-      .mockImplementation(() => undefined);
+    clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
     processOnceSpy = vi.spyOn(process, "once").mockImplementation((_e, _l) => process);
 
     const originalIsTTY = process.stdout.isTTY;
@@ -1274,12 +1273,7 @@ describe("status command", () => {
     mockTmux.mockResolvedValue(null);
     mockGit.mockResolvedValue(null);
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "status",
-      "--include-terminated",
-    ]);
+    await program.parseAsync(["node", "test", "status", "--include-terminated"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("app-1");
@@ -1311,13 +1305,7 @@ describe("status command", () => {
     mockTmux.mockResolvedValue(null);
     mockGit.mockResolvedValue(null);
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "status",
-      "--json",
-      "--include-terminated",
-    ]);
+    await program.parseAsync(["node", "test", "status", "--json", "--include-terminated"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
