@@ -56,6 +56,25 @@ import { fileURLToPath } from "node:url";
 const MUX_PATH = "/ao-terminal-mux";
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
+/** Network-level error codes that represent a client-initiated connection
+ *  reset. These are expected in proxy scenarios (Cloudflare Tunnel, load
+ *  balancers, browser tab closed mid-request) and should be silently ignored
+ *  rather than crashing the process. */
+const IGNORABLE_NETWORK_CODES = new Set(["ECONNRESET", "EPIPE", "ECONNABORTED"]);
+
+/** Attach a socket/stream error handler that swallows client-disconnect errors
+ *  and logs anything unexpected. Prevents unhandled 'error' events from
+ *  crashing the process when a downstream connection is abruptly reset. */
+function suppressNetworkErrors(
+  stream: { on(event: "error", handler: (err: NodeJS.ErrnoException) => void): unknown },
+  label: string,
+): void {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== undefined && IGNORABLE_NETWORK_CODES.has(err.code)) return;
+    console.error(`[single-port] unexpected ${label} error (${err.code ?? "?"}): ${err.message}`);
+  });
+}
+
 /**
  * Hop-by-hop headers (RFC 9110 §7.6.1) are meaningful only on a single
  * transport connection and must not be forwarded by an intermediary.
@@ -173,6 +192,11 @@ function tunnelUpgrade(
   clientHead: Buffer,
   target: { host: string; port: number; path: string },
 ): void {
+  // Guard the client socket before the upstream upgrade completes — if the
+  // client drops the connection during the handshake there will be no other
+  // error listener yet and Node will throw an uncaught exception.
+  suppressNetworkErrors(clientSocket, "client socket (pre-upgrade)");
+
   const proxyReq = httpRequest({
     host: target.host,
     port: target.port,
@@ -228,6 +252,7 @@ function tunnelUpgrade(
     lines.push("connection: close");
     lines.push("\r\n");
     clientSocket.write(lines.join("\r\n"));
+    suppressNetworkErrors(proxyRes, "upstream response (non-upgrade)");
     proxyRes.pipe(clientSocket);
     proxyRes.on("end", () => clientSocket.end());
   });
@@ -265,6 +290,10 @@ export function createSinglePortServer(config: SinglePortConfig): SinglePortServ
       },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 502, filterResponseHeaders(proxyRes.headers));
+        // Guard the upstream response stream — if the upstream resets the
+        // connection mid-response the pipe would otherwise emit an unhandled
+        // 'error' event and crash the process.
+        suppressNetworkErrors(proxyRes, "upstream response (HTTP)");
         proxyRes.pipe(res);
       },
     );
@@ -276,6 +305,10 @@ export function createSinglePortServer(config: SinglePortConfig): SinglePortServ
       res.end(`Bad gateway: ${err.message}`);
     });
 
+    // Guard the incoming client request stream — if the client resets the TCP
+    // connection while we are reading the body the pipe emits an unhandled
+    // 'error' event.
+    suppressNetworkErrors(req, "client request (HTTP)");
     req.pipe(proxyReq);
   });
 
@@ -346,6 +379,15 @@ function configFromEnv(): SinglePortConfig {
 }
 
 function main(): void {
+  // Last-resort guard: any network-reset error that slips through the per-socket
+  // handlers above would otherwise terminate this isolated proxy process. We
+  // only swallow the same ignorable codes — everything else is re-thrown so real
+  // bugs still surface.
+  process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+    if (err.code !== undefined && IGNORABLE_NETWORK_CODES.has(err.code)) return;
+    throw err;
+  });
+
   const config = configFromEnv();
   const proxy = createSinglePortServer(config);
 
