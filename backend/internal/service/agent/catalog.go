@@ -16,19 +16,11 @@ type Info struct {
 	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown"`
 }
 
-// Counts summarizes the local agent inventory.
-type Counts struct {
-	Supported  int `json:"supported"`
-	Installed  int `json:"installed"`
-	Authorized int `json:"authorized"`
-}
-
 // Inventory describes all daemon-supported agents and which are runnable here.
 type Inventory struct {
 	Supported  []Info `json:"supported"`
 	Installed  []Info `json:"installed"`
 	Authorized []Info `json:"authorized"`
-	Counts     Counts `json:"counts"`
 }
 
 // Service reports supported and locally runnable agent adapters.
@@ -84,11 +76,6 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 		Supported:  supported,
 		Installed:  installed,
 		Authorized: authorized,
-		Counts: Counts{
-			Supported:  len(supported),
-			Installed:  len(installed),
-			Authorized: len(authorized),
-		},
 	}, nil
 }
 

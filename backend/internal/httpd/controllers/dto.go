@@ -438,9 +438,6 @@ type ListAgentsResponse = agentsvc.Inventory
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
-// AgentCounts summarizes supported and installed agents.
-type AgentCounts = agentsvc.Counts
-
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`

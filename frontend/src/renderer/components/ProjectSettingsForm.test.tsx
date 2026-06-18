@@ -273,6 +273,82 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(agentRequestCount()).toBe(2));
 	});
 
+	it("reuses the cached agent catalog across project settings switches", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [{ id: "codex", label: "Codex" }],
+			installed: [{ id: "codex", label: "Codex" }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+		});
+		mockGetResponses();
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false },
+				mutations: { retry: false },
+			},
+		});
+
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<ProjectSettingsForm projectId="proj-1" />
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		expect(agentRequestCount()).toBe(1);
+
+		mockProject({
+			id: "proj-2",
+			name: "Project Two",
+			kind: "single_repo",
+			path: "/repo/project-two",
+			repo: "",
+			defaultBranch: "main",
+		});
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<ProjectSettingsForm projectId="proj-2" />
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-two").length).toBeGreaterThan(0));
+		expect(agentRequestCount()).toBe(1);
+	});
+
+	it("lets project settings manually reload the shared agent catalog", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [{ id: "codex", label: "Codex" }],
+			installed: [{ id: "codex", label: "Codex" }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+		});
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeInTheDocument();
+		expect(agentRequestCount()).toBe(1);
+
+		await userEvent.click(screen.getByRole("button", { name: "Reload agents" }));
+
+		await waitFor(() => expect(agentRequestCount()).toBe(2));
+	});
+
 	it("does not restart the orchestrator when unrelated settings change", async () => {
 		mockProject({
 			id: "proj-1",

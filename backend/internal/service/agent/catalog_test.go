@@ -52,7 +52,7 @@ func (f fakeAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error
 	return f.status, f.authErr
 }
 
-func TestListCountsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
+func TestListReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
 		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
@@ -63,8 +63,8 @@ func TestListCountsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got.Counts.Supported != 3 || got.Counts.Installed != 1 {
-		t.Fatalf("counts = %#v, want supported=3 installed=1", got.Counts)
+	if len(got.Supported) != 3 {
+		t.Fatalf("supported = %#v, want 3 agents", got.Supported)
 	}
 	if len(got.Installed) != 1 || got.Installed[0].ID != "codex" {
 		t.Fatalf("installed = %#v, want only codex", got.Installed)
@@ -83,8 +83,8 @@ func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got.Counts.Supported != 4 || got.Counts.Installed != 4 || got.Counts.Authorized != 1 {
-		t.Fatalf("counts = %#v, want supported=4 installed=4 authorized=1", got.Counts)
+	if len(got.Supported) != 4 || len(got.Installed) != 4 {
+		t.Fatalf("inventory = %#v, want supported=4 installed=4", got)
 	}
 	if len(got.Authorized) != 1 || got.Authorized[0].ID != "codex" {
 		t.Fatalf("authorized = %#v, want only codex", got.Authorized)

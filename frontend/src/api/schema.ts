@@ -529,11 +529,6 @@ export interface components {
             model?: string;
             permissions?: string;
         };
-        AgentCounts: {
-            authorized: number;
-            installed: number;
-            supported: number;
-        };
         AgentInfo: {
             /** @enum {string} */
             authStatus?: "authorized" | "unauthorized" | "unknown";
@@ -617,7 +612,6 @@ export interface components {
         };
         ListAgentsResponse: {
             authorized: components["schemas"]["AgentInfo"][];
-            counts: components["schemas"]["AgentCounts"];
             installed: components["schemas"]["AgentInfo"][];
             supported: components["schemas"]["AgentInfo"][];
         };

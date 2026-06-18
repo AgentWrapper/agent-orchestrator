@@ -1,11 +1,14 @@
-import { useState, type KeyboardEvent } from "react";
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+
+import { agentsQueryKey, useAgentsQuery } from "../hooks/useAgentsQuery";
+import { DashboardSubhead } from "./DashboardSubhead";
+import { Button } from "./ui/button";
 import { Plus } from "lucide-react";
 import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -68,9 +71,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
+	const agentsQuery = useAgentsQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+	const authorizedAgentIds = new Set((agentsQuery.data?.authorized ?? []).map((agent) => agent.id));
+	const loginNeededAgents = (agentsQuery.data?.installed ?? []).filter((agent) => !authorizedAgentIds.has(agent.id));
+	const showAgentSetupWarning = !agentsQuery.isLoading && authorizedAgentIds.size === 0;
 	const orchestrator = projectId
 		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
 		: undefined;
@@ -156,6 +163,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				actions={actions}
 			/>
 
+			{showAgentSetupWarning && (
+				<div className="shrink-0 px-[18px] pt-[14px]">
+					<div className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-[12px] leading-5 text-warning">
+						<span>{agentSetupMessage(loginNeededAgents)}</span>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={agentsQuery.isFetching}
+							onClick={() => queryClient.invalidateQueries({ queryKey: agentsQueryKey })}
+						>
+							{agentsQuery.isFetching ? "Reloading..." : "Reload agents"}
+						</Button>
+					</div>
+				</div>
+			)}
+
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
@@ -222,6 +246,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	);
 }
 
+function agentSetupMessage(loginNeededAgents: { id: string; label?: string }[]) {
+	if (loginNeededAgents.length === 0) return "Install and log in to a supported agent, then reload agents.";
+	return `Log in to ${formatAgentList(loginNeededAgents)}, then reload agents.`;
+}
+
+function formatAgentList(agents: { id: string; label?: string }[]) {
+	const labels = agents.map((agent) => agent.label || agent.id).sort((a, b) => a.localeCompare(b));
+	if (labels.length <= 2) return labels.join(" and ");
+	return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
+}
+
 function ZoneColumn({
 	col,
 	sessions,
@@ -263,22 +298,11 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		if (event.target !== event.currentTarget) {
-			return;
-		}
-		if (event.key === "Enter" || event.key === " ") {
-			event.preventDefault();
-			onOpen();
-		}
-	};
 	return (
-		<div
+		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
 			onClick={onOpen}
-			onKeyDown={handleKeyDown}
-			role="button"
-			tabIndex={0}
+			type="button"
 		>
 			<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
 				<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
@@ -314,7 +338,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					"no PR yet"
 				)}
 			</div>
-		</div>
+		</button>
 	);
 }
 
@@ -327,7 +351,7 @@ function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSu
 			</span>
 			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
 			<PRStatusStrip pr={pr} />
-			<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={pr} />
+			<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={pr} />
 		</div>
 	);
 }

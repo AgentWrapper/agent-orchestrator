@@ -30,7 +30,6 @@ func TestListAgents(t *testing.T) {
 			Supported:  []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}, {ID: "codex", Label: "Codex"}},
 			Installed:  []agentsvc.Info{{ID: "codex", Label: "Codex"}},
 			Authorized: []agentsvc.Info{{ID: "codex", Label: "Codex"}},
-			Counts:     agentsvc.Counts{Supported: 2, Installed: 1, Authorized: 1},
 		}},
 	}, httpd.ControlDeps{}))
 	defer srv.Close()
@@ -39,9 +38,12 @@ func TestListAgents(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /agents = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"supported"`, `"installed"`, `"authorized"`, `"supported":2`, `"installed":1`, `"authorized":1`, `"id":"codex"`} {
+	for _, want := range []string{`"supported"`, `"installed"`, `"authorized"`, `"id":"codex"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
+	}
+	if strings.Contains(string(body), `"counts"`) {
+		t.Fatalf("body includes removed counts field: %s", body)
 	}
 }
