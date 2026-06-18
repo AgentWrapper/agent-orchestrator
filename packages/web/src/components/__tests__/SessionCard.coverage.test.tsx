@@ -139,8 +139,6 @@ describe("SessionCard diff coverage", () => {
   it("shows a hover-revealed terminal link on active worker cards", () => {
     render(<SessionCard session={makeSession({ id: "reviewable-1" })} />);
 
-    expect(screen.getByText("terminal").closest("a")).toHaveClass(
-      "session-card__terminal-link",
-    );
+    expect(screen.getByText("terminal").closest("a")).toHaveClass("session-card__terminal-link");
   });
 });

@@ -1,20 +1,20 @@
 /**
  * QA Loop Engine
- * 
+ *
  * State machine that manages the builder → QA → rework cycles.
  * Handles retry budgets, escalation, and completion detection.
  */
 
-import type { TaskId, TaskStatus, QAResult, QAVerdict } from "./types.js";
+import type { TaskId, TaskStatus, QAResult } from "./types.js";
 
-export type QALoopState = 
-  | "idle" 
-  | "building" 
-  | "qa_running" 
-  | "qa_passed" 
-  | "qa_failed" 
-  | "rework" 
-  | "blocked" 
+export type QALoopState =
+  | "idle"
+  | "building"
+  | "qa_running"
+  | "qa_passed"
+  | "qa_failed"
+  | "rework"
+  | "blocked"
   | "done";
 
 export interface QALoopConfig {
@@ -80,9 +80,9 @@ export class QALoopEngine {
     const retries = this.retryCount.get(taskId) || 0;
     if (retries >= this.config.maxRetries) {
       this.state.set(taskId, "blocked");
-      return { 
-        action: "escalate", 
-        reason: `Max retries (${this.config.maxRetries}) exceeded` 
+      return {
+        action: "escalate",
+        reason: `Max retries (${this.config.maxRetries}) exceeded`,
       };
     }
 
@@ -149,12 +149,8 @@ export class QALoopEngine {
   shouldAutoRework(taskId: TaskId): boolean {
     const state = this.state.get(taskId);
     const retries = this.retryCount.get(taskId) || 0;
-    
-    return (
-      this.config.autoRework &&
-      state === "rework" &&
-      retries < this.config.maxRetries
-    );
+
+    return this.config.autoRework && state === "rework" && retries < this.config.maxRetries;
   }
 
   /**

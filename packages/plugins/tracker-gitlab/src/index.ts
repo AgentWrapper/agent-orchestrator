@@ -173,10 +173,7 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
       }
 
       if (update.comment) {
-        await glab(
-          ["issue", "note", identifier, "--repo", repo, "-m", update.comment],
-          hostname,
-        );
+        await glab(["issue", "note", identifier, "--repo", repo, "-m", update.comment], hostname);
       }
     },
 

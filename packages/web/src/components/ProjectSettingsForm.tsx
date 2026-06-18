@@ -99,12 +99,11 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
       <section className="project-settings-form__section">
         <div className="project-settings-form__section-header">
           <div>
-            <p className="project-settings-form__eyebrow">
-              Behavior
-            </p>
+            <p className="project-settings-form__eyebrow">Behavior</p>
             <h2 className="project-settings-form__section-title">Runtime configuration</h2>
             <p className="project-settings-form__section-copy">
-              These values change how AO runs this project without changing which repository the project points at.
+              These values change how AO runs this project without changing which repository the
+              project points at.
             </p>
           </div>
           <button
@@ -189,16 +188,19 @@ function ProjectSettingsFormInner({ projectId, initialValues }: ProjectSettingsF
       </section>
 
       <section className="project-settings-form__section">
-        <p className="project-settings-form__eyebrow">
-          Identity
-        </p>
+        <p className="project-settings-form__eyebrow">Identity</p>
         <h2 className="project-settings-form__section-title">Repository identity</h2>
         <p className="project-settings-form__section-copy">
-          These fields are read-only because they define which repository AO considers this project to be.
+          These fields are read-only because they define which repository AO considers this project
+          to be.
         </p>
 
         <div className="project-settings-form__grid">
-          <ReadonlyField id="identity-project-id" label="Project ID" value={initialValues.identity.projectId} />
+          <ReadonlyField
+            id="identity-project-id"
+            label="Project ID"
+            value={initialValues.identity.projectId}
+          />
           <ReadonlyField id="identity-path" label="Path" value={initialValues.identity.path} />
           <ReadonlyField id="identity-repo" label="Repo" value={initialValues.identity.repo} />
           <ReadonlyField
@@ -239,15 +241,7 @@ function EditableField({
   );
 }
 
-function ReadonlyField({
-  id,
-  label,
-  value,
-}: {
-  id: string;
-  label: string;
-  value: string;
-}) {
+function ReadonlyField({ id, label, value }: { id: string; label: string; value: string }) {
   return (
     <label htmlFor={id} className="project-settings-form__field">
       <span className="project-settings-form__label">{label}</span>

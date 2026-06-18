@@ -353,7 +353,6 @@ export function loadGlobalConfig(
   if (!parsed) return null;
 
   if (migrationSummary) {
-    // eslint-disable-next-line no-console -- required migration visibility for stale shadow stripping
     console.info(migrationSummary);
     recordActivityEvent({
       source: "config",
@@ -480,7 +479,9 @@ export function writeLocalProjectConfig(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value);
+  return (
+    value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
+  );
 }
 
 function mergeRoleBehavior(
@@ -806,9 +807,10 @@ export function registerProjectInGlobalConfig(
       }
     }
 
-    const repoIdentity = existing?.repo
-      ?? normalizeRepoIdentity(originUrl)
-      ?? (localConfig?.repo ? normalizeLegacyRepoValue(localConfig.repo) : undefined);
+    const repoIdentity =
+      existing?.repo ??
+      normalizeRepoIdentity(originUrl) ??
+      (localConfig?.repo ? normalizeLegacyRepoValue(localConfig.repo) : undefined);
     const defaultBranch = existing?.defaultBranch ?? localConfig?.defaultBranch ?? "main";
     const requestedSessionPrefix =
       existing?.sessionPrefix ??

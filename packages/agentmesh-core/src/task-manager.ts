@@ -1,19 +1,50 @@
 /**
  * Task Manager
- * 
+ *
  * Manages the task board with SQLite persistence.
  * Handles task CRUD operations and status transitions.
  */
 
-import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import type { Task, TaskId, TaskStatus, TaskPriority } from "./types.js";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import type { Task, TaskId, TaskStatus } from "./types.js";
 
-const DatabaseAvailable = Database !== undefined;
+type SqliteStatement = {
+  run(...args: unknown[]): { changes: number };
+  get(...args: unknown[]): unknown;
+  all(...args: unknown[]): unknown[];
+};
+
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+};
+
+type SqliteDatabaseConstructor = new (path: string) => SqliteDatabase;
+
+const requireLoaders = [
+  createRequire(import.meta.url),
+  // Next.js can bundle this file into .next/server/chunks, so fall back to
+  // resolving from the dashboard process cwd when the package-root loader
+  // points at a bundled artifact instead of node_modules.
+  createRequire(join(process.cwd(), "package.json")),
+];
+
+const Database = (() => {
+  for (const requireFn of requireLoaders) {
+    try {
+      return requireFn("better-sqlite3") as SqliteDatabaseConstructor;
+    } catch {}
+  }
+  return null;
+})();
+
+const DatabaseAvailable = Database !== null;
 
 export class TaskManager {
-  private db: Database.Database | null;
+  private db: SqliteDatabase | null;
   private storagePath: string;
   private inMemoryTasks: Map<TaskId, Task>;
 
@@ -21,13 +52,18 @@ export class TaskManager {
     this.storagePath = storagePath;
     this.inMemoryTasks = new Map();
     this.ensureStorageDir();
-    
+
     if (DatabaseAvailable) {
-      this.db = new Database(join(storagePath, "tasks.db"));
-      this.initializeSchema();
+      try {
+        this.db = new Database(join(storagePath, "tasks.db"));
+        this.initializeSchema();
+      } catch (err) {
+        this.db = null;
+        console.warn("[TaskManager] better-sqlite3 failed to open, using in-memory storage", err);
+      }
     } else {
       this.db = null;
-      console.warn("[TaskManager] better-sqlite3 not available, using in-memory storage");
+      console.warn("[TaskManager] better-sqlite3 unavailable, using in-memory storage");
     }
   }
 
@@ -39,7 +75,7 @@ export class TaskManager {
 
   private initializeSchema(): void {
     if (!this.db) return;
-    
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -69,7 +105,7 @@ export class TaskManager {
   create(task: Omit<Task, "id" | "createdAt" | "updatedAt">): Task {
     const id = this.generateTaskId();
     const now = new Date().toISOString();
-    
+
     const newTask: Task = {
       ...task,
       id,
@@ -102,7 +138,7 @@ export class TaskManager {
         newTask.updatedAt,
         newTask.startedAt || null,
         newTask.completedAt || null,
-        JSON.stringify(newTask.metadata)
+        JSON.stringify(newTask.metadata),
       );
     } else {
       this.inMemoryTasks.set(id, newTask);
@@ -114,10 +150,10 @@ export class TaskManager {
   get(taskId: TaskId): Task | null {
     if (this.db) {
       const stmt = this.db.prepare("SELECT * FROM tasks WHERE id = ?");
-      const row = stmt.get(taskId) as any;
-      
+      const row = stmt.get(taskId) as Record<string, unknown>;
+
       if (!row) return null;
-      
+
       return this.rowToTask(row);
     } else {
       return this.inMemoryTasks.get(taskId) || null;
@@ -132,7 +168,7 @@ export class TaskManager {
   }): Task[] {
     if (this.db) {
       let query = "SELECT * FROM tasks WHERE 1=1";
-      const params: any[] = [];
+      const params: (string | number | bigint | Buffer | null)[] = [];
 
       if (filters?.status) {
         query += " AND status = ?";
@@ -154,26 +190,28 @@ export class TaskManager {
       query += " ORDER BY createdAt DESC";
 
       const stmt = this.db.prepare(query);
-      const rows = stmt.all(...params) as any[];
-      
-      return rows.map(row => this.rowToTask(row));
+      const rows = stmt.all(...params) as unknown[];
+
+      return rows.map((row) => this.rowToTask(row as Record<string, unknown>));
     } else {
       let tasks = Array.from(this.inMemoryTasks.values());
-      
+
       if (filters?.status) {
-        tasks = tasks.filter(t => t.status === filters.status);
+        tasks = tasks.filter((t) => t.status === filters.status);
       }
       if (filters?.projectId) {
-        tasks = tasks.filter(t => t.projectId === filters.projectId);
+        tasks = tasks.filter((t) => t.projectId === filters.projectId);
       }
       if (filters?.role) {
-        tasks = tasks.filter(t => t.role === filters.role);
+        tasks = tasks.filter((t) => t.role === filters.role);
       }
       if (filters?.assignee) {
-        tasks = tasks.filter(t => t.assignee === filters.assignee);
+        tasks = tasks.filter((t) => t.assignee === filters.assignee);
       }
-      
-      return tasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      return tasks.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
     }
   }
 
@@ -211,7 +249,7 @@ export class TaskManager {
         updated.startedAt || null,
         updated.completedAt || null,
         JSON.stringify(updated.metadata),
-        taskId
+        taskId,
       );
     } else {
       this.inMemoryTasks.set(taskId, updated);
@@ -251,24 +289,24 @@ export class TaskManager {
     return `TASK-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  private rowToTask(row: any): Task {
+  private rowToTask(row: Record<string, unknown>): Task {
     return {
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      status: row.status,
-      priority: row.priority,
-      role: row.role,
-      assignee: row.assignee || undefined,
-      projectId: row.projectId,
-      branch: row.branch,
-      issueId: row.issueId || undefined,
-      issueUrl: row.issueUrl || undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      startedAt: row.startedAt || undefined,
-      completedAt: row.completedAt || undefined,
-      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      id: row.id as string,
+      title: row.title as string,
+      description: row.description as string,
+      status: row.status as TaskStatus,
+      priority: row.priority as Task["priority"],
+      role: row.role as Task["role"],
+      assignee: (row.assignee as string | null) || undefined,
+      projectId: row.projectId as string,
+      branch: row.branch as string,
+      issueId: (row.issueId as string | null) || undefined,
+      issueUrl: (row.issueUrl as string | null) || undefined,
+      createdAt: row.createdAt as string,
+      updatedAt: row.updatedAt as string,
+      startedAt: (row.startedAt as string | null) || undefined,
+      completedAt: (row.completedAt as string | null) || undefined,
+      metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
     };
   }
 

@@ -1,6 +1,6 @@
 /**
  * KimiCode Agent Adapter
- * 
+ *
  * Adapter for KimiCode - Moonshot AI's coding assistant.
  * Optimized for Chinese language support and Moonshot's large context models.
  */
@@ -16,8 +16,7 @@ import type {
   AgentStatus,
   AgentSessionInfo,
 } from "@aoagents/agentmesh-core";
-import type { SessionManager } from "@aoagents/ao-core";
-import type { SessionId } from "@aoagents/ao-core";
+import type { SessionManager, SessionId } from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -32,12 +31,12 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
   /**
    * Check if KimiCode CLI is available
    */
-  async preflight(context: PreflightContext): Promise<PreflightResult> {
+  async preflight(_context: PreflightContext): Promise<PreflightResult> {
     try {
       const { stdout } = await execFileAsync("kimicode", ["--version"], {
         timeout: 5000,
       });
-      
+
       const versionMatch = stdout.match(/KimiCode (\d+\.\d+\.\d+)/);
       const version = versionMatch ? versionMatch[1] : "unknown";
 
@@ -46,7 +45,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
         version,
         warnings: [],
       };
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         warnings: [],
@@ -58,7 +57,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
    * Start a KimiCode session with role context
    */
   async start(config: AgentStartConfig): Promise<AgentSession> {
-    const { taskId, role, prompt, workspacePath, branch, environment } = config;
+    const { taskId, role, prompt, branch } = config;
 
     // Build role-specific prompt
     const rolePrompt = this.buildRolePrompt(role, prompt);
@@ -94,7 +93,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
    */
   async getOutput(session: AgentSession, options?: OutputOptions): Promise<AgentOutput> {
     const activityLogPath = this.getActivityLogPath(session.aoSessionId);
-    
+
     try {
       const { stdout } = await execFileAsync("tail", [
         "-n",
@@ -107,7 +106,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
         capturedAt: new Date(),
         linesRead: stdout.split("\n").length,
       };
-    } catch (error) {
+    } catch {
       return {
         text: "",
         capturedAt: new Date(),
@@ -121,7 +120,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
    */
   async getStatus(session: AgentSession): Promise<AgentStatus> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return "exited";
     }
@@ -155,7 +154,7 @@ export class KimiCodeAdapter implements AgentMeshAgentAdapter {
    */
   async getSessionInfo(session: AgentSession): Promise<AgentSessionInfo | null> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return null;
     }
@@ -235,10 +234,13 @@ ${task}
 Use KimiCode's large context to understand the entire codebase context for more accurate planning.`,
     };
 
-    return rolePrompts[role] || `You are a ${role} agent using KimiCode.
+    return (
+      rolePrompts[role] ||
+      `You are a ${role} agent using KimiCode.
 
 TASK:
-${task}`;
+${task}`
+    );
   }
 
   /**

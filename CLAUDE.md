@@ -34,21 +34,21 @@ packages/
 
 ## Tech Stack
 
-| Layer | Stack |
-|-------|-------|
-| Language | TypeScript (strict mode, ES2022, Node16 modules) |
-| Runtime | Node.js 20+ |
-| Package Manager | pnpm 9.15.4 (`workspace:*` protocol) |
-| Web | Next.js 15 (App Router) + React 19 |
-| Styling | Tailwind CSS v4 + CSS custom properties (`@theme` block in `globals.css`) |
-| Terminal UI | xterm.js 5.3.0 + WebSocket to tmux PTYs |
-| Validation | Zod |
-| Testing | Vitest + @testing-library/react |
-| Linting | ESLint 10 (flat config) + Prettier 3.8 |
-| CI/CD | GitHub Actions (lint, typecheck, test, release) |
-| Versioning | Changesets |
-| Git hooks | Husky + gitleaks (secret scanning) |
-| Container | OCI via Containerfile (Podman/Docker) |
+| Layer           | Stack                                                                     |
+| --------------- | ------------------------------------------------------------------------- |
+| Language        | TypeScript (strict mode, ES2022, Node16 modules)                          |
+| Runtime         | Node.js 20+                                                               |
+| Package Manager | pnpm 9.15.4 (`workspace:*` protocol)                                      |
+| Web             | Next.js 15 (App Router) + React 19                                        |
+| Styling         | Tailwind CSS v4 + CSS custom properties (`@theme` block in `globals.css`) |
+| Terminal UI     | xterm.js 5.3.0 + WebSocket to tmux PTYs                                   |
+| Validation      | Zod                                                                       |
+| Testing         | Vitest + @testing-library/react                                           |
+| Linting         | ESLint 10 (flat config) + Prettier 3.8                                    |
+| CI/CD           | GitHub Actions (lint, typecheck, test, release)                           |
+| Versioning      | Changesets                                                                |
+| Git hooks       | Husky + gitleaks (secret scanning)                                        |
+| Container       | OCI via Containerfile (Podman/Docker)                                     |
 
 ## Commands
 
@@ -83,16 +83,16 @@ pnpm format:check
 
 Every abstraction is a pluggable interface defined in `packages/core/src/types.ts`:
 
-| Slot | Default | Purpose |
-|------|---------|---------|
-| Runtime | tmux | Where agents execute |
-| Agent | claude-code | Which AI tool to use |
-| Workspace | worktree | Code isolation (worktree vs clone) |
-| Tracker | github | Issue tracking (GitHub, Linear, GitLab) |
-| SCM | github | PR, CI, reviews |
-| Notifier | desktop | Notification delivery |
-| Terminal | iterm2 | Human attachment UI |
-| Lifecycle | core (non-pluggable) | State machine + polling |
+| Slot      | Default              | Purpose                                 |
+| --------- | -------------------- | --------------------------------------- |
+| Runtime   | tmux                 | Where agents execute                    |
+| Agent     | claude-code          | Which AI tool to use                    |
+| Workspace | worktree             | Code isolation (worktree vs clone)      |
+| Tracker   | github               | Issue tracking (GitHub, Linear, GitLab) |
+| SCM       | github               | PR, CI, reviews                         |
+| Notifier  | desktop              | Notification delivery                   |
+| Terminal  | iterm2               | Human attachment UI                     |
+| Lifecycle | core (non-pluggable) | State machine + polling                 |
 
 ### Session Lifecycle
 
@@ -103,6 +103,7 @@ Sessions have a **canonical lifecycle** (in `lifecycle-state.ts`) with separate 
 **Terminal reasons:** `manually_killed`, `runtime_lost`, `agent_process_exited`, `probe_failure`, `error_in_process`, `auto_cleanup`, `pr_merged`
 
 **Legacy status flow (derived via `deriveLegacyStatus`):**
+
 ```
 spawning -> working -> pr_open -> ci_failed / review_pending
                                       |              |
@@ -184,6 +185,7 @@ Touch only what you must. Clean up only your own mess.
 - Every changed line should trace directly to the task description.
 
 This is especially critical in:
+
 - `types.ts` - changing an interface breaks every plugin. Minimize surface changes.
 - `globals.css` - tokens are consumed across 50+ components. Don't rename casually.
 - `lifecycle-manager.ts` - state transitions have implicit dependencies. Document why a transition is safe.
@@ -193,6 +195,7 @@ This is especially critical in:
 Define success criteria. Loop until verified.
 
 Transform tasks into verifiable goals:
+
 - "Add a new status" -> "Add to enum, update `isTerminalSession`, add to dashboard column mapping, write tests for all three"
 - "Fix the bug" -> "Write a test that reproduces it, then make it pass"
 - "Refactor X" -> "Ensure tests pass before and after"
@@ -208,27 +211,32 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## CLI Behavior (ao start / ao stop)
 
 ### ao start
+
 - Registers in `running.json` (PID, port, projects)
 - Offers to restore sessions from `last-stop.json` — includes cross-project sessions via `otherProjects` field
 - `ao start --restore` restores `last-stop.json` without prompting; `ao start --no-restore` skips restore
 - **Ctrl+C performs full graceful shutdown** (same as ao stop): kills all sessions, writes last-stop state, unregisters from running.json. 10s hard timeout guarantees exit.
 
 ### ao stop
+
 - `ao stop` (no args): kills ALL sessions across ALL projects, sends SIGTERM to parent ao start process, stops dashboard, unregisters
 - `ao stop <project>`: kills only that project's sessions, does NOT kill parent process or dashboard (they serve all projects)
 - Always loads global config (`~/.agent-orchestrator/config.yaml`) to see all projects — local config only has the cwd project
 - Records `LastStopState` with `otherProjects` field for cross-project session restore
 
 ### ao update
+
 - For package-manager installs, `ao update` pauses a running AO via `ao stop --yes`, runs the global package update, verifies `ao --version`, then restarts with `ao start --restore` (or `--no-restore` if requested)
 - Failed package-manager updates must report that AO was not updated, include actionable remediation, and restart the previous installation if AO was paused
 
 ### Dashboard sidebar
+
 - Sidebar always shows sessions from ALL projects regardless of which project page is active
 - `useSessionEvents` in Dashboard.tsx is called without project filter — sidebar gets unscoped sessions
 - Kanban board filters client-side via `projectSessions` memo
 
 ### Key invariants
+
 - `sm.list()` persists `detecting` state (not `terminated`) to disk when enrichment detects dead runtimes — terminal decisions are made only by the lifecycle manager's probe pipeline (#1735)
 - `deriveLegacyStatus()` maps canonical lifecycle to legacy status — new terminal reasons must be added here
 - Tab completions merge local config + global config to show all projects
@@ -259,27 +267,27 @@ The codebase has a deliberate set of cross-platform abstractions. Every platform
 
 All importable from `@aoagents/ao-core` unless noted:
 
-| Need | Use |
-|------|-----|
-| OS check | `isWindows()` |
-| Pick runtime | `getDefaultRuntime()` |
-| Resolve shell (PowerShell vs `/bin/sh`) | `getShell()` |
-| Kill process + descendants | `killProcessTree(pid, signal?)` |
-| Find PID listening on a port | `findPidByPort(port)` |
-| Default env (HOME / TMPDIR / SHELL / PATH / USER) | `getEnvDefaults()` |
-| Compare paths (case-insensitive on NTFS/APFS) | `pathsEqual()` / `canonicalCompareKey()` from `cli/src/lib/path-equality.ts` |
-| Escape shell args | `shellEscape()` |
-| Install agent PATH wrappers (`gh`/`git`) | `setupPathWrapperWorkspace(workspacePath)` |
-| Build env PATH with `~/.ao/bin` prepended | `buildAgentPath(basePath?)` |
-| Tail JSONL | `readLastJsonlEntry` / `readLastActivityEntry` |
-| Activity-state contract helpers | `checkActivityLogState`, `getActivityFallbackState`, `classifyTerminalActivity`, `recordTerminalActivity`, `appendActivityEntry` |
-| Windows pty-host registry (used by `ao stop`) | `registerWindowsPtyHost`, `getWindowsPtyHosts`, `unregisterWindowsPtyHost`, `clearWindowsPtyHostRegistry` |
-| Reap orphan pty-hosts on `ao stop` | `sweepWindowsPtyHosts()` from `@aoagents/ao-plugin-runtime-process` |
-| Talk to a Windows pty-host over its named pipe | `getPipePath`, `connectPtyHost`, `ptyHostSendMessage`, `ptyHostGetOutput`, `ptyHostIsAlive`, `ptyHostKill` from `@aoagents/ao-plugin-runtime-process` |
-| Validate user-supplied session ID before pipe/shell use | `validateSessionId()` from `@/server/tmux-utils` |
-| Resolve a session's Windows pipe path | `resolvePipePath()` from `@/server/tmux-utils` |
-| POSIX-only Ctrl+C signal forwarding | `forwardSignalsToChild()` from `cli/src/lib/shell.ts` (guard with `!isWindows()`) |
-| Defensive PowerShell sweep of orphan pty-hosts | `stopStaleWindowsPtyHosts(projectDir)` from `web/src/lib/windows-pty-cleanup.ts` |
+| Need                                                    | Use                                                                                                                                                   |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OS check                                                | `isWindows()`                                                                                                                                         |
+| Pick runtime                                            | `getDefaultRuntime()`                                                                                                                                 |
+| Resolve shell (PowerShell vs `/bin/sh`)                 | `getShell()`                                                                                                                                          |
+| Kill process + descendants                              | `killProcessTree(pid, signal?)`                                                                                                                       |
+| Find PID listening on a port                            | `findPidByPort(port)`                                                                                                                                 |
+| Default env (HOME / TMPDIR / SHELL / PATH / USER)       | `getEnvDefaults()`                                                                                                                                    |
+| Compare paths (case-insensitive on NTFS/APFS)           | `pathsEqual()` / `canonicalCompareKey()` from `cli/src/lib/path-equality.ts`                                                                          |
+| Escape shell args                                       | `shellEscape()`                                                                                                                                       |
+| Install agent PATH wrappers (`gh`/`git`)                | `setupPathWrapperWorkspace(workspacePath)`                                                                                                            |
+| Build env PATH with `~/.ao/bin` prepended               | `buildAgentPath(basePath?)`                                                                                                                           |
+| Tail JSONL                                              | `readLastJsonlEntry` / `readLastActivityEntry`                                                                                                        |
+| Activity-state contract helpers                         | `checkActivityLogState`, `getActivityFallbackState`, `classifyTerminalActivity`, `recordTerminalActivity`, `appendActivityEntry`                      |
+| Windows pty-host registry (used by `ao stop`)           | `registerWindowsPtyHost`, `getWindowsPtyHosts`, `unregisterWindowsPtyHost`, `clearWindowsPtyHostRegistry`                                             |
+| Reap orphan pty-hosts on `ao stop`                      | `sweepWindowsPtyHosts()` from `@aoagents/ao-plugin-runtime-process`                                                                                   |
+| Talk to a Windows pty-host over its named pipe          | `getPipePath`, `connectPtyHost`, `ptyHostSendMessage`, `ptyHostGetOutput`, `ptyHostIsAlive`, `ptyHostKill` from `@aoagents/ao-plugin-runtime-process` |
+| Validate user-supplied session ID before pipe/shell use | `validateSessionId()` from `@/server/tmux-utils`                                                                                                      |
+| Resolve a session's Windows pipe path                   | `resolvePipePath()` from `@/server/tmux-utils`                                                                                                        |
+| POSIX-only Ctrl+C signal forwarding                     | `forwardSignalsToChild()` from `cli/src/lib/shell.ts` (guard with `!isWindows()`)                                                                     |
+| Defensive PowerShell sweep of orphan pty-hosts          | `stopStaleWindowsPtyHosts(projectDir)` from `web/src/lib/windows-pty-cleanup.ts`                                                                      |
 
 `docs/CROSS_PLATFORM.md` has the full helper reference with import paths, the EPERM-vs-ESRCH gotcha when probing processes (with a copyable code snippet), path case-insensitivity rules, PowerShell-vs-bash differences (`& ` call-operator, `$env:VAR`, no `/dev/null`, no `$(cat …)`, `.cmd`/`.bat`/`.exe` shim resolution via `shell: isWindows()`), the IPv6 `localhost` stall on Windows, agent-plugin Windows specifics, the test pattern for mocking `process.platform`, and a 10-point pre-merge checklist. **Run through that checklist for any non-trivial change.**
 
@@ -344,40 +352,40 @@ All importable from `@aoagents/ao-core` unless noted:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `packages/core/src/types.ts` | Central type definitions (all 8 plugin interfaces) |
-| `packages/core/src/session-manager.ts` | Session CRUD + stale runtime reconciliation (persists runtime_lost on dead runtimes) |
-| `packages/core/src/lifecycle-manager.ts` | State machine + polling loop + reactions |
-| `packages/core/src/lifecycle-state.ts` | Canonical lifecycle → legacy status mapping (deriveLegacyStatus) |
-| `packages/core/src/config.ts` | YAML config loading with Zod validation |
-| `packages/core/src/plugin-registry.ts` | Plugin discovery and resolution |
-| `packages/core/src/index.ts` | Core public API (stable, do not break) |
-| `packages/web/src/components/Dashboard.tsx` | Main dashboard view |
-| `packages/web/src/components/SessionDetail.tsx` | Session detail view |
-| `packages/web/src/components/DirectTerminal.tsx` | xterm.js terminal with WebSocket |
-| `packages/web/src/components/SessionCard.tsx` | Kanban session card |
-| `packages/web/src/hooks/useSessionEvents.ts` | SSE consumer hook (project filter optional — sidebar uses unscoped) |
-| `packages/web/src/lib/types.ts` | Dashboard types |
-| `packages/web/src/app/globals.css` | Design tokens and base styles (full token definitions) |
-| `DESIGN.md` | **Design system reference** — design principles, token mapping, component patterns, anti-patterns (read this before writing any web UI) |
-| `agent-orchestrator.yaml` | Project-level config (user-created) |
-| `eslint.config.js` | ESLint flat config |
-| `tsconfig.base.json` | Shared TypeScript base config |
-| `packages/cli/src/commands/start.ts` | ao start/stop commands + Ctrl+C graceful shutdown |
-| `packages/cli/src/lib/running-state.ts` | RunningState + LastStopState management (register/unregister, last-stop read/write) |
-| `packages/web/src/components/ProjectSidebar.tsx` | Sidebar — always shows all projects' sessions |
+| File                                             | Purpose                                                                                                                                 |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/core/src/types.ts`                     | Central type definitions (all 8 plugin interfaces)                                                                                      |
+| `packages/core/src/session-manager.ts`           | Session CRUD + stale runtime reconciliation (persists runtime_lost on dead runtimes)                                                    |
+| `packages/core/src/lifecycle-manager.ts`         | State machine + polling loop + reactions                                                                                                |
+| `packages/core/src/lifecycle-state.ts`           | Canonical lifecycle → legacy status mapping (deriveLegacyStatus)                                                                        |
+| `packages/core/src/config.ts`                    | YAML config loading with Zod validation                                                                                                 |
+| `packages/core/src/plugin-registry.ts`           | Plugin discovery and resolution                                                                                                         |
+| `packages/core/src/index.ts`                     | Core public API (stable, do not break)                                                                                                  |
+| `packages/web/src/components/Dashboard.tsx`      | Main dashboard view                                                                                                                     |
+| `packages/web/src/components/SessionDetail.tsx`  | Session detail view                                                                                                                     |
+| `packages/web/src/components/DirectTerminal.tsx` | xterm.js terminal with WebSocket                                                                                                        |
+| `packages/web/src/components/SessionCard.tsx`    | Kanban session card                                                                                                                     |
+| `packages/web/src/hooks/useSessionEvents.ts`     | SSE consumer hook (project filter optional — sidebar uses unscoped)                                                                     |
+| `packages/web/src/lib/types.ts`                  | Dashboard types                                                                                                                         |
+| `packages/web/src/app/globals.css`               | Design tokens and base styles (full token definitions)                                                                                  |
+| `DESIGN.md`                                      | **Design system reference** — design principles, token mapping, component patterns, anti-patterns (read this before writing any web UI) |
+| `agent-orchestrator.yaml`                        | Project-level config (user-created)                                                                                                     |
+| `eslint.config.js`                               | ESLint flat config                                                                                                                      |
+| `tsconfig.base.json`                             | Shared TypeScript base config                                                                                                           |
+| `packages/cli/src/commands/start.ts`             | ao start/stop commands + Ctrl+C graceful shutdown                                                                                       |
+| `packages/cli/src/lib/running-state.ts`          | RunningState + LastStopState management (register/unregister, last-stop read/write)                                                     |
+| `packages/web/src/components/ProjectSidebar.tsx` | Sidebar — always shows all projects' sessions                                                                                           |
 
 ## Skills
 
 The `skills/` directory contains reusable workflow documents for common tasks. Load them before starting work:
 
-| Skill | When to load |
-|-------|-------------|
-| [`skills/bug-triage/SKILL.md`](skills/bug-triage/SKILL.md) | Triage a bug report — investigate, search duplicates, file GitHub issues, push fix PRs |
-| [`skills/agent-orchestrator/SKILL.md`](skills/agent-orchestrator/SKILL.md) | Architecture and conventions for working on this codebase |
-| [`skills/release-notes/ao-weekly-release/SKILL.md`](skills/release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history |
-| [`skills/social-media/SKILL.md`](skills/social-media/SKILL.md) | Social media post generation |
+| Skill                                                                                                | When to load                                                                           |
+| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`skills/bug-triage/SKILL.md`](skills/bug-triage/SKILL.md)                                           | Triage a bug report — investigate, search duplicates, file GitHub issues, push fix PRs |
+| [`skills/agent-orchestrator/SKILL.md`](skills/agent-orchestrator/SKILL.md)                           | Architecture and conventions for working on this codebase                              |
+| [`skills/release-notes/ao-weekly-release/SKILL.md`](skills/release-notes/ao-weekly-release/SKILL.md) | Generate weekly release notes from git history                                         |
+| [`skills/social-media/SKILL.md`](skills/social-media/SKILL.md)                                       | Social media post generation                                                           |
 
 See [`skills/README.md`](skills/README.md) for how to install skills into other coding agents (Cursor, Copilot, Codex, etc.).
 
@@ -451,24 +459,28 @@ export default { manifest, create, detect } satisfies PluginModule<Runtime>;
 
 ```typescript
 import {
-  shellEscape,                  // Safe command argument escaping
-  validateUrl,                  // Webhook URL validation
-  readLastJsonlEntry,           // Efficient JSONL log tail (native agent JSONL)
-  readLastActivityEntry,        // Read last AO activity JSONL entry
-  checkActivityLogState,        // Extract sticky waiting_input/blocked from AO JSONL
-  getActivityFallbackState,     // Last-resort fallback: actionable states + liveness age decay
-  recordTerminalActivity,       // Shared recordActivity impl (classify + dedup + append)
-  classifyTerminalActivity,     // Classify terminal output via detectActivity
-  appendActivityEntry,          // Low-level JSONL append
-  setupPathWrapperWorkspace,    // Install ~/.ao/bin wrappers + .ao/AGENTS.md
-  buildAgentPath,               // Prepend ~/.ao/bin to PATH
+  shellEscape, // Safe command argument escaping
+  validateUrl, // Webhook URL validation
+  readLastJsonlEntry, // Efficient JSONL log tail (native agent JSONL)
+  readLastActivityEntry, // Read last AO activity JSONL entry
+  checkActivityLogState, // Extract sticky waiting_input/blocked from AO JSONL
+  getActivityFallbackState, // Last-resort fallback: actionable states + liveness age decay
+  recordTerminalActivity, // Shared recordActivity impl (classify + dedup + append)
+  classifyTerminalActivity, // Classify terminal output via detectActivity
+  appendActivityEntry, // Low-level JSONL append
+  setupPathWrapperWorkspace, // Install ~/.ao/bin wrappers + .ao/AGENTS.md
+  buildAgentPath, // Prepend ~/.ao/bin to PATH
   normalizeAgentPermissionMode, // Normalize permission mode strings
-  DEFAULT_READY_THRESHOLD_MS,   // 5 min — ready→idle threshold
-  DEFAULT_ACTIVE_WINDOW_MS,     // 30s — active→ready window
-  ACTIVITY_INPUT_STALENESS_MS,  // Deprecated compatibility export; actionable states no longer expire by wallclock
-  PREFERRED_GH_PATH,            // /usr/local/bin/gh
-  CI_STATUS, ACTIVITY_STATE, SESSION_STATUS,  // Constants
-  type Session, type ProjectConfig, type RuntimeHandle,
+  DEFAULT_READY_THRESHOLD_MS, // 5 min — ready→idle threshold
+  DEFAULT_ACTIVE_WINDOW_MS, // 30s — active→ready window
+  ACTIVITY_INPUT_STALENESS_MS, // Deprecated compatibility export; actionable states no longer expire by wallclock
+  PREFERRED_GH_PATH, // /usr/local/bin/gh
+  CI_STATUS,
+  ACTIVITY_STATE,
+  SESSION_STATUS, // Constants
+  type Session,
+  type ProjectConfig,
+  type RuntimeHandle,
 } from "@aoagents/ao-core";
 ```
 
@@ -492,29 +504,31 @@ All agent plugins (claude-code, codex, aider, opencode, etc.) must implement the
 
 **Required methods (all agents):**
 
-| Method | Purpose | Return `null` OK? |
-|--------|---------|-------------------|
-| `getLaunchCommand` | Shell command to start the agent | No |
-| `getEnvironment` | Env vars for agent process (must include `~/.ao/bin` in PATH) | No |
-| `detectActivity` | Terminal output classification (deprecated, but required) | No |
-| `getActivityState` | JSONL/API-based activity detection (min 3 states: active/ready/idle) | Yes (if no data) |
-| `isProcessRunning` | Check process alive via tmux TTY or PID | No |
-| `getSessionInfo` | Extract summary, cost, session ID from agent's data | Yes (if agent has no introspection) |
+| Method             | Purpose                                                              | Return `null` OK?                   |
+| ------------------ | -------------------------------------------------------------------- | ----------------------------------- |
+| `getLaunchCommand` | Shell command to start the agent                                     | No                                  |
+| `getEnvironment`   | Env vars for agent process (must include `~/.ao/bin` in PATH)        | No                                  |
+| `detectActivity`   | Terminal output classification (deprecated, but required)            | No                                  |
+| `getActivityState` | JSONL/API-based activity detection (min 3 states: active/ready/idle) | Yes (if no data)                    |
+| `isProcessRunning` | Check process alive via tmux TTY or PID                              | No                                  |
+| `getSessionInfo`   | Extract summary, cost, session ID from agent's data                  | Yes (if agent has no introspection) |
 
 **Optional methods (implement when the agent supports it):**
 
-| Method | Purpose | When to skip |
-|--------|---------|-------------|
-| `getRestoreCommand` | Resume a previous session | Agent has no resume capability (return `null`) |
-| `setupWorkspaceHooks` | Install metadata-update hooks (PATH wrappers or agent-native) | Never — required for dashboard PR tracking |
-| `postLaunchSetup` | Post-launch config (re-ensure hooks, resolve binary) | Only if no post-launch work needed |
-| `recordActivity` | Write terminal-derived activity to JSONL for `getActivityState` | Agent has native JSONL with full state coverage (Claude Code). Codex implements it as a safety net for when its native JSONL is missing/unparseable. |
+| Method                | Purpose                                                         | When to skip                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getRestoreCommand`   | Resume a previous session                                       | Agent has no resume capability (return `null`)                                                                                                       |
+| `setupWorkspaceHooks` | Install metadata-update hooks (PATH wrappers or agent-native)   | Never — required for dashboard PR tracking                                                                                                           |
+| `postLaunchSetup`     | Post-launch config (re-ensure hooks, resolve binary)            | Only if no post-launch work needed                                                                                                                   |
+| `recordActivity`      | Write terminal-derived activity to JSONL for `getActivityState` | Agent has native JSONL with full state coverage (Claude Code). Codex implements it as a safety net for when its native JSONL is missing/unparseable. |
 
 **Metadata hooks are critical.** Without `setupWorkspaceHooks`, PRs created by agents won't appear in the dashboard. Two patterns exist:
+
 - **Agent-native hooks** (Claude Code): PostToolUse hooks in `.claude/settings.json`
 - **PATH wrappers** (Codex, Aider, OpenCode): `~/.ao/bin/gh` and `~/.ao/bin/git` intercept commands. Call `setupPathWrapperWorkspace(workspacePath)` — it installs wrappers to `~/.ao/bin/` and writes session context to `.ao/AGENTS.md` (gitignored, does not modify tracked files).
 
 **Environment requirements:**
+
 - All agents must set `AO_SESSION_ID` and optionally `AO_ISSUE_ID`
 - All agents using PATH wrappers must prepend `~/.ao/bin` to PATH
 - Use `normalizeAgentPermissionMode` from `@aoagents/ao-core` (not a local duplicate)
@@ -528,14 +542,14 @@ spawning → active ↔ ready → idle → exited
                 ↘ waiting_input / blocked ↗
 ```
 
-| State | Meaning | When |
-|-------|---------|------|
-| `active` | Agent is working right now | Activity within last 30s |
-| `ready` | Agent finished recently, may resume | 30s–5min since last activity |
-| `idle` | Agent has been quiet for a while | >5min since last activity |
-| `waiting_input` | Agent is blocked on user approval | Permission prompt visible |
-| `blocked` | Agent hit an error it can't recover from | Error state detected |
-| `exited` | Process is dead | `isProcessRunning` returns false |
+| State           | Meaning                                  | When                             |
+| --------------- | ---------------------------------------- | -------------------------------- |
+| `active`        | Agent is working right now               | Activity within last 30s         |
+| `ready`         | Agent finished recently, may resume      | 30s–5min since last activity     |
+| `idle`          | Agent has been quiet for a while         | >5min since last activity        |
+| `waiting_input` | Agent is blocked on user approval        | Permission prompt visible        |
+| `blocked`       | Agent hit an error it can't recover from | Error state detected             |
+| `exited`        | Process is dead                          | `isProcessRunning` returns false |
 
 **The `getActivityState` contract — implement exactly this cascade:**
 
@@ -569,14 +583,15 @@ async getActivityState(session, readyThresholdMs?): Promise<ActivityDetection | 
 
 **Two activity detection patterns exist:**
 
-| Pattern | Used by | How it works |
-|---------|---------|-------------|
-| **Native JSONL** | Claude Code, Codex | Agent writes its own JSONL with rich state (`permission_request`, `tool_call`, `error`, etc.). `getActivityState` reads the last entry and maps it to activity states. |
+| Pattern               | Used by                     | How it works                                                                                                                                                                                                                                                   |
+| --------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Native JSONL**      | Claude Code, Codex          | Agent writes its own JSONL with rich state (`permission_request`, `tool_call`, `error`, etc.). `getActivityState` reads the last entry and maps it to activity states.                                                                                         |
 | **AO Activity JSONL** | Aider, OpenCode, new agents | Agent implements `recordActivity`. Lifecycle manager calls it each poll cycle with terminal output. It calls `classifyTerminalActivity()` → `appendActivityEntry()` to write to `{workspacePath}/.ao/activity.jsonl`. `getActivityState` reads from this file. |
 
 **For agents using AO Activity JSONL (the common case for new plugins):**
 
 1. Implement `recordActivity` — delegate to the shared `recordTerminalActivity()`:
+
 ```typescript
 async recordActivity(session: Session, terminalOutput: string): Promise<void> {
   if (!session.workspacePath) return;
@@ -589,6 +604,7 @@ async recordActivity(session: Session, terminalOutput: string): Promise<void> {
 `recordTerminalActivity` handles classification, deduplication (20s window for non-actionable states), and appending. You don't need to implement dedup yourself.
 
 2. Implement `detectActivity` with patterns specific to the agent's terminal output:
+
 ```typescript
 detectActivity(terminalOutput: string): ActivityState {
   // Match the ACTUAL prompts/patterns the agent emits.
@@ -598,6 +614,7 @@ detectActivity(terminalOutput: string): ActivityState {
 ```
 
 3. In `getActivityState`, use `checkActivityLogState()` for waiting_input/blocked, then fall back to `getActivityFallbackState()`:
+
 ```typescript
 // checkActivityLogState returns non-null ONLY for waiting_input/blocked.
 // active/idle/ready intentionally return null — use the fallback for those.
@@ -626,6 +643,7 @@ if (fallback) return fallback;
 7. Returns `null` when both native signal and JSONL are unavailable
 
 **`isProcessRunning` must:**
+
 - Support tmux runtime (TTY-based `ps` lookup with process name regex)
 - Support process runtime (PID signal-0 check with EPERM handling)
 - Match BOTH the node wrapper name AND the actual binary name (some agents install as `.agentname` with a dot prefix — the regex must handle this)

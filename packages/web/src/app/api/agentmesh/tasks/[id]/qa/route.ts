@@ -4,13 +4,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * POST /api/agentmesh/tasks/:id/qa
- * 
+ *
  * Submit QA result for a task
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(request);
   const { id: taskId } = await params;
 
@@ -33,14 +30,11 @@ export async function POST(
         message: `QA ${verdict}: ${summary}`,
       },
       undefined,
-      correlationId
+      correlationId,
     );
   } catch (error) {
     console.error("Error in POST /api/agentmesh/tasks/:id/qa:", error);
 
-    return NextResponse.json(
-      { error: "Failed to submit QA result" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to submit QA result" }, { status: 500 });
   }
 }

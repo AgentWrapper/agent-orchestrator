@@ -1,12 +1,12 @@
 /**
  * Timeline Logger
- * 
+ *
  * Logs every task event as structured JSONL for replay and debugging.
  * Provides a complete audit trail of task execution.
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { TimelineEvent, TaskId } from "./types.js";
 
 export class TimelineLogger {
@@ -42,7 +42,7 @@ export class TimelineLogger {
   /**
    * Get timeline for a specific task
    */
-  getTaskTimeline(taskId: TaskId): TimelineEvent[] {
+  getTaskTimeline(_taskId: TaskId): TimelineEvent[] {
     // This would read from the JSONL log file
     // For now, return empty array as file reading is complex
     return [];
@@ -60,7 +60,7 @@ export class TimelineLogger {
   /**
    * Query timeline by event type
    */
-  queryByEventType(eventType: string): TimelineEvent[] {
+  queryByEventType(_eventType: string): TimelineEvent[] {
     // This would filter the JSONL log file
     // For now, return empty array as file reading is complex
     return [];
@@ -69,7 +69,7 @@ export class TimelineLogger {
   /**
    * Query timeline by time range
    */
-  queryByTimeRange(startTime: string, endTime: string): TimelineEvent[] {
+  queryByTimeRange(_startTime: string, _endTime: string): TimelineEvent[] {
     // This would filter the JSONL log file by timestamp
     // For now, return empty array as file reading is complex
     return [];

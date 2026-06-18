@@ -3,12 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CI_STATUS } from "@aoagents/ao-core/types";
 import { cn } from "@/lib/cn";
-import {
-  isPRMergeReady,
-  isPRRateLimited,
-  isPRUnenriched,
-  type DashboardPR,
-} from "@/lib/types";
+import { isPRMergeReady, isPRRateLimited, isPRUnenriched, type DashboardPR } from "@/lib/types";
 import { buildGitHubCompareUrl } from "@/lib/github-links";
 import { PRCommentThread } from "./PRCommentThread";
 
@@ -62,7 +57,8 @@ export function buildBlockerChips(
     chips.push({
       icon: "✗",
       variant: "fail",
-      text: failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
+      text:
+        failCount > 0 ? `${failCount} check${failCount !== 1 ? "s" : ""} failing` : "CI failing",
       notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
@@ -115,11 +111,7 @@ export function SessionDetailPRCard({
     };
   }, []);
 
-  const handleAskAgentToFix = async (comment: {
-    url: string;
-    path: string;
-    body: string;
-  }) => {
+  const handleAskAgentToFix = async (comment: { url: string; path: string; body: string }) => {
     setSentComments((prev) => {
       const next = new Set(prev);
       next.delete(comment.url);

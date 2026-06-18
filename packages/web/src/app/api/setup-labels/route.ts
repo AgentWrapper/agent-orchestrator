@@ -29,13 +29,22 @@ export async function POST() {
 
       for (const label of LABELS) {
         try {
-          await execFileAsync("gh", [
-            "label", "create", label.name,
-            "--repo", project.repo,
-            "--color", label.color,
-            "--description", label.description,
-            "--force",
-          ], { timeout: 10_000 });
+          await execFileAsync(
+            "gh",
+            [
+              "label",
+              "create",
+              label.name,
+              "--repo",
+              project.repo,
+              "--color",
+              label.color,
+              "--description",
+              label.description,
+              "--force",
+            ],
+            { timeout: 10_000 },
+          );
           results.push({ repo: project.repo, label: label.name, status: "created" });
         } catch {
           results.push({ repo: project.repo, label: label.name, status: "exists" });

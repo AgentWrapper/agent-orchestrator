@@ -152,15 +152,11 @@ describe("tracker-gitlab plugin", () => {
 
   describe("issueUrl", () => {
     it("generates correct URL for gitlab.com", () => {
-      expect(tracker.issueUrl("42", project)).toBe(
-        "https://gitlab.com/acme/repo/-/issues/42",
-      );
+      expect(tracker.issueUrl("42", project)).toBe("https://gitlab.com/acme/repo/-/issues/42");
     });
 
     it("strips # prefix from identifier", () => {
-      expect(tracker.issueUrl("#42", project)).toBe(
-        "https://gitlab.com/acme/repo/-/issues/42",
-      );
+      expect(tracker.issueUrl("#42", project)).toBe("https://gitlab.com/acme/repo/-/issues/42");
     });
 
     it("uses custom host when configured", () => {
@@ -197,9 +193,7 @@ describe("tracker-gitlab plugin", () => {
 
   describe("issueLabel", () => {
     it("extracts issue number from GitLab URL", () => {
-      expect(
-        tracker.issueLabel!("https://gitlab.com/acme/repo/-/issues/42", project),
-      ).toBe("#42");
+      expect(tracker.issueLabel!("https://gitlab.com/acme/repo/-/issues/42", project)).toBe("#42");
     });
 
     it("falls back to last URL segment", () => {

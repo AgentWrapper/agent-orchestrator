@@ -48,7 +48,9 @@ describe("handleWindowsPipeMessage", () => {
 
     // Simulate connect
     sock.emit("connect");
-    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ ch: "terminal", id: "s1", type: "opened" }));
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({ ch: "terminal", id: "s1", type: "opened" }),
+    );
   });
 
   it("confirms opened for already-connected session", () => {
@@ -61,7 +63,9 @@ describe("handleWindowsPipeMessage", () => {
     handleWindowsPipeMessage({ id: "s1", type: "open" }, ws, pipes, bufs, deps);
 
     expect(deps.connect).not.toHaveBeenCalled();
-    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ ch: "terminal", id: "s1", type: "opened" }));
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({ ch: "terminal", id: "s1", type: "opened" }),
+    );
   });
 
   it("rejects malformed session ids before touching the pipe path", () => {
@@ -197,7 +201,13 @@ describe("handleWindowsPipeMessage", () => {
     const pipes = new Map<string, Socket>([["s1", sock]]);
     const bufs = new Map<string, Buffer>();
 
-    handleWindowsPipeMessage({ id: "s1", type: "resize", cols: 120, rows: 40 }, ws, pipes, bufs, deps);
+    handleWindowsPipeMessage(
+      { id: "s1", type: "resize", cols: 120, rows: 40 },
+      ws,
+      pipes,
+      bufs,
+      deps,
+    );
 
     const write = (sock as unknown as { write: ReturnType<typeof vi.fn> }).write;
     expect(write).toHaveBeenCalled();
@@ -245,13 +255,25 @@ describe("handleWindowsPipeMessage", () => {
     sockA.emit("connect");
     sockA.emit("data", frame(0x01, Buffer.from("from-A")));
     expect(ws.send).toHaveBeenCalledWith(
-      JSON.stringify({ ch: "terminal", id: "s1", type: "data", data: "from-A", projectId: "projA" }),
+      JSON.stringify({
+        ch: "terminal",
+        id: "s1",
+        type: "data",
+        data: "from-A",
+        projectId: "projA",
+      }),
     );
 
     sockB.emit("connect");
     sockB.emit("data", frame(0x01, Buffer.from("from-B")));
     expect(ws.send).toHaveBeenCalledWith(
-      JSON.stringify({ ch: "terminal", id: "s1", type: "data", data: "from-B", projectId: "projB" }),
+      JSON.stringify({
+        ch: "terminal",
+        id: "s1",
+        type: "data",
+        data: "from-B",
+        projectId: "projB",
+      }),
     );
   });
 

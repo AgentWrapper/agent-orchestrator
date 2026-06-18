@@ -1,13 +1,18 @@
 /**
  * Lock Manager
- * 
+ *
  * Manages code ownership and locking for multi-agent coordination.
  * Prevents conflicts when multiple agents work on the same codebase.
+ *
+ * Persists to SQLite when better-sqlite3 is available. When the native
+ * binary fails to load/build (common on Windows without build tools), it
+ * falls back to in-memory storage so the CoordinationService — and the web
+ * server that constructs it on startup — never crashes.
  */
 
-import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 
 export type LockType = "file" | "directory" | "branch" | "feature";
 
@@ -31,15 +36,63 @@ export interface LockRequest {
   metadata?: Record<string, unknown>;
 }
 
+type SqliteStatement = {
+  run(...args: unknown[]): { changes: number };
+  get(...args: unknown[]): unknown;
+  all(...args: unknown[]): unknown[];
+};
+
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+};
+
+type SqliteDatabaseConstructor = new (path: string) => SqliteDatabase;
+
+const requireLoaders = [
+  createRequire(import.meta.url),
+  // Next.js can bundle this file into .next/server/chunks, so fall back to
+  // resolving from the dashboard process cwd when the package-root loader
+  // points at a bundled artifact instead of node_modules.
+  createRequire(join(process.cwd(), "package.json")),
+];
+
+const Database = (() => {
+  for (const requireFn of requireLoaders) {
+    try {
+      return requireFn("better-sqlite3") as SqliteDatabaseConstructor;
+    } catch {}
+  }
+  return null;
+})();
+
+const DatabaseAvailable = Database !== null;
+
 export class LockManager {
-  private db: Database.Database;
+  private db: SqliteDatabase | null;
   private storagePath: string;
+  private inMemoryLocks: Map<string, Lock>;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(storagePath: string) {
     this.storagePath = storagePath;
+    this.inMemoryLocks = new Map();
     this.ensureStorageDir();
-    this.db = new Database(join(storagePath, "locks.db"));
-    this.initializeSchema();
+
+    if (DatabaseAvailable) {
+      try {
+        this.db = new Database(join(storagePath, "locks.db"));
+        this.initializeSchema();
+      } catch (err) {
+        this.db = null;
+        console.warn("[LockManager] better-sqlite3 failed to open, using in-memory storage", err);
+      }
+    } else {
+      this.db = null;
+      console.warn("[LockManager] better-sqlite3 unavailable, using in-memory storage");
+    }
+
     this.startCleanupJob();
   }
 
@@ -50,6 +103,8 @@ export class LockManager {
   }
 
   private initializeSchema(): void {
+    if (!this.db) return;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS locks (
         id TEXT PRIMARY KEY,
@@ -94,22 +149,26 @@ export class LockManager {
       metadata: request.metadata || {},
     };
 
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO locks (
-        id, type, resource, owner, acquiredAt, expiresAt, reason, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO locks (
+          id, type, resource, owner, acquiredAt, expiresAt, reason, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    stmt.run(
-      lock.id,
-      lock.type,
-      lock.resource,
-      lock.owner,
-      lock.acquiredAt,
-      lock.expiresAt,
-      lock.reason,
-      JSON.stringify(lock.metadata)
-    );
+      stmt.run(
+        lock.id,
+        lock.type,
+        lock.resource,
+        lock.owner,
+        lock.acquiredAt,
+        lock.expiresAt,
+        lock.reason,
+        JSON.stringify(lock.metadata),
+      );
+    } else {
+      this.inMemoryLocks.set(lock.id, lock);
+    }
 
     return lock;
   }
@@ -118,18 +177,31 @@ export class LockManager {
    * Release a lock
    */
   release(lockId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM locks WHERE id = ?");
-    const result = stmt.run(lockId);
-    return result.changes > 0;
+    if (this.db) {
+      const stmt = this.db.prepare("DELETE FROM locks WHERE id = ?");
+      const result = stmt.run(lockId);
+      return result.changes > 0;
+    }
+    return this.inMemoryLocks.delete(lockId);
   }
 
   /**
    * Release all locks for an owner
    */
   releaseAll(owner: string): number {
-    const stmt = this.db.prepare("DELETE FROM locks WHERE owner = ?");
-    const result = stmt.run(owner);
-    return result.changes;
+    if (this.db) {
+      const stmt = this.db.prepare("DELETE FROM locks WHERE owner = ?");
+      const result = stmt.run(owner);
+      return result.changes;
+    }
+    let count = 0;
+    for (const [id, lock] of this.inMemoryLocks) {
+      if (lock.owner === owner) {
+        this.inMemoryLocks.delete(id);
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
@@ -144,19 +216,26 @@ export class LockManager {
    */
   getActiveLock(resource: string): Lock | null {
     const now = new Date().toISOString();
-    
-    const stmt = this.db.prepare(`
-      SELECT * FROM locks 
-      WHERE resource = ? AND expiresAt > ?
-      ORDER BY acquiredAt DESC
-      LIMIT 1
-    `);
-    
-    const row = stmt.get(resource, now) as any;
-    
-    if (!row) return null;
-    
-    return this.rowToLock(row);
+
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM locks 
+        WHERE resource = ? AND expiresAt > ?
+        ORDER BY acquiredAt DESC
+        LIMIT 1
+      `);
+
+      const row = stmt.get(resource, now) as Record<string, unknown>;
+
+      if (!row) return null;
+
+      return this.rowToLock(row);
+    }
+
+    const matches = Array.from(this.inMemoryLocks.values())
+      .filter((lock) => lock.resource === resource && lock.expiresAt > now)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt));
+    return matches[0] ?? null;
   }
 
   /**
@@ -164,16 +243,22 @@ export class LockManager {
    */
   getOwnerLocks(owner: string): Lock[] {
     const now = new Date().toISOString();
-    
-    const stmt = this.db.prepare(`
-      SELECT * FROM locks 
-      WHERE owner = ? AND expiresAt > ?
-      ORDER BY acquiredAt DESC
-    `);
-    
-    const rows = stmt.all(owner, now) as any[];
-    
-    return rows.map(row => this.rowToLock(row));
+
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM locks 
+        WHERE owner = ? AND expiresAt > ?
+        ORDER BY acquiredAt DESC
+      `);
+
+      const rows = stmt.all(owner, now) as unknown[];
+
+      return rows.map((row) => this.rowToLock(row as Record<string, unknown>));
+    }
+
+    return Array.from(this.inMemoryLocks.values())
+      .filter((lock) => lock.owner === owner && lock.expiresAt > now)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt));
   }
 
   /**
@@ -181,16 +266,22 @@ export class LockManager {
    */
   getAllActiveLocks(): Lock[] {
     const now = new Date().toISOString();
-    
-    const stmt = this.db.prepare(`
-      SELECT * FROM locks 
-      WHERE expiresAt > ?
-      ORDER BY acquiredAt DESC
-    `);
-    
-    const rows = stmt.all(now) as any[];
-    
-    return rows.map(row => this.rowToLock(row));
+
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM locks 
+        WHERE expiresAt > ?
+        ORDER BY acquiredAt DESC
+      `);
+
+      const rows = stmt.all(now) as unknown[];
+
+      return rows.map((row) => this.rowToLock(row as Record<string, unknown>));
+    }
+
+    return Array.from(this.inMemoryLocks.values())
+      .filter((lock) => lock.expiresAt > now)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt));
   }
 
   /**
@@ -212,11 +303,15 @@ export class LockManager {
     const currentExpires = new Date(lock.expiresAt);
     const newExpires = new Date(currentExpires.getTime() + additionalDuration);
 
-    const stmt = this.db.prepare(`
-      UPDATE locks SET expiresAt = ? WHERE id = ?
-    `);
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        UPDATE locks SET expiresAt = ? WHERE id = ?
+      `);
 
-    stmt.run(newExpires.toISOString(), lockId);
+      stmt.run(newExpires.toISOString(), lockId);
+    } else {
+      this.inMemoryLocks.set(lockId, { ...lock, expiresAt: newExpires.toISOString() });
+    }
 
     return {
       ...lock,
@@ -228,12 +323,16 @@ export class LockManager {
    * Get a specific lock by ID
    */
   getLock(lockId: string): Lock | null {
-    const stmt = this.db.prepare("SELECT * FROM locks WHERE id = ?");
-    const row = stmt.get(lockId) as any;
-    
-    if (!row) return null;
-    
-    return this.rowToLock(row);
+    if (this.db) {
+      const stmt = this.db.prepare("SELECT * FROM locks WHERE id = ?");
+      const row = stmt.get(lockId) as Record<string, unknown>;
+
+      if (!row) return null;
+
+      return this.rowToLock(row);
+    }
+
+    return this.inMemoryLocks.get(lockId) ?? null;
   }
 
   /**
@@ -241,21 +340,34 @@ export class LockManager {
    */
   cleanup(): number {
     const now = new Date().toISOString();
-    
-    const stmt = this.db.prepare("DELETE FROM locks WHERE expiresAt < ?");
-    const result = stmt.run(now);
-    
-    return result.changes;
+
+    if (this.db) {
+      const stmt = this.db.prepare("DELETE FROM locks WHERE expiresAt < ?");
+      const result = stmt.run(now);
+
+      return result.changes;
+    }
+
+    let count = 0;
+    for (const [id, lock] of this.inMemoryLocks) {
+      if (lock.expiresAt < now) {
+        this.inMemoryLocks.delete(id);
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
    * Start background cleanup job
    */
   private startCleanupJob(): void {
-    // Run cleanup every minute
-    setInterval(() => {
+    // Run cleanup every minute. unref() so the timer never keeps the process
+    // (or a test runner) alive on its own.
+    this.cleanupTimer = setInterval(() => {
       this.cleanup();
     }, 60000);
+    this.cleanupTimer.unref?.();
   }
 
   /**
@@ -263,14 +375,14 @@ export class LockManager {
    */
   checkConflicts(resources: string[], owner: string): string[] {
     const conflicts: string[] = [];
-    
+
     for (const resource of resources) {
       const activeLock = this.getActiveLock(resource);
       if (activeLock && activeLock.owner !== owner) {
         conflicts.push(resource);
       }
     }
-    
+
     return conflicts;
   }
 
@@ -321,26 +433,32 @@ export class LockManager {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32bit integer
     }
     return Math.abs(hash).toString(16);
   }
 
-  private rowToLock(row: any): Lock {
+  private rowToLock(row: Record<string, unknown>): Lock {
     return {
-      id: row.id,
-      type: row.type,
-      resource: row.resource,
-      owner: row.owner,
-      acquiredAt: row.acquiredAt,
-      expiresAt: row.expiresAt,
-      reason: row.reason,
-      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      id: row.id as string,
+      type: row.type as LockType,
+      resource: row.resource as string,
+      owner: row.owner as string,
+      acquiredAt: row.acquiredAt as string,
+      expiresAt: row.expiresAt as string,
+      reason: row.reason as string,
+      metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
     };
   }
 
   close(): void {
-    this.db.close();
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    if (this.db) {
+      this.db.close();
+    }
   }
 }

@@ -1,11 +1,11 @@
 /**
  * Coordination Service
- * 
+ *
  * Integrates AgentMesh coordination layer with AO's SessionManager and LifecycleManager.
  * Bridges the gap between AO's infrastructure and AgentMesh's coordination features.
  */
 
-import type { SessionManager, Session, SessionId } from "@aoagents/ao-core";
+import type { SessionManager, SessionId } from "@aoagents/ao-core";
 import { TaskManager } from "./task-manager.js";
 import { MessageBus } from "./message-bus.js";
 import { RoleManager } from "./role-manager.js";
@@ -16,21 +16,16 @@ import { TimelineLogger } from "./timeline-logger.js";
 import { AgentMeshStorage } from "./storage.js";
 import { LockManager } from "./lock-manager.js";
 import { CostTracker } from "./cost-tracker.js";
-import { parseCostFromOutput, aggregateCostEntries } from "./cost-parser.js";
-import type { Task, TaskId, QAResult, PolicyCheckResult, LockRequest } from "./types.js";
-
-// Agent adapter interface for AgentMesh
-interface AgentMeshAgentAdapter {
-  name: string;
-  displayName: string;
-  preflight(context: any): Promise<any>;
-  start(config: any): Promise<any>;
-  sendMessage(session: any, message: any): Promise<void>;
-  getOutput(session: any, options?: any): Promise<any>;
-  getStatus(session: any): Promise<any>;
-  stop(session: any): Promise<void>;
-  getSessionInfo?(session: any): Promise<any>;
-}
+import { parseCostFromOutput } from "./cost-parser.js";
+import type {
+  Task,
+  TaskId,
+  TaskPriority,
+  AgentRole,
+  QAResult,
+  LockRequest,
+  AgentMeshAgentAdapter,
+} from "./types.js";
 
 export class CoordinationService {
   private taskManager: TaskManager;
@@ -46,14 +41,10 @@ export class CoordinationService {
   private lockManager: LockManager;
   private costTracker: CostTracker;
 
-  constructor(
-    sessionManager: SessionManager,
-    projectId: string,
-    basePath?: string
-  ) {
+  constructor(sessionManager: SessionManager, projectId: string, basePath?: string) {
     this.sessionManager = sessionManager;
     this.storage = new AgentMeshStorage(projectId, basePath);
-    
+
     // Initialize AgentMesh services
     this.taskManager = new TaskManager(this.storage.getTasksPath());
     this.messageBus = new MessageBus(this.storage.getMessagesPath());
@@ -64,9 +55,9 @@ export class CoordinationService {
     this.timelineLogger = new TimelineLogger(this.storage.getTimelinePath());
     this.lockManager = new LockManager(this.storage.getTasksPath()); // Use same storage path
     this.costTracker = new CostTracker(this.storage.getTasksPath()); // Use same storage path
-    
+
     this.adapterRegistry = new Map();
-    
+
     // Subscribe to message bus events
     this.setupMessageHandlers();
   }
@@ -103,8 +94,8 @@ export class CoordinationService {
         title: config.title,
         description: config.description,
         status: "created",
-        priority: config.priority as any,
-        role: config.role as any,
+        priority: config.priority as TaskPriority,
+        role: config.role as AgentRole,
         projectId: config.projectId,
         branch: config.branch,
         issueId: config.issueId,
@@ -128,7 +119,10 @@ export class CoordinationService {
         data: { error: String(error), config },
         source: "coordination_service",
       });
-      throw new Error(`Failed to create task: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to create task: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -147,7 +141,7 @@ export class CoordinationService {
       // Get the adapter for this role
       const adapterName = this.roleManager.getAdapterForRole(task.role);
       const adapter = this.getAdapter(adapterName);
-      
+
       if (!adapter) {
         throw new Error(`Adapter not found for role: ${task.role}`);
       }
@@ -166,7 +160,9 @@ export class CoordinationService {
           data: { adapter: adapterName, warnings: preflight.warnings },
           source: "coordination_service",
         });
-        throw new Error(`Preflight failed for ${adapterName}: ${preflight.warnings.join(", ")}`);
+        throw new Error(
+          `Preflight failed for ${adapterName}: ${(preflight.warnings ?? []).join(", ")}`,
+        );
       }
 
       // Start the agent session
@@ -191,7 +187,7 @@ export class CoordinationService {
       try {
         const output = await adapter.getOutput(agentSession, { lines: 100 });
         const costResult = parseCostFromOutput(output.text, adapterName);
-        
+
         if (costResult.metrics) {
           this.costTracker.recordCost({
             taskId,
@@ -201,8 +197,8 @@ export class CoordinationService {
             inputTokens: costResult.metrics.inputTokens,
             outputTokens: costResult.metrics.outputTokens,
             costUsd: costResult.metrics.costUsd,
-            metadata: { 
-              phase: "start", 
+            metadata: {
+              phase: "start",
               role: task.role,
               confidence: costResult.metrics.confidence,
             },
@@ -301,7 +297,7 @@ export class CoordinationService {
       try {
         const output = await qaAdapter.getOutput(qaSession, { lines: 100 });
         const costResult = parseCostFromOutput(output.text, "codex");
-        
+
         if (costResult.metrics) {
           this.costTracker.recordCost({
             taskId,
@@ -311,8 +307,8 @@ export class CoordinationService {
             inputTokens: costResult.metrics.inputTokens,
             outputTokens: costResult.metrics.outputTokens,
             costUsd: costResult.metrics.costUsd,
-            metadata: { 
-              phase: "qa", 
+            metadata: {
+              phase: "qa",
               role: "qa",
               confidence: costResult.metrics.confidence,
             },
@@ -416,7 +412,10 @@ export class CoordinationService {
         data: { error: String(error), qaResult },
         source: "coordination_service",
       });
-      throw new Error(`Failed to process QA result: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to process QA result: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -430,7 +429,7 @@ export class CoordinationService {
 
       // Get diff for policy check
       const diff = await this.getDiff(taskId);
-      
+
       // Run policy check
       const policyResult = this.policyEngine.check(diff, {
         taskId,
@@ -485,7 +484,7 @@ export class CoordinationService {
       if (!task || !decision.qaResult) throw new Error(`Task or QA result not found: ${taskId}`);
 
       // Get builder adapter
-      const adapter = this.getAdapter(task.metadata?.adapter as string || "claude-code");
+      const adapter = this.getAdapter((task.metadata?.adapter as string) || "claude-code");
       if (!adapter) throw new Error(`Adapter not found for task: ${taskId}`);
 
       const agentSession = {
@@ -498,8 +497,8 @@ export class CoordinationService {
       // Send rework message with QA findings
       await adapter.sendMessage(agentSession, {
         type: "rework_request",
-        body: `QA failed. Please address the following issues:\n\n${decision.qaResult.summary}\n\nFindings:\n${decision.qaResult.findings.map(f => `- [${f.severity.toUpperCase()}] ${f.message}`).join("\n")}`,
-        data: { qaResult: decision.qaResult },
+        body: `QA failed. Please address the following issues:\n\n${decision.qaResult.summary}\n\nFindings:\n${decision.qaResult.findings.map((f) => `- [${f.severity.toUpperCase()}] ${f.message}`).join("\n")}`,
+        attachments: { qaResult: JSON.stringify(decision.qaResult) },
       });
 
       // Start rework phase
@@ -509,19 +508,22 @@ export class CoordinationService {
       // Parse and record rework cost from agent output
       try {
         const output = await adapter.getOutput(agentSession, { lines: 100 });
-        const costResult = parseCostFromOutput(output.text, task.metadata?.adapter as string || "claude-code");
-        
+        const costResult = parseCostFromOutput(
+          output.text,
+          (task.metadata?.adapter as string) || "claude-code",
+        );
+
         if (costResult.metrics) {
           this.costTracker.recordCost({
             taskId,
-            agent: task.metadata?.adapter as string || "claude-code",
+            agent: (task.metadata?.adapter as string) || "claude-code",
             model: costResult.metrics.model,
             tokensUsed: costResult.metrics.totalTokens,
             inputTokens: costResult.metrics.inputTokens,
             outputTokens: costResult.metrics.outputTokens,
             costUsd: costResult.metrics.costUsd,
-            metadata: { 
-              phase: "rework", 
+            metadata: {
+              phase: "rework",
               retryCount: this.qaLoopEngine.getRetryCount(taskId),
               confidence: costResult.metrics.confidence,
             },
@@ -529,25 +531,33 @@ export class CoordinationService {
         } else {
           this.costTracker.recordCost({
             taskId,
-            agent: task.metadata?.adapter as string || "claude-code",
+            agent: (task.metadata?.adapter as string) || "claude-code",
             model: "unknown",
             tokensUsed: 0,
             inputTokens: 0,
             outputTokens: 0,
             costUsd: 0,
-            metadata: { phase: "rework", retryCount: this.qaLoopEngine.getRetryCount(taskId), parseErrors: costResult.parseErrors },
+            metadata: {
+              phase: "rework",
+              retryCount: this.qaLoopEngine.getRetryCount(taskId),
+              parseErrors: costResult.parseErrors,
+            },
           });
         }
       } catch (error) {
         this.costTracker.recordCost({
           taskId,
-          agent: task.metadata?.adapter as string || "claude-code",
+          agent: (task.metadata?.adapter as string) || "claude-code",
           model: "unknown",
           tokensUsed: 0,
           inputTokens: 0,
           outputTokens: 0,
           costUsd: 0,
-          metadata: { phase: "rework", retryCount: this.qaLoopEngine.getRetryCount(taskId), error: String(error) },
+          metadata: {
+            phase: "rework",
+            retryCount: this.qaLoopEngine.getRetryCount(taskId),
+            error: String(error),
+          },
         });
       }
 
@@ -678,7 +688,7 @@ export class CoordinationService {
     }
 
     // Acquire locks for all resources
-    const lockRequests: LockRequest[] = resources.map(resource => ({
+    const lockRequests: LockRequest[] = resources.map((resource) => ({
       type: "file",
       resource,
       owner: taskId,
@@ -688,7 +698,7 @@ export class CoordinationService {
     }));
 
     const locks = this.lockManager.acquireMultiple(lockRequests);
-    
+
     if (locks.length === resources.length) {
       this.timelineLogger.log({
         taskId,
@@ -696,15 +706,15 @@ export class CoordinationService {
         data: { lockCount: locks.length, resources },
         source: "coordination_service",
       });
-      
+
       // Store lock IDs in task metadata
       this.taskManager.update(taskId, {
         metadata: {
           ...task.metadata,
-          locks: locks.map(l => l.id),
+          locks: locks.map((l) => l.id),
         },
       });
-      
+
       return true;
     }
 
@@ -718,8 +728,8 @@ export class CoordinationService {
     const task = this.taskManager.get(taskId);
     if (!task) return;
 
-    const lockIds = task.metadata?.locks as string[] || [];
-    
+    const lockIds = (task.metadata?.locks as string[]) || [];
+
     for (const lockId of lockIds) {
       this.lockManager.release(lockId);
     }
@@ -767,7 +777,10 @@ export class CoordinationService {
         data: { sessionId, error: String(error) },
         source: "coordination_service",
       });
-      throw new Error(`Failed to send message to session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to send message to session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -784,7 +797,10 @@ export class CoordinationService {
         data: { sessionId, error: String(error) },
         source: "coordination_service",
       });
-      throw new Error(`Failed to get session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to get session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -801,7 +817,10 @@ export class CoordinationService {
         data: { projectId, error: String(error) },
         source: "coordination_service",
       });
-      throw new Error(`Failed to list sessions: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to list sessions: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -818,7 +837,10 @@ export class CoordinationService {
         data: { sessionId, error: String(error) },
         source: "coordination_service",
       });
-      throw new Error(`Failed to kill session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to kill session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -852,7 +874,13 @@ export class CoordinationService {
   /**
    * Record cost from an agent operation
    */
-  recordAgentCost(taskId: string, agent: string, model: string, tokensUsed: number, costUsd: number): void {
+  recordAgentCost(
+    taskId: string,
+    agent: string,
+    model: string,
+    tokensUsed: number,
+    costUsd: number,
+  ): void {
     this.costTracker.recordCost({
       taskId,
       agent,
@@ -900,7 +928,12 @@ export class CoordinationService {
   /**
    * Update budget configuration
    */
-  updateBudgetConfig(config: { maxCostPerTask?: number; maxCostPerDay?: number; maxTokensPerTask?: number; alertThreshold?: number }): void {
+  updateBudgetConfig(config: {
+    maxCostPerTask?: number;
+    maxCostPerDay?: number;
+    maxTokensPerTask?: number;
+    alertThreshold?: number;
+  }): void {
     this.costTracker.updateBudgetConfig(config);
   }
 

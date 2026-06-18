@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Address button — icon options</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0b0d;
+        --card: #15171b;
+        --t1: #f4f5f7;
+        --t2: #9ba1aa;
+        --t3: #646a73;
+        --t4: #444951;
+        --line: rgba(255, 255, 255, 0.06);
+        --line-2: rgba(255, 255, 255, 0.1);
+        --blue-soft: #7eaaff;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--t1);
+        font-family: "Schibsted Grotesk", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        padding: 40px 46px 80px;
+      }
+      h1 {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .lede {
+        font-size: 13px;
+        color: var(--t3);
+        margin: 7px 0 28px;
+        max-width: 620px;
+        line-height: 1.5;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 13px;
+      }
+      .cell {
+        background: var(--card);
+        border-radius: 11px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        padding: 22px 16px 15px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 15px;
+      }
+      .cell.cur {
+        box-shadow: inset 0 0 0 1px rgba(77, 141, 255, 0.4);
+      }
+      .addr {
+        padding: 6px 12px;
+        border-radius: 6px;
+        background: rgba(77, 141, 255, 0.1);
+        color: var(--blue-soft);
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+      .addr:hover {
+        background: rgba(77, 141, 255, 0.18);
+      }
+      .cap {
+        text-align: center;
+      }
+      .cap .nm {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .cap .ds {
+        font-size: 11px;
+        color: var(--t3);
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      .badge {
+        font-family: monospace;
+        font-size: 9px;
+        color: var(--blue-soft);
+        background: rgba(77, 141, 255, 0.14);
+        padding: 1px 6px;
+        border-radius: 4px;
+        margin-top: 7px;
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>“Address” button — icon candidates</h1>
+    <p class="lede">
+      The action hands a review comment to the agent to fix. Icon should read as “send to agent /
+      auto-resolve,” shown on the real tinted button.
+    </p>
+    <div class="grid" id="g"></div>
+    <script>
+      const S = (p) =>
+        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+      const O = [
+        {
+          nm: "Wand + sparkle",
+          cur: true,
+          ds: "current — agent ‘magic-fixes’ it",
+          ic: `<path d="m4 20 7-7"/><path d="M14.5 4.5 16 2l2 1.5L16.5 6z"/><path d="m17 9 .5 1.6 1.6.5-1.6.5L17 13l-.5-1.6L14.9 11l1.6-.5z"/>`,
+        },
+        {
+          nm: "Paper plane",
+          ds: "send the comment to the agent",
+          ic: `<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>`,
+        },
+        {
+          nm: "Return / route",
+          ds: "route into the session (chat-send glyph)",
+          ic: `<path d="M9 10 4 15l5 5"/><path d="M4 15h11a5 5 0 0 0 5-5V4"/>`,
+        },
+        {
+          nm: "Sparkles",
+          ds: "auto-fix, no stick",
+          ic: `<path d="M11 3 12.7 7.3 17 9 12.7 10.7 11 15 9.3 10.7 5 9 9.3 7.3z"/><path d="M18 14l.7 1.9 1.9.7-1.9.7L18 19.2l-.7-1.9-1.9-.7 1.9-.7z"/>`,
+        },
+        {
+          nm: "Wrench",
+          ds: "fix it",
+          ic: `<path d="M14.5 5.5a3.5 3.5 0 0 1-4.6 4.6L4 16v4h4l5.9-5.9a3.5 3.5 0 0 0 4.6-4.6l-2.3 2.3-2-2z"/>`,
+        },
+        {
+          nm: "Forward arrow",
+          ds: "hand off to the agent",
+          ic: `<path d="M13 17l5-5-5-5"/><path d="M6 17l5-5-5-5"/>`,
+        },
+        {
+          nm: "Check + arrow",
+          ds: "send → it gets resolved",
+          ic: `<path d="M20 6 9 17l-5-5"/><path d="M14 18h7v-7" opacity=".0"/><path d="M16 4h4v4"/>`,
+        },
+        { nm: "Bolt", ds: "quick auto-resolve", ic: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>` },
+        {
+          nm: "Bot",
+          ds: "literal — agent takes it",
+          ic: `<rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 4.5V8"/><circle cx="12" cy="3.5" r="1.2"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/>`,
+        },
+      ];
+      document.getElementById("g").innerHTML = O.map(
+        (o) => `
+ <div class="cell ${o.cur ? "cur" : ""}">
+   <button class="addr">${S(o.ic)}Address</button>
+   <div class="cap"><div class="nm">${o.nm}</div><div class="ds">${o.ds}</div>${o.cur ? '<span class="badge">CURRENT</span>' : ""}</div>
+ </div>`,
+      ).join("");
+    </script>
+  </body>
+</html>

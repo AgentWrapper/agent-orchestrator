@@ -121,12 +121,8 @@ export async function POST(request: NextRequest) {
 
     // Detect project collision errors and return a structured 409 so the
     // AddProjectModal can display the collision UI (open existing / use suggested ID).
-    const pathAlreadyRegistered = message.match(
-      /^Project "([^"]+)" is already registered at/,
-    );
-    const idAlreadyRegistered = message.match(
-      /^Project id "([^"]+)" is already registered for/,
-    );
+    const pathAlreadyRegistered = message.match(/^Project "([^"]+)" is already registered at/);
+    const idAlreadyRegistered = message.match(/^Project id "([^"]+)" is already registered for/);
 
     if (pathAlreadyRegistered) {
       const existingProjectId = pathAlreadyRegistered[1];

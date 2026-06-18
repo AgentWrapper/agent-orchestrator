@@ -1,6 +1,6 @@
 /**
  * AgentMesh Adapters Registry
- * 
+ *
  * Central registry for agent adapters that bridge AgentMesh coordination layer
  * with AO's SessionManager.
  */
@@ -45,10 +45,7 @@ export class AdapterRegistry {
     this.register("kimicode", (sm) => new KimiCodeAdapter(sm));
   }
 
-  register(
-    name: string,
-    factory: (sessionManager: SessionManager) => AgentMeshAgentAdapter
-  ): void {
+  register(name: string, factory: (sessionManager: SessionManager) => AgentMeshAgentAdapter): void {
     this.adapters.set(name, factory);
   }
 

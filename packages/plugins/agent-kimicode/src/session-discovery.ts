@@ -335,9 +335,7 @@ async function writeKimiSessionPin(workspacePath: string, sessionId: string): Pr
  *     context.jsonl   — conversation history
  *     wire.jsonl      — turn events
  */
-async function findKimiSessionMatchUncached(
-  session: Session,
-): Promise<KimiSessionMatch | null> {
+async function findKimiSessionMatchUncached(session: Session): Promise<KimiSessionMatch | null> {
   if (!session.workspacePath) return null;
   const resolved = await resolveWorkspacePath(session.workspacePath);
   const bucket = join(kimiShareDir(), "sessions", kimiWorkspaceHash(resolved));

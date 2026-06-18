@@ -1,6 +1,6 @@
 /**
  * Cost Parser
- * 
+ *
  * Parses agent output to extract token usage and cost information.
  * Supports multiple agent CLIs with different output formats.
  */
@@ -70,7 +70,9 @@ function parseClaudeCodeCost(output: string): ParsedCostMetrics | null {
   const inputTokens = parseInt(tokenMatch[2], 10);
   const outputTokens = parseInt(tokenMatch[3], 10);
   const totalTokens = parseInt(tokenMatch[1], 10);
-  const costUsd = costMatch ? parseFloat(costMatch[1]) : estimateCost(inputTokens, outputTokens, "claude-3-5-sonnet");
+  const costUsd = costMatch
+    ? parseFloat(costMatch[1])
+    : estimateCost(inputTokens, outputTokens, "claude-3-5-sonnet");
   const model = modelMatch?.[1] || "claude-3-5-sonnet";
 
   return {
@@ -97,7 +99,9 @@ function parseCodexCost(output: string): ParsedCostMetrics | null {
   const totalTokens = parseInt(tokenMatch[1], 10);
   const inputTokens = parseInt(tokenMatch[2], 10);
   const outputTokens = parseInt(tokenMatch[3], 10);
-  const costUsd = costMatch ? parseFloat(costMatch[1]) : estimateCost(inputTokens, outputTokens, "gpt-4");
+  const costUsd = costMatch
+    ? parseFloat(costMatch[1])
+    : estimateCost(inputTokens, outputTokens, "gpt-4");
   const model = modelMatch?.[1] || "gpt-4";
 
   return {
@@ -116,7 +120,7 @@ function parseCodexCost(output: string): ParsedCostMetrics | null {
  */
 function parseAiderCost(output: string): ParsedCostMetrics | null {
   const tokenMatch = output.match(/(\d+)\s*tokens/);
-  
+
   if (!tokenMatch) return null;
 
   const totalTokens = parseInt(tokenMatch[1], 10);
@@ -141,7 +145,7 @@ function parseAiderCost(output: string): ParsedCostMetrics | null {
  */
 function parseCursorCost(output: string): ParsedCostMetrics | null {
   const tokenMatch = output.match(/(\d+)\s*tokens/);
-  
+
   if (!tokenMatch) return null;
 
   const totalTokens = parseInt(tokenMatch[1], 10);
@@ -165,7 +169,7 @@ function parseCursorCost(output: string): ParsedCostMetrics | null {
 function parseGenericCost(output: string): ParsedCostMetrics | null {
   // Look for any token pattern
   const tokenMatch = output.match(/(\d+)\s*tokens?/i);
-  
+
   if (!tokenMatch) return null;
 
   const totalTokens = parseInt(tokenMatch[1], 10);
@@ -195,14 +199,14 @@ function estimateCost(inputTokens: number, outputTokens: number, model: string):
     "gpt-4": { input: 30, output: 60 },
     "gpt-4-turbo": { input: 10, output: 30 },
     "gpt-3.5-turbo": { input: 0.5, output: 1.5 },
-    "unknown": { input: 10, output: 30 },
+    unknown: { input: 10, output: 30 },
   };
 
   const modelPricing = pricing[model] || pricing["unknown"];
-  
+
   const inputCost = (inputTokens / 1_000_000) * modelPricing.input;
   const outputCost = (outputTokens / 1_000_000) * modelPricing.output;
-  
+
   return inputCost + outputCost;
 }
 
@@ -211,17 +215,17 @@ function estimateCost(inputTokens: number, outputTokens: number, model: string):
  */
 export function parseMultipleCostEntries(output: string, agentType: string): ParsedCostMetrics[] {
   const entries: ParsedCostMetrics[] = [];
-  
+
   // Split by common delimiters that might separate multiple operations
   const sections = output.split(/\n\n+|\n---+\n|\n={3,}/);
-  
+
   for (const section of sections) {
     const result = parseCostFromOutput(section, agentType);
     if (result.metrics) {
       entries.push(result.metrics);
     }
   }
-  
+
   return entries;
 }
 
@@ -243,17 +247,21 @@ export function aggregateCostEntries(entries: ParsedCostMetrics[]): ParsedCostMe
   const totalInputTokens = entries.reduce((sum, e) => sum + e.inputTokens, 0);
   const totalOutputTokens = entries.reduce((sum, e) => sum + e.outputTokens, 0);
   const totalCost = entries.reduce((sum, e) => sum + e.costUsd, 0);
-  
+
   // Use the most common model, or the first one
-  const modelCounts = entries.reduce((acc, e) => {
-    acc[e.model] = (acc[e.model] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  
-  const dominantModel = Object.entries(modelCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "unknown";
-  
+  const modelCounts = entries.reduce(
+    (acc, e) => {
+      acc[e.model] = (acc[e.model] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+
+  const dominantModel =
+    Object.entries(modelCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "unknown";
+
   // Confidence is high if all entries have high confidence
-  const allHighConfidence = entries.every(e => e.confidence === "high");
+  const allHighConfidence = entries.every((e) => e.confidence === "high");
   const confidence = allHighConfidence ? "high" : "medium";
 
   return {

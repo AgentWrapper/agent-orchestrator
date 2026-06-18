@@ -46,156 +46,152 @@ export function registerSession(program: Command): void {
       "Include terminated sessions (killed/done/merged/terminated/errored/cleanup)",
     )
     .option("--json", "Output as JSON")
-    .action(async (opts: {
-      project?: string;
-      all?: boolean;
-      includeTerminated?: boolean;
-      json?: boolean;
-    }) => {
-      const config = loadConfig();
-      if (opts.project && !config.projects[opts.project]) {
-        console.error(chalk.red(`Unknown project: ${opts.project}`));
-        process.exit(1);
-      }
+    .action(
+      async (opts: {
+        project?: string;
+        all?: boolean;
+        includeTerminated?: boolean;
+        json?: boolean;
+      }) => {
+        const config = loadConfig();
+        if (opts.project && !config.projects[opts.project]) {
+          console.error(chalk.red(`Unknown project: ${opts.project}`));
+          process.exit(1);
+        }
 
-      const sm = await getSessionManager(config);
-      const allSessions = await sm.list(opts.project);
+        const sm = await getSessionManager(config);
+        const allSessions = await sm.list(opts.project);
 
-      // Filter out orchestrator sessions unless --all is passed
-      const withoutOrchestrators = opts.all
-        ? allSessions
-        : allSessions.filter(
-            (s) => !isOrchestratorSessionName(config, s.id, s.projectId),
+        // Filter out orchestrator sessions unless --all is passed
+        const withoutOrchestrators = opts.all
+          ? allSessions
+          : allSessions.filter((s) => !isOrchestratorSessionName(config, s.id, s.projectId));
+
+        // Count terminal sessions that would be hidden by default, then
+        // drop them unless --include-terminated is passed.
+        const hiddenTerminatedCount = opts.includeTerminated
+          ? 0
+          : withoutOrchestrators.filter(isTerminalSession).length;
+        const sessions = opts.includeTerminated
+          ? withoutOrchestrators
+          : withoutOrchestrators.filter((s) => !isTerminalSession(s));
+
+        // Group sessions by project
+        const byProject = new Map<string, typeof sessions>();
+        for (const s of sessions) {
+          const list = byProject.get(s.projectId) ?? [];
+          list.push(s);
+          byProject.set(s.projectId, list);
+        }
+
+        // Iterate over all configured projects (not just ones with sessions)
+        const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
+        const allSessionPrefixes = Object.entries(config.projects).map(
+          ([id, project]) => project.sessionPrefix ?? id,
+        );
+        const jsonOutput: SessionListEntry[] = [];
+
+        for (const projectId of projectIds) {
+          const project = config.projects[projectId];
+          if (!project) continue;
+          if (!opts.json) {
+            console.log(chalk.bold(`\n${project.name || projectId}:`));
+          }
+
+          const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
+            a.id.localeCompare(b.id),
           );
 
-      // Count terminal sessions that would be hidden by default, then
-      // drop them unless --include-terminated is passed.
-      const hiddenTerminatedCount = opts.includeTerminated
-        ? 0
-        : withoutOrchestrators.filter(isTerminalSession).length;
-      const sessions = opts.includeTerminated
-        ? withoutOrchestrators
-        : withoutOrchestrators.filter((s) => !isTerminalSession(s));
-
-      // Group sessions by project
-      const byProject = new Map<string, typeof sessions>();
-      for (const s of sessions) {
-        const list = byProject.get(s.projectId) ?? [];
-        list.push(s);
-        byProject.set(s.projectId, list);
-      }
-
-      // Iterate over all configured projects (not just ones with sessions)
-      const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
-      const allSessionPrefixes = Object.entries(config.projects).map(
-        ([id, project]) => project.sessionPrefix ?? id,
-      );
-      const jsonOutput: SessionListEntry[] = [];
-
-      for (const projectId of projectIds) {
-        const project = config.projects[projectId];
-        if (!project) continue;
-        if (!opts.json) {
-          console.log(chalk.bold(`\n${project.name || projectId}:`));
-        }
-
-        const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
-          a.id.localeCompare(b.id),
-        );
-
-        if (projectSessions.length === 0) {
-          if (!opts.json) {
-            console.log(chalk.dim("  (no active sessions)"));
-          }
-          continue;
-        }
-
-        // Pre-fetch all branches and activities in parallel
-        const branches = await Promise.all(
-          projectSessions.map(async (s) => {
-            if (s.workspacePath) {
-              return git(["branch", "--show-current"], s.workspacePath).catch(() => null);
+          if (projectSessions.length === 0) {
+            if (!opts.json) {
+              console.log(chalk.dim("  (no active sessions)"));
             }
-            return null;
-          }),
-        );
-
-        const activities = await Promise.all(
-          projectSessions.map((s) => {
-            // On Windows, use enriched session lastActivityAt (no tmux available).
-            if (isWindows()) {
-              return Promise.resolve(s.lastActivityAt ? s.lastActivityAt.getTime() : null);
-            }
-            const tmuxTarget = s.runtimeHandle?.id ?? s.id;
-            return getTmuxActivity(tmuxTarget).catch(() => null);
-          }),
-        );
-
-        for (let i = 0; i < projectSessions.length; i++) {
-          const s = projectSessions[i];
-          const liveBranch = branches[i];
-          const activityTs = activities[i];
-
-          // Priority: live branch from workspace > metadata branch > empty string
-          const branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
-          const prUrl = s.metadata["pr"] ?? null;
-
-          if (opts.json) {
-            const role = isOrchestratorSession(
-              s,
-              project.sessionPrefix ?? projectId,
-              allSessionPrefixes,
-            )
-              ? "orchestrator"
-              : "worker";
-
-            jsonOutput.push({
-              id: s.id,
-              projectId,
-              projectName: project.name || projectId,
-              role,
-              branch: branchStr || null,
-              status: s.status,
-              issueId: s.issueId,
-              pr: prUrl,
-              workspacePath: s.workspacePath,
-              lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
-            });
-
             continue;
           }
 
-          const age = activityTs ? formatAge(activityTs) : "-";
-          const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
-          if (branchStr) parts.push(chalk.cyan(branchStr));
-          if (s.status) parts.push(chalk.dim(`[${s.status}]`));
-          if (prUrl) parts.push(chalk.blue(prUrl));
+          // Pre-fetch all branches and activities in parallel
+          const branches = await Promise.all(
+            projectSessions.map(async (s) => {
+              if (s.workspacePath) {
+                return git(["branch", "--show-current"], s.workspacePath).catch(() => null);
+              }
+              return null;
+            }),
+          );
 
-          console.log(`  ${parts.join("  ")}`);
+          const activities = await Promise.all(
+            projectSessions.map((s) => {
+              // On Windows, use enriched session lastActivityAt (no tmux available).
+              if (isWindows()) {
+                return Promise.resolve(s.lastActivityAt ? s.lastActivityAt.getTime() : null);
+              }
+              const tmuxTarget = s.runtimeHandle?.id ?? s.id;
+              return getTmuxActivity(tmuxTarget).catch(() => null);
+            }),
+          );
+
+          for (let i = 0; i < projectSessions.length; i++) {
+            const s = projectSessions[i];
+            const liveBranch = branches[i];
+            const activityTs = activities[i];
+
+            // Priority: live branch from workspace > metadata branch > empty string
+            const branchStr = s.workspacePath && liveBranch ? liveBranch : s.branch || "";
+            const prUrl = s.metadata["pr"] ?? null;
+
+            if (opts.json) {
+              const role = isOrchestratorSession(
+                s,
+                project.sessionPrefix ?? projectId,
+                allSessionPrefixes,
+              )
+                ? "orchestrator"
+                : "worker";
+
+              jsonOutput.push({
+                id: s.id,
+                projectId,
+                projectName: project.name || projectId,
+                role,
+                branch: branchStr || null,
+                status: s.status,
+                issueId: s.issueId,
+                pr: prUrl,
+                workspacePath: s.workspacePath,
+                lastActivityAt: activityTs ? new Date(activityTs).toISOString() : null,
+              });
+
+              continue;
+            }
+
+            const age = activityTs ? formatAge(activityTs) : "-";
+            const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
+            if (branchStr) parts.push(chalk.cyan(branchStr));
+            if (s.status) parts.push(chalk.dim(`[${s.status}]`));
+            if (prUrl) parts.push(chalk.blue(prUrl));
+
+            console.log(`  ${parts.join("  ")}`);
+          }
         }
-      }
 
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            { data: jsonOutput, meta: { hiddenTerminatedCount } },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
+        if (opts.json) {
+          console.log(
+            JSON.stringify({ data: jsonOutput, meta: { hiddenTerminatedCount } }, null, 2),
+          );
+          return;
+        }
 
-      if (hiddenTerminatedCount > 0) {
-        console.log(
-          chalk.dim(
-            `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
-          ),
-        );
-      }
+        if (hiddenTerminatedCount > 0) {
+          console.log(
+            chalk.dim(
+              `  ${hiddenTerminatedCount} terminated session${hiddenTerminatedCount !== 1 ? "s" : ""} hidden. Use --include-terminated to show.`,
+            ),
+          );
+        }
 
-      console.log();
-    });
+        console.log();
+      },
+    );
 
   session
     .command("attach")
@@ -210,14 +206,15 @@ export function registerSession(program: Command): void {
         // Windows: connect to PTY host named pipe and relay raw terminal I/O
         // Prefer explicit pipePath from runtimeHandle.data if it's a valid string
         const dataPipePath = sessionInfo?.runtimeHandle?.data?.["pipePath"];
-        const pipePath = typeof dataPipePath === "string" && dataPipePath
-          ? dataPipePath
-          : `\\\\.\\pipe\\ao-pty-${
-              sessionInfo?.runtimeHandle?.id ??
-              (config.configPath
-                ? `${generateConfigHash(config.configPath)}-${sessionName}`
-                : sessionName)
-            }`;
+        const pipePath =
+          typeof dataPipePath === "string" && dataPipePath
+            ? dataPipePath
+            : `\\\\.\\pipe\\ao-pty-${
+                sessionInfo?.runtimeHandle?.id ??
+                (config.configPath
+                  ? `${generateConfigHash(config.configPath)}-${sessionName}`
+                  : sessionName)
+              }`;
 
         const sock = netConnect(pipePath);
 
@@ -265,13 +262,18 @@ export function registerSession(program: Command): void {
               // 0x07 = MSG_STATUS_RES (PTY exited)
               if (msgType === 0x07) {
                 try {
-                  const status = JSON.parse(payload.toString()) as { alive: boolean; exitCode?: number };
+                  const status = JSON.parse(payload.toString()) as {
+                    alive: boolean;
+                    exitCode?: number;
+                  };
                   if (!status.alive) {
                     cleanup();
                     console.log(`\n[session exited with code ${status.exitCode ?? "unknown"}]`);
                     process.exit(status.exitCode ?? 0);
                   }
-                } catch { /* ignore parse errors */ }
+                } catch {
+                  /* ignore parse errors */
+                }
               }
             }
           });
@@ -521,7 +523,9 @@ export function registerSession(program: Command): void {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
         const port = config.port ?? DEFAULT_PORT;
-        console.log(chalk.dim(`  View:     ${projectSessionUrl(port, restored.projectId, sessionName)}`));
+        console.log(
+          chalk.dim(`  View:     ${projectSessionUrl(port, restored.projectId, sessionName)}`),
+        );
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));

@@ -1,0 +1,2031 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AO — Agent Session</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0b0d;
+        --bg-side: #08090b;
+        --bg-top: #0a0b0d;
+        --panel: #0e0f12;
+        --card: #15171b;
+        --card-hover: #191b20;
+        --term: #0c0d10;
+        --ui: "Schibsted Grotesk", sans-serif;
+        --mono: "JetBrains Mono", monospace;
+        --t1: #f4f5f7;
+        --t2: #9ba1aa;
+        --t3: #646a73;
+        --t4: #444951;
+        --line: rgba(255, 255, 255, 0.06);
+        --line-2: rgba(255, 255, 255, 0.1);
+        --blue: #4d8dff;
+        --blue-soft: #7eaaff;
+        --orange: #f59f4c;
+        --amber: #e8c14a;
+        --red: #ef6b6b;
+        --green: #74b98a;
+        --hover: rgba(255, 255, 255, 0.04);
+        --hover-2: rgba(255, 255, 255, 0.07);
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: var(--bg);
+        color: var(--t1);
+        font-family: var(--ui);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+        font-size: 14px;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: none;
+        background: none;
+        color: inherit;
+      }
+
+      .app {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 288px 1fr;
+        grid-template-rows: 56px 1fr;
+        grid-template-areas: "side top" "side main";
+      }
+
+      /* ---- sidebar (identical language to the board) ---- */
+      .sidebar {
+        grid-area: side;
+        background: var(--bg-side);
+        border-right: 1px solid var(--line);
+        overflow-y: auto;
+        padding: 0 12px 16px;
+        display: flex;
+        flex-direction: column;
+      }
+      .brand {
+        height: 56px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 6px;
+        margin-bottom: 12px;
+      }
+      .collapse {
+        margin-left: auto;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        color: var(--t3);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .collapse:hover {
+        background: var(--hover);
+        color: var(--t1);
+      }
+      .mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: #000;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+        box-shadow:
+          inset 0 0 0 1px var(--line),
+          0 2px 10px rgba(77, 141, 255, 0.18);
+      }
+      .mark img {
+        width: 23px;
+        height: 23px;
+        object-fit: contain;
+        image-rendering: pixelated;
+      }
+      .brand .name {
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: -0.015em;
+      }
+      .brand .name b {
+        font-weight: 400;
+        color: var(--t3);
+      }
+      .nav-label {
+        font-size: 10.5px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--t4);
+        padding: 0 9px 12px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .nav-label button {
+        color: var(--t4);
+        font-size: 13px;
+        display: inline-flex;
+        align-items: center;
+      }
+      .proj {
+        margin-bottom: 3px;
+      }
+      .prow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 9px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .prow:hover {
+        background: var(--hover);
+      }
+      .prow.sel {
+        background: var(--hover-2);
+      }
+      .prow .chev {
+        color: var(--t4);
+        width: 14px;
+        height: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .prow:hover .chev {
+        color: var(--t2);
+      }
+      .prow .pn {
+        font-size: 13px;
+        font-weight: 500;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--t2);
+      }
+      .prow.sel .pn {
+        color: var(--t1);
+        font-weight: 600;
+      }
+      .prow .ct {
+        font-size: 11px;
+        color: var(--t3);
+        font-family: var(--mono);
+      }
+      .slist {
+        padding: 4px 0 10px 6px;
+        margin-left: 9px;
+        border-left: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .ses {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 9px 7px 11px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .ses:hover {
+        background: var(--hover);
+      }
+      .ses.sel {
+        background: var(--hover-2);
+      }
+      .ses .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: var(--t4);
+      }
+      .ses .sn {
+        font-size: 12px;
+        color: var(--t2);
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-family: var(--mono);
+      }
+      .ses.sel .sn {
+        color: var(--t1);
+      }
+      .ses .si {
+        font-size: 10px;
+        color: var(--t4);
+        font-family: var(--mono);
+      }
+      .ses.act .dot {
+        background: var(--orange);
+        animation: breathe 2.4s ease-in-out infinite;
+      }
+      .side-foot {
+        margin-top: auto;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .side-foot button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px;
+        border-radius: 6px;
+        color: var(--t3);
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .side-foot button:hover {
+        background: var(--hover);
+        color: var(--t1);
+      }
+
+      /* ---- topbar (session context) ---- */
+      .topbar {
+        grid-area: top;
+        background: var(--bg-top);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        padding: 0 16px 0 14px;
+      }
+      .board-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 12px 7px 9px;
+        border-radius: 7px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--t2);
+        flex-shrink: 0;
+      }
+      .board-btn:hover {
+        background: var(--hover);
+        color: var(--t1);
+      }
+      .vdiv {
+        width: 1px;
+        height: 22px;
+        background: var(--line);
+        margin: 0 3px;
+        flex-shrink: 0;
+      }
+      .sess-id {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        min-width: 0;
+        gap: 11px;
+      }
+      .sess-id .t {
+        font-size: 13.5px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 360px;
+        flex-shrink: 1;
+      }
+      .sess-id .b {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--t3);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      .sess-id .b .g {
+        color: var(--t4);
+        display: inline-flex;
+        align-items: center;
+      }
+      .stat {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--orange);
+        padding: 5px 11px;
+        border-radius: 7px;
+        box-shadow: inset 0 0 0 1px rgba(245, 159, 76, 0.25);
+        background: rgba(245, 159, 76, 0.07);
+        white-space: nowrap;
+      }
+      .stat .d {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--orange);
+        animation: breathe 2.4s ease-in-out infinite;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .ibtn {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border-radius: 7px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--t2);
+      }
+      .ibtn:hover {
+        background: var(--hover);
+        color: var(--t1);
+      }
+      .ibtn .bdg {
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        min-width: 15px;
+        height: 15px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--amber);
+        color: #1a1400;
+        font-size: 9px;
+        font-weight: 800;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 0 0 2px var(--bg-top);
+      }
+      .btn {
+        padding: 8px 14px;
+        border-radius: 7px;
+        font-size: 12.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .btn-danger {
+        color: #ff8a8a;
+        box-shadow: inset 0 0 0 1px rgba(239, 107, 107, 0.28);
+      }
+      .btn-danger:hover {
+        background: rgba(239, 107, 107, 0.1);
+      }
+      .btn-primary {
+        background: var(--blue);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #5b97ff;
+      }
+
+      /* ---- main split: work surface + inspector ---- */
+      .main {
+        grid-area: main;
+        display: grid;
+        grid-template-columns: 1fr 344px;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .work {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+
+      /* framed terminal panel — flush to sidebar + topbar */
+      .terminal {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: var(--term);
+        overflow: hidden;
+      }
+      .term-head {
+        height: 47px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 15px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.012);
+      }
+      .term-head .lbl {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--t3);
+      }
+      .term-head .sid {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--t2);
+      }
+      .term-head .conn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--green);
+        letter-spacing: 0.04em;
+      }
+      .term-head .conn .d {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 7px var(--green);
+      }
+      .term-head .tspc {
+        flex: 1;
+      }
+      .term-head .zoom {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--t3);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .term-head .zoom button {
+        width: 22px;
+        height: 22px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        color: var(--t3);
+      }
+      .term-head .zoom button:hover {
+        background: var(--hover-2);
+        color: var(--t1);
+      }
+
+      .term-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 18px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.65;
+        color: #c5ccd3;
+      }
+      .term-body::-webkit-scrollbar {
+        width: 9px;
+      }
+      .term-body::-webkit-scrollbar-thumb {
+        background: var(--hover-2);
+        border-radius: 9px;
+      }
+      .tl {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .dim {
+        color: var(--t3);
+      }
+      .faint {
+        color: var(--t4);
+      }
+      .ag {
+        color: var(--orange);
+      }
+      .blu {
+        color: var(--blue-soft);
+      }
+      .grn {
+        color: var(--green);
+      }
+      .amb {
+        color: var(--amber);
+      }
+      .usr {
+        color: #cdd3da;
+        background: rgba(255, 255, 255, 0.03);
+        display: block;
+        padding: 7px 11px;
+        border-radius: 6px;
+        border-left: 2px solid var(--blue);
+        margin: 7px 0;
+      }
+      .bullet {
+        color: var(--orange);
+      }
+      .tool {
+        color: var(--t2);
+      }
+      .tool .tn {
+        color: var(--blue-soft);
+      }
+      .ok {
+        color: var(--green);
+      }
+      .caret {
+        display: inline-block;
+        width: 7px;
+        height: 15px;
+        background: var(--orange);
+        animation: blink 1.1s step-end infinite;
+        vertical-align: -2px;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* ---- inspector rail: pluggable view slot ---- */
+      .insp {
+        background: var(--bg);
+        border-left: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .rail-tabs {
+        height: 47px;
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        padding: 0 11px;
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+      }
+      .rt {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 6px;
+        border-radius: 7px;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--t3);
+        min-width: 0;
+      }
+      .rt svg {
+        flex-shrink: 0;
+      }
+      .rt:hover {
+        background: var(--hover);
+        color: var(--t1);
+      }
+      .rt.on {
+        background: var(--hover-2);
+        color: var(--t1);
+      }
+      .rt .lbl {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .rail-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 18px 18px 40px;
+      }
+      .rail-body::-webkit-scrollbar {
+        width: 8px;
+      }
+      .rail-body::-webkit-scrollbar-thumb {
+        background: var(--hover-2);
+        border-radius: 8px;
+      }
+      .view {
+        display: none;
+      }
+      .view.on {
+        display: block;
+      }
+      .sec {
+        margin-bottom: 22px;
+      }
+      .sec-h {
+        font-size: 10.5px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--t4);
+        margin-bottom: 11px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .sec-h a {
+        color: var(--blue-soft);
+        font-size: 11px;
+        font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .sec-h a:hover {
+        text-decoration: underline;
+        cursor: pointer;
+      }
+
+      /* overview kv */
+      .kv {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .kv .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 2px;
+        font-size: 12.5px;
+      }
+      .kv .k {
+        color: var(--t3);
+        width: 74px;
+        flex-shrink: 0;
+      }
+      .kv .v {
+        color: var(--t1);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .kv .v .agdot {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        background: #000;
+        overflow: hidden;
+        display: inline-grid;
+        place-items: center;
+        box-shadow: inset 0 0 0 1px var(--line);
+      }
+      .kv .v .agdot img {
+        width: 13px;
+        height: 13px;
+        image-rendering: pixelated;
+      }
+      .kv .v.path {
+        color: var(--t2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* PR card */
+      .pr {
+        background: var(--card);
+        border-radius: 9px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        padding: 13px 14px;
+      }
+      .pr .pr-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 9px;
+      }
+      .pr .num {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--t3);
+      }
+      .pr .pr-state {
+        margin-left: auto;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--green);
+        background: rgba(116, 185, 138, 0.13);
+        padding: 3px 8px;
+        border-radius: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .pr .pr-title {
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.4;
+        color: var(--t1);
+        margin-bottom: 11px;
+      }
+      .pr .pr-branch {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--t2);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 13px;
+      }
+      .pr .pr-branch .g {
+        color: var(--t4);
+        display: inline-flex;
+      }
+      .pr .pr-branch .arr {
+        color: var(--t4);
+      }
+      .checks {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        margin-bottom: 13px;
+      }
+      .chk {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 11.5px;
+        color: var(--t2);
+      }
+      .chk .ic {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        display: inline-flex;
+      }
+      .chk .nm {
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .chk .ms {
+        color: var(--t4);
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+      .chk.pass .ic {
+        color: var(--green);
+      }
+      .chk.run .ic {
+        color: var(--amber);
+      }
+      .chk.fail .ic {
+        color: var(--red);
+      }
+      .pr-acts {
+        display: flex;
+        gap: 8px;
+      }
+      .pr-acts button {
+        flex: 1;
+        padding: 8px;
+        border-radius: 7px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .pr-acts .view {
+        color: var(--t1);
+        box-shadow: inset 0 0 0 1px var(--line-2);
+      }
+      .pr-acts .view:hover {
+        background: var(--hover);
+      }
+      .pr-acts .merge {
+        background: var(--green);
+        color: #06210f;
+      }
+      .pr-acts .merge:hover {
+        filter: brightness(1.07);
+      }
+
+      /* review comments — quiet by default */
+      .rev {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .rev-item {
+        background: var(--card);
+        border-radius: 8px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        padding: 11px 13px;
+      }
+      .rev-item.resolved {
+        opacity: 0.55;
+      }
+      .rev-top {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 6px;
+      }
+      .rev-av {
+        width: 19px;
+        height: 19px;
+        border-radius: 50%;
+        background: var(--hover-2);
+        color: var(--t2);
+        font-size: 8.5px;
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+      }
+      .rev-who {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--t1);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .rev-who .od {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--amber);
+        flex-shrink: 0;
+      }
+      .rev-loc {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--t4);
+        margin-left: auto;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .rev-loc:hover {
+        color: var(--blue-soft);
+      }
+      .rev-body {
+        font-size: 12px;
+        color: var(--t2);
+        line-height: 1.5;
+      }
+      .rev-body code {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--t1);
+        background: var(--hover-2);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      .rev-acts {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-top: 10px;
+      }
+      .rev-acts .addr {
+        padding: 5px 10px;
+        border-radius: 6px;
+        background: rgba(77, 141, 255, 0.1);
+        color: var(--blue-soft);
+        font-size: 11px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .rev-acts .addr:hover {
+        background: rgba(77, 141, 255, 0.18);
+        color: #9cbcff;
+      }
+      .rev-acts .lnk {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--t3);
+      }
+      .rev-acts .lnk:hover {
+        color: var(--t1);
+      }
+      .rev-acts .sp {
+        flex: 1;
+      }
+
+      /* activity timeline */
+      .tline {
+        position: relative;
+        padding-left: 20px;
+      }
+      .tline::before {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 4px;
+        bottom: 6px;
+        width: 1px;
+        background: var(--line);
+      }
+      .ev {
+        position: relative;
+        padding: 0 0 15px;
+      }
+      .ev:last-child {
+        padding-bottom: 0;
+      }
+      .ev .node {
+        position: absolute;
+        left: -18px;
+        top: 3px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--t4);
+        box-shadow: 0 0 0 3px var(--bg);
+      }
+      .ev.now .node {
+        background: var(--orange);
+        box-shadow:
+          0 0 0 3px var(--bg),
+          0 0 8px var(--orange);
+      }
+      .ev.good .node {
+        background: var(--green);
+      }
+      .ev.warn .node {
+        background: var(--amber);
+      }
+      .ev .et {
+        font-size: 12px;
+        color: var(--t1);
+        line-height: 1.45;
+      }
+      .ev .et b {
+        font-weight: 600;
+      }
+      .ev .ets {
+        font-size: 10.5px;
+        color: var(--t4);
+        font-family: var(--mono);
+        margin-top: 2px;
+      }
+
+      /* ---- Changes / diff view ---- */
+      .diff-sum {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--t3);
+        margin-bottom: 13px;
+        display: flex;
+        gap: 9px;
+      }
+      .diff-sum .a {
+        color: var(--green);
+      }
+      .diff-sum .d {
+        color: var(--red);
+      }
+      .files {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        margin-bottom: 20px;
+      }
+      .file {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 9px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .file:hover {
+        background: var(--hover);
+      }
+      .file.sel {
+        background: var(--hover-2);
+      }
+      .file .fi {
+        color: var(--t4);
+        display: inline-flex;
+        flex-shrink: 0;
+      }
+      .file .fp {
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--t2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .file.sel .fp {
+        color: var(--t1);
+      }
+      .file .fs {
+        font-family: var(--mono);
+        font-size: 10px;
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .file .fs .a {
+        color: var(--green);
+      }
+      .file .fs .d {
+        color: var(--red);
+      }
+      .hunk {
+        background: var(--term);
+        border-radius: 8px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .hunk .hh {
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--line);
+        color: var(--t3);
+        font-size: 10.5px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .hunk .hh .fp {
+        color: var(--t2);
+      }
+      .dl {
+        display: flex;
+        padding: 0 12px;
+        white-space: pre;
+      }
+      .dl .ln {
+        width: 30px;
+        color: var(--t4);
+        flex-shrink: 0;
+        text-align: right;
+        padding-right: 12px;
+        user-select: none;
+      }
+      .dl .tx {
+        color: #aeb6bf;
+      }
+      .dl.add {
+        background: rgba(116, 185, 138, 0.09);
+      }
+      .dl.add .tx {
+        color: #9fd6b0;
+      }
+      .dl.add .ln {
+        color: rgba(116, 185, 138, 0.5);
+      }
+      .dl.del {
+        background: rgba(239, 107, 107, 0.08);
+      }
+      .dl.del .tx {
+        color: #e9a2a2;
+      }
+      .dl.del .ln {
+        color: rgba(239, 107, 107, 0.5);
+      }
+      .dl .mk {
+        width: 14px;
+        flex-shrink: 0;
+        color: var(--t4);
+      }
+      .dl.add .mk {
+        color: var(--green);
+      }
+      .dl.del .mk {
+        color: var(--red);
+      }
+
+      /* ---- Agent browser view ---- */
+      .brz {
+        background: var(--card);
+        border-radius: 9px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        overflow: hidden;
+        margin-bottom: 14px;
+      }
+      .brz-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brz-bar .nav {
+        display: flex;
+        gap: 3px;
+      }
+      .brz-bar .nav button {
+        width: 22px;
+        height: 22px;
+        border-radius: 5px;
+        color: var(--t3);
+        display: grid;
+        place-items: center;
+      }
+      .brz-bar .nav button:hover {
+        background: var(--hover-2);
+        color: var(--t1);
+      }
+      .brz-url {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        background: var(--term);
+        box-shadow: inset 0 0 0 1px var(--line);
+        border-radius: 6px;
+        padding: 5px 9px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--t2);
+        min-width: 0;
+      }
+      .brz-url .lk {
+        color: var(--green);
+        flex-shrink: 0;
+        display: inline-flex;
+      }
+      .brz-url .u {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brz-frame {
+        height: 208px;
+        background: #000;
+        overflow: hidden;
+        position: relative;
+      }
+      .brz-frame iframe {
+        width: 1280px;
+        height: 860px;
+        border: 0;
+        transform: scale(0.241);
+        transform-origin: top left;
+      }
+      .brz-cap {
+        font-size: 11px;
+        color: var(--t3);
+        line-height: 1.5;
+      }
+      .brz-cap b {
+        color: var(--t2);
+        font-weight: 600;
+      }
+      .live-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 6px var(--green);
+        margin-right: 5px;
+        vertical-align: 1px;
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="mark"><img src="mascot.png" alt="AO" /></span
+          ><span class="name">Agent<b> / </b>Orchestrator</span>
+          <button class="collapse" title="Collapse sidebar">
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2.5" />
+              <line x1="9" y1="4" x2="9" y2="20" />
+              <path d="m15.5 9-3 3 3 3" />
+            </svg>
+          </button>
+        </div>
+        <div class="nav-label">
+          Projects
+          <button>
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+        <div class="proj">
+          <div class="prow">
+            <span class="chev"
+              ><svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m9 6 6 6-6 6" /></svg></span
+            ><span class="pn">integrator</span><span class="ct">5</span>
+          </div>
+        </div>
+        <div class="proj">
+          <div class="prow sel">
+            <span class="chev"
+              ><svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m6 9 6 6 6-6" /></svg></span
+            ><span class="pn">Agent Orchestrator</span><span class="ct">4</span>
+          </div>
+          <div class="slist">
+            <div class="ses act sel">
+              <span class="dot"></span><span class="sn">session/ao-2-1</span
+              ><span class="si">ao-2-1</span>
+            </div>
+            <div class="ses">
+              <span class="dot"></span><span class="sn">docs/architecture-doc</span
+              ><span class="si">ao-201</span>
+            </div>
+            <div class="ses">
+              <span class="dot"></span><span class="sn">docs/architecture-doc-claude</span
+              ><span class="si">ao-202</span>
+            </div>
+            <div class="ses">
+              <span class="dot"></span><span class="sn">test/onboarding-harness</span
+              ><span class="si">ao-203</span>
+            </div>
+          </div>
+        </div>
+        <div class="proj">
+          <div class="prow">
+            <span class="chev"
+              ><svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m9 6 6 6-6 6" /></svg></span
+            ><span class="pn">mercury</span><span class="ct">2</span>
+          </div>
+        </div>
+        <div class="proj">
+          <div class="prow">
+            <span class="chev"
+              ><svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m9 6 6 6-6 6" /></svg></span
+            ><span class="pn">WorkOS</span><span class="ct">0</span>
+          </div>
+        </div>
+        <div class="side-foot">
+          <button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+              /></svg
+            >Settings
+          </button>
+        </div>
+      </aside>
+
+      <!-- TOPBAR -->
+      <header class="topbar">
+        <button class="board-btn" title="Back to Kanban (⌘[)">
+          <svg
+            width="21"
+            height="21"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 18l-6-6 6-6" /></svg
+          >Kanban
+        </button>
+        <span class="vdiv"></span>
+        <div class="sess-id">
+          <span class="t">Design the agent session detail page</span>
+          <span class="b"
+            ><span class="g"
+              ><svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="6" y1="4" x2="6" y2="14" />
+                <circle cx="6" cy="17" r="2.3" />
+                <circle cx="18" cy="7" r="2.3" />
+                <path d="M18 9.3a8 8 0 0 1-8 8" /></svg></span
+            >session/ao-2-1</span
+          >
+        </div>
+        <span class="stat"><span class="d"></span>Working</span>
+        <div class="spacer"></div>
+        <button class="ibtn" title="Notifications">
+          <svg
+            width="17"
+            height="17"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg
+          ><span class="bdg">2</span>
+        </button>
+        <button class="btn btn-danger">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M4 7h16" />
+            <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+            <line x1="10" y1="11.5" x2="10" y2="17.5" />
+            <line x1="14" y1="11.5" x2="14" y2="17.5" /></svg
+          >Kill
+        </button>
+        <button class="btn btn-primary">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="9" y="2.5" width="6" height="4.5" rx="1.4" />
+            <rect x="2.5" y="17" width="6" height="4.5" rx="1.4" />
+            <rect x="9" y="17" width="6" height="4.5" rx="1.4" />
+            <rect x="15.5" y="17" width="6" height="4.5" rx="1.4" />
+            <path d="M12 7v4.5M5.5 17v-5.5h13V17M12 11.5V17" /></svg
+          >Orchestrator
+        </button>
+      </header>
+
+      <!-- MAIN: work surface + inspector -->
+      <div class="main">
+        <!-- WORK -->
+        <section class="work">
+          <div class="terminal">
+            <div class="term-head">
+              <span class="lbl">Terminal</span><span class="sid">ao-2-1</span>
+              <span class="tspc"></span>
+              <span class="zoom"><button>−</button>13px<button>+</button></span>
+              <button class="zoom" style="margin-left: 6px">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <!-- ════════════════════════════════════════════════════════════
+             LIVE xterm.js VIEWPORT — real tmux PTY over WebSocket.
+             We do NOT style this content; Claude Code emits its own ANSI.
+             We only set the xterm.js `theme` + font (see palette below).
+             The text here is a faithful stand-in for what the PTY renders.
+             ════════════════════════════════════════════════════════════ -->
+            <div class="term-body" id="xterm-viewport">
+              <div class="tl">
+                <span class="ag">✦ Claude Code</span>
+                <span class="dim">v2.1.150 · Opus 4.7 · ~/…/worktrees/ao-2-1</span>
+              </div>
+              <div class="tl">&nbsp;</div>
+              <div class="tl">
+                <span class="bullet">●</span> Reusing the kanban token set — surfaces, status
+                palette, mascot mark, SVG icons.
+              </div>
+              <div class="tl">
+                &nbsp;&nbsp;<span class="tool"
+                  >Write(<span class="tn">design-session.html</span>)</span
+                >
+                <span class="faint">⎿ wrote 182 lines</span>
+              </div>
+              <div class="tl">
+                &nbsp;&nbsp;<span class="tool"
+                  >Bash(<span class="tn">open design-session.html</span>)</span
+                >
+              </div>
+              <div class="tl">
+                &nbsp;&nbsp;&nbsp;&nbsp;<span class="ok">⎿</span>
+                <span class="dim">launched preview in browser</span>
+              </div>
+              <div class="tl">&nbsp;</div>
+              <div class="tl">
+                <span class="bullet">●</span> Wired overview, pull-request status, and an activity
+                timeline into the rail.
+              </div>
+              <div class="tl">
+                &nbsp;&nbsp;Color stays rationed — neutral by default.
+                <span class="dim">Working on the inspector…</span>
+              </div>
+              <div class="tl">&nbsp;</div>
+              <div class="tl faint">
+                ───────────────────────────────────────────────────────────────
+              </div>
+              <div class="tl"><span class="blu">›</span> <span class="caret"></span></div>
+              <div class="tl">&nbsp;</div>
+              <div class="tl faint">
+                ▸▸ bypass permissions on (shift+tab to cycle) · ⇥ for agents
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- INSPECTOR — pluggable view slot -->
+        <aside class="insp">
+          <div class="rail-tabs">
+            <button class="rt on" data-v="summary">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="8" y1="7" x2="20" y2="7" />
+                <line x1="8" y1="12" x2="20" y2="12" />
+                <line x1="8" y1="17" x2="16" y2="17" />
+                <circle cx="4" cy="7" r="1" />
+                <circle cx="4" cy="12" r="1" />
+                <circle cx="4" cy="17" r="1" /></svg
+              ><span class="lbl">Summary</span>
+            </button>
+            <button class="rt" data-v="diff">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 3v6" />
+                <path d="M9 6h6" />
+                <path d="M11 18H7a2 2 0 0 1-2-2V6" />
+                <path d="M13 15h4" />
+                <circle cx="5" cy="4" r="0" />
+                <path d="M19 9v7a2 2 0 0 1-2 2h-2" /></svg
+              ><span class="lbl">Changes</span>
+            </button>
+            <button class="rt" data-v="browser">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" /></svg
+              ><span class="lbl">Browser</span>
+            </button>
+          </div>
+
+          <div class="rail-body">
+            <!-- SUMMARY -->
+            <div class="view on" id="v-summary">
+              <div class="sec">
+                <div class="sec-h">Pull request <a>Open ↗</a></div>
+                <div class="pr">
+                  <div class="pr-top">
+                    <span class="num">#2051</span><span class="pr-state">Open</span>
+                  </div>
+                  <div class="pr-title">Add agent session detail page to the dashboard</div>
+                  <div class="pr-branch">
+                    <span class="g"
+                      ><svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="6" y1="4" x2="6" y2="14" />
+                        <circle cx="6" cy="17" r="2.3" />
+                        <circle cx="18" cy="7" r="2.3" />
+                        <path d="M18 9.3a8 8 0 0 1-8 8" /></svg></span
+                    >session/ao-2-1 <span class="arr">→</span> main
+                  </div>
+                  <div class="checks">
+                    <div class="chk pass">
+                      <span class="ic"
+                        ><svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M20 6 9 17l-5-5" /></svg></span
+                      ><span class="nm">lint</span><span class="ms">12s</span>
+                    </div>
+                    <div class="chk pass">
+                      <span class="ic"
+                        ><svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M20 6 9 17l-5-5" /></svg></span
+                      ><span class="nm">typecheck</span><span class="ms">34s</span>
+                    </div>
+                    <div class="chk run">
+                      <span class="ic"
+                        ><svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M12 3a9 9 0 1 0 9 9" /></svg></span
+                      ><span class="nm">test</span><span class="ms">running…</span>
+                    </div>
+                    <div class="chk pass">
+                      <span class="ic"
+                        ><svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M20 6 9 17l-5-5" /></svg></span
+                      ><span class="nm">build</span><span class="ms">1m 02s</span>
+                    </div>
+                  </div>
+                  <div class="pr-acts">
+                    <button class="view">View diff</button>
+                    <button class="merge">Merge when green</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sec">
+                <div class="sec-h">Review comments <a>2 unresolved</a></div>
+                <div class="rev">
+                  <div class="rev-item">
+                    <div class="rev-top">
+                      <span class="rev-av">PK</span
+                      ><span class="rev-who"><span class="od"></span>prateek</span
+                      ><span class="rev-loc" title="Jump to line">design-session.html:240</span>
+                    </div>
+                    <div class="rev-body">
+                      Use the shared <code>StatusBadge</code> here instead of a local span — keeps
+                      the status palette in one place.
+                    </div>
+                    <div class="rev-acts">
+                      <button class="addr" title="Send this comment to the agent to fix">
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M11 3 12.7 7.3 17 9 12.7 10.7 11 15 9.3 10.7 5 9 9.3 7.3z" />
+                          <path d="M18 14l.7 1.9 1.9.7-1.9.7L18 19.2l-.7-1.9-1.9-.7 1.9-.7z" /></svg
+                        >Address
+                      </button>
+                    </div>
+                  </div>
+                  <div class="rev-item">
+                    <div class="rev-top">
+                      <span class="rev-av">JL</span
+                      ><span class="rev-who"><span class="od"></span>jordan</span
+                      ><span class="rev-loc" title="Jump to line">design-session.html:188</span>
+                    </div>
+                    <div class="rev-body">
+                      Inline <code>style=</code> on the zoom button trips the lint rule (C-02). Move
+                      it to a class.
+                    </div>
+                    <div class="rev-acts">
+                      <button class="addr" title="Send this comment to the agent to fix">
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M11 3 12.7 7.3 17 9 12.7 10.7 11 15 9.3 10.7 5 9 9.3 7.3z" />
+                          <path d="M18 14l.7 1.9 1.9.7-1.9.7L18 19.2l-.7-1.9-1.9-.7 1.9-.7z" /></svg
+                        >Address
+                      </button>
+                    </div>
+                  </div>
+                  <div class="rev-item resolved">
+                    <div class="rev-top">
+                      <span class="rev-av">PK</span><span class="rev-who">prateek</span
+                      ><span class="rev-loc">resolved</span>
+                    </div>
+                    <div class="rev-body">
+                      Nice — the org-chart icon reads way better than the share glyph.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sec">
+                <div class="sec-h">Activity</div>
+                <div class="tline">
+                  <div class="ev now">
+                    <span class="node"></span>
+                    <div class="et"><b>Working</b> — writing design-session.html</div>
+                    <div class="ets">now</div>
+                  </div>
+                  <div class="ev good">
+                    <span class="node"></span>
+                    <div class="et">Opened <b>PR #2051</b> against main</div>
+                    <div class="ets">8m ago</div>
+                  </div>
+                  <div class="ev">
+                    <span class="node"></span>
+                    <div class="et">Pushed commit <b>a3f9c2e</b> · 3 files</div>
+                    <div class="ets">9m ago</div>
+                  </div>
+                  <div class="ev warn">
+                    <span class="node"></span>
+                    <div class="et">Waited on input → resolved</div>
+                    <div class="ets">26m ago</div>
+                  </div>
+                  <div class="ev">
+                    <span class="node"></span>
+                    <div class="et">Created worktree &amp; branch</div>
+                    <div class="ets">2h 14m ago</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sec">
+                <div class="sec-h">Overview</div>
+                <div class="kv">
+                  <div class="row">
+                    <span class="k">Worktree</span><span class="v path">~/…/worktrees/ao-2-1</span>
+                  </div>
+                  <div class="row">
+                    <span class="k">Started</span><span class="v">2h 14m ago</span>
+                  </div>
+                  <div class="row">
+                    <span class="k">Tokens</span
+                    ><span class="v"
+                      >418k <span class="faint">in</span> · 52k <span class="faint">out</span></span
+                    >
+                  </div>
+                  <div class="row"><span class="k">Cost</span><span class="v">$2.41</span></div>
+                </div>
+              </div>
+            </div>
+            <!-- /summary -->
+
+            <!-- CHANGES / DIFF -->
+            <div class="view" id="v-diff">
+              <div class="sec-h">
+                Working tree
+                <span style="text-transform: none; letter-spacing: 0; color: var(--t3)"
+                  >vs main</span
+                >
+              </div>
+              <div class="diff-sum">
+                <span>4 files</span><span class="a">+418</span><span class="d">−24</span>
+              </div>
+              <div class="files">
+                <div class="file sel">
+                  <span class="fi"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                      <path d="M14 3v5h5" /></svg></span
+                  ><span class="fp">design-session.html</span
+                  ><span class="fs"><span class="a">+182</span><span class="d">−24</span></span>
+                </div>
+                <div class="file">
+                  <span class="fi"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                      <path d="M14 3v5h5" /></svg></span
+                  ><span class="fp">design-orgchart-icons.html</span
+                  ><span class="fs"><span class="a">+96</span></span>
+                </div>
+                <div class="file">
+                  <span class="fi"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                      <path d="M14 3v5h5" /></svg></span
+                  ><span class="fp">design-orchestrator-icons.html</span
+                  ><span class="fs"><span class="a">+140</span></span>
+                </div>
+                <div class="file">
+                  <span class="fi"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <circle cx="8.5" cy="8.5" r="1.6" />
+                      <path d="m21 15-5-5L5 21" /></svg></span
+                  ><span class="fp">mascot.png</span
+                  ><span class="fs"><span class="a">bin</span></span>
+                </div>
+              </div>
+              <div class="hunk">
+                <div class="hh">
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" /></svg
+                  ><span class="fp">design-session.html</span> · topbar
+                </div>
+                <div class="dl">
+                  <span class="ln">241</span><span class="mk"></span
+                  ><span class="tx"> &lt;div class="spacer"&gt;&lt;/div&gt;</span>
+                </div>
+                <div class="dl del">
+                  <span class="ln">242</span><span class="mk">−</span
+                  ><span class="tx">
+                    &lt;button class="btn btn-danger"&gt;…power…Kill&lt;/button&gt;</span
+                  >
+                </div>
+                <div class="dl add">
+                  <span class="ln">242</span><span class="mk">+</span
+                  ><span class="tx">
+                    &lt;button class="btn btn-danger"&gt;…trash…Kill&lt;/button&gt;</span
+                  >
+                </div>
+                <div class="dl add">
+                  <span class="ln">243</span><span class="mk">+</span
+                  ><span class="tx"> &lt;button class="btn btn-primary"&gt;…orgchart…</span>
+                </div>
+                <div class="dl add">
+                  <span class="ln">244</span><span class="mk">+</span
+                  ><span class="tx"> Orchestrator&lt;/button&gt;</span>
+                </div>
+                <div class="dl">
+                  <span class="ln">245</span><span class="mk"></span
+                  ><span class="tx"> &lt;/header&gt;</span>
+                </div>
+              </div>
+            </div>
+            <!-- /diff -->
+
+            <!-- AGENT BROWSER -->
+            <div class="view" id="v-browser">
+              <div class="sec-h">
+                Agent browser
+                <span style="text-transform: none; letter-spacing: 0; color: var(--t3)"
+                  >live preview</span
+                >
+              </div>
+              <div class="brz">
+                <div class="brz-bar">
+                  <div class="nav">
+                    <button title="Back">
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M15 18l-6-6 6-6" />
+                      </svg>
+                    </button>
+                    <button title="Reload">
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+                        <path d="M21 3v5h-5" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="brz-url">
+                    <span class="lk"
+                      ><svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="5" y="11" width="14" height="9" rx="2" />
+                        <path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span
+                    ><span class="u">localhost:3001/projects/ao/board</span>
+                  </div>
+                </div>
+                <div class="brz-frame">
+                  <iframe src="kanban.html" title="agent browser preview" scrolling="no"></iframe>
+                </div>
+              </div>
+              <div class="brz-cap">
+                <span class="live-dot"></span><b>Agent is viewing this page.</b> A browser plugin
+                (web preview / Playwright-driven session) renders what the agent navigates — live,
+                scrollable, clickable.
+              </div>
+            </div>
+            <!-- /browser -->
+          </div>
+          <!-- /rail-body -->
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      document.querySelectorAll(".rt").forEach((b) => {
+        b.addEventListener("click", () => {
+          document.querySelectorAll(".rt").forEach((x) => x.classList.remove("on"));
+          document.querySelectorAll(".view").forEach((x) => x.classList.remove("on"));
+          b.classList.add("on");
+          document.getElementById("v-" + b.dataset.v).classList.add("on");
+        });
+      });
+    </script>
+  </body>
+</html>

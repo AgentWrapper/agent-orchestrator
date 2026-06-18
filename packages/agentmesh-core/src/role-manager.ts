@@ -1,11 +1,11 @@
 /**
  * Role Manager
- * 
+ *
  * Defines agent roles, their prompt templates, and capabilities.
  * Manages role assignment and prompt assembly.
  */
 
-import type { AgentRole, RoleDefinition, AgentStartConfig } from "./types.js";
+import type { AgentRole, RoleDefinition } from "./types.js";
 
 export class RoleManager {
   private roles: Map<AgentRole, RoleDefinition>;

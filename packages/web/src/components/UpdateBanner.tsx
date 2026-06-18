@@ -122,9 +122,7 @@ export function UpdateBanner() {
           {phase === "blocked" && errorMessage ? (
             <span className="text-xs text-[var(--color-status-error)]">{errorMessage}</span>
           ) : phase === "error" && errorMessage ? (
-            <span className="text-xs text-[var(--color-status-error)]">
-              {errorMessage}
-            </span>
+            <span className="text-xs text-[var(--color-status-error)]">{errorMessage}</span>
           ) : phase === "starting" ? (
             <span className="text-xs text-[var(--color-text-secondary)]">Starting…</span>
           ) : (

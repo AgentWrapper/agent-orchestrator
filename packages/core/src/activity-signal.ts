@@ -1,4 +1,9 @@
-import type { ActivityDetection, ActivitySignal, ActivitySignalSource, ActivityState } from "./types.js";
+import type {
+  ActivityDetection,
+  ActivitySignal,
+  ActivitySignalSource,
+  ActivityState,
+} from "./types.js";
 
 const TIMING_SENSITIVE_ACTIVITY_STATES: ReadonlySet<ActivityState> = new Set([
   "active",

@@ -223,7 +223,10 @@ function DashboardInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const handleToggleSidebar = useCallback(() => {
-    if (isInsideLayout && parentCtx) { parentCtx.onToggleSidebar(); return; }
+    if (isInsideLayout && parentCtx) {
+      parentCtx.onToggleSidebar();
+      return;
+    }
     if (isMobile) {
       setMobileSidebarOpen((v) => !v);
     } else {
@@ -502,8 +505,7 @@ function DashboardInner({
   );
   // Always show the human-readable project name in the titlebar — never the raw
   // project id hash (that was a poor disambiguation hack and reads as gibberish).
-  const headerProjectLabel =
-    projectName ?? (allProjectsView ? "All projects" : "Dashboard");
+  const headerProjectLabel = projectName ?? (allProjectsView ? "All projects" : "Dashboard");
   const showHeaderProjectLabel = !allProjectsView && headerProjectLabel.trim().length > 0;
 
   const handleZoneToggle = (level: AttentionLevel) => {
@@ -520,274 +522,277 @@ function DashboardInner({
 
   const mainPanel = (
     <div className="dashboard-main--desktop">
-        <header className="dashboard-app-header">
-          {/* Mobile-only drawer toggle. On desktop the sidebar owns its own
+      <header className="dashboard-app-header">
+        {/* Mobile-only drawer toggle. On desktop the sidebar owns its own
               collapse/expand affordance, so the topbar doesn't duplicate it. */}
-          {isMobile ? (
-            <button
-              type="button"
-              className="dashboard-app-sidebar-toggle"
-              onClick={handleToggleSidebar}
-              aria-label="Toggle sidebar"
+        {isMobile ? (
+          <button
+            type="button"
+            className="dashboard-app-sidebar-toggle"
+            onClick={handleToggleSidebar}
+            aria-label="Toggle sidebar"
+          >
+            <svg
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        ) : null}
+        {showHeaderProjectLabel ? (
+          <>
+            <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
+            <div className="topbar-project-pills-group">
+              <div className="topbar-project-line">
+                <span className="dashboard-app-header__project">{headerProjectLabel}</span>
+                <nav className="workspace-mode-switch" aria-label="Workspace mode">
+                  <Link
+                    href={codingHref}
+                    className="workspace-mode-switch__item workspace-mode-switch__item--active"
+                    aria-current="page"
+                  >
+                    Coding
+                  </Link>
+                  <Link href={reviewHref} className="workspace-mode-switch__item">
+                    Reviews
+                  </Link>
+                  {/* AgentMesh task board (coordination layer). Reachable from
+                      this top-nav switch and directly at /agentmesh. See the
+                      "AgentMesh Coordination Layer" section in SETUP.md. */}
+                  <Link href="/agentmesh" className="workspace-mode-switch__item">
+                    AgentMesh
+                  </Link>
+                </nav>
+              </div>
+              {!allProjectsView && projectSessions.length > 0 ? (
+                <div className="topbar-session-pills">
+                  {grouped.working.length > 0 ? (
+                    <div className="topbar-status-pill topbar-status-pill--active">
+                      <span className="topbar-status-pill__dot topbar-status-pill__dot--working" />
+                      <span className="topbar-status-pill__label">
+                        {grouped.working.length} working
+                      </span>
+                    </div>
+                  ) : null}
+                  {grouped.merge.length +
+                    grouped.action.length +
+                    grouped.respond.length +
+                    grouped.review.length >
+                  0 ? (
+                    <div className="topbar-status-pill topbar-status-pill--waiting-for-input">
+                      <span className="topbar-status-pill__dot topbar-status-pill__dot--attention" />
+                      <span className="topbar-status-pill__label">
+                        {grouped.merge.length +
+                          grouped.action.length +
+                          grouped.respond.length +
+                          grouped.review.length}{" "}
+                        need attention
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+        <div className="dashboard-app-header__spacer" />
+        <div className="dashboard-app-header__actions">
+          {showDebugBundleButton ? <CopyDebugBundleButton projectId={projectId} /> : null}
+          <DashboardNotificationButton />
+          {!allProjectsView && orchestratorHref ? (
+            <Link
+              href={orchestratorHref}
+              className="dashboard-app-btn dashboard-app-btn--primary"
+              aria-label="Orchestrator"
             >
               <svg
-                width="16"
-                height="16"
+                width="12"
+                height="12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                <circle cx="6" cy="17" r="2" />
+                <circle cx="12" cy="17" r="2" />
+                <circle cx="18" cy="17" r="2" />
+              </svg>
+              Orchestrator
+            </Link>
+          ) : canSpawnProjectOrchestrator && activeProject ? (
+            <button
+              type="button"
+              className="dashboard-app-btn dashboard-app-btn--primary"
+              aria-label="Spawn Orchestrator"
+              onClick={() => void handleSpawnOrchestrator(activeProject)}
+              disabled={isSpawningCurrentProject}
+            >
+              <svg
+                width="12"
+                height="12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
+                <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
+                <circle cx="6" cy="17" r="2" />
+                <circle cx="12" cy="17" r="2" />
+                <circle cx="18" cy="17" r="2" />
+              </svg>
+              {isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
+        <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
+        <div className="dashboard-main__subhead">
+          <h1 className="dashboard-main__title">Board</h1>
+          <p className="dashboard-main__subtitle">
+            Live agent sessions flowing from work → review → merge.
+          </p>
+        </div>
+
+        <div className="dashboard-main__body">
+          {loadErrorBanner}
+          {anyRateLimited && !rateLimitDismissed && (
+            <div className="dashboard-alert mb-4 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+              <svg
+                className="h-3.5 w-3.5 shrink-0"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
                 viewBox="0 0 24 24"
-                aria-hidden="true"
               >
-                <path d="M4 6h16M4 12h16M4 18h16" />
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4M12 16h.01" />
               </svg>
-            </button>
-          ) : null}
-          {showHeaderProjectLabel ? (
-            <>
-              <span className="dashboard-app-header__sep topbar-desktop-only" aria-hidden="true" />
-              <div className="topbar-project-pills-group">
-                <div className="topbar-project-line">
-                  <span className="dashboard-app-header__project">{headerProjectLabel}</span>
-                  <nav className="workspace-mode-switch" aria-label="Workspace mode">
-                    <Link
-                      href={codingHref}
-                      className="workspace-mode-switch__item workspace-mode-switch__item--active"
-                      aria-current="page"
-                    >
-                      Coding
-                    </Link>
-                    <Link href={reviewHref} className="workspace-mode-switch__item">
-                      Reviews
-                    </Link>
-                    <Link href="/agentmesh" className="workspace-mode-switch__item">
-                      AgentMesh
-                    </Link>
-                  </nav>
-                </div>
-                {!allProjectsView && projectSessions.length > 0 ? (
-                  <div className="topbar-session-pills">
-                    {grouped.working.length > 0 ? (
-                      <div className="topbar-status-pill topbar-status-pill--active">
-                        <span className="topbar-status-pill__dot topbar-status-pill__dot--working" />
-                        <span className="topbar-status-pill__label">
-                          {grouped.working.length} working
-                        </span>
-                      </div>
-                    ) : null}
-                    {grouped.merge.length +
-                      grouped.action.length +
-                      grouped.respond.length +
-                      grouped.review.length >
-                    0 ? (
-                      <div className="topbar-status-pill topbar-status-pill--waiting-for-input">
-                        <span className="topbar-status-pill__dot topbar-status-pill__dot--attention" />
-                        <span className="topbar-status-pill__label">
-                          {grouped.merge.length +
-                            grouped.action.length +
-                            grouped.respond.length +
-                            grouped.review.length}{" "}
-                          need attention
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-          <div className="dashboard-app-header__spacer" />
-          <div className="dashboard-app-header__actions">
-            {showDebugBundleButton ? <CopyDebugBundleButton projectId={projectId} /> : null}
-            <DashboardNotificationButton />
-            {!allProjectsView && orchestratorHref ? (
-              <Link
-                href={orchestratorHref}
-                className="dashboard-app-btn dashboard-app-btn--primary"
-                aria-label="Orchestrator"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                  <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                  <circle cx="6" cy="17" r="2" />
-                  <circle cx="12" cy="17" r="2" />
-                  <circle cx="18" cy="17" r="2" />
-                </svg>
-                Orchestrator
-              </Link>
-            ) : canSpawnProjectOrchestrator && activeProject ? (
+              <span className="flex-1">
+                GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
+                Will retry automatically on next refresh.
+              </span>
               <button
-                type="button"
-                className="dashboard-app-btn dashboard-app-btn--primary"
-                aria-label="Spawn Orchestrator"
-                onClick={() => void handleSpawnOrchestrator(activeProject)}
-                disabled={isSpawningCurrentProject}
+                onClick={() => setRateLimitDismissed(true)}
+                className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+                aria-label="Dismiss"
               >
                 <svg
-                  width="12"
-                  height="12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="5" r="2" fill="currentColor" stroke="none" />
-                  <path d="M12 7v4M12 11H6M12 11h6M6 11v3M12 11v3M18 11v3" />
-                  <circle cx="6" cy="17" r="2" />
-                  <circle cx="12" cy="17" r="2" />
-                  <circle cx="18" cy="17" r="2" />
-                </svg>
-                {isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
-              </button>
-            ) : null}
-          </div>
-        </header>
-
-        <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
-          <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName} />
-          <div className="dashboard-main__subhead">
-            <h1 className="dashboard-main__title">Board</h1>
-            <p className="dashboard-main__subtitle">
-              Live agent sessions flowing from work → review → merge.
-            </p>
-          </div>
-
-          <div className="dashboard-main__body">
-            {loadErrorBanner}
-            {anyRateLimited && !rateLimitDismissed && (
-              <div className="dashboard-alert mb-4 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-                <svg
-                  className="h-3.5 w-3.5 shrink-0"
+                  className="h-3.5 w-3.5"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
                   viewBox="0 0 24 24"
                 >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 8v4M12 16h.01" />
+                  <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
-                <span className="flex-1">
-                  GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
-                  Will retry automatically on next refresh.
-                </span>
-                <button
-                  onClick={() => setRateLimitDismissed(true)}
-                  className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-                  aria-label="Dismiss"
-                >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M18 6 6 18M6 6l12 12" />
-                  </svg>
-                </button>
+              </button>
+            </div>
+          )}
+
+          {allProjectsView && (
+            <ProjectOverviewGrid
+              overviews={projectOverviews}
+              onSpawnOrchestrator={handleSpawnOrchestrator}
+              spawningProjectIds={spawningProjectIds}
+              spawnErrors={spawnErrors}
+              attentionZones={attentionZones}
+            />
+          )}
+
+          {!allProjectsView && hasAnySessions && (
+            <div className="kanban-board-wrap">
+              <div
+                className="kanban-board"
+                data-columns={kanbanLevels.length}
+                style={
+                  {
+                    "--kanban-column-count": kanbanLevels.length,
+                  } as React.CSSProperties
+                }
+              >
+                {kanbanLevels.map((level) => (
+                  <AttentionZone
+                    key={level}
+                    level={level}
+                    sessions={grouped[level]}
+                    onKill={handleKill}
+                    onRestore={handleRestore}
+                    compactMobile={isMobile}
+                    collapsed={isMobile && collapsedZones.has(level)}
+                    onToggle={isMobile ? handleZoneToggle : undefined}
+                    onPreview={isMobile ? handlePreview : undefined}
+                  />
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {allProjectsView && (
-              <ProjectOverviewGrid
-                overviews={projectOverviews}
-                onSpawnOrchestrator={handleSpawnOrchestrator}
-                spawningProjectIds={spawningProjectIds}
-                spawnErrors={spawnErrors}
-                attentionZones={attentionZones}
-              />
-            )}
+          {showEmptyState ? (
+            <EmptyState
+              orchestratorHref={orchestratorHref}
+              onSpawnOrchestrator={
+                canSpawnProjectOrchestrator && activeProject
+                  ? () => {
+                      void handleSpawnOrchestrator(activeProject);
+                    }
+                  : null
+              }
+              spawnLabel={isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
+              spawnDisabled={isSpawningCurrentProject}
+            />
+          ) : null}
 
-            {!allProjectsView && hasAnySessions && (
-              <div className="kanban-board-wrap">
-                <div
-                  className="kanban-board"
-                  data-columns={kanbanLevels.length}
-                  style={
-                    {
-                      "--kanban-column-count": kanbanLevels.length,
-                    } as React.CSSProperties
-                  }
+          {!allProjectsView && currentProjectSpawnError ? (
+            <p className="mt-3 text-[11px] text-[var(--color-status-error)]">
+              {currentProjectSpawnError}
+            </p>
+          ) : null}
+
+          {!allProjectsView && grouped.done.length > 0 && (
+            <div className="done-bar mt-6">
+              <button
+                type="button"
+                className="done-bar__toggle"
+                onClick={() => setDoneExpanded((v) => !v)}
+                aria-expanded={doneExpanded}
+              >
+                <svg
+                  className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
-                  {kanbanLevels.map((level) => (
-                    <AttentionZone
-                      key={level}
-                      level={level}
-                      sessions={grouped[level]}
-                      onKill={handleKill}
-                      onRestore={handleRestore}
-                      compactMobile={isMobile}
-                      collapsed={isMobile && collapsedZones.has(level)}
-                      onToggle={isMobile ? handleZoneToggle : undefined}
-                      onPreview={isMobile ? handlePreview : undefined}
-                    />
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+                <span className="done-bar__label">Done / Terminated</span>
+                <span className="done-bar__count">{grouped.done.length}</span>
+              </button>
+              {doneExpanded && (
+                <div className="done-bar__cards">
+                  {grouped.done.map((session) => (
+                    <DoneCard key={session.id} session={session} onRestore={handleRestore} />
                   ))}
                 </div>
-              </div>
-            )}
-
-            {showEmptyState ? (
-              <EmptyState
-                orchestratorHref={orchestratorHref}
-                onSpawnOrchestrator={
-                  canSpawnProjectOrchestrator && activeProject
-                    ? () => {
-                        void handleSpawnOrchestrator(activeProject);
-                      }
-                    : null
-                }
-                spawnLabel={isSpawningCurrentProject ? "Spawning..." : "Spawn Orchestrator"}
-                spawnDisabled={isSpawningCurrentProject}
-              />
-            ) : null}
-
-            {!allProjectsView && currentProjectSpawnError ? (
-              <p className="mt-3 text-[11px] text-[var(--color-status-error)]">
-                {currentProjectSpawnError}
-              </p>
-            ) : null}
-
-            {!allProjectsView && grouped.done.length > 0 && (
-              <div className="done-bar mt-6">
-                <button
-                  type="button"
-                  className="done-bar__toggle"
-                  onClick={() => setDoneExpanded((v) => !v)}
-                  aria-expanded={doneExpanded}
-                >
-                  <svg
-                    className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
-                  <span className="done-bar__label">Done / Terminated</span>
-                  <span className="done-bar__count">{grouped.done.length}</span>
-                </button>
-                {doneExpanded && (
-                  <div className="done-bar__cards">
-                    {grouped.done.map((session) => (
-                      <DoneCard key={session.id} session={session} onRestore={handleRestore} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </main>
+              )}
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 
@@ -838,10 +843,7 @@ function DashboardInner({
             />
           </div>
           {mobileSidebarOpen && (
-            <div
-              className="sidebar-mobile-backdrop"
-              onClick={() => setMobileSidebarOpen(false)}
-            />
+            <div className="sidebar-mobile-backdrop" onClick={() => setMobileSidebarOpen(false)} />
           )}
           {mainPanel}
         </div>

@@ -1,12 +1,17 @@
 /**
  * Cost Tracker
- * 
+ *
  * Tracks per-task cost and token usage for budget management.
  * Integrates with agent adapters to capture cost information.
+ *
+ * Persists to SQLite when better-sqlite3 is available. When the native
+ * binary fails to load/build (common on Windows without build tools), it
+ * falls back to in-memory storage so the CoordinationService — and the web
+ * server that constructs it on startup — never crashes.
  */
 
-import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 
 export interface CostEntry {
@@ -39,17 +44,63 @@ export interface BudgetConfig {
   alertThreshold: number; // percentage
 }
 
+type SqliteStatement = {
+  run(...args: unknown[]): { changes: number };
+  get(...args: unknown[]): unknown;
+  all(...args: unknown[]): unknown[];
+};
+
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+};
+
+type SqliteDatabaseConstructor = new (path: string) => SqliteDatabase;
+
+const requireLoaders = [
+  createRequire(import.meta.url),
+  // Next.js can bundle this file into .next/server/chunks, so fall back to
+  // resolving from the dashboard process cwd when the package-root loader
+  // points at a bundled artifact instead of node_modules.
+  createRequire(join(process.cwd(), "package.json")),
+];
+
+const Database = (() => {
+  for (const requireFn of requireLoaders) {
+    try {
+      return requireFn("better-sqlite3") as SqliteDatabaseConstructor;
+    } catch {}
+  }
+  return null;
+})();
+
+const DatabaseAvailable = Database !== null;
+
 export class CostTracker {
-  private db: Database.Database;
+  private db: SqliteDatabase | null;
   private storagePath: string;
   private budgetConfig: BudgetConfig;
+  private inMemoryEntries: CostEntry[];
 
   constructor(storagePath: string, budgetConfig?: Partial<BudgetConfig>) {
     this.storagePath = storagePath;
+    this.inMemoryEntries = [];
     this.ensureStorageDir();
-    this.db = new Database(join(storagePath, "costs.db"));
-    this.initializeSchema();
-    
+
+    if (DatabaseAvailable) {
+      try {
+        this.db = new Database(join(storagePath, "costs.db"));
+        this.initializeSchema();
+      } catch (err) {
+        this.db = null;
+        console.warn("[CostTracker] better-sqlite3 failed to open, using in-memory storage", err);
+      }
+    } else {
+      this.db = null;
+      console.warn("[CostTracker] better-sqlite3 unavailable, using in-memory storage");
+    }
+
     this.budgetConfig = {
       maxCostPerTask: budgetConfig?.maxCostPerTask || 100,
       maxCostPerDay: budgetConfig?.maxCostPerDay || 500,
@@ -65,6 +116,8 @@ export class CostTracker {
   }
 
   private initializeSchema(): void {
+    if (!this.db) return;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cost_entries (
         id TEXT PRIMARY KEY,
@@ -91,48 +144,40 @@ export class CostTracker {
   recordCost(entry: Omit<CostEntry, "id" | "timestamp">): CostEntry {
     const id = this.generateId();
     const timestamp = new Date().toISOString();
-    
+
     const costEntry: CostEntry = {
       id,
       timestamp,
       ...entry,
     };
 
-    const stmt = this.db.prepare(`
-      INSERT INTO cost_entries (
-        id, taskId, agent, model, tokensUsed, inputTokens, outputTokens, costUsd, timestamp, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        INSERT INTO cost_entries (
+          id, taskId, agent, model, tokensUsed, inputTokens, outputTokens, costUsd, timestamp, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    stmt.run(
-      costEntry.id,
-      costEntry.taskId,
-      costEntry.agent,
-      costEntry.model,
-      costEntry.tokensUsed,
-      costEntry.inputTokens,
-      costEntry.outputTokens,
-      costEntry.costUsd,
-      costEntry.timestamp,
-      JSON.stringify(costEntry.metadata)
-    );
+      stmt.run(
+        costEntry.id,
+        costEntry.taskId,
+        costEntry.agent,
+        costEntry.model,
+        costEntry.tokensUsed,
+        costEntry.inputTokens,
+        costEntry.outputTokens,
+        costEntry.costUsd,
+        costEntry.timestamp,
+        JSON.stringify(costEntry.metadata),
+      );
+    } else {
+      this.inMemoryEntries.push(costEntry);
+    }
 
     return costEntry;
   }
 
-  /**
-   * Get cost summary for a task
-   */
-  getTaskSummary(taskId: string): CostSummary {
-    const stmt = this.db.prepare(`
-      SELECT * FROM cost_entries 
-      WHERE taskId = ? 
-      ORDER BY timestamp ASC
-    `);
-    
-    const rows = stmt.all(taskId) as any[];
-    const entries = rows.map(row => this.rowToCostEntry(row));
-
+  private summarize(taskId: string, entries: CostEntry[]): CostSummary {
     const totalCostUsd = entries.reduce((sum, e) => sum + e.costUsd, 0);
     const totalTokens = entries.reduce((sum, e) => sum + e.tokensUsed, 0);
     const totalInputTokens = entries.reduce((sum, e) => sum + e.inputTokens, 0);
@@ -159,41 +204,53 @@ export class CostTracker {
   }
 
   /**
+   * Get cost summary for a task
+   */
+  getTaskSummary(taskId: string): CostSummary {
+    let entries: CostEntry[];
+
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM cost_entries 
+        WHERE taskId = ? 
+        ORDER BY timestamp ASC
+      `);
+
+      const rows = stmt.all(taskId) as unknown[];
+      entries = rows.map((row) => this.rowToCostEntry(row as Record<string, unknown>));
+    } else {
+      entries = this.inMemoryEntries
+        .filter((e) => e.taskId === taskId)
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    }
+
+    return this.summarize(taskId, entries);
+  }
+
+  /**
    * Get cost summary for a date range
    */
   getDateRangeSummary(startDate: Date, endDate: Date): CostSummary {
-    const stmt = this.db.prepare(`
-      SELECT * FROM cost_entries 
-      WHERE timestamp >= ? AND timestamp <= ?
-      ORDER BY timestamp ASC
-    `);
-    
-    const rows = stmt.all(startDate.toISOString(), endDate.toISOString()) as any[];
-    const entries = rows.map(row => this.rowToCostEntry(row));
+    const start = startDate.toISOString();
+    const end = endDate.toISOString();
+    let entries: CostEntry[];
 
-    const totalCostUsd = entries.reduce((sum, e) => sum + e.costUsd, 0);
-    const totalTokens = entries.reduce((sum, e) => sum + e.tokensUsed, 0);
-    const totalInputTokens = entries.reduce((sum, e) => sum + e.inputTokens, 0);
-    const totalOutputTokens = entries.reduce((sum, e) => sum + e.outputTokens, 0);
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM cost_entries 
+        WHERE timestamp >= ? AND timestamp <= ?
+        ORDER BY timestamp ASC
+      `);
 
-    const agentBreakdown: Record<string, { cost: number; tokens: number }> = {};
-    for (const entry of entries) {
-      if (!agentBreakdown[entry.agent]) {
-        agentBreakdown[entry.agent] = { cost: 0, tokens: 0 };
-      }
-      agentBreakdown[entry.agent].cost += entry.costUsd;
-      agentBreakdown[entry.agent].tokens += entry.tokensUsed;
+      const rows = stmt.all(start, end) as unknown[];
+      entries = rows.map((row) => this.rowToCostEntry(row as Record<string, unknown>));
+    } else {
+      entries = this.inMemoryEntries
+        .filter((e) => e.timestamp >= start && e.timestamp <= end)
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     }
 
-    return {
-      taskId: "date-range",
-      totalCostUsd,
-      totalTokens,
-      totalInputTokens,
-      totalOutputTokens,
-      agentBreakdown,
-      timeline: entries,
-    };
+    return this.summarize("date-range", entries);
   }
 
   /**
@@ -208,22 +265,34 @@ export class CostTracker {
     alerts: string[];
   } {
     const summary = this.getTaskSummary(taskId);
-    
+
     const costRemaining = this.budgetConfig.maxCostPerTask - summary.totalCostUsd;
     const tokensRemaining = this.budgetConfig.maxTokensPerTask - summary.totalTokens;
-    
+
     const alerts: string[] = [];
-    
-    if (summary.totalCostUsd >= this.budgetConfig.maxCostPerTask * this.budgetConfig.alertThreshold) {
-      alerts.push(`Cost threshold reached: $${summary.totalCostUsd.toFixed(2)} / $${this.budgetConfig.maxCostPerTask}`);
+
+    if (
+      summary.totalCostUsd >=
+      this.budgetConfig.maxCostPerTask * this.budgetConfig.alertThreshold
+    ) {
+      alerts.push(
+        `Cost threshold reached: $${summary.totalCostUsd.toFixed(2)} / $${this.budgetConfig.maxCostPerTask}`,
+      );
     }
-    
-    if (summary.totalTokens >= this.budgetConfig.maxTokensPerTask * this.budgetConfig.alertThreshold) {
-      alerts.push(`Token threshold reached: ${summary.totalTokens} / ${this.budgetConfig.maxTokensPerTask}`);
+
+    if (
+      summary.totalTokens >=
+      this.budgetConfig.maxTokensPerTask * this.budgetConfig.alertThreshold
+    ) {
+      alerts.push(
+        `Token threshold reached: ${summary.totalTokens} / ${this.budgetConfig.maxTokensPerTask}`,
+      );
     }
-    
+
     return {
-      withinBudget: summary.totalCostUsd < this.budgetConfig.maxCostPerTask && summary.totalTokens < this.budgetConfig.maxTokensPerTask,
+      withinBudget:
+        summary.totalCostUsd < this.budgetConfig.maxCostPerTask &&
+        summary.totalTokens < this.budgetConfig.maxTokensPerTask,
       costUsd: summary.totalCostUsd,
       tokens: summary.totalTokens,
       costRemaining,
@@ -244,16 +313,21 @@ export class CostTracker {
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-    
+
     const summary = this.getDateRangeSummary(startOfDay, endOfDay);
     const costRemaining = this.budgetConfig.maxCostPerDay - summary.totalCostUsd;
-    
+
     const alerts: string[] = [];
-    
-    if (summary.totalCostUsd >= this.budgetConfig.maxCostPerDay * this.budgetConfig.alertThreshold) {
-      alerts.push(`Daily cost threshold reached: $${summary.totalCostUsd.toFixed(2)} / $${this.budgetConfig.maxCostPerDay}`);
+
+    if (
+      summary.totalCostUsd >=
+      this.budgetConfig.maxCostPerDay * this.budgetConfig.alertThreshold
+    ) {
+      alerts.push(
+        `Daily cost threshold reached: $${summary.totalCostUsd.toFixed(2)} / $${this.budgetConfig.maxCostPerDay}`,
+      );
     }
-    
+
     return {
       withinBudget: summary.totalCostUsd < this.budgetConfig.maxCostPerDay,
       costUsd: summary.totalCostUsd,
@@ -266,33 +340,50 @@ export class CostTracker {
    * Get all cost entries for a task
    */
   getTaskEntries(taskId: string): CostEntry[] {
-    const stmt = this.db.prepare(`
-      SELECT * FROM cost_entries 
-      WHERE taskId = ? 
-      ORDER BY timestamp DESC
-    `);
-    
-    const rows = stmt.all(taskId) as any[];
-    return rows.map(row => this.rowToCostEntry(row));
+    if (this.db) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM cost_entries 
+        WHERE taskId = ? 
+        ORDER BY timestamp DESC
+      `);
+
+      const rows = stmt.all(taskId) as unknown[];
+      return rows.map((row) => this.rowToCostEntry(row as Record<string, unknown>));
+    }
+
+    return this.inMemoryEntries
+      .filter((e) => e.taskId === taskId)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
   /**
    * Get cost breakdown by agent
    */
   getAgentBreakdown(agent: string, startDate?: Date, endDate?: Date): CostSummary {
-    let query = "SELECT * FROM cost_entries WHERE agent = ?";
-    const params: any[] = [agent];
-    
-    if (startDate && endDate) {
-      query += " AND timestamp >= ? AND timestamp <= ?";
-      params.push(startDate.toISOString(), endDate.toISOString());
+    let entries: CostEntry[];
+
+    if (this.db) {
+      let query = "SELECT * FROM cost_entries WHERE agent = ?";
+      const params: (string | number | bigint | Buffer | null)[] = [agent];
+
+      if (startDate && endDate) {
+        query += " AND timestamp >= ? AND timestamp <= ?";
+        params.push(startDate.toISOString(), endDate.toISOString());
+      }
+
+      query += " ORDER BY timestamp ASC";
+
+      const stmt = this.db.prepare(query);
+      const rows = stmt.all(...params) as unknown[];
+      entries = rows.map((row) => this.rowToCostEntry(row as Record<string, unknown>));
+    } else {
+      const start = startDate?.toISOString();
+      const end = endDate?.toISOString();
+      entries = this.inMemoryEntries
+        .filter((e) => e.agent === agent)
+        .filter((e) => (start && end ? e.timestamp >= start && e.timestamp <= end : true))
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     }
-    
-    query += " ORDER BY timestamp ASC";
-    
-    const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as any[];
-    const entries = rows.map(row => this.rowToCostEntry(row));
 
     const totalCostUsd = entries.reduce((sum, e) => sum + e.costUsd, 0);
     const totalTokens = entries.reduce((sum, e) => sum + e.tokensUsed, 0);
@@ -314,9 +405,15 @@ export class CostTracker {
    * Delete cost entries for a task
    */
   deleteTaskEntries(taskId: string): number {
-    const stmt = this.db.prepare("DELETE FROM cost_entries WHERE taskId = ?");
-    const result = stmt.run(taskId);
-    return result.changes;
+    if (this.db) {
+      const stmt = this.db.prepare("DELETE FROM cost_entries WHERE taskId = ?");
+      const result = stmt.run(taskId);
+      return result.changes;
+    }
+
+    const before = this.inMemoryEntries.length;
+    this.inMemoryEntries = this.inMemoryEntries.filter((e) => e.taskId !== taskId);
+    return before - this.inMemoryEntries.length;
   }
 
   /**
@@ -337,22 +434,24 @@ export class CostTracker {
     return `cost-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 
-  private rowToCostEntry(row: any): CostEntry {
+  private rowToCostEntry(row: Record<string, unknown>): CostEntry {
     return {
-      id: row.id,
-      taskId: row.taskId,
-      agent: row.agent,
-      model: row.model,
-      tokensUsed: row.tokensUsed,
-      inputTokens: row.inputTokens,
-      outputTokens: row.outputTokens,
-      costUsd: row.costUsd,
-      timestamp: row.timestamp,
-      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      id: row.id as string,
+      taskId: row.taskId as string,
+      agent: row.agent as string,
+      model: row.model as string,
+      tokensUsed: row.tokensUsed as number,
+      inputTokens: row.inputTokens as number,
+      outputTokens: row.outputTokens as number,
+      costUsd: row.costUsd as number,
+      timestamp: row.timestamp as string,
+      metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
     };
   }
 
   close(): void {
-    this.db.close();
+    if (this.db) {
+      this.db.close();
+    }
   }
 }

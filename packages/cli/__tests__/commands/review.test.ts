@@ -143,6 +143,14 @@ function createGitRepo(path: string): void {
   });
 }
 
+function buildReviewCommand(output: unknown): string {
+  const payload = JSON.stringify(output);
+  if (process.platform === "win32") {
+    return `@'\n${payload}\n'@`;
+  }
+  return `cat <<'__AO_REVIEW_OUTPUT__'\n${payload}\n__AO_REVIEW_OUTPUT__`;
+}
+
 let tmpDir: string;
 let originalHome: string | undefined;
 let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -254,7 +262,9 @@ describe("review command", () => {
       "app-1",
       "--execute",
       "--command",
-      `printf '%s\\n' '{"findings":[{"severity":"warning","title":"CLI finding","body":"Detected in CLI."}]}'`,
+      buildReviewCommand({
+        findings: [{ severity: "warning", title: "CLI finding", body: "Detected in CLI." }],
+      }),
       "--json",
     ]);
 
@@ -305,7 +315,7 @@ describe("review command", () => {
       "review",
       "execute",
       "--command",
-      `printf '%s\\n' '{"findings":[]}'`,
+      buildReviewCommand({ findings: [] }),
       "--json",
     ]);
 

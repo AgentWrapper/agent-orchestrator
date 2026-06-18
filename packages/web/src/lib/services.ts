@@ -37,6 +37,8 @@ import {
   AiderAdapter,
   CursorAdapter,
   CodexAdapter,
+  OpenCodeAdapter,
+  KimiCodeAdapter,
 } from "@aoagents/agentmesh-adapters";
 
 // Static plugin imports — webpack needs these to be string literals
@@ -135,14 +137,21 @@ async function initServices(): Promise<Services> {
   const coordinationService = new CoordinationService(
     sessionManager,
     "agentmesh",
-    undefined // Use default base path
+    undefined, // Use default base path
   );
 
-  // Register agent adapters with CoordinationService
+  // Register agent adapters with CoordinationService. These mirror the local
+  // agent plugins that have a runtime-process/tmux launch path.
   coordinationService.registerAdapter("claude-code", new ClaudeCodeAdapter(sessionManager));
   coordinationService.registerAdapter("aider", new AiderAdapter(sessionManager));
   coordinationService.registerAdapter("cursor", new CursorAdapter(sessionManager));
   coordinationService.registerAdapter("codex", new CodexAdapter(sessionManager));
+  coordinationService.registerAdapter("opencode", new OpenCodeAdapter(sessionManager));
+  coordinationService.registerAdapter("kimicode", new KimiCodeAdapter(sessionManager));
+  // DevinAdapter and GeminiAdapter are intentionally NOT registered here:
+  // Devin is an external API-based agent (no local session to coordinate) and
+  // the Gemini CLI must be installed and authenticated separately. They are
+  // exported from @aoagents/agentmesh-adapters for direct/manual use only.
 
   // Lifecycle manager for webhook-triggered checks only — no independent polling.
   // The CLI process (`ao`) runs the 30s polling loop and writes PR enrichment

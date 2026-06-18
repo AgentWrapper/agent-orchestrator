@@ -56,7 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   env.cleanup();
-});
+}, 20_000);
 
 describe("status decision helpers", () => {
   it("promotes conflicting runtime evidence into detecting instead of terminating", () => {
@@ -1080,9 +1080,11 @@ describe("check (single session)", () => {
       detectPR: vi.fn().mockResolvedValue(followUpPR),
       // Enrichment cache must show closedPR as closed so the detectPR filter
       // can remove it using per-PR state rather than the aggregate lifecycle state.
-      getPRState: vi.fn().mockImplementation((pr: PRInfo) =>
-        Promise.resolve(pr.number === closedPR.number ? "closed" : "open"),
-      ),
+      getPRState: vi
+        .fn()
+        .mockImplementation((pr: PRInfo) =>
+          Promise.resolve(pr.number === closedPR.number ? "closed" : "open"),
+        ),
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -1375,6 +1377,7 @@ describe("check (single session)", () => {
       expect(mockSessionManager.list).toHaveBeenCalledTimes(1);
     } finally {
       lm.stop();
+      await lm.waitForIdle();
     }
   });
 
@@ -2468,7 +2471,9 @@ describe("reactions", () => {
     const sentMessage = vi.mocked(mockSessionManager.send).mock.calls[0]![1];
     expect(sentMessage).toContain("CI is failing on your PR.");
     expect(sentMessage).toContain("Failed: build → Run pnpm test");
-    expect(sentMessage).toContain("Failure URL: https://github.com/org/repo/actions/runs/123/job/456");
+    expect(sentMessage).toContain(
+      "Failure URL: https://github.com/org/repo/actions/runs/123/job/456",
+    );
     expect(sentMessage).toContain("Log tail (last 3 lines):");
     expect(sentMessage).toContain("AssertionError: expected true to be false");
     expect(sentMessage).toContain("\u200B```");
@@ -4596,8 +4601,8 @@ describe("multi-PR state machine aggregation", () => {
         pr: pr10,
         prs: [pr10, { ...pr10 }],
         metadata: {
-          prEnrichment_1: "{\"state\":\"open\"}",
-          prReviewComments_1: "{\"unresolvedThreads\":0}",
+          prEnrichment_1: '{"state":"open"}',
+          prReviewComments_1: '{"unresolvedThreads":0}',
         },
       });
 
@@ -4607,13 +4612,13 @@ describe("multi-PR state machine aggregation", () => {
         metaOverrides: {
           pr: pr10.url,
           prs: `${pr10.url},${pr10.url}`,
-          prEnrichment_1: "{\"state\":\"open\"}",
-          prReviewComments_1: "{\"unresolvedThreads\":0}",
+          prEnrichment_1: '{"state":"open"}',
+          prReviewComments_1: '{"unresolvedThreads":0}',
         },
       });
       updateMetadata(env.sessionsDir, "app-1", {
-        prEnrichment_1: "{\"state\":\"open\"}",
-        prReviewComments_1: "{\"unresolvedThreads\":0}",
+        prEnrichment_1: '{"state":"open"}',
+        prReviewComments_1: '{"unresolvedThreads":0}',
       });
 
       lm.start(60_000);

@@ -358,7 +358,9 @@ async function sendTestNotifications(
     if (delivery.status === "sent") {
       pass(`${delivery.reference}: test notification sent`);
     } else if (delivery.status === "unresolved") {
-      warn(`${delivery.reference}: plugin "${delivery.pluginName}" not loaded (may not be installed)`);
+      warn(
+        `${delivery.reference}: plugin "${delivery.pluginName}" not loaded (may not be installed)`,
+      );
     } else if (delivery.error) {
       fail(delivery.error);
     }

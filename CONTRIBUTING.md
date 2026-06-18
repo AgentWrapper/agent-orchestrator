@@ -76,10 +76,10 @@ AO uses a **two-stage release pipeline**. This public repo handles version bumps
 
 ### Where things happen
 
-| Stage                    | Where                          | Responsibility                                                           |
-| ------------------------ | ------------------------------ | ------------------------------------------------------------------------ |
-| Versioning + GitHub release | This repo (public, CI)      | Changesets version bumps, git tags, `gh release create`                  |
-| npm publish              | Private server (AO cron)       | Detects new GitHub releases → builds → `pnpm changeset publish`         |
+| Stage                       | Where                    | Responsibility                                                  |
+| --------------------------- | ------------------------ | --------------------------------------------------------------- |
+| Versioning + GitHub release | This repo (public, CI)   | Changesets version bumps, git tags, `gh release create`         |
+| npm publish                 | Private server (AO cron) | Detects new GitHub releases → builds → `pnpm changeset publish` |
 
 The flow on every release:
 

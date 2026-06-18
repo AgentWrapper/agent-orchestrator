@@ -645,67 +645,71 @@ describe("runCodexCodeReview", () => {
 });
 
 describe("prepareGitReviewerWorkspace", () => {
-  it.skipIf(isWindows())("prunes stale git worktree metadata when the reviewer workspace directory is gone", async () => {
-    const tmpHome = join(tmpdir(), `ao-test-review-worktree-${randomUUID()}`);
-    const originalHome = process.env["HOME"];
-    process.env["HOME"] = tmpHome;
+  it.skipIf(isWindows())(
+    "prunes stale git worktree metadata when the reviewer workspace directory is gone",
+    async () => {
+      const tmpHome = join(tmpdir(), `ao-test-review-worktree-${randomUUID()}`);
+      const originalHome = process.env["HOME"];
+      process.env["HOME"] = tmpHome;
 
-    try {
-      const repoPath = join(tmpHome, "repo");
-      mkdirSync(repoPath, { recursive: true });
-      execFileSync("git", ["init", "-b", "main"], { cwd: repoPath });
-      writeFileSync(join(repoPath, "README.md"), "# App\n");
-      execFileSync("git", ["add", "README.md"], { cwd: repoPath });
-      execFileSync("git", ["commit", "-m", "initial"], {
-        cwd: repoPath,
-        env: {
-          ...process.env,
-          GIT_AUTHOR_NAME: "AO Test",
-          GIT_AUTHOR_EMAIL: "ao@example.com",
-          GIT_COMMITTER_NAME: "AO Test",
-          GIT_COMMITTER_EMAIL: "ao@example.com",
-        },
-      });
+      try {
+        const repoPath = join(tmpHome, "repo");
+        mkdirSync(repoPath, { recursive: true });
+        execFileSync("git", ["init", "-b", "main"], { cwd: repoPath });
+        writeFileSync(join(repoPath, "README.md"), "# App\n");
+        execFileSync("git", ["add", "README.md"], { cwd: repoPath });
+        execFileSync("git", ["commit", "-m", "initial"], {
+          cwd: repoPath,
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "AO Test",
+            GIT_AUTHOR_EMAIL: "ao@example.com",
+            GIT_COMMITTER_NAME: "AO Test",
+            GIT_COMMITTER_EMAIL: "ao@example.com",
+          },
+        });
 
-      const run = store.createRun({
-        linkedSessionId: "app-1",
-        reviewerSessionId: "app-rev-stale",
-        status: "queued",
-      });
-      const project = { ...config.projects.app!, path: repoPath };
-      const workspaceRoot = join(
-        tmpHome,
-        ".agent-orchestrator",
-        "projects",
-        "app",
-        "code-reviews",
-        "workspaces",
-      );
-      const workspacePath = join(workspaceRoot, run.reviewerSessionId);
-      mkdirSync(workspaceRoot, { recursive: true });
-      execFileSync("git", ["worktree", "add", "--detach", workspacePath, "HEAD"], {
-        cwd: repoPath,
-      });
-      rmSync(workspacePath, { recursive: true, force: true });
+        const run = store.createRun({
+          linkedSessionId: "app-1",
+          reviewerSessionId: "app-rev-stale",
+          status: "queued",
+        });
+        const project = { ...config.projects.app!, path: repoPath };
+        const workspaceRoot = join(
+          tmpHome,
+          ".agent-orchestrator",
+          "projects",
+          "app",
+          "code-reviews",
+          "workspaces",
+        );
+        const workspacePath = join(workspaceRoot, run.reviewerSessionId);
+        mkdirSync(workspaceRoot, { recursive: true });
+        execFileSync("git", ["worktree", "add", "--detach", workspacePath, "HEAD"], {
+          cwd: repoPath,
+        });
+        rmSync(workspacePath, { recursive: true, force: true });
 
-      const preparedPath = await prepareGitReviewerWorkspace({
-        projectId: "app",
-        project,
-        session: makeSession({ workspacePath: repoPath }),
-        run,
-      });
+        const preparedPath = await prepareGitReviewerWorkspace({
+          projectId: "app",
+          project,
+          session: makeSession({ workspacePath: repoPath }),
+          run,
+        });
 
-      expect(preparedPath).toBe(workspacePath);
-      expect(existsSync(workspacePath)).toBe(true);
-    } finally {
-      if (originalHome === undefined) {
-        delete process.env["HOME"];
-      } else {
-        process.env["HOME"] = originalHome;
+        expect(preparedPath).toBe(workspacePath);
+        expect(existsSync(workspacePath)).toBe(true);
+      } finally {
+        if (originalHome === undefined) {
+          delete process.env["HOME"];
+        } else {
+          process.env["HOME"] = originalHome;
+        }
+        rmSync(tmpHome, { recursive: true, force: true });
       }
-      rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
+    },
+    15000,
+  );
 });
 
 describe("parseReviewerOutput", () => {

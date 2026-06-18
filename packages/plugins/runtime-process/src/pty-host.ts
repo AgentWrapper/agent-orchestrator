@@ -95,8 +95,7 @@ export class MessageParser {
 // Standalone entry-point
 // ---------------------------------------------------------------------------
 
-const isMain =
-  process.argv[1]?.endsWith("pty-host.js") || process.argv[1]?.endsWith("pty-host.ts");
+const isMain = process.argv[1]?.endsWith("pty-host.js") || process.argv[1]?.endsWith("pty-host.ts");
 
 if (isMain) {
   void runPtyHost();
@@ -362,14 +361,28 @@ async function runPtyHost(): Promise<void> {
     shuttingDown = true;
     try {
       if (ptyExitCode === undefined) {
-        try { pty.kill(); } catch { /* already dead */ }
+        try {
+          pty.kill();
+        } catch {
+          /* already dead */
+        }
       }
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
     for (const sock of clients) {
-      try { sock.destroy(); } catch { /* noop */ }
+      try {
+        sock.destroy();
+      } catch {
+        /* noop */
+      }
     }
     clients.clear();
-    try { server.close(); } catch { /* noop */ }
+    try {
+      server.close();
+    } catch {
+      /* noop */
+    }
     // Give node-pty a tick to release the ConPTY handle before the event loop
     // exits. Without this, the conpty_console_list_agent helper may still be
     // mid-cleanup when the parent node process terminates.
@@ -394,7 +407,8 @@ async function runPtyHost(): Promise<void> {
   process.on("exit", () => {
     try {
       if (ptyExitCode === undefined) pty.kill();
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   });
-
 }

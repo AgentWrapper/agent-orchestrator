@@ -238,15 +238,7 @@ describe("runtime.create()", () => {
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       1,
       "tmux",
-      [
-        "new-session",
-        "-d",
-        "-s",
-        "launch-long",
-        "-c",
-        "/tmp/ws",
-        expect.stringContaining("bash "),
-      ],
+      ["new-session", "-d", "-s", "launch-long", "-c", "/tmp/ws", expect.stringContaining("bash ")],
       expectedTmuxOptions,
     );
   });

@@ -60,11 +60,11 @@ function makePng(size) {
       const inA = x > size * 0.22 && x < size * 0.42 && y > size * 0.22 && y < size * 0.78;
       const inO =
         x > size * 0.52 &&
-        x < size * 0.80 &&
+        x < size * 0.8 &&
         y > size * 0.22 &&
         y < size * 0.78 &&
-        !(x > size * 0.60 && x < size * 0.72 && y > size * 0.34 && y < size * 0.66);
-      const inABar = x > size * 0.30 && x < size * 0.50 && y > size * 0.47 && y < size * 0.57;
+        !(x > size * 0.6 && x < size * 0.72 && y > size * 0.34 && y < size * 0.66);
+      const inABar = x > size * 0.3 && x < size * 0.5 && y > size * 0.47 && y < size * 0.57;
       const mark = inA || inO || inABar;
       raw[offset] = mark ? 255 : 20;
       raw[offset + 1] = mark ? 255 : 24;
@@ -162,9 +162,13 @@ function writeIcon() {
 
   if (process.platform === "darwin" && commandExists("iconutil")) {
     try {
-      execFileSync("iconutil", ["-c", "icns", iconsetDir, "-o", resolve(resourcesDir, "AppIcon.icns")], {
-        stdio: "ignore",
-      });
+      execFileSync(
+        "iconutil",
+        ["-c", "icns", iconsetDir, "-o", resolve(resourcesDir, "AppIcon.icns")],
+        {
+          stdio: "ignore",
+        },
+      );
       rmSync(iconsetDir, { recursive: true, force: true });
     } catch {
       // The PNG iconset remains usable as a build artifact even if iconutil is unavailable.

@@ -1,13 +1,7 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
-import {
-  isMac,
-  isTerminalSession,
-  isWindows,
-  loadConfig,
-  type Session,
-} from "@aoagents/ao-core";
+import { isMac, isTerminalSession, isWindows, loadConfig, type Session } from "@aoagents/ao-core";
 import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { findProjectForSession, matchesPrefix } from "../lib/session-utils.js";
@@ -34,7 +28,9 @@ async function openInIterm(sessionName: string, newWindow?: boolean): Promise<bo
 function spawnDetached(cmd: string, args: string[]): boolean {
   try {
     const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: false });
-    child.on("error", () => { /* swallow — caller already returned */ });
+    child.on("error", () => {
+      /* swallow — caller already returned */
+    });
     child.unref();
     return true;
   } catch {
@@ -81,116 +77,115 @@ export function registerOpen(program: Command): void {
     .argument("[target]", 'Session name, project ID, or "all" to open everything')
     .option("-w, --new-window", "Open in a new terminal window (macOS)")
     .option("-b, --browser", "Open the dashboard URL in a browser instead of a terminal")
-    .action(async (target: string | undefined, opts: { newWindow?: boolean; browser?: boolean }) => {
-      const config = loadConfig();
-      const sm = await getSessionManager(config);
-      const all = await sm.list();
+    .action(
+      async (target: string | undefined, opts: { newWindow?: boolean; browser?: boolean }) => {
+        const config = loadConfig();
+        const sm = await getSessionManager(config);
+        const all = await sm.list();
 
-      // For aggregate targets ("all" / project) we hide terminated sessions —
-      // mirrors Mac's old tmux-list-sessions behavior, which only ever showed
-      // live sessions. For a named lookup the user is asking about a specific
-      // session, so we keep terminated ones in scope and open the dashboard
-      // so they can read the transcript even if the agent has died.
-      let sessionsToOpen: Session[];
+        // For aggregate targets ("all" / project) we hide terminated sessions —
+        // mirrors Mac's old tmux-list-sessions behavior, which only ever showed
+        // live sessions. For a named lookup the user is asking about a specific
+        // session, so we keep terminated ones in scope and open the dashboard
+        // so they can read the transcript even if the agent has died.
+        let sessionsToOpen: Session[];
 
-      if (!target || target === "all") {
-        sessionsToOpen = all.filter((s) => !isTerminalSession(s));
-      } else if (config.projects[target]) {
-        const project = config.projects[target];
-        const prefix = project.sessionPrefix || target;
-        sessionsToOpen = all
-          .filter((s) => !isTerminalSession(s))
-          .filter((s) => s.projectId === target || matchesPrefix(s.id, prefix));
-      } else {
-        const match = all.find((s) => s.id === target);
-        if (!match) {
-          console.error(
-            chalk.red(`Unknown target: ${target}\nSpecify a session name, project ID, or "all".`),
-          );
-          process.exit(1);
+        if (!target || target === "all") {
+          sessionsToOpen = all.filter((s) => !isTerminalSession(s));
+        } else if (config.projects[target]) {
+          const project = config.projects[target];
+          const prefix = project.sessionPrefix || target;
+          sessionsToOpen = all
+            .filter((s) => !isTerminalSession(s))
+            .filter((s) => s.projectId === target || matchesPrefix(s.id, prefix));
+        } else {
+          const match = all.find((s) => s.id === target);
+          if (!match) {
+            console.error(
+              chalk.red(`Unknown target: ${target}\nSpecify a session name, project ID, or "all".`),
+            );
+            process.exit(1);
+          }
+          sessionsToOpen = [match];
         }
-        sessionsToOpen = [match];
-      }
 
-      if (sessionsToOpen.length === 0) {
-        console.log(chalk.dim("No sessions to open."));
-        return;
-      }
+        if (sessionsToOpen.length === 0) {
+          console.log(chalk.dim("No sessions to open."));
+          return;
+        }
 
-      // Prefer the live daemon's port over the config default — they can
-      // diverge if the dashboard auto-picked a free port at startup.
-      const running = await getRunning();
-      const port = running?.port ?? config.port ?? DEFAULT_PORT;
-      if (!running && !opts.browser) {
+        // Prefer the live daemon's port over the config default — they can
+        // diverge if the dashboard auto-picked a free port at startup.
+        const running = await getRunning();
+        const port = running?.port ?? config.port ?? DEFAULT_PORT;
+        if (!running && !opts.browser) {
+          console.log(
+            chalk.dim(
+              "Note: AO daemon does not appear to be running — dashboard URL fallback may not load.",
+            ),
+          );
+        }
+
         console.log(
-          chalk.dim(
-            "Note: AO daemon does not appear to be running — dashboard URL fallback may not load.",
+          chalk.bold(
+            `Opening ${sessionsToOpen.length} session${sessionsToOpen.length > 1 ? "s" : ""}...\n`,
           ),
         );
-      }
 
-      console.log(
-        chalk.bold(
-          `Opening ${sessionsToOpen.length} session${sessionsToOpen.length > 1 ? "s" : ""}...\n`,
-        ),
-      );
+        const sorted = [...sessionsToOpen].sort((a, b) => a.id.localeCompare(b.id));
 
-      const sorted = [...sessionsToOpen].sort((a, b) => a.id.localeCompare(b.id));
+        for (const session of sorted) {
+          const projectId =
+            session.projectId ?? findProjectForSession(config, session.id) ?? target;
+          const url = projectSessionUrl(port, projectId ?? session.id, session.id);
+          const dead = isTerminalSession(session);
 
-      for (const session of sorted) {
-        const projectId = session.projectId ?? findProjectForSession(config, session.id) ?? target;
-        const url = projectSessionUrl(port, projectId ?? session.id, session.id);
-        const dead = isTerminalSession(session);
+          // --browser, or terminated sessions (no live PTY to attach to), or
+          // named-lookup of a dead session: open the dashboard URL.
+          if (opts.browser || dead) {
+            openUrl(url);
+            if (dead) {
+              const sr = session.lifecycle.session.reason;
+              const rr = session.lifecycle.runtime.reason;
+              const at = session.lifecycle.session.terminatedAt;
+              const when = at ? new Date(at).toLocaleString() : "unknown time";
+              console.log(
+                `  ${chalk.yellow(session.id)} ${chalk.dim("(terminated)")} — opened ${chalk.dim(url)}`,
+              );
+              console.log(chalk.dim(`    died at ${when}: session=${sr}, runtime=${rr}`));
+              console.log(chalk.dim(`    restart with: ao session restore ${session.id}`));
+            } else {
+              console.log(`  ${chalk.green(session.id)} — opened ${chalk.dim(url)}`);
+            }
+            continue;
+          }
 
-        // --browser, or terminated sessions (no live PTY to attach to), or
-        // named-lookup of a dead session: open the dashboard URL.
-        if (opts.browser || dead) {
+          if (isMac()) {
+            const opened = await openInIterm(session.id, opts.newWindow);
+            if (opened) {
+              console.log(chalk.green(`  Opened: ${session.id}`));
+              continue;
+            }
+          } else if (isWindows()) {
+            // The spawned `ao session attach` does loadConfig() which searches
+            // upward from cwd for agent-orchestrator.yaml. Anchor the new
+            // console at the project's path (where the yaml lives); if that
+            // isn't in config, fall back to the worktree (yaml may live in a
+            // parent directory of it).
+            const projectPath = projectId ? config.projects[projectId]?.path : undefined;
+            const cwd = projectPath ?? session.workspacePath ?? undefined;
+            if (openWindowsConsole(session.id, cwd)) {
+              console.log(chalk.green(`  Opened: ${session.id} (new console)`));
+              continue;
+            }
+          }
+
+          // Final fallback (Linux always lands here, plus any platform whose
+          // terminal-spawn helper failed): open the dashboard URL.
           openUrl(url);
-          if (dead) {
-            const sr = session.lifecycle.session.reason;
-            const rr = session.lifecycle.runtime.reason;
-            const at = session.lifecycle.session.terminatedAt;
-            const when = at ? new Date(at).toLocaleString() : "unknown time";
-            console.log(
-              `  ${chalk.yellow(session.id)} ${chalk.dim("(terminated)")} — opened ${chalk.dim(url)}`,
-            );
-            console.log(
-              chalk.dim(`    died at ${when}: session=${sr}, runtime=${rr}`),
-            );
-            console.log(
-              chalk.dim(`    restart with: ao session restore ${session.id}`),
-            );
-          } else {
-            console.log(`  ${chalk.green(session.id)} — opened ${chalk.dim(url)}`);
-          }
-          continue;
+          console.log(`  ${chalk.yellow(session.id)} — opened ${chalk.dim(url)}`);
         }
-
-        if (isMac()) {
-          const opened = await openInIterm(session.id, opts.newWindow);
-          if (opened) {
-            console.log(chalk.green(`  Opened: ${session.id}`));
-            continue;
-          }
-        } else if (isWindows()) {
-          // The spawned `ao session attach` does loadConfig() which searches
-          // upward from cwd for agent-orchestrator.yaml. Anchor the new
-          // console at the project's path (where the yaml lives); if that
-          // isn't in config, fall back to the worktree (yaml may live in a
-          // parent directory of it).
-          const projectPath = projectId ? config.projects[projectId]?.path : undefined;
-          const cwd = projectPath ?? session.workspacePath ?? undefined;
-          if (openWindowsConsole(session.id, cwd)) {
-            console.log(chalk.green(`  Opened: ${session.id} (new console)`));
-            continue;
-          }
-        }
-
-        // Final fallback (Linux always lands here, plus any platform whose
-        // terminal-spawn helper failed): open the dashboard URL.
-        openUrl(url);
-        console.log(`  ${chalk.yellow(session.id)} — opened ${chalk.dim(url)}`);
-      }
-      console.log();
-    });
+        console.log();
+      },
+    );
 }

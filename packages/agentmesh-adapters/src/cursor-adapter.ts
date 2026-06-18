@@ -1,6 +1,6 @@
 /**
  * Cursor Agent Adapter
- * 
+ *
  * Adapter for Cursor IDE integration with AgentMesh.
  * Monitors .cursor/chat.md file for activity detection.
  */
@@ -16,10 +16,13 @@ import type {
   AgentStatus,
   AgentSessionInfo,
 } from "@aoagents/agentmesh-core";
-import type { SessionManager } from "@aoagents/ao-core";
-import type { SessionId } from "@aoagents/ao-core";
-import { getShell, isWindows } from "@aoagents/ao-core";
-import { getActivityLogPath } from "@aoagents/ao-core";
+import {
+  type SessionManager,
+  type SessionId,
+  getShell,
+  isWindows,
+  getActivityLogPath,
+} from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, readFile } from "node:fs/promises";
@@ -36,17 +39,17 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
   /**
    * Check if Cursor CLI is available
    */
-  async preflight(context: PreflightContext): Promise<PreflightResult> {
+  async preflight(_context: PreflightContext): Promise<PreflightResult> {
     try {
       const shell = getShell();
       const command = isWindows() ? "cursor.exe" : "cursor";
       const commandArgs = shell.args(`${command} --version`);
-      
+
       const { stdout } = await execFileAsync(shell.cmd, commandArgs, {
         timeout: 5000,
         shell: isWindows() ? true : false,
       });
-      
+
       const versionMatch = stdout.match(/Cursor (\d+\.\d+\.\d+)/);
       const version = versionMatch ? versionMatch[1] : "unknown";
 
@@ -55,7 +58,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
         version,
         warnings: [],
       };
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         warnings: [],
@@ -67,7 +70,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
    * Start a Cursor session with role context
    */
   async start(config: AgentStartConfig): Promise<AgentSession> {
-    const { taskId, role, prompt, workspacePath, branch, environment } = config;
+    const { taskId, role, prompt, branch } = config;
 
     // Build role-specific prompt
     const rolePrompt = this.buildRolePrompt(role, prompt);
@@ -104,7 +107,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
    */
   async getOutput(session: AgentSession, options?: OutputOptions): Promise<AgentOutput> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession || !aoSession.workspacePath) {
       return {
         text: "",
@@ -115,11 +118,11 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
 
     // Try to read Cursor's chat.md file
     const cursorChatPath = join(aoSession.workspacePath, ".cursor", "chat.md");
-    
+
     try {
-      const fileStats = await stat(cursorChatPath);
+      await stat(cursorChatPath);
       const fileContent = await readFile(cursorChatPath, "utf-8");
-      
+
       // Get last N lines
       const lines = fileContent.split("\n");
       const startLine = Math.max(0, lines.length - (options?.lines || 50));
@@ -130,10 +133,10 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
         capturedAt: new Date(),
         linesRead: lines.length - startLine,
       };
-    } catch (error) {
+    } catch {
       // Fall back to standard activity log
       const activityLogPath = await this.getActivityLogPath(session.aoSessionId);
-      
+
       try {
         const content = await readFile(activityLogPath, "utf-8");
         const lines = content.split("\n");
@@ -145,7 +148,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
           capturedAt: new Date(),
           linesRead: tailLines.split("\n").length,
         };
-      } catch (readError) {
+      } catch {
         return {
           text: "",
           capturedAt: new Date(),
@@ -161,7 +164,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
    */
   async getStatus(session: AgentSession): Promise<AgentStatus> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return "exited";
     }
@@ -169,22 +172,22 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
     // Try Cursor-specific activity detection
     if (aoSession.workspacePath) {
       const cursorChatPath = join(aoSession.workspacePath, ".cursor", "chat.md");
-      
+
       try {
         const fileStats = await stat(cursorChatPath);
         const now = new Date();
         const diffMs = now.getTime() - fileStats.mtime.getTime();
-        
+
         // If modified within last 30 seconds, consider active
         if (diffMs < 30000) {
           return "active";
         }
-        
+
         // If modified within last 5 minutes, consider idle
         if (diffMs < 300000) {
           return "idle";
         }
-      } catch (error) {
+      } catch {
         // File doesn't exist, fall back to AO status
       }
     }
@@ -219,7 +222,7 @@ export class CursorAdapter implements AgentMeshAgentAdapter {
    */
   async getSessionInfo(session: AgentSession): Promise<AgentSessionInfo | null> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return null;
     }
@@ -298,10 +301,13 @@ ${task}
 Use Cursor's context awareness to understand the codebase better for more accurate planning.`,
     };
 
-    return rolePrompts[role] || `You are a ${role} agent using Cursor IDE.
+    return (
+      rolePrompts[role] ||
+      `You are a ${role} agent using Cursor IDE.
 
 TASK:
-${task}`;
+${task}`
+    );
   }
 
   /**

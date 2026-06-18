@@ -1,6 +1,6 @@
 /**
  * AgentMesh Core
- * 
+ *
  * Main entry point for the AgentMesh coordination layer.
  * Exports all core services and types.
  */
@@ -22,7 +22,11 @@ export { LockManager } from "./lock-manager.js";
 export { CostTracker } from "./cost-tracker.js";
 
 // Cost Parsing
-export { parseCostFromOutput, parseMultipleCostEntries, aggregateCostEntries } from "./cost-parser.js";
+export {
+  parseCostFromOutput,
+  parseMultipleCostEntries,
+  aggregateCostEntries,
+} from "./cost-parser.js";
 export type { ParsedCostMetrics, CostParseResult } from "./cost-parser.js";
 
 // Re-export QA loop types

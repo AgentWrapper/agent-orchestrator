@@ -517,9 +517,7 @@ function sendNotification(
             // Don't crash the lifecycle on toast failures — log and resolve.
             // Common causes: stripped-down Windows SKU without WinRT, locked
             // group policy, or the user disabled toast notifications.
-            console.warn(
-              `[notifier-desktop] Windows toast failed: ${(err as Error).message}`,
-            );
+            console.warn(`[notifier-desktop] Windows toast failed: ${(err as Error).message}`);
           }
           resolve();
         },

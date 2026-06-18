@@ -125,7 +125,9 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
     );
 
     // Scope to the topbar since MobileBottomNav also has an orchestrator link
-    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Orchestrator" }),
+    ).toBeInTheDocument();
   });
 
   it("does not show orchestrator button when no orchestrator exists", () => {
@@ -136,7 +138,9 @@ describe("SessionDetail unified layout (mobile viewport)", () => {
       />,
     );
 
-    expect(within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("link", { name: "Orchestrator" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows merged PR link for merged sessions", () => {

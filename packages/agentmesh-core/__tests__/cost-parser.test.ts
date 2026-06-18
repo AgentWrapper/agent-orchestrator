@@ -3,14 +3,19 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseCostFromOutput, parseMultipleCostEntries, aggregateCostEntries } from "../src/cost-parser.js";
+import {
+  parseCostFromOutput,
+  parseMultipleCostEntries,
+  aggregateCostEntries,
+} from "../src/cost-parser.js";
 
 describe("Cost Parser", () => {
   describe("parseClaudeCodeCost", () => {
     it("should parse Claude Code cost output", () => {
-      const output = "Tokens: 1234 (input: 567, output: 667) | Cost: $0.0123 | Model: claude-3-5-sonnet";
+      const output =
+        "Tokens: 1234 (input: 567, output: 667) | Cost: $0.0123 | Model: claude-3-5-sonnet";
       const result = parseCostFromOutput(output, "claude-code");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
       expect(result.metrics?.inputTokens).toBe(567);
@@ -23,7 +28,7 @@ describe("Cost Parser", () => {
     it("should estimate cost when not provided", () => {
       const output = "Tokens: 1234 (input: 567, output: 667)";
       const result = parseCostFromOutput(output, "claude-code");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
       expect(result.metrics?.costUsd).toBeGreaterThan(0);
@@ -33,7 +38,7 @@ describe("Cost Parser", () => {
     it("should return null when no token info found", () => {
       const output = "No token information here";
       const result = parseCostFromOutput(output, "claude-code");
-      
+
       expect(result.metrics).toBeNull();
     });
   });
@@ -42,7 +47,7 @@ describe("Cost Parser", () => {
     it("should parse Codex cost output", () => {
       const output = "Used 1234 tokens (567 in, 667 out) - $0.0123 | Model: gpt-4";
       const result = parseCostFromOutput(output, "codex");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
       expect(result.metrics?.inputTokens).toBe(567);
@@ -56,7 +61,7 @@ describe("Cost Parser", () => {
     it("should parse Aider token output and estimate cost", () => {
       const output = "Processed 1234 tokens";
       const result = parseCostFromOutput(output, "aider");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
       expect(result.metrics?.costUsd).toBeGreaterThan(0);
@@ -68,7 +73,7 @@ describe("Cost Parser", () => {
     it("should parse Cursor token output and estimate cost", () => {
       const output = "Generated 1234 tokens";
       const result = parseCostFromOutput(output, "cursor");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
       expect(result?.metrics?.costUsd).toBeGreaterThan(0);
@@ -80,7 +85,7 @@ describe("Cost Parser", () => {
     it("should parse generic token output", () => {
       const output = "Total: 1234 tokens";
       const result = parseCostFromOutput(output, "unknown");
-      
+
       expect(result.metrics).not.toBeNull();
       expect(result.metrics?.totalTokens).toBe(1234);
     });
@@ -92,9 +97,9 @@ describe("Cost Parser", () => {
 
 ---
 Tokens: 200 (input: 100, output: 100) | Cost: $0.002`;
-      
+
       const entries = parseMultipleCostEntries(output, "claude-code");
-      
+
       expect(entries).toHaveLength(2);
       expect(entries[0].totalTokens).toBe(100);
       expect(entries[1].totalTokens).toBe(200);
@@ -121,9 +126,9 @@ Tokens: 200 (input: 100, output: 100) | Cost: $0.002`;
           confidence: "high" as const,
         },
       ];
-      
+
       const aggregated = aggregateCostEntries(entries);
-      
+
       expect(aggregated.totalTokens).toBe(450);
       expect(aggregated.inputTokens).toBe(300);
       expect(aggregated.outputTokens).toBe(150);
@@ -134,7 +139,7 @@ Tokens: 200 (input: 100, output: 100) | Cost: $0.002`;
 
     it("should handle empty entries array", () => {
       const aggregated = aggregateCostEntries([]);
-      
+
       expect(aggregated.totalTokens).toBe(0);
       expect(aggregated.costUsd).toBe(0);
       expect(aggregated.confidence).toBe("low");
@@ -167,9 +172,9 @@ Tokens: 200 (input: 100, output: 100) | Cost: $0.002`;
           confidence: "high" as const,
         },
       ];
-      
+
       const aggregated = aggregateCostEntries(entries);
-      
+
       expect(aggregated.model).toBe("claude-3-5-sonnet");
     });
   });

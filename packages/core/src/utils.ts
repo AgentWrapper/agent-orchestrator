@@ -47,7 +47,8 @@ export function validateUrl(url: string, label: string): void {
  */
 export function isGitBranchNameSafe(name: string): boolean {
   if (!name) return false;
-  if (name === "@" || name.startsWith(".") || name.endsWith(".") || name.endsWith("/")) return false;
+  if (name === "@" || name.startsWith(".") || name.endsWith(".") || name.endsWith("/"))
+    return false;
   if (name.endsWith(".lock")) return false;
   if (name.includes("..")) return false;
   if (name.includes("//")) return false;
@@ -81,9 +82,10 @@ export function normalizeRetryConfig(
   const rawRetries = config?.retries as number | undefined;
   const rawDelay = config?.retryDelayMs as number | undefined;
   const retries = Number.isFinite(rawRetries) ? Math.max(0, rawRetries ?? 0) : defaults.retries;
-  const retryDelayMs = Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
-    ? (rawDelay as number)
-    : defaults.retryDelayMs;
+  const retryDelayMs =
+    Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
+      ? (rawDelay as number)
+      : defaults.retryDelayMs;
   return { retries, retryDelayMs };
 }
 

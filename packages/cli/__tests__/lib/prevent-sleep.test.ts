@@ -10,10 +10,7 @@ vi.mock("node:child_process", () => ({
 import { preventIdleSleep } from "../../src/lib/prevent-sleep.js";
 
 // Store original platform descriptor for safe restoration
-const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(
-  process,
-  "platform",
-);
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
 function setPlatform(platform: string): void {
   Object.defineProperty(process, "platform", {
@@ -53,11 +50,10 @@ describe("preventIdleSleep", () => {
 
       const handle = preventIdleSleep();
 
-      expect(mockSpawn).toHaveBeenCalledWith(
-        "caffeinate",
-        ["-i", "-w", String(process.pid)],
-        { stdio: "ignore", detached: true },
-      );
+      expect(mockSpawn).toHaveBeenCalledWith("caffeinate", ["-i", "-w", String(process.pid)], {
+        stdio: "ignore",
+        detached: true,
+      });
       expect(mockChild.unref).toHaveBeenCalled();
       expect(handle).not.toBeNull();
     });
@@ -74,11 +70,10 @@ describe("preventIdleSleep", () => {
       const customPid = 12345;
       preventIdleSleep(customPid);
 
-      expect(mockSpawn).toHaveBeenCalledWith(
-        "caffeinate",
-        ["-i", "-w", String(customPid)],
-        { stdio: "ignore", detached: true },
-      );
+      expect(mockSpawn).toHaveBeenCalledWith("caffeinate", ["-i", "-w", String(customPid)], {
+        stdio: "ignore",
+        detached: true,
+      });
     });
 
     it("returns handle with release function", () => {

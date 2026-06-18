@@ -144,7 +144,8 @@ describe("useMediaQuery", () => {
 
     expect(currentMQL.removeListener).toHaveBeenCalledWith(expect.any(Function));
     const addedListener = (currentMQL.addListener as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    const removedListener = (currentMQL.removeListener as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const removedListener = (currentMQL.removeListener as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(addedListener).toBe(removedListener);
   });
 });

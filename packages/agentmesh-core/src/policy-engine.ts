@@ -1,6 +1,6 @@
 /**
  * Policy Engine
- * 
+ *
  * Validates code changes against configurable policy rules.
  * Blocks dangerous changes before PR creation.
  */
@@ -22,9 +22,9 @@ export class PolicyEngine {
       name: "No Hardcoded Secrets",
       description: "Prevent hardcoded API keys, passwords, or tokens",
       severity: "error",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Common secret patterns
         const secretPatterns = [
           /api[_-]?key\s*[:=]\s*['"][\w-]{20,}['"]/gi,
@@ -37,7 +37,7 @@ export class PolicyEngine {
         for (const pattern of secretPatterns) {
           const matches = diff.match(pattern);
           if (matches) {
-            matches.forEach(match => {
+            matches.forEach((match) => {
               violations.push({
                 ruleId: "no-hardcoded-secrets",
                 message: `Potential hardcoded secret detected: ${match.substring(0, 20)}...`,
@@ -57,10 +57,10 @@ export class PolicyEngine {
       name: "No Console Logs",
       description: "Prevent console.log statements in production code",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
         const consoleLogPattern = /console\.(log|debug|info|warn|error)\(/g;
-        
+
         const matches = diff.match(consoleLogPattern);
         if (matches) {
           violations.push({
@@ -80,12 +80,12 @@ export class PolicyEngine {
       name: "Require Tests",
       description: "Ensure new features include test coverage",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Check if source files were modified
         const hasSourceChanges = /\.(ts|js|tsx|jsx)$/.test(diff);
-        
+
         // Check if test files were added/modified
         const hasTestChanges = /\.(test\.|spec\.)/.test(diff);
 
@@ -107,9 +107,9 @@ export class PolicyEngine {
       name: "No Destructive Operations",
       description: "Block dangerous file operations like rm -rf",
       severity: "error",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const dangerousPatterns = [
           /rm\s+-rf/g,
           /rm\s+-fr/g,
@@ -121,7 +121,7 @@ export class PolicyEngine {
         for (const pattern of dangerousPatterns) {
           const matches = diff.match(pattern);
           if (matches) {
-            matches.forEach(match => {
+            matches.forEach((match) => {
               violations.push({
                 ruleId: "no-destructive-ops",
                 message: `Dangerous operation detected: ${match}`,
@@ -141,9 +141,9 @@ export class PolicyEngine {
       name: "No SQL Injection",
       description: "Prevent SQL injection vulnerabilities in database queries",
       severity: "error",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const sqlInjectionPatterns = [
           /query\s*\(\s*['"`]\s*\$\{/g, // Template literals in queries
           /execute\s*\(\s*['"`]\s*\+/g, // String concatenation in queries
@@ -153,7 +153,7 @@ export class PolicyEngine {
         for (const pattern of sqlInjectionPatterns) {
           const matches = diff.match(pattern);
           if (matches) {
-            matches.forEach(match => {
+            matches.forEach((match) => {
               violations.push({
                 ruleId: "no-sql-injection",
                 message: `Potential SQL injection vulnerability: ${match.substring(0, 30)}...`,
@@ -173,9 +173,9 @@ export class PolicyEngine {
       name: "No XSS Vulnerabilities",
       description: "Prevent cross-site scripting vulnerabilities",
       severity: "error",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const xssPatterns = [
           /innerHTML\s*=\s*\$\{/g, // Template literal in innerHTML
           /innerHTML\s*=\s*\+/g, // String concatenation in innerHTML
@@ -186,7 +186,7 @@ export class PolicyEngine {
         for (const pattern of xssPatterns) {
           const matches = diff.match(pattern);
           if (matches) {
-            matches.forEach(match => {
+            matches.forEach((match) => {
               violations.push({
                 ruleId: "no-xss-vulnerability",
                 message: `Potential XSS vulnerability: ${match.substring(0, 30)}...`,
@@ -206,9 +206,9 @@ export class PolicyEngine {
       name: "No Synchronous Operations",
       description: "Prevent synchronous file/network operations that block the event loop",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const syncPatterns = [
           /readFileSync/g,
           /writeFileSync/g,
@@ -238,13 +238,13 @@ export class PolicyEngine {
       name: "Require Alt Text",
       description: "Ensure all images have alt text for accessibility",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Check for img tags without alt attribute
         const imgPattern = /<img(?![^>]*\balt\s*=)/gi;
         const matches = diff.match(imgPattern);
-        
+
         if (matches) {
           violations.push({
             ruleId: "require-alt-text",
@@ -263,13 +263,14 @@ export class PolicyEngine {
       name: "Require ARIA Labels",
       description: "Ensure interactive elements have ARIA labels for accessibility",
       severity: "info",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Check for buttons without aria-label or text content
-        const buttonPattern = /<button(?![^>]*(aria-label|aria-labelledby|>[\s\S]{0,50}<\/button>))/gi;
+        const buttonPattern =
+          /<button(?![^>]*(aria-label|aria-labelledby|>[\s\S]{0,50}<\/button>))/gi;
         const matches = diff.match(buttonPattern);
-        
+
         if (matches) {
           violations.push({
             ruleId: "require-aria-labels",
@@ -288,12 +289,12 @@ export class PolicyEngine {
       name: "No TODO Comments",
       description: "Prevent TODO comments in committed code",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const todoPattern = /TODO|FIXME|HACK|XXX/gi;
         const matches = diff.match(todoPattern);
-        
+
         if (matches) {
           violations.push({
             ruleId: "no-todo-comments",
@@ -312,14 +313,15 @@ export class PolicyEngine {
       name: "No Magic Numbers",
       description: "Prevent magic numbers, use named constants instead",
       severity: "info",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Match numbers that aren't 0, 1, or common small values
         const magicNumberPattern = /[^a-zA-Z0-9_](?!0|1|2|10|100|1000)\d{2,}(?![a-zA-Z])/g;
         const matches = diff.match(magicNumberPattern);
-        
-        if (matches && matches.length > 5) { // Only flag if many occurrences
+
+        if (matches && matches.length > 5) {
+          // Only flag if many occurrences
           violations.push({
             ruleId: "no-magic-numbers",
             message: `Found ${matches.length} potential magic number(s). Consider using named constants.`,
@@ -337,17 +339,17 @@ export class PolicyEngine {
       name: "Require Error Handling",
       description: "Ensure async operations have proper error handling",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         // Check for await without try-catch
         const awaitPattern = /await\s+[a-zA-Z_$][a-zA-Z0-9_$]*/g;
         const matches = diff.match(awaitPattern);
-        
+
         if (matches && matches.length > 3) {
           // Check if there's a try-catch nearby
           const hasTryCatch = /try\s*\{[\s\S]{0,500}catch/g.test(diff);
-          
+
           if (!hasTryCatch) {
             violations.push({
               ruleId: "require-error-handling",
@@ -367,20 +369,21 @@ export class PolicyEngine {
       name: "No Hardcoded URLs",
       description: "Prevent hardcoded URLs, use environment variables",
       severity: "warning",
-      check: (diff, context) => {
+      check: (diff, _context) => {
         const violations: PolicyViolation[] = [];
-        
+
         const urlPattern = /https?:\/\/[^\s"'`<>]+/g;
         const matches = diff.match(urlPattern);
-        
+
         if (matches) {
           // Filter out localhost and common documentation URLs
-          const problematicUrls = matches.filter(url => 
-            !url.includes('localhost') && 
-            !url.includes('127.0.0.1') &&
-            !url.includes('example.com')
+          const problematicUrls = matches.filter(
+            (url) =>
+              !url.includes("localhost") &&
+              !url.includes("127.0.0.1") &&
+              !url.includes("example.com"),
           );
-          
+
           if (problematicUrls.length > 0) {
             violations.push({
               ruleId: "no-hardcoded-urls",
@@ -424,7 +427,7 @@ export class PolicyEngine {
         allViolations.push(...violations);
 
         // Check if any error-level violations should block
-        if (violations.some(v => v.severity === "error")) {
+        if (violations.some((v) => v.severity === "error")) {
           blocked = true;
         }
       } catch (error) {

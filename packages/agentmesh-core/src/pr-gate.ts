@@ -1,6 +1,6 @@
 /**
  * PR Gate
- * 
+ *
  * Controls PR opening based on QA results and policy checks.
  * Ensures PRs only open after quality gates pass.
  */
@@ -52,7 +52,9 @@ export class PRGate {
           reasons.push(`Policy check failed: ${options.policyResult.violations.length} violations`);
           canOpen = false;
         } else {
-          reasons.push(`Policy check has warnings: ${options.policyResult.violations.length} issues`);
+          reasons.push(
+            `Policy check has warnings: ${options.policyResult.violations.length} issues`,
+          );
         }
       }
     }
@@ -60,7 +62,9 @@ export class PRGate {
     // Check approval requirement
     if (options.approvals !== undefined) {
       if (options.approvals < this.config.requiredApprovals) {
-        reasons.push(`Insufficient approvals: ${options.approvals}/${this.config.requiredApprovals} required`);
+        reasons.push(
+          `Insufficient approvals: ${options.approvals}/${this.config.requiredApprovals} required`,
+        );
         canOpen = false;
       }
     }
@@ -70,7 +74,8 @@ export class PRGate {
       reasons,
       qaPassed: options.qaResult?.verdict === "PASS",
       policyPassed: options.policyResult?.passed,
-      approvalsMet: options.approvals !== undefined && options.approvals >= this.config.requiredApprovals,
+      approvalsMet:
+        options.approvals !== undefined && options.approvals >= this.config.requiredApprovals,
     };
   }
 

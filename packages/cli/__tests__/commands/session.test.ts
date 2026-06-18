@@ -475,13 +475,7 @@ describe("session ls", () => {
     mockTmux.mockResolvedValue(null);
     mockGit.mockResolvedValue(null);
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "session",
-      "ls",
-      "--include-terminated",
-    ]);
+    await program.parseAsync(["node", "test", "session", "ls", "--include-terminated"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("app-1");
@@ -513,14 +507,7 @@ describe("session ls", () => {
     mockTmux.mockResolvedValue(null);
     mockGit.mockResolvedValue(null);
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "session",
-      "ls",
-      "--json",
-      "--include-terminated",
-    ]);
+    await program.parseAsync(["node", "test", "session", "ls", "--json", "--include-terminated"]);
 
     expect(consoleSpy).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
@@ -769,7 +756,11 @@ describe("session attach", () => {
       issueId: null,
       pr: null,
       workspacePath: null,
-      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" } },
+      runtimeHandle: {
+        id: "hash-app-1",
+        runtimeName: "process",
+        data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" },
+      },
       agentInfo: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),
@@ -803,7 +794,9 @@ describe("session attach", () => {
     const inputData = Buffer.from("ls\r");
     process.stdin.emit("data", inputData);
     expect((mockSocket as { write: ReturnType<typeof vi.fn> }).write).toHaveBeenCalled();
-    const written = (mockSocket as { write: ReturnType<typeof vi.fn> }).write.mock.calls.at(-1)![0] as Buffer;
+    const written = (mockSocket as { write: ReturnType<typeof vi.fn> }).write.mock.calls.at(
+      -1,
+    )![0] as Buffer;
     expect(written.readUInt8(0)).toBe(0x02); // MSG_TERMINAL_INPUT
     expect(written.subarray(5).toString()).toBe("ls\r");
 
@@ -939,7 +932,11 @@ describe("session attach", () => {
       issueId: null,
       pr: null,
       workspacePath: null,
-      runtimeHandle: { id: "hash-app-1", runtimeName: "process", data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" } },
+      runtimeHandle: {
+        id: "hash-app-1",
+        runtimeName: "process",
+        data: { pipePath: "\\\\.\\pipe\\ao-pty-hash-app-1" },
+      },
       agentInfo: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),

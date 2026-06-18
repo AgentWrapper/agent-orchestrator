@@ -4,20 +4,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * POST /api/agentmesh/tasks/:id/start
- * 
+ *
  * Start the builder phase for a task
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(request);
   const { id: taskId } = await params;
 
   try {
-    const body = await request.json();
-    const { agent: _agent } = body;
-
     const { coordinationService } = await getServices();
     await coordinationService.startBuilder(taskId);
 
@@ -28,14 +22,11 @@ export async function POST(
         message: "Builder phase started",
       },
       undefined,
-      correlationId
+      correlationId,
     );
   } catch (error) {
     console.error("Error in POST /api/agentmesh/tasks/:id/start:", error);
 
-    return NextResponse.json(
-      { error: "Failed to start task" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to start task" }, { status: 500 });
   }
 }

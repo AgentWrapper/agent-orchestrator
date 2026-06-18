@@ -2,10 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  getWorkspaceAgentsMdPath,
-  writeWorkspaceOpenCodeAgentsMd,
-} from "../opencode-agents-md.js";
+import { getWorkspaceAgentsMdPath, writeWorkspaceOpenCodeAgentsMd } from "../opencode-agents-md.js";
 
 describe("opencode-agents-md", () => {
   const root = mkdtempSync(join(tmpdir(), "ao-opencode-agents-md-"));
@@ -31,11 +28,7 @@ describe("opencode-agents-md", () => {
   it("preserves existing AGENTS.md content and appends the orchestrator block", () => {
     const workspacePath = join(root, "workspace");
     mkdirSync(workspacePath, { recursive: true });
-    writeFileSync(
-      join(workspacePath, "AGENTS.md"),
-      "# Existing\n\nDo keep this.\n",
-      "utf-8",
-    );
+    writeFileSync(join(workspacePath, "AGENTS.md"), "# Existing\n\nDo keep this.\n", "utf-8");
     const promptFile = join(root, "prompt.md");
     writeFileSync(promptFile, "Merged orchestrator instructions.\n", "utf-8");
 

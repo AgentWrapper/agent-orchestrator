@@ -178,7 +178,10 @@ export function ErrorDisplay({
               <summary className="cursor-pointer list-none px-4 py-3 text-[12px] font-medium text-[var(--color-text-secondary)]">
                 {detailsTitle}
               </summary>
-              <div className="border-t px-4 py-4" style={{ borderColor: "var(--color-border-subtle)" }}>
+              <div
+                className="border-t px-4 py-4"
+                style={{ borderColor: "var(--color-border-subtle)" }}
+              >
                 {error?.digest ? (
                   <p className="mb-3 font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
                     digest: {error.digest}

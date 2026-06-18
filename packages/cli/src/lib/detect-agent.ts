@@ -59,7 +59,7 @@ export async function detectAvailableAgents(): Promise<DetectedAgent[]> {
  * - Multiple agents available + non-human → pick first (claude-code if available)
  */
 export async function detectAgentRuntime(preDetected?: DetectedAgent[]): Promise<string> {
-  const available = preDetected ?? await detectAvailableAgents();
+  const available = preDetected ?? (await detectAvailableAgents());
 
   if (available.length === 0) {
     return "claude-code";
@@ -81,6 +81,6 @@ export async function detectAgentRuntime(preDetected?: DetectedAgent[]): Promise
       value: agent.name,
       label: agent.displayName,
       hint: agent.name,
-    }))
+    })),
   );
 }

@@ -9308,3 +9308,10 @@ body.is-resizing-x {
   cursor: col-resize;
   user-select: none;
 }
+
+/* AgentMesh QA loop progress bars — width is data-driven via the --progress
+   custom property set inline; the literal width stays out of the JSX style. */
+.qa-progress-bar__fill {
+  width: var(--progress, 0%);
+  transition: width 0.3s ease;
+}

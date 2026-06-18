@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AO — Orchestrator button icon exploration</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0b0d;
+        --panel: #0e0f12;
+        --card: #15171b;
+        --ui: "Schibsted Grotesk", sans-serif;
+        --mono: "JetBrains Mono", monospace;
+        --t1: #f4f5f7;
+        --t2: #9ba1aa;
+        --t3: #646a73;
+        --t4: #444951;
+        --line: rgba(255, 255, 255, 0.06);
+        --line-2: rgba(255, 255, 255, 0.1);
+        --blue: #4d8dff;
+        --hover: rgba(255, 255, 255, 0.04);
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--t1);
+        font-family: var(--ui);
+        -webkit-font-smoothing: antialiased;
+        padding: 38px 44px 80px;
+      }
+      h1 {
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+      }
+      .lede {
+        font-size: 13px;
+        color: var(--t3);
+        margin: 7px 0 30px;
+        max-width: 680px;
+        line-height: 1.55;
+      }
+      .lede b {
+        color: var(--t2);
+        font-weight: 600;
+      }
+      .grp {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--t4);
+        margin: 30px 0 15px;
+        padding-bottom: 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+        gap: 13px;
+      }
+      .cell {
+        background: var(--card);
+        border-radius: 10px;
+        box-shadow: inset 0 0 0 1px var(--line);
+        padding: 18px 16px 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 13px;
+      }
+      .cell:hover {
+        box-shadow: inset 0 0 0 1px var(--line-2);
+      }
+      .btn {
+        padding: 8px 14px;
+        border-radius: 7px;
+        font-size: 12.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        background: var(--blue);
+        color: #fff;
+        cursor: pointer;
+      }
+      .btn:hover {
+        background: #5b97ff;
+      }
+      .cap {
+        text-align: center;
+      }
+      .cap .nm {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--t1);
+      }
+      .cap .ds {
+        font-size: 11px;
+        color: var(--t3);
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      .cur {
+        box-shadow: inset 0 0 0 1px rgba(77, 141, 255, 0.5);
+      }
+      .badge {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: var(--blue);
+        background: rgba(77, 141, 255, 0.14);
+        padding: 1px 6px;
+        border-radius: 4px;
+        margin-top: 7px;
+        display: inline-block;
+      }
+      /* icon-only + mascot variants */
+      .ibtn {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: var(--blue);
+        display: grid;
+        place-items: center;
+        color: #fff;
+        cursor: pointer;
+      }
+      .mtile {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: #000;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+      .mtile img {
+        width: 16px;
+        height: 16px;
+        image-rendering: pixelated;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Orchestrator button — icon candidates</h1>
+    <p class="lede">
+      The action spawns &amp; conducts parallel agents. Two honest metaphor families:
+      <b>conducting / magic</b> (ties to the blue-wand mascot lore) and
+      <b>coordinating many nodes</b> (shows the fleet it manages). All shown in the real blue
+      primary style.
+    </p>
+
+    <div class="grp">Conducting / magic</div>
+    <div class="grid" id="g1"></div>
+
+    <div class="grp">Coordinating many agents</div>
+    <div class="grid" id="g2"></div>
+
+    <div class="grp">Other / literal</div>
+    <div class="grid" id="g3"></div>
+
+    <div class="grp">Treatment variants (icon-only · mascot)</div>
+    <div class="grid" id="g4"></div>
+
+    <script>
+      const S = (p, w = 15) =>
+        `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+
+      const conducting = [
+        {
+          nm: "Wand + sparkles",
+          ds: "current — conductor's wand",
+          cur: true,
+          ic: `<path d="m4 20 8.5-8.5"/><path d="M15 4.5 16 2l2.5 1L16 4l-1 2.5z"/><path d="m18 9 .5 2 2 .5-2 .5-.5 2-.5-2-2-.5 2-.5z"/>`,
+        },
+        {
+          nm: "Wand (single)",
+          ds: "cleaner, one sparkle at tip",
+          ic: `<path d="m4 20 10-10"/><path d="M14.5 5.5 16 2.5 17.5 5.5 20.5 7 17.5 8.5 16 11.5 14.5 8.5 11.5 7z"/>`,
+        },
+        {
+          nm: "Sparkles",
+          ds: "magic / auto — no stick",
+          ic: `<path d="M11 3 12.7 7.3 17 9 12.7 10.7 11 15 9.3 10.7 5 9 9.3 7.3z"/><path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z"/>`,
+        },
+        {
+          nm: "Conductor baton",
+          ds: "baton with tip — literal conducting",
+          ic: `<line x1="4.5" y1="19.5" x2="16" y2="8"/><circle cx="18" cy="6" r="2.4"/>`,
+        },
+        { nm: "Zap", ds: "fast spawn / power", ic: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>` },
+      ];
+
+      const coordinating = [
+        {
+          nm: "Org chart",
+          ds: "one conductor → many agents",
+          ic: `<rect x="9" y="2.5" width="6" height="5" rx="1.3"/><rect x="2.5" y="16.5" width="6" height="5" rx="1.3"/><rect x="15.5" y="16.5" width="6" height="5" rx="1.3"/><path d="M12 7.5v4M5.5 16.5v-2.5h13v2.5"/>`,
+        },
+        {
+          nm: "Git fork",
+          ds: "parallel branches / worktrees",
+          ic: `<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M6 8.4v1.1a2.5 2.5 0 0 0 2.5 2.5h7A2.5 2.5 0 0 0 18 9.5V8.4M12 12v3.6"/>`,
+        },
+        {
+          nm: "Hub / radial",
+          ds: "central node, spokes to agents",
+          ic: `<circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="4" r="1.8"/><circle cx="12" cy="20" r="1.8"/><circle cx="4.5" cy="8" r="1.8"/><circle cx="19.5" cy="8" r="1.8"/><path d="M12 9.4V5.8M12 14.6v3.6M9.8 10.7 6 8.9M14.2 10.7 18 8.9"/>`,
+        },
+        {
+          nm: "Grid (fleet)",
+          ds: "a board of agents",
+          ic: `<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>`,
+        },
+        {
+          nm: "Layers",
+          ds: "stacked parallel work",
+          ic: `<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>`,
+        },
+      ];
+
+      const other = [
+        {
+          nm: "Command",
+          ds: "power-user / control surface",
+          ic: `<path d="M9 3a3 3 0 1 1-3 3v12a3 3 0 1 1 3-3h6a3 3 0 1 1-3 3V6a3 3 0 1 1 3 3H9"/>`,
+        },
+        {
+          nm: "Compass",
+          ds: "steer / direct the fleet",
+          ic: `<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/>`,
+        },
+        {
+          nm: "Cpu / agent core",
+          ds: "the brain doing the work",
+          ic: `<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2.5v2M15 2.5v2M9 19.5v2M15 19.5v2M2.5 9h2M2.5 15h2M19.5 9h2M19.5 15h2"/>`,
+        },
+        {
+          nm: "Play (start)",
+          ds: "kick off agents",
+          ic: `<circle cx="12" cy="12" r="9"/><path d="M10 8.5 16 12l-6 3.5z"/>`,
+        },
+        {
+          nm: "Bot",
+          ds: "literal agent face",
+          ic: `<rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 4.5V8"/><circle cx="12" cy="3.5" r="1.3"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/>`,
+        },
+      ];
+
+      function render(id, arr) {
+        document.getElementById(id).innerHTML = arr
+          .map(
+            (o) => `
+    <div class="cell">
+      <button class="btn ${o.cur ? "cur" : ""}">${S(o.ic)}Orchestrator</button>
+      <div class="cap"><div class="nm">${o.nm}</div><div class="ds">${o.ds}</div>
+      ${o.cur ? '<span class="badge">CURRENT</span>' : ""}</div>
+    </div>`,
+          )
+          .join("");
+      }
+      render("g1", conducting);
+      render("g2", coordinating);
+      render("g3", other);
+
+      // treatment variants
+      document.getElementById("g4").innerHTML = `
+  <div class="cell">
+    <button class="ibtn">${S(`<path d="m4 20 8.5-8.5"/><path d="M15 4.5 16 2l2.5 1L16 4l-1 2.5z"/><path d="m18 9 .5 2 2 .5-2 .5-.5 2-.5-2-2-.5 2-.5z"/>`, 17)}</button>
+    <div class="cap"><div class="nm">Icon-only (wand)</div><div class="ds">label lives in a tooltip; saves topbar width</div></div>
+  </div>
+  <div class="cell">
+    <button class="btn"><span class="mtile"><img src="mascot.png" alt=""/></span>Orchestrator</button>
+    <div class="cap"><div class="nm">Mascot chip</div><div class="ds">most literal — but black tile fights the blue fill</div></div>
+  </div>
+  <div class="cell">
+    <button class="btn" style="background:#15171b;box-shadow:inset 0 0 0 1px rgba(77,141,255,.4);color:#7eaaff">${S(`<path d="m4 20 8.5-8.5"/><path d="M15 4.5 16 2l2.5 1L16 4l-1 2.5z"/><path d="m18 9 .5 2 2 .5-2 .5-.5 2-.5-2-2-.5 2-.5z"/>`)}Orchestrator</button>
+    <div class="cap"><div class="nm">Outline (not filled)</div><div class="ds">quieter — if Kill should be the only solid button</div></div>
+  </div>`;
+    </script>
+  </body>
+</html>

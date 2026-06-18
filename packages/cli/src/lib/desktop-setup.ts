@@ -211,7 +211,9 @@ function printStatus(): void {
   console.log(`  config backend: ${configBackend ?? "not configured"}`);
   console.log(`  dashboardUrl: ${configDashboardUrl ?? "not configured"}`);
   console.log(`  config appPath: ${configAppPath ?? "not configured"}`);
-  console.log(`  terminal-notifier: ${commandExists("terminal-notifier") ? "available" : "missing"}`);
+  console.log(
+    `  terminal-notifier: ${commandExists("terminal-notifier") ? "available" : "missing"}`,
+  );
   console.log(`  osascript: ${commandExists("osascript") ? "available" : "missing"}`);
   console.log(`  installed: ${installed ? "yes" : "no"}`);
   console.log(`  app: ${appPath}`);
@@ -382,7 +384,10 @@ async function chooseDesktopBackend(
     options: [
       {
         value: "ao-app",
-        label: existingBackend === "ao-app" ? "AO Notifier.app (current)" : "AO Notifier.app (recommended)",
+        label:
+          existingBackend === "ao-app"
+            ? "AO Notifier.app (current)"
+            : "AO Notifier.app (recommended)",
         hint: "Native macOS app with actions and AO-specific behavior",
       },
       {
@@ -392,7 +397,10 @@ async function chooseDesktopBackend(
       },
       {
         value: "terminal-notifier",
-        label: existingBackend === "terminal-notifier" ? "terminal-notifier (current)" : "terminal-notifier",
+        label:
+          existingBackend === "terminal-notifier"
+            ? "terminal-notifier (current)"
+            : "terminal-notifier",
         hint: "Requires Homebrew package; supports click-to-open",
       },
       {
@@ -610,11 +618,7 @@ async function wireDesktopConfig(
 
   if (
     !conflictAlreadyChecked &&
-    !(await shouldReplaceConflictingDesktop(
-      existingDesktop["plugin"],
-      force,
-      nonInteractive,
-    ))
+    !(await shouldReplaceConflictingDesktop(existingDesktop["plugin"], force, nonInteractive))
   ) {
     return false;
   }

@@ -20,7 +20,11 @@ if (!existsSync(appDir)) {
   process.exit(1);
 }
 
-execFileSync("codesign", ["--force", "--deep", "--options", "runtime", "--sign", identity, appDir], {
-  stdio: "inherit",
-});
+execFileSync(
+  "codesign",
+  ["--force", "--deep", "--options", "runtime", "--sign", identity, appDir],
+  {
+    stdio: "inherit",
+  },
+);
 console.log(`Signed AO Notifier.app with ${identity === "-" ? "ad-hoc identity" : identity}.`);

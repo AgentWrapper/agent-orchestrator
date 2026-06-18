@@ -7,6 +7,7 @@ import {
   type ProjectConfig,
 } from "@aoagents/ao-core";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
@@ -92,7 +93,8 @@ import {
 // (~/.kimi/sessions/<md5(cwd)>/<session-uuid>/{context,wire}.jsonl).
 // ---------------------------------------------------------------------------
 function workspaceHash(workspacePath: string): string {
-  return createHash("md5").update(workspacePath).digest("hex");
+  const canonical = existsSync(workspacePath) ? realpathSync.native(workspacePath) : workspacePath;
+  return createHash("md5").update(canonical).digest("hex");
 }
 
 function writeKimiSession(
@@ -205,6 +207,22 @@ function mockTmuxWithProcess(processName: string, found = true) {
   });
 }
 
+async function bestEffortRm(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error: unknown) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if ((code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM") && attempt < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   _resetSessionMatchCache();
@@ -216,11 +234,11 @@ beforeEach(() => {
   // (/var is a symlink on macOS). Without this, the plugin hashes
   // realpath(workspacePath) while the test wrote under the unresolved path,
   // and the hashes diverge.
-  fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "kimicode-test-")));
+  fakeHome = realpathSync.native(mkdtempSync(join(tmpdir(), "kimicode-test-")));
 });
 
-afterEach(() => {
-  rmSync(fakeHome, { recursive: true, force: true });
+afterEach(async () => {
+  await bestEffortRm(fakeHome);
 });
 
 // =============================================================================
@@ -262,9 +280,7 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command with --work-dir", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe(
-      "kimi --work-dir '/workspace/repo'",
-    );
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("kimi --work-dir '/workspace/repo'");
   });
 
   it("adds --yolo when permissions=permissionless", () => {
@@ -382,9 +398,7 @@ describe("getEnvironment", () => {
 
   it("sets AO_ISSUE_ID only when provided", () => {
     expect(agent.getEnvironment(makeLaunchConfig()).AO_ISSUE_ID).toBeUndefined();
-    expect(agent.getEnvironment(makeLaunchConfig({ issueId: "GH-42" })).AO_ISSUE_ID).toBe(
-      "GH-42",
-    );
+    expect(agent.getEnvironment(makeLaunchConfig({ issueId: "GH-42" })).AO_ISSUE_ID).toBe("GH-42");
   });
 
   // PATH and GH_PATH are not set here — session-manager injects them for
@@ -465,11 +479,7 @@ describe("detectActivity", () => {
     // UI re-renders `kimi>` on the last line as part of the prompt chrome.
     // Old ordering (idle-first) misclassified this as idle and left the
     // session hanging. Actionable states MUST win.
-    const output = [
-      "Allow file write?",
-      "(Y)es/(N)o",
-      "kimi> ",
-    ].join("\n");
+    const output = ["Allow file write?", "(Y)es/(N)o", "kimi> "].join("\n");
     expect(agent.detectActivity(output)).toBe("waiting_input");
   });
 
@@ -740,9 +750,7 @@ describe("getActivityState", () => {
     );
 
     mockTmuxWithProcess("kimi");
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("pinned-uuid");
   });
 
@@ -752,9 +760,7 @@ describe("getActivityState", () => {
     writeKimiSession(realWorkspace, "ao-spawned");
 
     mockTmuxWithProcess("kimi");
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("ao-spawned");
 
     const pin = JSON.parse(
@@ -783,9 +789,7 @@ describe("getActivityState", () => {
 
     mockTmuxWithProcess("kimi");
     _resetSessionMatchCache();
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("ao-original");
   });
 
@@ -827,9 +831,7 @@ describe("getActivityState", () => {
       }),
     );
 
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("ao-launched-uuid");
   });
 
@@ -870,9 +872,7 @@ describe("getActivityState", () => {
     writeKimiSession(realWorkspace, "ao-spawned");
 
     mockTmuxWithProcess("kimi");
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("ao-spawned");
   });
 
@@ -895,9 +895,7 @@ describe("getActivityState", () => {
     writeKimiSession(realWorkspace, "kimi-just-created-this");
 
     mockTmuxWithProcess("kimi");
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     // The newly-created UUID must NOT have been treated as pre-existing —
     // pre-launch baseline didn't see it. Discovery must attach to it.
     expect(info?.agentSessionId).toBe("kimi-just-created-this");
@@ -940,9 +938,7 @@ describe("getActivityState", () => {
     );
 
     mockTmuxWithProcess("kimi");
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info).toBeNull();
   });
 
@@ -1003,7 +999,7 @@ describe("getActivityState", () => {
     const real = join(fakeHome, "workspaces", "real-project");
     mkdirSync(real, { recursive: true });
     const link = join(fakeHome, "workspaces", "link-to-project");
-    symlinkSync(real, link);
+    symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
 
     // Write a session under the realpath bucket, then look it up via the
     // symlink path — our resolveWorkspacePath should make them equivalent.
@@ -1034,24 +1030,27 @@ describe("getActivityState", () => {
   // would let stat() / createReadStream() follow it to /etc/passwd, /dev/zero,
   // a FIFO, etc. — escaping the kimi-sessions sandbox. lstat-based checks
   // reject anything that isn't a regular file.
-  it("rejects session dirs whose live-signal files are symlinks (sandbox escape)", async () => {
-    mockTmuxWithProcess("kimi");
-    const bucket = join(fakeHome, ".kimi", "sessions", workspaceHash(workspace));
-    const sessionDir = join(bucket, "symlinked-session");
-    mkdirSync(sessionDir, { recursive: true });
+  it.skipIf(process.platform === "win32")(
+    "rejects session dirs whose live-signal files are symlinks (sandbox escape)",
+    async () => {
+      mockTmuxWithProcess("kimi");
+      const bucket = join(fakeHome, ".kimi", "sessions", workspaceHash(workspace));
+      const sessionDir = join(bucket, "symlinked-session");
+      mkdirSync(sessionDir, { recursive: true });
 
-    // Create symlinks where context.jsonl / wire.jsonl should be — pointing
-    // at unrelated files outside the sessions tree.
-    const decoy = join(fakeHome, "decoy.txt");
-    writeFileSync(decoy, "should never be read");
-    symlinkSync(decoy, join(sessionDir, "context.jsonl"));
-    symlinkSync(decoy, join(sessionDir, "wire.jsonl"));
+      // Create symlinks where context.jsonl / wire.jsonl should be — pointing
+      // at unrelated files outside the sessions tree.
+      const decoy = join(fakeHome, "decoy.txt");
+      writeFileSync(decoy, "should never be read");
+      symlinkSync(decoy, join(sessionDir, "context.jsonl"));
+      symlinkSync(decoy, join(sessionDir, "wire.jsonl"));
 
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: workspace }),
-    );
-    expect(result).toBeNull();
-  });
+      const result = await agent.getActivityState(
+        makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: workspace }),
+      );
+      expect(result).toBeNull();
+    },
+  );
 });
 
 // =============================================================================
@@ -1160,9 +1159,7 @@ describe("getSessionInfo", () => {
     writeFileSync(
       join(fakeHome, ".kimi", "kimi.json"),
       JSON.stringify({
-        work_dirs: [
-          { path: realWorkspace, kaos: "local", last_session_id: "older-uuid" },
-        ],
+        work_dirs: [{ path: realWorkspace, kaos: "local", last_session_id: "older-uuid" }],
       }),
     );
 
@@ -1184,15 +1181,11 @@ describe("getSessionInfo", () => {
     writeFileSync(
       join(fakeHome, ".kimi", "kimi.json"),
       JSON.stringify({
-        work_dirs: [
-          { path: realWorkspace, kaos: "local", last_session_id: null },
-        ],
+        work_dirs: [{ path: realWorkspace, kaos: "local", last_session_id: null }],
       }),
     );
 
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("only-uuid");
   });
 
@@ -1200,9 +1193,7 @@ describe("getSessionInfo", () => {
     // No kimi.json exists — hash-based discovery should still work.
     writeKimiSession(workspace, "hash-found-uuid");
 
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: workspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: workspace }));
     expect(info?.agentSessionId).toBe("hash-found-uuid");
   });
 
@@ -1236,15 +1227,11 @@ describe("getSessionInfo", () => {
     writeFileSync(
       join(fakeHome, ".kimi", "kimi.json"),
       JSON.stringify({
-        work_dirs: [
-          { path: realWorkspace, kaos: "local", last_session_id: "stale-uuid" },
-        ],
+        work_dirs: [{ path: realWorkspace, kaos: "local", last_session_id: "stale-uuid" }],
       }),
     );
 
-    const info = await agent.getSessionInfo(
-      makeSession({ workspacePath: realWorkspace }),
-    );
+    const info = await agent.getSessionInfo(makeSession({ workspacePath: realWorkspace }));
     expect(info?.agentSessionId).toBe("ao-spawned");
 
     // And the AO pin file must record "ao-spawned", not "stale-uuid" —
@@ -1273,9 +1260,7 @@ describe("getSessionInfo", () => {
     writeFileSync(
       join(fakeHome, ".kimi", "kimi.json"),
       JSON.stringify({
-        work_dirs: [
-          { path: realWorkspace, kaos: "local", last_session_id: "old-uuid" },
-        ],
+        work_dirs: [{ path: realWorkspace, kaos: "local", last_session_id: "old-uuid" }],
       }),
     );
 
@@ -1306,24 +1291,30 @@ describe("getSessionInfo", () => {
   // Defensive: a symlinked wire.jsonl in the bucket (e.g. pointing at
   // /etc/passwd, /dev/zero, or a FIFO) must not be opened by
   // extractKimiSummary. lstat-rejects symlinks before createReadStream.
-  it("returns null summary when wire.jsonl is a symlink (sandbox escape)", async () => {
-    mockTmuxWithProcess("kimi");
-    const bucket = join(fakeHome, ".kimi", "sessions", workspaceHash(workspace));
-    const sessionDir = join(bucket, "symlinked-wire");
-    mkdirSync(sessionDir, { recursive: true });
-    // context.jsonl is real so getKimiLiveSignalMtime succeeds and the dir
-    // is selected. Then extractKimiSummary tries to open the symlinked
-    // wire.jsonl and must refuse.
-    writeFileSync(join(sessionDir, "context.jsonl"), '{"role":"_system_prompt"}\n');
-    const decoy = join(fakeHome, "decoy-wire.txt");
-    writeFileSync(decoy, '{"timestamp":1,"message":{"type":"TurnBegin","payload":{"user_input":"leaked"}}}\n');
-    symlinkSync(decoy, join(sessionDir, "wire.jsonl"));
+  it.skipIf(process.platform === "win32")(
+    "returns null summary when wire.jsonl is a symlink (sandbox escape)",
+    async () => {
+      mockTmuxWithProcess("kimi");
+      const bucket = join(fakeHome, ".kimi", "sessions", workspaceHash(workspace));
+      const sessionDir = join(bucket, "symlinked-wire");
+      mkdirSync(sessionDir, { recursive: true });
+      // context.jsonl is real so getKimiLiveSignalMtime succeeds and the dir
+      // is selected. Then extractKimiSummary tries to open the symlinked
+      // wire.jsonl and must refuse.
+      writeFileSync(join(sessionDir, "context.jsonl"), '{"role":"_system_prompt"}\n');
+      const decoy = join(fakeHome, "decoy-wire.txt");
+      writeFileSync(
+        decoy,
+        '{"timestamp":1,"message":{"type":"TurnBegin","payload":{"user_input":"leaked"}}}\n',
+      );
+      symlinkSync(decoy, join(sessionDir, "wire.jsonl"));
 
-    const info = await agent.getSessionInfo(makeSession({ workspacePath: workspace }));
-    // Discovery still produced a match (context.jsonl is fine), but the
-    // summary read MUST NOT have followed the symlink.
-    expect(info?.summary).toBeNull();
-  });
+      const info = await agent.getSessionInfo(makeSession({ workspacePath: workspace }));
+      // Discovery still produced a match (context.jsonl is fine), but the
+      // summary read MUST NOT have followed the symlink.
+      expect(info?.summary).toBeNull();
+    },
+  );
 });
 
 // =============================================================================
@@ -1428,7 +1419,10 @@ describe("workspace hooks", () => {
   const agent = create();
 
   it("setupWorkspaceHooks delegates to setupPathWrapperWorkspace", async () => {
-    await agent.setupWorkspaceHooks!("/workspace/test", { dataDir: "/tmp/ao-data", sessionId: "s" });
+    await agent.setupWorkspaceHooks!("/workspace/test", {
+      dataDir: "/tmp/ao-data",
+      sessionId: "s",
+    });
     expect(mockSetupPathWrapperWorkspace).toHaveBeenCalledWith("/workspace/test");
   });
 
@@ -1487,8 +1481,7 @@ describe("detect", () => {
     // contains plain "kimi" but no kimi-cli / kimi-code / moonshot marker.
     const { execFileSync } = await import("node:child_process");
     vi.mocked(execFileSync).mockImplementationOnce(
-      () =>
-        "kimi v0.1 — keyboard input manager\n" as unknown as ReturnType<typeof execFileSync>,
+      () => "kimi v0.1 — keyboard input manager\n" as unknown as ReturnType<typeof execFileSync>,
     );
     expect(detect()).toBe(false);
   });

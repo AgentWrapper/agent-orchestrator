@@ -4,19 +4,20 @@ import {
   mkdtempSync,
   mkdirSync,
   realpathSync,
-  writeFileSync,
   rmSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { toClaudeProjectPath, create } from "../index.js";
+import { toClaudeProjectPath, create, resolveWorkspaceForClaude } from "../index.js";
 import { resetWarnedReaddirPaths } from "../activity-detection.js";
 import {
   createActivitySignal,
+  isWindows,
   type ActivityState,
-  type Session,
   type RuntimeHandle,
+  type Session,
 } from "@aoagents/ao-core";
 
 // Mock homedir() so getActivityState looks in our temp dir
@@ -83,10 +84,7 @@ function writeActivityLog(
   mkdirSync(aoDir, { recursive: true });
   const entry: Record<string, unknown> = { ts, state, source };
   if (trigger !== undefined) entry.trigger = trigger;
-  writeFileSync(
-    join(aoDir, "activity.jsonl"),
-    JSON.stringify(entry) + "\n",
-  );
+  writeFileSync(join(aoDir, "activity.jsonl"), JSON.stringify(entry) + "\n");
 }
 
 // =============================================================================
@@ -130,7 +128,7 @@ describe("Claude Code Activity Detection", () => {
   describe("getActivityState", () => {
     const agent = create();
 
-    beforeEach(() => {
+    beforeEach(async () => {
       // realpathSync because /var/folders/... is a symlink to /private/var/folders/...
       // on macOS. getClaudeActivityState resolves symlinks before slugifying (so the
       // slug matches what Claude wrote), so the test setup must do the same — otherwise
@@ -141,7 +139,7 @@ describe("Claude Code Activity Detection", () => {
       mkdirSync(workspacePath, { recursive: true });
 
       // Create the Claude project directory matching the workspace path
-      const encoded = toClaudeProjectPath(workspacePath);
+      const encoded = toClaudeProjectPath(await resolveWorkspaceForClaude(workspacePath));
       projectDir = join(fakeHome, ".claude", "projects", encoded);
       mkdirSync(projectDir, { recursive: true });
 
@@ -174,7 +172,9 @@ describe("Claude Code Activity Detection", () => {
     });
 
     it("returns 'exited' when runtimeHandle is null", async () => {
-      expect((await agent.getActivityState(makeSession({ runtimeHandle: null })))?.state).toBe("exited");
+      expect((await agent.getActivityState(makeSession({ runtimeHandle: null })))?.state).toBe(
+        "exited",
+      );
     });
 
     // -----------------------------------------------------------------------
@@ -190,33 +190,29 @@ describe("Claude Code Activity Detection", () => {
       expect(await agent.getActivityState(makeSession({ workspacePath: null }))).toBeNull();
     });
 
-    it("logs a warning when ~/.claude/projects/<dir> is unreadable (EACCES)", async () => {
-      // Make the existing project dir unreadable by stripping owner-read.
-      // ENOENT (dir missing) is normal and stays silent; EACCES/EPERM must
-      // surface so users can debug a silent-idle session.
-      const { chmodSync } = await import("node:fs");
-      chmodSync(projectDir, 0o000);
+    it("logs a warning when ~/.claude/projects/<dir> cannot be read (non-ENOENT)", async () => {
+      // Replace the project directory with a file so readdir() fails
+      // deterministically across platforms without depending on chmod/ACL
+      // semantics. Any non-ENOENT read failure must surface once.
+      rmSync(projectDir, { recursive: true, force: true });
+      writeFileSync(projectDir, "not a directory");
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const result = await agent.getActivityState(makeSession());
         expect(result).toBeNull();
         expect(warn).toHaveBeenCalledOnce();
-        // Non-capturing group: alternation MUST stay inside `(?:...)` or it
-        // would parse as `(failed to read.*EACCES) | (EPERM)` and any string
-        // containing the literal `EPERM` would pass the assertion.
-        expect(warn.mock.calls[0]?.[0]).toMatch(/failed to read.*(?:EACCES|EPERM)/);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/failed to read.*(?:EACCES|EPERM|ENOTDIR)/);
       } finally {
-        chmodSync(projectDir, 0o755);
         warn.mockRestore();
       }
     });
 
     it("only warns ONCE per path across multiple polls (no log flood)", async () => {
       // Real bug this guards against: getActivityState runs on a polling
-      // interval; without the dedupe set, a single EACCES path would log
+      // interval; without the dedupe set, a single unreadable path would log
       // 60+ lines/minute indefinitely.
-      const { chmodSync } = await import("node:fs");
-      chmodSync(projectDir, 0o000);
+      rmSync(projectDir, { recursive: true, force: true });
+      writeFileSync(projectDir, "not a directory");
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         await agent.getActivityState(makeSession());
@@ -224,7 +220,6 @@ describe("Claude Code Activity Detection", () => {
         await agent.getActivityState(makeSession());
         expect(warn).toHaveBeenCalledOnce();
       } finally {
-        chmodSync(projectDir, 0o755);
         warn.mockRestore();
       }
     });
@@ -280,7 +275,7 @@ describe("Claude Code Activity Detection", () => {
       const { symlinkSync } = await import("node:fs");
       const target = workspacePath; // the real workspace dir
       const link = join(fakeHome, "symlinked-workspace");
-      symlinkSync(target, link);
+      symlinkSync(target, link, isWindows() ? "junction" : "dir");
 
       // JSONL is already in projectDir (which slugifies the real path).
       writeJsonl([{ type: "assistant", message: { content: "Done!" } }]);
@@ -527,10 +522,7 @@ describe("Claude Code Activity Detection", () => {
       });
 
       it("'system' api_error ignores staleness (always blocked)", async () => {
-        writeJsonl(
-          [{ type: "system", subtype: "api_error", level: "error" }],
-          400_000,
-        );
+        writeJsonl([{ type: "system", subtype: "api_error", level: "error" }], 400_000);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("blocked");
       });
 

@@ -229,9 +229,7 @@ function getAuditLogPath(config: OrchestratorConfig, component: string): string 
 }
 
 function shouldRedactKey(key: string): boolean {
-  return /token|secret|password|cookie|authorization|api[-_]?key|prompt|message|note/i.test(
-    key,
-  );
+  return /token|secret|password|cookie|authorization|api[-_]?key|prompt|message|note/i.test(key);
 }
 
 function sanitizeString(value: string): string {
@@ -251,10 +249,12 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   }
   if (typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).slice(0, 25).map(([key, entry]) => [
-        key,
-        shouldRedactKey(key) ? REDACTED_VALUE : sanitizeUnknown(entry, depth + 1),
-      ]),
+      Object.entries(value)
+        .slice(0, 25)
+        .map(([key, entry]) => [
+          key,
+          shouldRedactKey(key) ? REDACTED_VALUE : sanitizeUnknown(entry, depth + 1),
+        ]),
     );
   }
   return String(value);
@@ -275,7 +275,11 @@ function sanitizePath(path?: string): string | undefined {
   return sanitizeString(path);
 }
 
-function appendRotatingNdjson(filePath: string, payload: Record<string, unknown>, maxBytes: number): void {
+function appendRotatingNdjson(
+  filePath: string,
+  payload: Record<string, unknown>,
+  maxBytes: number,
+): void {
   const rotatedPath = `${filePath}.1`;
   if (existsSync(filePath)) {
     const currentSize = statSync(filePath).size;

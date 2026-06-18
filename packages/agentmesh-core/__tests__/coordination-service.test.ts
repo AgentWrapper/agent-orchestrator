@@ -58,7 +58,7 @@ class MockSessionManager implements SessionManager {
     this.sessions.delete(sessionId);
   }
 
-  async restore(sessionId: string): Promise<void> {
+  async restore(_sessionId: string): Promise<void> {
     // Mock implementation
   }
 
@@ -78,11 +78,7 @@ describe("CoordinationService", () => {
   beforeEach(() => {
     mockSessionManager = new MockSessionManager();
     tempDir = `/tmp/agentmesh-test-${randomUUID()}`;
-    coordinationService = new CoordinationService(
-      mockSessionManager,
-      "test-project",
-      tempDir
-    );
+    coordinationService = new CoordinationService(mockSessionManager, "test-project", tempDir);
   });
 
   afterEach(async () => {

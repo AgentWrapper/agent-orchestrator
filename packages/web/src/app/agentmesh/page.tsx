@@ -1,26 +1,18 @@
 /**
  * AgentMesh Page
- * 
- * Main page for AgentMesh coordination layer.
- * Shows the task board and QA loop status.
+ *
+ * Main page for the AgentMesh coordination layer.
+ * Shows the task board. The per-task QA loop status is surfaced from a
+ * selected task inside the board itself — there is no global "current task",
+ * so we do not render QALoopStatus with a hardcoded task id here.
  */
 
 import TaskBoard from "@/components/TaskBoard";
-import QALoopStatus from "@/components/QALoopStatus";
 
 export default function AgentMeshPage() {
   return (
-    <div className="h-full flex">
-      {/* Task Board - Left Side */}
-      <div className="flex-1 border-r">
-        <TaskBoard />
-      </div>
-
-      {/* QA Loop Status - Right Side */}
-      <div className="w-96 p-4 bg-gray-50">
-        <h2 className="text-lg font-semibold mb-4">QA Loop Status</h2>
-        <QALoopStatus taskId="TASK-1" />
-      </div>
+    <div className="h-full p-4">
+      <TaskBoard />
     </div>
   );
 }

@@ -1,9 +1,9 @@
 /**
  * Devin Agent Adapter
- * 
+ *
  * Special adapter for Devin - not a local terminal agent.
  * Works via GitHub issues/PRs/comments instead of spawning processes.
- * 
+ *
  * Devin roles in AgentMesh: external_reviewer, async_builder, pr_fixer, regression_checker
  */
 
@@ -19,7 +19,6 @@ import type {
   AgentSessionInfo,
 } from "@aoagents/agentmesh-core";
 import type { SessionManager } from "@aoagents/ao-core";
-import type { SessionId } from "@aoagents/ao-core";
 
 export class DevinAdapter implements AgentMeshAgentAdapter {
   name = "devin";
@@ -27,13 +26,13 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
 
   constructor(
     private sessionManager: SessionManager,
-    private githubToken?: string
+    private githubToken?: string,
   ) {}
 
   /**
    * Check if GitHub API is accessible and Devin is available
    */
-  async preflight(context: PreflightContext): Promise<PreflightResult> {
+  async preflight(_context: PreflightContext): Promise<PreflightResult> {
     try {
       // Check if GitHub token is available
       if (!this.githubToken) {
@@ -63,8 +62,8 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
         };
       }
 
-      const user = await response.json();
-      
+      await response.json();
+
       return {
         ok: true,
         version: "github-api",
@@ -83,7 +82,7 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
    * Devin does NOT use SessionManager.spawn() - it's external
    */
   async start(config: AgentStartConfig): Promise<AgentSession> {
-    const { taskId, role, prompt, branch, environment } = config;
+    const { taskId, role, prompt, branch } = config;
 
     // Build role-specific prompt for Devin
     const rolePrompt = this.buildRolePrompt(role, prompt);
@@ -114,18 +113,15 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
   /**
    * Send a message to Devin by posting a comment on the GitHub issue
    */
-  async sendMessage(session: AgentSession, message: AgentMessage): Promise<void> {
+  async sendMessage(_session: AgentSession, _message: AgentMessage): Promise<void> {
     // TODO: Store issue number in session when metadata is supported
-    // For now, this is a placeholder
-    console.log("Devin sendMessage called (placeholder)");
   }
 
   /**
    * Get output from Devin by reading GitHub issue comments and PR description
    */
-  async getOutput(session: AgentSession, options?: OutputOptions): Promise<AgentOutput> {
+  async getOutput(_session: AgentSession, _options?: OutputOptions): Promise<AgentOutput> {
     // TODO: Get issue number from session when metadata is supported
-    // For now, return empty output
     return {
       text: "",
       capturedAt: new Date(),
@@ -138,7 +134,7 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
    */
   async getStatus(session: AgentSession): Promise<AgentStatus> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return "exited";
     }
@@ -167,7 +163,7 @@ export class DevinAdapter implements AgentMeshAgentAdapter {
    */
   async getSessionInfo(session: AgentSession): Promise<AgentSessionInfo | null> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return null;
     }
@@ -242,10 +238,13 @@ ${task}
 Provide a detailed regression report with any issues found.`,
     };
 
-    return rolePrompts[role] || `You are a ${role} using Devin.
+    return (
+      rolePrompts[role] ||
+      `You are a ${role} using Devin.
 
 TASK:
-${task}`;
+${task}`
+    );
   }
 
   /**
@@ -271,27 +270,23 @@ ${task}`;
     body: string;
     labels: string[];
     assignee?: string;
-  }): Promise<any> {
+  }): Promise<{ number: number }> {
     const repo = this.getRepoFromConfig();
-    const response = await fetch(
-      `https://api.github.com/repos/${repo}/issues`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.githubToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
-      }
-    );
+    const response = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to create GitHub issue: ${response.statusText}`);
     }
 
-    const issueData = await response.json();
-    return issueData as any;
+    return (await response.json()) as { number: number };
   }
 
   private async createGitHubComment(issueNumber: number, body: string): Promise<void> {
@@ -306,7 +301,7 @@ ${task}`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ body }),
-      }
+      },
     );
 
     if (!response.ok) {
@@ -314,27 +309,23 @@ ${task}`;
     }
   }
 
-  private async getGitHubIssue(issueNumber: number): Promise<any> {
+  private async getGitHubIssue(issueNumber: number): Promise<Record<string, unknown>> {
     const repo = this.getRepoFromConfig();
-    const response = await fetch(
-      `https://api.github.com/repos/${repo}/issues/${issueNumber}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.githubToken}`,
-          Accept: "application/vnd.github.v3+json",
-        },
-      }
-    );
+    const response = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+      headers: {
+        Authorization: `Bearer ${this.githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to get GitHub issue: ${response.statusText}`);
     }
 
-    const issueData = await response.json();
-    return issueData as any;
+    return (await response.json()) as Record<string, unknown>;
   }
 
-  private async getGitHubComments(issueNumber: number): Promise<any[]> {
+  private async getGitHubComments(issueNumber: number): Promise<Record<string, unknown>[]> {
     const repo = this.getRepoFromConfig();
     const response = await fetch(
       `https://api.github.com/repos/${repo}/issues/${issueNumber}/comments`,
@@ -343,40 +334,35 @@ ${task}`;
           Authorization: `Bearer ${this.githubToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     if (!response.ok) {
       throw new Error(`Failed to get GitHub comments: ${response.statusText}`);
     }
 
-    const commentsData = await response.json();
-    return commentsData as any[];
+    return (await response.json()) as Record<string, unknown>[];
   }
 
   private async closeGitHubIssue(issueNumber: number): Promise<void> {
     const repo = this.getRepoFromConfig();
-    const response = await fetch(
-      `https://api.github.com/repos/${repo}/issues/${issueNumber}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${this.githubToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ state: "closed" }),
-      }
-    );
+    const response = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${this.githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ state: "closed" }),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to close GitHub issue: ${response.statusText}`);
     }
   }
 
-  private async getDevinPR(taskId: string): Promise<any | null> {
+  private async getDevinPR(_taskId: string): Promise<Record<string, unknown> | null> {
     // This would search for PRs created by Devin for this task
-    // For now, return null as placeholder
     return null;
   }
 

@@ -80,9 +80,7 @@ describe("activity events: plugin-registry", () => {
     });
 
     const calls = vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0]);
-    const specifierFailed = calls.find(
-      (c) => c.kind === "plugin-registry.specifier_failed",
-    );
+    const specifierFailed = calls.find((c) => c.kind === "plugin-registry.specifier_failed");
     expect(specifierFailed).toBeDefined();
   });
 
@@ -121,8 +119,8 @@ describe("activity events: plugin-registry", () => {
     });
 
     const calls = vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0]);
-    const failures = calls.filter((c) =>
-      typeof c.kind === "string" && c.kind.startsWith("plugin-registry."),
+    const failures = calls.filter(
+      (c) => typeof c.kind === "string" && c.kind.startsWith("plugin-registry."),
     );
     expect(failures).toEqual([]);
   });

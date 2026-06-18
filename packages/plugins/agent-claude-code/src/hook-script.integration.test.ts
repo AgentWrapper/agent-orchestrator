@@ -3,7 +3,8 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { METADATA_UPDATER_SCRIPT } from "./index.js";
+import { isWindows } from "@aoagents/ao-core";
+import { METADATA_UPDATER_SCRIPT, METADATA_UPDATER_SCRIPT_NODE } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Integration tests for the metadata-updater.sh hook script.
@@ -13,11 +14,19 @@ import { METADATA_UPDATER_SCRIPT } from "./index.js";
 
 let testDir: string;
 let hookScriptPath: string;
+let hookCommand: string;
 
 beforeAll(() => {
   testDir = mkdtempSync(join(tmpdir(), "ao-hook-test-"));
-  hookScriptPath = join(testDir, "metadata-updater.sh");
-  writeFileSync(hookScriptPath, METADATA_UPDATER_SCRIPT, { mode: 0o755 });
+  if (isWindows()) {
+    hookScriptPath = join(testDir, "metadata-updater.cjs");
+    hookCommand = `node "${hookScriptPath}"`;
+    writeFileSync(hookScriptPath, METADATA_UPDATER_SCRIPT_NODE, "utf-8");
+  } else {
+    hookScriptPath = join(testDir, "metadata-updater.sh");
+    hookCommand = `bash "${hookScriptPath}"`;
+    writeFileSync(hookScriptPath, METADATA_UPDATER_SCRIPT, { mode: 0o755 });
+  }
 });
 
 afterAll(() => {
@@ -50,7 +59,7 @@ function runHook(opts: {
 
   let stdout: string;
   try {
-    stdout = execSync(`bash "${hookScriptPath}"`, {
+    stdout = execSync(hookCommand, {
       input,
       env: {
         ...process.env,

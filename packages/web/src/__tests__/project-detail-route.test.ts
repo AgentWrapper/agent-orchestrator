@@ -3,11 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
-import {
-  getProjectDir,
-  loadGlobalConfig,
-  registerProjectInGlobalConfig,
-} from "@aoagents/ao-core";
+import { getProjectDir, loadGlobalConfig, registerProjectInGlobalConfig } from "@aoagents/ao-core";
 
 const invalidatePortfolioServicesCache = vi.fn();
 const getServices = vi.fn();
@@ -17,7 +13,11 @@ vi.mock("@/lib/services", () => ({
   getServices,
 }));
 
-function makeRequest(method: string, body?: Record<string, unknown>, projectId = "demo"): NextRequest {
+function makeRequest(
+  method: string,
+  body?: Record<string, unknown>,
+  projectId = "demo",
+): NextRequest {
   return new NextRequest(`http://localhost:3000/api/projects/${projectId}`, {
     method,
     body: body ? JSON.stringify(body) : undefined,
@@ -72,9 +72,12 @@ describe("/api/projects/[id]", () => {
     const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
     const { PATCH } = await import("@/app/api/projects/[id]/route");
-    const response = await PATCH(makeRequest("PATCH", { agent: "codex", runtime: "tmux" }, effectiveId), {
-      params: Promise.resolve({ id: effectiveId }),
-    });
+    const response = await PATCH(
+      makeRequest("PATCH", { agent: "codex", runtime: "tmux" }, effectiveId),
+      {
+        params: Promise.resolve({ id: effectiveId }),
+      },
+    );
 
     expect(response.status).toBe(200);
     const localYaml = readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8");
@@ -121,11 +124,7 @@ describe("/api/projects/[id]", () => {
     mkdirSync(repoDir, { recursive: true });
     writeFileSync(
       path.join(repoDir, "agent-orchestrator.yml"),
-      [
-        'agent: "claude-code"',
-        'runtime: "tmux"',
-        "",
-      ].join("\n"),
+      ['agent: "claude-code"', 'runtime: "tmux"', ""].join("\n"),
     );
     const effectiveId = registerProjectInGlobalConfig("demo", "Demo", repoDir);
 
@@ -256,7 +255,14 @@ describe("/api/projects/[id]", () => {
 
     const destroy = vi.fn().mockResolvedValue(undefined);
     const list = vi.fn().mockResolvedValue([
-      { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
+      {
+        path: path.join(
+          tempRoot,
+          "managed-worktrees",
+          effectiveId,
+          `${effectiveId}-orchestrator-1`,
+        ),
+      },
     ]);
     const sessionManager = {
       list: vi.fn().mockResolvedValue([]),
@@ -305,7 +311,14 @@ describe("/api/projects/[id]", () => {
     const list = vi.fn().mockImplementation(async () => {
       events.push("workspace.list");
       return [
-        { path: path.join(tempRoot, "managed-worktrees", effectiveId, `${effectiveId}-orchestrator-1`) },
+        {
+          path: path.join(
+            tempRoot,
+            "managed-worktrees",
+            effectiveId,
+            `${effectiveId}-orchestrator-1`,
+          ),
+        },
       ];
     });
     const sessionManager = {
@@ -397,13 +410,9 @@ describe("/api/projects/[id]", () => {
     const unsafeId = "_bad";
     writeFileSync(
       configPath,
-      [
-        "projects:",
-        `  "${unsafeId}":`,
-        '    name: "Unsafe"',
-        `    path: ${repoDir}`,
-        "",
-      ].join("\n"),
+      ["projects:", `  "${unsafeId}":`, '    name: "Unsafe"', `    path: ${repoDir}`, ""].join(
+        "\n",
+      ),
     );
 
     const destroy = vi.fn().mockResolvedValue(undefined);
@@ -455,7 +464,9 @@ describe("/api/projects/[id]", () => {
       repaired: true,
       projectId: effectiveId,
     });
-    expect(readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8")).toContain("agent: codex");
+    expect(readFileSync(path.join(repoDir, "agent-orchestrator.yaml"), "utf-8")).toContain(
+      "agent: codex",
+    );
   });
 
   it("POST repair preserves wrapped defaults so the project can start with its intended agent", async () => {
@@ -475,7 +486,11 @@ describe("/api/projects/[id]", () => {
         "",
       ].join("\n"),
     );
-    const effectiveId = registerProjectInGlobalConfig("broken-defaults", "Broken Defaults", repoDir);
+    const effectiveId = registerProjectInGlobalConfig(
+      "broken-defaults",
+      "Broken Defaults",
+      repoDir,
+    );
 
     const { POST } = await import("@/app/api/projects/[id]/route");
     const response = await POST(makeRequest("POST", undefined, effectiveId), {
@@ -516,7 +531,9 @@ describe("/api/projects/[id]", () => {
       repaired: true,
       projectId: effectiveId,
     });
-    expect(readFileSync(path.join(repoDir, "agent-orchestrator.yml"), "utf-8")).toContain("agent: codex");
+    expect(readFileSync(path.join(repoDir, "agent-orchestrator.yml"), "utf-8")).toContain(
+      "agent: codex",
+    );
     expect(existsSync(path.join(repoDir, "agent-orchestrator.yaml"))).toBe(false);
   });
 });

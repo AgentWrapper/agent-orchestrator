@@ -15,7 +15,9 @@
 
 Spawn parallel AI coding agents, each in its own git worktree, on a single machine. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise the whole fleet from one dashboard.
 
-**Agent-agnostic** (Claude Code, Codex, Aider, Cursor, OpenCode) · **Runtime-agnostic** (tmux, ConPTY/process, Docker) · **Tracker-agnostic** (GitHub, Linear, GitLab)
+**Agent-agnostic** (Claude Code, Codex, Aider, Cursor, OpenCode) · **Runtime-agnostic** (tmux, ConPTY/process) · **Tracker-agnostic** (GitHub, Linear, GitLab)
+
+> **Note:** This package is maintained in the fork [`ch1kim0n1/parallel-agents`](https://github.com/ch1kim0n1/parallel-agents). Links and badges below point to the upstream [`ComposioHQ/agent-orchestrator`](https://github.com/ComposioHQ/agent-orchestrator); please file fork-specific issues on the fork.
 
 ## Install
 
@@ -50,6 +52,10 @@ The dashboard opens at `http://localhost:3000` and an orchestrator agent starts 
 ao start ~/path/to/another-repo
 ```
 
+If you are testing the repository itself instead of the published package, use the repo-level
+[Quick-start.md](../../Quick-start.md) for the shortest local setup and smoke-test flow. On
+Windows, make sure you are actually running Node `20.18.3+`.
+
 You don't need to learn the CLI — the dashboard and the orchestrator agent drive everything. (Individual `ao` commands are documented in the [CLI Reference](https://github.com/ComposioHQ/agent-orchestrator/blob/main/docs/CLI.md) and used internally by the orchestrator.)
 
 ## How it works
@@ -62,17 +68,17 @@ You don't need to learn the CLI — the dashboard and the orchestrator agent dri
 
 ## Pluggable by design
 
-Seven plugin slots; the lifecycle state machine stays in core:
+Eight plugin slots — seven swappable (below) plus Lifecycle, which is managed by core and not pluggable:
 
-| Slot | Default | Alternatives |
-| --- | --- | --- |
-| Runtime | tmux (macOS/Linux) / process (Windows) | process, docker |
-| Agent | claude-code | codex, aider, cursor, opencode, kimicode |
-| Workspace | worktree | clone |
-| Tracker | github | linear, gitlab |
-| SCM | github | gitlab |
-| Notifier | desktop | slack, discord, composio, webhook, openclaw |
-| Terminal | iterm2 | web |
+| Slot      | Default                                | Alternatives                                   |
+| --------- | -------------------------------------- | ---------------------------------------------- |
+| Runtime   | tmux (macOS/Linux) / process (Windows) | process                                        |
+| Agent     | claude-code                            | codex, aider, cursor, opencode, kimicode, grok |
+| Workspace | worktree                               | clone                                          |
+| Tracker   | github                                 | linear, gitlab                                 |
+| SCM       | github                                 | gitlab                                         |
+| Notifier  | desktop                                | slack, discord, composio, webhook, openclaw    |
+| Terminal  | iterm2                                 | web                                            |
 
 ## Why AgentMesh?
 

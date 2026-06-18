@@ -36,7 +36,10 @@ function getCanonicalPath(path: string): string {
   }
 }
 
-function findProjectIdForPath(projectPath: string, config: ReturnType<typeof loadProjectDiscoveryConfig>): string | undefined {
+function findProjectIdForPath(
+  projectPath: string,
+  config: ReturnType<typeof loadProjectDiscoveryConfig>,
+): string | undefined {
   const canonicalProjectPath = getCanonicalPath(projectPath);
 
   for (const [projectId, project] of Object.entries(config.projects)) {
@@ -68,7 +71,9 @@ function findLocalConfigPath(startDir: string): string | undefined {
   }
 }
 
-function findDiscoveredRepoProjectId(config: ReturnType<typeof loadProjectDiscoveryConfig>): string | undefined {
+function findDiscoveredRepoProjectId(
+  config: ReturnType<typeof loadProjectDiscoveryConfig>,
+): string | undefined {
   try {
     const localConfigPath = findLocalConfigPath(process.cwd());
     if (!localConfigPath) {

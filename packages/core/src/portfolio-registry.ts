@@ -8,11 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import type {
-  PortfolioProject,
-  PortfolioPreferences,
-  PortfolioRegistered,
-} from "./types.js";
+import type { PortfolioProject, PortfolioPreferences, PortfolioRegistered } from "./types.js";
 import {
   getPortfolioDir,
   getPreferencesPath,
@@ -45,7 +41,11 @@ function parsePortfolioRegistered(value: unknown): PortfolioRegistered | null {
 
   const projects: PortfolioRegistered["projects"] = [];
   for (const project of value.projects) {
-    if (!isRecord(project) || typeof project.path !== "string" || typeof project.addedAt !== "string") {
+    if (
+      !isRecord(project) ||
+      typeof project.path !== "string" ||
+      typeof project.addedAt !== "string"
+    ) {
       return null;
     }
     if (
@@ -73,7 +73,11 @@ function parsePortfolioPreferences(value: unknown): PortfolioPreferences | null 
     return null;
   }
 
-  if ("defaultProjectId" in value && value.defaultProjectId !== undefined && typeof value.defaultProjectId !== "string") {
+  if (
+    "defaultProjectId" in value &&
+    value.defaultProjectId !== undefined &&
+    typeof value.defaultProjectId !== "string"
+  ) {
     return null;
   }
 
@@ -112,7 +116,9 @@ function parsePortfolioPreferences(value: unknown): PortfolioPreferences | null 
 
   return {
     version: 1,
-    ...(typeof value.defaultProjectId === "string" ? { defaultProjectId: value.defaultProjectId } : {}),
+    ...(typeof value.defaultProjectId === "string"
+      ? { defaultProjectId: value.defaultProjectId }
+      : {}),
     ...(Array.isArray(value.projectOrder) ? { projectOrder: value.projectOrder } : {}),
     ...(isRecord(value.projects)
       ? {
@@ -344,7 +350,13 @@ export function registerProject(
   }
 
   const projectId = configProjectKey ?? basename(normalizedRepoPath);
-  return registerProjectInGlobalConfig(projectId, displayName ?? projectId, normalizedRepoPath, localConfig, options);
+  return registerProjectInGlobalConfig(
+    projectId,
+    displayName ?? projectId,
+    normalizedRepoPath,
+    localConfig,
+    options,
+  );
 }
 
 /** Remove a project from the canonical global config registry. */

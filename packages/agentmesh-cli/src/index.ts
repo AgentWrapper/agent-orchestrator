@@ -2,21 +2,25 @@
 
 /**
  * AgentMesh CLI
- * 
+ *
  * Command-line interface for the AgentMesh coordination layer.
  * Provides commands for task management, QA loops, and agent coordination.
  */
 
 import { Command } from "commander";
 import chalk from "chalk";
-import { TaskManager } from "@aoagents/agentmesh-core";
-import { MessageBus } from "@aoagents/agentmesh-core";
-import { RoleManager } from "@aoagents/agentmesh-core";
-import { QALoopEngine } from "@aoagents/agentmesh-core";
-import { PolicyEngine } from "@aoagents/agentmesh-core";
-import { PRGate } from "@aoagents/agentmesh-core";
-import { TimelineLogger } from "@aoagents/agentmesh-core";
-import { AgentMeshStorage } from "@aoagents/agentmesh-core";
+import {
+  TaskManager,
+  RoleManager,
+  QALoopEngine,
+  PolicyEngine,
+  TimelineLogger,
+  AgentMeshStorage,
+  type TaskStatus,
+  type TaskPriority,
+  type AgentRole,
+  type QAVerdict,
+} from "@aoagents/agentmesh-core";
 
 const program = new Command();
 
@@ -45,16 +49,16 @@ program
   .option("--priority <priority>", "Task priority (low, medium, high, critical)")
   .action(async (options) => {
     console.log(chalk.blue("📝 Creating task..."));
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
-    
+
     const task = taskManager.create({
       title: options.title || "Untitled Task",
       description: options.description || "",
       status: "created",
-      priority: (options.priority as any) || "medium",
-      role: (options.role as any) || "builder",
+      priority: (options.priority as TaskPriority) || "medium",
+      role: (options.role as AgentRole) || "builder",
       projectId: "default",
       branch: "main",
       metadata: {},
@@ -63,7 +67,7 @@ program
     console.log(chalk.green(`✓ Task created: ${task.id}`));
     console.log(chalk.gray(`  Title: ${task.title}`));
     console.log(chalk.gray(`  Role: ${task.role}`));
-    
+
     taskManager.close();
   });
 
@@ -74,25 +78,29 @@ program
   .option("--role <role>", "Filter by role")
   .action(async (options) => {
     console.log(chalk.blue("📋 Listing tasks..."));
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
-    
+
     const tasks = taskManager.list({
-      status: options.status as any,
-      role: options.role,
+      status: options.status as TaskStatus | undefined,
+      role: options.role as AgentRole | undefined,
     });
 
     if (tasks.length === 0) {
       console.log(chalk.gray("No tasks found"));
     } else {
-      tasks.forEach(task => {
-        const statusColor = task.status === "done" ? chalk.green : 
-                          task.status === "blocked" ? chalk.red : chalk.yellow;
+      tasks.forEach((task) => {
+        const statusColor =
+          task.status === "done"
+            ? chalk.green
+            : task.status === "blocked"
+              ? chalk.red
+              : chalk.yellow;
         console.log(`${statusColor(task.status)} ${task.id}: ${task.title}`);
       });
     }
-    
+
     taskManager.close();
   });
 
@@ -101,12 +109,12 @@ program
   .description("Show task details")
   .action(async (taskId) => {
     console.log(chalk.blue(`📋 Task: ${taskId}`));
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
-    
+
     const task = taskManager.get(taskId);
-    
+
     if (!task) {
       console.log(chalk.red("✗ Task not found"));
     } else {
@@ -117,7 +125,7 @@ program
       console.log(chalk.gray(`Priority: ${task.priority}`));
       console.log(chalk.gray(`Created: ${task.createdAt}`));
     }
-    
+
     taskManager.close();
   });
 
@@ -127,11 +135,11 @@ program
   .description("List available agent roles")
   .action(async () => {
     console.log(chalk.blue("🎭 Available Roles:"));
-    
+
     const roleManager = new RoleManager();
     const roles = roleManager.listRoles();
 
-    roles.forEach(role => {
+    roles.forEach((role) => {
       console.log(chalk.white(`  ${role.displayName} (${role.name})`));
       console.log(chalk.gray(`    ${role.description}`));
       console.log(chalk.gray(`    Adapter: ${role.agentAdapter}`));
@@ -146,11 +154,11 @@ program
   .description("Start QA for a task")
   .action(async (taskId) => {
     console.log(chalk.blue(`🔍 Starting QA for task: ${taskId}`));
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
     const qaLoop = new QALoopEngine();
-    
+
     const task = taskManager.get(taskId);
     if (!task) {
       console.log(chalk.red("✗ Task not found"));
@@ -160,12 +168,12 @@ program
 
     qaLoop.start(taskId);
     qaLoop.startQA(taskId);
-    
+
     taskManager.transitionStatus(taskId, "qa_running");
-    
+
     console.log(chalk.green("✓ QA started"));
     console.log(chalk.gray("  Status: qa_running"));
-    
+
     taskManager.close();
   });
 
@@ -175,12 +183,12 @@ program
   .option("--summary <summary>", "QA summary")
   .action(async (taskId, verdict, options) => {
     console.log(chalk.blue(`📊 QA Result for task: ${taskId}`));
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
     const qaLoop = new QALoopEngine();
     const timelineLogger = new TimelineLogger(storage.getTimelinePath());
-    
+
     const task = taskManager.get(taskId);
     if (!task) {
       console.log(chalk.red("✗ Task not found"));
@@ -189,14 +197,14 @@ program
     }
 
     const qaResult = {
-      verdict: verdict.toUpperCase() as any,
+      verdict: verdict.toUpperCase() as QAVerdict,
       summary: options.summary || "QA completed",
       findings: [],
       timestamp: new Date().toISOString(),
     };
 
     const decision = qaLoop.processQAResult(taskId, qaResult);
-    
+
     timelineLogger.log({
       taskId,
       eventType: "qa_result",
@@ -207,7 +215,7 @@ program
     console.log(chalk.green(`✓ QA Result: ${verdict.toUpperCase()}`));
     console.log(chalk.gray(`  Decision: ${decision.action}`));
     console.log(chalk.gray(`  Reason: ${decision.reason}`));
-    
+
     // Update task status based on decision
     if (decision.action === "proceed") {
       taskManager.transitionStatus(taskId, "qa_passed");
@@ -216,7 +224,7 @@ program
     } else if (decision.action === "block") {
       taskManager.transitionStatus(taskId, "blocked");
     }
-    
+
     taskManager.close();
   });
 
@@ -226,9 +234,9 @@ program
   .description("Check a diff against policy rules")
   .action(async (diff) => {
     console.log(chalk.blue("🔒 Checking policy rules..."));
-    
+
     const policyEngine = new PolicyEngine();
-    
+
     const result = policyEngine.check(diff, {
       taskId: "manual",
       branch: "main",
@@ -241,11 +249,17 @@ program
     } else {
       console.log(chalk.red("✗ Policy check failed"));
       console.log(chalk.gray(`  Violations: ${result.violations.length}`));
-      
-      result.violations.forEach(violation => {
-        const severityColor = violation.severity === "error" ? chalk.red : 
-                             violation.severity === "warning" ? chalk.yellow : chalk.gray;
-        console.log(severityColor(`  - [${violation.severity.toUpperCase()}] ${violation.message}`));
+
+      result.violations.forEach((violation) => {
+        const severityColor =
+          violation.severity === "error"
+            ? chalk.red
+            : violation.severity === "warning"
+              ? chalk.yellow
+              : chalk.gray;
+        console.log(
+          severityColor(`  - [${violation.severity.toUpperCase()}] ${violation.message}`),
+        );
       });
     }
   });
@@ -257,15 +271,15 @@ program
   .action(async () => {
     console.log(chalk.blue("📊 AgentMesh Task Board"));
     console.log();
-    
+
     const storage = new AgentMeshStorage("default");
     const taskManager = new TaskManager(storage.getTasksPath());
-    
+
     const tasks = taskManager.list();
-    
+
     // Group by status
     const byStatus = new Map<string, typeof tasks>();
-    tasks.forEach(task => {
+    tasks.forEach((task) => {
       if (!byStatus.has(task.status)) {
         byStatus.set(task.status, []);
       }
@@ -273,20 +287,28 @@ program
     });
 
     // Display columns
-    const statuses = ["created", "building", "qa_running", "qa_passed", "rework", "blocked", "done"];
-    
-    statuses.forEach(status => {
+    const statuses = [
+      "created",
+      "building",
+      "qa_running",
+      "qa_passed",
+      "rework",
+      "blocked",
+      "done",
+    ];
+
+    statuses.forEach((status) => {
       const statusTasks = byStatus.get(status) || [];
-      const statusColor = status === "done" ? chalk.green : 
-                        status === "blocked" ? chalk.red : chalk.blue;
-      
+      const statusColor =
+        status === "done" ? chalk.green : status === "blocked" ? chalk.red : chalk.blue;
+
       console.log(statusColor(`${status.toUpperCase()} (${statusTasks.length})`));
-      statusTasks.forEach(task => {
+      statusTasks.forEach((task) => {
         console.log(chalk.gray(`  • ${task.id}: ${task.title}`));
       });
       console.log();
     });
-    
+
     taskManager.close();
   });
 

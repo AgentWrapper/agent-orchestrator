@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * GET /api/agents
- * 
+ *
  * List registered agent plugins.
  * Returns all available agent adapters with their metadata.
  */
@@ -29,14 +29,11 @@ export async function GET(request: NextRequest) {
         count: agents.length,
       },
       undefined,
-      correlationId
+      correlationId,
     );
   } catch (error) {
     console.error("Error in GET /api/agents:", error);
 
-    return NextResponse.json(
-      { error: "Failed to list agent plugins" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to list agent plugins" }, { status: 500 });
   }
 }

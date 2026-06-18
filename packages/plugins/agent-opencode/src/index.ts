@@ -144,9 +144,7 @@ process.stdin.on('data', c => input += c).on('end', () => {
  * Query OpenCode's session list and find the matching session for this AO session.
  * Tries metadata `opencodeSessionId` first, then falls back to title matching.
  */
-async function findOpenCodeSession(
-  session: Session,
-): Promise<OpenCodeSessionListEntry | null> {
+async function findOpenCodeSession(session: Session): Promise<OpenCodeSessionListEntry | null> {
   try {
     const sessions = await getCachedOpenCodeSessionList();
 
@@ -197,9 +195,7 @@ function createOpenCodeAgent(): Agent {
       const sharedOptions: string[] = [];
       const agentConfig = config.projectConfig.agentConfig;
 
-      const existingSessionId = asValidOpenCodeSessionId(
-        agentConfig?.opencodeSessionId,
-      );
+      const existingSessionId = asValidOpenCodeSessionId(agentConfig?.opencodeSessionId);
 
       if (existingSessionId) {
         options.push("--session", shellEscape(existingSessionId));
@@ -429,7 +425,10 @@ function createOpenCodeAgent(): Agent {
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(_workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
+    async setupWorkspaceHooks(
+      _workspacePath: string,
+      _config: WorkspaceHooksConfig,
+    ): Promise<void> {
       // PATH wrappers are installed by session-manager for all agents.
     },
 

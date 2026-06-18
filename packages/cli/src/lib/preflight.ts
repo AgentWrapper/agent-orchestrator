@@ -43,18 +43,14 @@ async function checkBuilt(webDir: string): Promise<void> {
   }
   const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
-    const hint = isNpmInstall
-      ? "Run: npm install -g @aoagents/ao@latest"
-      : "Run: pnpm build";
+    const hint = isNpmInstall ? "Run: npm install -g @aoagents/ao@latest" : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }
 
   const webBuildId = resolve(webDir, ".next", "BUILD_ID");
   const startAllEntry = resolve(webDir, "dist-server", "start-all.js");
   if (!existsSync(webBuildId) || !existsSync(startAllEntry)) {
-    const hint = isNpmInstall
-      ? "Run: npm install -g @aoagents/ao@latest"
-      : "Run: pnpm build";
+    const hint = isNpmInstall ? "Run: npm install -g @aoagents/ao@latest" : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }
 }

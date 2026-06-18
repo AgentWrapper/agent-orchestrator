@@ -1,6 +1,6 @@
 /**
  * AgentMesh Core Types
- * 
+ *
  * Type definitions for the AgentMesh coordination layer.
  * This extends the AO core types with coordination-specific concepts.
  */
@@ -12,7 +12,19 @@ import type { SessionId } from "@aoagents/ao-core";
 // =============================================================================
 
 export type TaskId = string;
-export type TaskStatus = "created" | "assigned" | "building" | "qa_running" | "qa_passed" | "qa_failed" | "rework" | "pr_opening" | "pr_open" | "done" | "blocked" | "cancelled";
+export type TaskStatus =
+  | "created"
+  | "assigned"
+  | "building"
+  | "qa_running"
+  | "qa_passed"
+  | "qa_failed"
+  | "rework"
+  | "pr_opening"
+  | "pr_open"
+  | "done"
+  | "blocked"
+  | "cancelled";
 
 export type TaskPriority = "low" | "medium" | "high" | "critical";
 
@@ -39,12 +51,12 @@ export interface Task {
 // AGENT ROLES
 // =============================================================================
 
-export type AgentRole = 
-  | "builder" 
-  | "qa" 
-  | "planner" 
-  | "security_reviewer" 
-  | "docs_writer" 
+export type AgentRole =
+  | "builder"
+  | "qa"
+  | "planner"
+  | "security_reviewer"
+  | "docs_writer"
   | "release_manager"
   | "external_reviewer"
   | "async_builder"

@@ -179,7 +179,6 @@ export function create(config?: Record<string, unknown>): Workspace {
           // Warn about corrupted clones instead of silently skipping.
           // RCA: "session shows up on disk but isn't returned by list()".
           const msg = err instanceof Error ? err.message : String(err);
-          // eslint-disable-next-line no-console -- expected diagnostic for corrupted clones
           console.warn(`[workspace-clone] Skipping "${entry.name}": not a valid git repo (${msg})`);
           if (!emittedCorruptClonePaths.has(clonePath)) {
             emittedCorruptClonePaths.add(clonePath);

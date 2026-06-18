@@ -3,7 +3,12 @@ import { createSessionManager } from "../session-manager.js";
 import { readMetadataRaw, updateMetadata, writeMetadata } from "../metadata.js";
 import { recordActivityEvent } from "../activity-events.js";
 import type { OrchestratorConfig, PluginRegistry, Agent } from "../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "./test-utils.js";
 
 vi.mock("../activity-events.js", () => ({
   recordActivityEvent: vi.fn(),
@@ -85,10 +90,10 @@ describe("PR metadata startup migration", () => {
         "https://github.com/aoagents/ReverbCode/pull/143",
         "https://github.com/aoagents/ReverbCode/pull/143",
       ].join(","),
-      prEnrichment_1: "{\"state\":\"open\"}",
-      prEnrichment_2: "{\"state\":\"open\"}",
-      prReviewComments_1: "{\"unresolvedThreads\":0}",
-      prReviewComments_2: "{\"unresolvedThreads\":0}",
+      prEnrichment_1: '{"state":"open"}',
+      prEnrichment_2: '{"state":"open"}',
+      prReviewComments_1: '{"unresolvedThreads":0}',
+      prReviewComments_2: '{"unresolvedThreads":0}',
     });
 
     createSessionManager({ config, registry: mockRegistry });
@@ -117,7 +122,12 @@ describe("PR metadata startup migration", () => {
 describe("activity event logging", () => {
   it("records session.spawned after a successful spawn", async () => {
     const { execFile } = await import("node:child_process");
-    vi.mocked(execFile).mockImplementation(((_file: string, _args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      _file: string,
+      _args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (cb) cb(null, "", "");
       return null as any;
@@ -214,7 +224,12 @@ describe("deleteSession retry loop", () => {
     let deleteCallCount = 0;
     const mockError = new Error("OpenCode delete failed");
 
-    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      file: string,
+      args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (!cb) return null as any;
 
@@ -254,7 +269,12 @@ describe("deleteSession retry loop", () => {
     const callTimes: number[] = [];
     const mockError = new Error("OpenCode delete failed");
 
-    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      file: string,
+      args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (!cb) return null as any;
 
@@ -304,7 +324,12 @@ describe("deleteSession retry loop", () => {
     const lastError = new Error("Final error after retries");
     let deleteCallCount = 0;
 
-    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      file: string,
+      args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (!cb) return null as any;
 
@@ -344,7 +369,12 @@ describe("deleteSession retry loop", () => {
 
     let deleteCallCount = 0;
 
-    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      file: string,
+      args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (!cb) return null as any;
 
@@ -392,7 +422,12 @@ describe("deleteSession retry loop", () => {
 
     let deleteCallCount = 0;
 
-    vi.mocked(execFile).mockImplementation(((file: string, args: string[], options: any, callback?: any) => {
+    vi.mocked(execFile).mockImplementation(((
+      file: string,
+      args: string[],
+      options: any,
+      callback?: any,
+    ) => {
       const cb = typeof options === "function" ? options : callback;
       if (!cb) return null as any;
 

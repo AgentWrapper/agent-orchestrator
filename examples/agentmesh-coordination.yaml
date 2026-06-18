@@ -1,5 +1,5 @@
 # AgentMesh Coordination Example
-# 
+#
 # This example shows how to use AgentMesh's coordination layer
 # to manage parallel AI agents with QA loops and policy gates.
 
@@ -23,15 +23,15 @@ projects:
 agentmesh:
   # Enable coordination layer
   enabled: true
-  
+
   # QA loop configuration
   qa:
     maxRetries: 3
-    qaTimeout: 1800000  # 30 minutes
-    reworkTimeout: 3600000  # 1 hour
+    qaTimeout: 1800000 # 30 minutes
+    reworkTimeout: 3600000 # 1 hour
     autoRework: true
     escalateAfterRetries: true
-  
+
   # Policy engine configuration
   policy:
     enabled: true
@@ -41,7 +41,7 @@ agentmesh:
       - no-console-log
       - require-tests
       - no-destructive-ops
-  
+
   # PR gate configuration
   prGate:
     requireQAPass: true
@@ -49,7 +49,7 @@ agentmesh:
     autoMergeOnPass: false
     requiredApprovals: 1
     blockOnPolicyViolation: true
-  
+
   # Role assignments
   roles:
     builder:
@@ -60,10 +60,10 @@ agentmesh:
       enabled: true
     planner:
       agent: claude-code
-      enabled: false  # Optional role
+      enabled: false # Optional role
     security_reviewer:
       agent: claude-code
-      enabled: false  # Optional role
+      enabled: false # Optional role
 
 # Standard AO reactions
 reactions:

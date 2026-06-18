@@ -15,10 +15,7 @@ import { readAgentReport, type AgentReport } from "./agent-report.js";
 /**
  * Report watcher trigger types.
  */
-export type ReportWatcherTrigger =
-  | "no_acknowledge"
-  | "stale_report"
-  | "agent_needs_input";
+export type ReportWatcherTrigger = "no_acknowledge" | "stale_report" | "agent_needs_input";
 
 /**
  * Result of a report audit check.

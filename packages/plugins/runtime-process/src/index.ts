@@ -79,10 +79,7 @@ export function create(): Runtime {
       if (isWindows()) {
         const pipePath = getPipePath(handleId);
         const shellInfo = getShell();
-        const ptyHostScript = resolve(
-          dirname(fileURLToPath(import.meta.url)),
-          "pty-host.js",
-        );
+        const ptyHostScript = resolve(dirname(fileURLToPath(import.meta.url)), "pty-host.js");
 
         const ptyEnv = { ...process.env, ...config.environment };
         try {
@@ -464,9 +461,17 @@ export function create(): Runtime {
       if (pipePath) {
         const alive = await ptyHostIsAlive(pipePath);
         if (!alive) {
-          return { type: "process", target: "", command: `# process for session ${handle.id} is no longer running` };
+          return {
+            type: "process",
+            target: "",
+            command: `# process for session ${handle.id} is no longer running`,
+          };
         }
-        return { type: "process", target: String((handle.data as Record<string, unknown>)?.pid ?? ""), command: pipePath };
+        return {
+          type: "process",
+          target: String((handle.data as Record<string, unknown>)?.pid ?? ""),
+          command: pipePath,
+        };
       }
 
       const entry = processes.get(handle.id);

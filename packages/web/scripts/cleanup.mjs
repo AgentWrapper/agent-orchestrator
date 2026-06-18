@@ -17,9 +17,9 @@ try {
       }
     }
   }
-  
+
   execFileSync("rimraf", [".next", "dist-server"], { stdio: "inherit" });
-} catch (error) {
+} catch {
   console.warn("Cleanup failed (likely file lock), continuing...");
   // Don't exit with error, allow build to proceed
 }

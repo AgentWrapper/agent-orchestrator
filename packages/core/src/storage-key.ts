@@ -27,7 +27,9 @@ export function normalizeOriginUrl(raw: string): string {
     return `https://${host}/${path}`;
   }
 
-  const normalized = trimmed.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, (scheme) => scheme.toLowerCase());
+  const normalized = trimmed.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, (scheme) =>
+    scheme.toLowerCase(),
+  );
   let url: URL;
   try {
     url = new URL(normalized);
@@ -53,7 +55,8 @@ export function relativeSubdir(gitRoot: string, projectPath: string): string {
 }
 
 export function deriveStorageKey({ originUrl, gitRoot, projectPath }: StorageKeyInput): string {
-  const normalizedOrigin = originUrl !== null ? normalizeOriginUrl(originUrl) : `local://${toPosixPath(gitRoot)}`;
+  const normalizedOrigin =
+    originUrl !== null ? normalizeOriginUrl(originUrl) : `local://${toPosixPath(gitRoot)}`;
   const subdir = relativeSubdir(gitRoot, projectPath);
   const raw = `${normalizedOrigin}#${subdir}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 12);

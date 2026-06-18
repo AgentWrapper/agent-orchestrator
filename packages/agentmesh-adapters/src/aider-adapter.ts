@@ -1,6 +1,6 @@
 /**
  * Aider Agent Adapter
- * 
+ *
  * Adapter for Aider - Git-aware AI coding assistant.
  * Optimized for automated commit workflows and git operations.
  */
@@ -16,10 +16,13 @@ import type {
   AgentStatus,
   AgentSessionInfo,
 } from "@aoagents/agentmesh-core";
-import type { SessionManager } from "@aoagents/ao-core";
-import type { SessionId } from "@aoagents/ao-core";
-import { getShell, isWindows } from "@aoagents/ao-core";
-import { getActivityLogPath } from "@aoagents/ao-core";
+import {
+  type SessionManager,
+  type SessionId,
+  getShell,
+  isWindows,
+  getActivityLogPath,
+} from "@aoagents/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
@@ -35,17 +38,17 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
   /**
    * Check if Aider CLI is available
    */
-  async preflight(context: PreflightContext): Promise<PreflightResult> {
+  async preflight(_context: PreflightContext): Promise<PreflightResult> {
     try {
       const shell = getShell();
       const command = isWindows() ? "aider.exe" : "aider";
       const commandArgs = shell.args(`${command} --version`);
-      
+
       const { stdout } = await execFileAsync(shell.cmd, commandArgs, {
         timeout: 5000,
         shell: isWindows() ? true : false,
       });
-      
+
       const versionMatch = stdout.match(/Aider (\d+\.\d+\.\d+)/);
       const version = versionMatch ? versionMatch[1] : "unknown";
 
@@ -54,7 +57,7 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
         version,
         warnings: [],
       };
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         warnings: [],
@@ -66,7 +69,7 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
    * Start an Aider session with role context
    */
   async start(config: AgentStartConfig): Promise<AgentSession> {
-    const { taskId, role, prompt, workspacePath, branch, environment } = config;
+    const { taskId, role, prompt, branch } = config;
 
     // Build role-specific prompt
     const rolePrompt = this.buildRolePrompt(role, prompt);
@@ -114,7 +117,7 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
         capturedAt: new Date(),
         linesRead: tailLines.split("\n").length,
       };
-    } catch (error) {
+    } catch {
       return {
         text: "",
         capturedAt: new Date(),
@@ -128,7 +131,7 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
    */
   async getStatus(session: AgentSession): Promise<AgentStatus> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return "exited";
     }
@@ -162,7 +165,7 @@ export class AiderAdapter implements AgentMeshAgentAdapter {
    */
   async getSessionInfo(session: AgentSession): Promise<AgentSessionInfo | null> {
     const aoSession = await this.sessionManager.get(session.aoSessionId);
-    
+
     if (!aoSession) {
       return null;
     }
@@ -243,10 +246,13 @@ ${task}
 Use Aider's git awareness to understand the codebase history and context for more accurate planning.`,
     };
 
-    return rolePrompts[role] || `You are a ${role} agent using Aider.
+    return (
+      rolePrompts[role] ||
+      `You are a ${role} agent using Aider.
 
 TASK:
-${task}`;
+${task}`
+    );
   }
 
   /**

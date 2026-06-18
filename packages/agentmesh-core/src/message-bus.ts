@@ -1,12 +1,12 @@
 /**
  * Message Bus
- * 
+ *
  * Typed message routing and logging system for agent-to-agent communication.
  * All messages are logged to JSONL for replay and debugging.
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { AgentMeshMessage, MessageType } from "./types.js";
 
 export class MessageBus {
@@ -66,7 +66,7 @@ export class MessageBus {
   /**
    * Get message history for a task
    */
-  getHistory(taskId: string, limit?: number): AgentMeshMessage[] {
+  getHistory(_taskId: string, _limit?: number): AgentMeshMessage[] {
     // This would read from the JSONL log file
     // For now, return empty array as file reading is complex
     return [];
@@ -80,7 +80,7 @@ export class MessageBus {
   private routeMessage(message: AgentMeshMessage): void {
     const handlers = this.messageHandlers.get(message.type);
     if (handlers) {
-      handlers.forEach(handler => {
+      handlers.forEach((handler) => {
         try {
           handler(message);
         } catch (error) {

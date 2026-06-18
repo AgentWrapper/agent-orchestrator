@@ -83,9 +83,117 @@
       "additionalProperties": {
         "$ref": "#/$defs/reactionConfig"
       }
+    },
+    "agentmesh": {
+      "$ref": "#/$defs/agentmeshConfig"
     }
   },
   "$defs": {
+    "agentmeshConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AgentMesh coordination layer settings (QA loop, policy gates, roles).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the AgentMesh coordination layer."
+        },
+        "qa": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "QA loop configuration.",
+          "properties": {
+            "maxRetries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum rework attempts before escalation."
+            },
+            "qaTimeout": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "QA run timeout in milliseconds."
+            },
+            "reworkTimeout": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Rework attempt timeout in milliseconds."
+            },
+            "autoRework": {
+              "type": "boolean",
+              "description": "Automatically send failing tasks back for rework."
+            },
+            "escalateAfterRetries": {
+              "type": "boolean",
+              "description": "Escalate to a human once maxRetries is exceeded."
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Policy engine configuration.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "blockOnPolicyViolation": {
+              "type": "boolean"
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "prGate": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "PR gate configuration.",
+          "properties": {
+            "requireQAPass": {
+              "type": "boolean"
+            },
+            "requirePolicyCheck": {
+              "type": "boolean"
+            },
+            "autoMergeOnPass": {
+              "type": "boolean"
+            },
+            "requiredApprovals": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blockOnPolicyViolation": {
+              "type": "boolean"
+            }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "description": "Per-role agent assignments keyed by role name.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "messaging": {
+          "type": "object",
+          "description": "Inter-agent messaging settings.",
+          "additionalProperties": true
+        }
+      }
+    },
     "reactionConfig": {
       "type": "object",
       "additionalProperties": false,

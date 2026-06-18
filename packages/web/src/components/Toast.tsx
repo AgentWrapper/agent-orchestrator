@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useReducer,
-  useRef,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useReducer, useRef } from "react";
 import { cn } from "@/lib/cn";
 
 type ToastVariant = "success" | "error" | "info";
@@ -22,10 +15,7 @@ type ToastAction =
   | { type: "SHOW"; message: string; variant: ToastVariant; key: number }
   | { type: "HIDE" };
 
-function toastReducer(
-  _state: ToastState | null,
-  action: ToastAction,
-): ToastState | null {
+function toastReducer(_state: ToastState | null, action: ToastAction): ToastState | null {
   if (action.type === "SHOW") {
     return { message: action.message, variant: action.variant, key: action.key };
   }
@@ -66,12 +56,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div
-        className="toast-container"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
+      <div className="toast-container" role="status" aria-live="polite" aria-atomic="true">
         {toast && (
           <div
             key={toast.key}

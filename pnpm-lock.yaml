@@ -13,6 +13,9 @@ importers:
 
   .:
     devDependencies:
+      '@aoagents/ao':
+        specifier: workspace:*
+        version: link:packages/ao
       '@changesets/cli':
         specifier: ^2.29.8
         version: 2.30.0(@types/node@25.6.0)

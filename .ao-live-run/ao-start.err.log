@@ -1,0 +1,23 @@
+- Starting dashboard
+√ Dashboard starting on http://localhost:3000
+[notifier-discord] No webhookUrl configured.
+  Set it in agent-orchestrator.yaml under notifiers.discord.webhookUrl
+  Create a webhook: Discord Server Settings > Integrations > Webhooks > New Webhook
+[notifier-openclaw] No token configured.
+  Add hooks.token to your OpenClaw config, or set notifiers.openclaw.openclawConfigPath.
+  Run: ao setup openclaw
+[notifier-slack] No webhookUrl configured — notifications will be no-ops
+[notifier-webhook] No url configured — notifications will be no-ops
+- Ensuring orchestrator session
+√ Restored orchestrator session: pa-orchestrator
+- Starting project supervisor
+[notifier-discord] No webhookUrl configured.
+  Set it in agent-orchestrator.yaml under notifiers.discord.webhookUrl
+  Create a webhook: Discord Server Settings > Integrations > Webhooks > New Webhook
+[notifier-openclaw] No token configured.
+  Add hooks.token to your OpenClaw config, or set notifiers.openclaw.openclawConfigPath.
+  Run: ao setup openclaw
+[notifier-slack] No webhookUrl configured — notifications will be no-ops
+[notifier-webhook] No url configured — notifications will be no-ops
+√ Lifecycle project supervisor started
+[notifier-composio] No composioApiKey or COMPOSIO_API_KEY configured — notifications will be no-ops
