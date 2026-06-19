@@ -94,6 +94,21 @@ function hasExplicitConflictingNotifierEntry(
   );
 }
 
+/**
+ * Whether AO notifier plugins should be skipped entirely for this process.
+ *
+ * Native front-ends (e.g. Maestro) own user-facing notifications themselves and
+ * launch the headless daemon with `AO_DISABLE_NOTIFIERS=1`. Honouring it at the
+ * single notifier registration chokepoint means no notifier instance is ever
+ * created, so the dispatcher finds none and stays silent — no duplicate desktop
+ * banners, no external (composio) dependency. Scoped to the process via env; the
+ * global config is never mutated, so other AO invocations are unaffected.
+ */
+function notifiersDisabledByEnv(): boolean {
+  const v = process.env["AO_DISABLE_NOTIFIERS"];
+  return v === "1" || v === "true" || v === "yes";
+}
+
 function collectNotifierRegistrations(
   pluginName: string,
   config: OrchestratorConfig,
@@ -434,6 +449,9 @@ export function createPluginRegistry(): PluginRegistry {
     config: OrchestratorConfig,
     isExternalLoad = false,
   ): void {
+    // Native front-ends launch the daemon with AO_DISABLE_NOTIFIERS=1 to own
+    // notifications themselves. Skip all notifier registration when set.
+    if (notifiersDisabledByEnv()) return;
     const { manifest } = plugin;
     const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
