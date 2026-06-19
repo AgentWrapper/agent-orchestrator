@@ -889,7 +889,7 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
 // =========================================================================
 // setupWorkspaceHooks / postLaunchSetup — hook path (symlink safety)
 // =========================================================================
-describe("hook setup — relative path (symlink-safe)", () => {
+describe("hook setup — $CLAUDE_PROJECT_DIR path (symlink-safe, sub-cwd-safe)", () => {
   const agent = create();
 
   /** Extract the hook command from the settings.json that was written */
@@ -902,15 +902,18 @@ describe("hook setup — relative path (symlink-safe)", () => {
     return parsed.hooks.PostToolUse[0].hooks[0].command;
   }
 
-  it("setupWorkspaceHooks writes a relative hook command (not absolute)", async () => {
+  it("setupWorkspaceHooks writes a $CLAUDE_PROJECT_DIR-rooted hook command (not a bare relative or hard absolute path)", async () => {
     await agent.setupWorkspaceHooks!(
       "/Users/equinox/.worktrees/integrator/integrator-5",
       {} as WorkspaceHooksConfig,
     );
 
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
-    expect(hookCommand).not.toMatch(/^\//);
+    expect(hookCommand).toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+    // Resolves from any sub-cwd (env-rooted), and never embeds the literal worktree path.
+    expect(hookCommand).toContain("$CLAUDE_PROJECT_DIR");
+    expect(hookCommand).not.toContain("/Users/equinox");
+    expect(hookCommand.startsWith(".claude/")).toBe(false);
   });
 
   it("postLaunchSetup is a no-op (hooks installed pre-launch via setupWorkspaceHooks)", async () => {
@@ -950,7 +953,7 @@ describe("hook setup — relative path (symlink-safe)", () => {
     expect(content1).toBe(content2);
   });
 
-  it("updates an existing absolute hook path to relative", async () => {
+  it("migrates an existing hard-absolute hook path to the $CLAUDE_PROJECT_DIR form", async () => {
     mockExistsSync.mockReturnValue(true);
     mockReadFile.mockResolvedValue(
       JSON.stringify({
@@ -977,8 +980,32 @@ describe("hook setup — relative path (symlink-safe)", () => {
       {} as WorkspaceHooksConfig,
     );
 
+    // upsert matches by the `metadata-updater.sh` identifier and replaces the stale
+    // absolute command with the env-rooted one.
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
+    expect(hookCommand).toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+  });
+
+  it("no generated hook command is cwd-relative (regression: broke when agent cwd was a worktree subdir)", async () => {
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-5",
+      {} as WorkspaceHooksConfig,
+    );
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    const settings = JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
+    const commands = Object.values(settings.hooks as Record<string, unknown>)
+      .flat()
+      .flatMap((g) => (g as { hooks: Array<{ command: string }> }).hooks)
+      .map((h) => h.command);
+    expect(commands.length).toBeGreaterThan(0);
+    for (const cmd of commands) {
+      expect(cmd).toContain("$CLAUDE_PROJECT_DIR/.claude/");
+      // never a bare relative path (the bug), never the literal worktree path.
+      expect(/(^|\s)\.claude\//.test(cmd)).toBe(false);
+      expect(cmd).not.toContain("/Users/equinox");
+    }
   });
 
   it("still writes the script file to the correct absolute filesystem path", async () => {
@@ -1020,9 +1047,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     return JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
   }
 
-  /** Activity-updater command paths (unix vs win32) */
-  const ACTIVITY_CMD_UNIX = ".claude/activity-updater.sh";
-  const ACTIVITY_CMD_WIN = "node .claude/activity-updater.cjs";
+  /** Activity-updater command paths (unix vs win32), rooted at $CLAUDE_PROJECT_DIR. */
+  const ACTIVITY_CMD_UNIX = '"$CLAUDE_PROJECT_DIR/.claude/activity-updater.sh"';
+  const ACTIVITY_CMD_WIN = 'node "$CLAUDE_PROJECT_DIR/.claude/activity-updater.cjs"';
 
   /**
    * Every Claude Code hook event the script knows how to translate into an
@@ -1326,7 +1353,7 @@ describe("setupWorkspaceHooks on win32", () => {
     await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe("node .claude/metadata-updater.cjs");
+    expect(hookCommand).toBe('node "$CLAUDE_PROJECT_DIR/.claude/metadata-updater.cjs"');
     expect(hookCommand).not.toContain(".sh");
   });
 
