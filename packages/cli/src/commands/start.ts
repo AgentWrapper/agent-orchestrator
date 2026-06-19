@@ -1011,9 +1011,12 @@ async function runStartup(
         const otherProjects = lastStop.otherProjects ?? [];
         const restoreProjectBySessionId = new Map<string, string>();
 
-        // Build flat list of all sessions to restore, grouped for display
+        // Build flat list of all sessions to restore across ALL projects.
+        // lastStop.sessionIds belongs to lastStop.projectId; otherProjects
+        // contains every other project that was active at stop time. Both
+        // must be restored regardless of which project cwd is now.
         const allRestoreSessions: string[] = [
-          ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
+          ...lastStop.sessionIds,
           ...otherProjects.flatMap((p) => p.sessionIds),
         ];
         for (const sessionId of lastStop.sessionIds) {
@@ -1025,22 +1028,34 @@ async function runStartup(
           }
         }
 
-        // Display grouped by project
-        const currentProjectSessions = lastStop.projectId === projectId ? lastStop.sessionIds : [];
-        if (currentProjectSessions.length > 0) {
+        // Display grouped by project: sessions whose projectId matches the
+        // cwd project are shown as "current project"; all others as "other".
+        const cwdProjectSessions: string[] = [
+          ...(lastStop.projectId === projectId ? lastStop.sessionIds : []),
+          ...otherProjects
+            .filter((p) => p.projectId === projectId)
+            .flatMap((p) => p.sessionIds),
+        ];
+        const crossProjectEntries: Array<{ projectId: string; sessionIds: string[] }> = [
+          ...(lastStop.projectId !== projectId
+            ? [{ projectId: lastStop.projectId, sessionIds: lastStop.sessionIds }]
+            : []),
+          ...otherProjects.filter((p) => p.projectId !== projectId),
+        ];
+        if (cwdProjectSessions.length > 0) {
           console.log(
             chalk.yellow(
-              `\n  ${currentProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`,
+              `\n  ${cwdProjectSessions.length} session(s) were active before last ao stop (${stoppedAgo}):`,
             ),
           );
-          console.log(chalk.dim(`  ${currentProjectSessions.join(", ")}\n`));
+          console.log(chalk.dim(`  ${cwdProjectSessions.join(", ")}\n`));
         }
-        if (otherProjects.length > 0) {
-          const otherTotal = otherProjects.reduce((sum, p) => sum + p.sessionIds.length, 0);
+        if (crossProjectEntries.length > 0) {
+          const otherTotal = crossProjectEntries.reduce((sum, p) => sum + p.sessionIds.length, 0);
           console.log(
             chalk.yellow(`  ${otherTotal} session(s) from other projects were also stopped:`),
           );
-          for (const p of otherProjects) {
+          for (const p of crossProjectEntries) {
             console.log(chalk.dim(`  ${p.projectId}: ${p.sessionIds.join(", ")}`));
           }
           console.log();
@@ -1061,9 +1076,12 @@ async function runStartup(
                 stoppedAt: lastStop.stoppedAt,
               },
             });
-            // Use global config so the session manager can see all projects
+            // Use global config so the session manager can see all projects.
+            // Required whenever sessions from any project other than the cwd
+            // project need to be restored (otherProjects entries, or when the
+            // stop was performed from a different project directory).
             let restoreConfig = config;
-            if (otherProjects.length > 0) {
+            if (otherProjects.length > 0 || lastStop.projectId !== projectId) {
               const globalPath = getGlobalConfigPath();
               if (existsSync(globalPath)) {
                 restoreConfig = loadConfig(globalPath);
