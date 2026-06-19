@@ -3,8 +3,22 @@ import { buildTerminalThemes, resolveMonoFontFamily } from "@/components/DirectT
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const ANSI_KEYS = [
-  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
 ] as const;
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -17,9 +31,7 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function toLinear(channel: number): number {
   const normalized = channel / 255;
-  return normalized <= 0.04045
-    ? normalized / 12.92
-    : Math.pow((normalized + 0.055) / 1.055, 2.4);
+  return normalized <= 0.04045 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
 }
 
 function relativeLuminance(hex: string): number {
@@ -88,8 +100,7 @@ describe("buildTerminalThemes", () => {
 });
 
 describe("resolveMonoFontFamily", () => {
-  const FALLBACK =
-    '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
+  const FALLBACK = '"JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace';
 
   beforeEach(() => {
     document.documentElement.style.removeProperty("--font-jetbrains-mono");
@@ -100,10 +111,7 @@ describe("resolveMonoFontFamily", () => {
   });
 
   it("prepends the resolved CSS variable to the fallback stack", () => {
-    document.documentElement.style.setProperty(
-      "--font-jetbrains-mono",
-      "__JetBrains_Mono_abc123",
-    );
+    document.documentElement.style.setProperty("--font-jetbrains-mono", "__JetBrains_Mono_abc123");
     const result = resolveMonoFontFamily();
     expect(result).toBe(`__JetBrains_Mono_abc123, ${FALLBACK}`);
   });
@@ -113,10 +121,7 @@ describe("resolveMonoFontFamily", () => {
   });
 
   it("never emits `var(...)` (would reintroduce the canvas-parse bug)", () => {
-    document.documentElement.style.setProperty(
-      "--font-jetbrains-mono",
-      "__JetBrains_Mono_abc123",
-    );
+    document.documentElement.style.setProperty("--font-jetbrains-mono", "__JetBrains_Mono_abc123");
     expect(resolveMonoFontFamily()).not.toMatch(/var\(/);
   });
 });

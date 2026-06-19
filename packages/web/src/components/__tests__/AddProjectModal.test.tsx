@@ -23,7 +23,9 @@ describe("AddProjectModal", () => {
         setItem: (key: string, value: string) => store.set(key, value),
         removeItem: (key: string) => store.delete(key),
         clear: () => store.clear(),
-        get length() { return store.size; },
+        get length() {
+          return store.size;
+        },
         key: (index: number) => [...store.keys()][index] ?? null,
       },
       writable: true,
@@ -44,9 +46,7 @@ describe("AddProjectModal", () => {
 
     render(<AddProjectModal open onClose={vi.fn()} />);
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/filesystem/browse?path=~"),
-    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/filesystem/browse?path=~"));
   });
 
   it("lets the user type an absolute path and add the current git directory", async () => {
@@ -163,7 +163,9 @@ describe("AddProjectModal", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        entries: [{ name: "downloads", isDirectory: true, isGitRepo: false, hasLocalConfig: false }],
+        entries: [
+          { name: "downloads", isDirectory: true, isGitRepo: false, hasLocalConfig: false },
+        ],
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -180,13 +182,17 @@ describe("AddProjectModal", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        entries: [{ name: "second-app", isDirectory: true, isGitRepo: true, hasLocalConfig: false }],
+        entries: [
+          { name: "second-app", isDirectory: true, isGitRepo: true, hasLocalConfig: false },
+        ],
       }),
     });
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        entries: [{ name: "second-app", isDirectory: true, isGitRepo: true, hasLocalConfig: false }],
+        entries: [
+          { name: "second-app", isDirectory: true, isGitRepo: true, hasLocalConfig: false },
+        ],
       }),
     });
     fetchMock.mockResolvedValueOnce({
@@ -206,9 +212,7 @@ describe("AddProjectModal", () => {
     fireEvent.click(await screen.findByRole("button", { name: /second-app/i }));
     fireEvent.click(screen.getByRole("button", { name: /^add project$/i }));
 
-    expect(
-      await screen.findByRole("button", { name: /open existing/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /open existing/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /use suggested id/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/project id/i)).toHaveValue("second-app-1");
   });

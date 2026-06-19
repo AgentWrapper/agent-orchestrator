@@ -1,5 +1,19 @@
 // ── State UI ──────────────────────────────────────────────────────────
 
+interface SkeletonProps {
+  className?: string;
+}
+
+/** Token-based loading placeholder. Use for content-shaped loading states. */
+export function Skeleton({ className = "" }: SkeletonProps) {
+  return (
+    <div
+      className={`animate-pulse rounded bg-[var(--color-bg-subtle)] ${className}`}
+      aria-hidden="true"
+    />
+  );
+}
+
 interface EmptyStateProps {
   message?: string;
   orchestratorHref?: string | null;
@@ -90,7 +104,8 @@ export function EmptyState({
             <>
               <p className="empty-state__headline">Ready to orchestrate</p>
               <p className="empty-state__hint">
-                Open the main orchestrator to start a session and fan out parallel agents across your codebase.
+                Open the main orchestrator to start a session and fan out parallel agents across
+                your codebase.
               </p>
               {orchestratorHref ? (
                 <a href={orchestratorHref} className="empty-state__cta">

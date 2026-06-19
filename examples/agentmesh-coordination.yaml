@@ -1,0 +1,80 @@
+# AgentMesh Coordination Example
+#
+# This example shows how to use AgentMesh's coordination layer
+# to manage parallel AI agents with QA loops and policy gates.
+
+# Basic project configuration
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+    sessionPrefix: app
+
+# AgentMesh coordination settings
+agentmesh:
+  # Enable coordination layer
+  enabled: true
+
+  # QA loop configuration
+  qa:
+    maxRetries: 3
+    qaTimeout: 1800000 # 30 minutes
+    reworkTimeout: 3600000 # 1 hour
+    autoRework: true
+    escalateAfterRetries: true
+
+  # Policy engine configuration
+  policy:
+    enabled: true
+    blockOnPolicyViolation: true
+    rules:
+      - no-hardcoded-secrets
+      - no-console-log
+      - require-tests
+      - no-destructive-ops
+
+  # PR gate configuration
+  prGate:
+    requireQAPass: true
+    requirePolicyCheck: true
+    autoMergeOnPass: false
+    requiredApprovals: 1
+    blockOnPolicyViolation: true
+
+  # Role assignments
+  roles:
+    builder:
+      agent: claude-code
+      enabled: true
+    qa:
+      agent: codex
+      enabled: true
+    planner:
+      agent: claude-code
+      enabled: false # Optional role
+    security_reviewer:
+      agent: claude-code
+      enabled: false # Optional role
+
+# Standard AO reactions
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 2
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 30m
+  approved-and-green:
+    auto: false
+    action: notify

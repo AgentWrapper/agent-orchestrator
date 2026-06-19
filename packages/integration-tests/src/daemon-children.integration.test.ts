@@ -139,7 +139,11 @@ describe.skipIf(!canRun)("daemon child reaping (integration)", () => {
     const childPids = await readChildPids(runningPid!);
     expect(childPids.length).toBeGreaterThan(0);
 
-    await execFileAsync(tsxBin, [cliEntry, "stop", "--all"], { cwd: repoPath, env, timeout: 20_000 });
+    await execFileAsync(tsxBin, [cliEntry, "stop", "--all"], {
+      cwd: repoPath,
+      env,
+      timeout: 20_000,
+    });
     await sleep(5_000);
 
     const stillAlive = childPids.filter(isAlive);

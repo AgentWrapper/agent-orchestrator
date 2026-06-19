@@ -147,18 +147,9 @@ describe("SessionPage project polling", () => {
     render(<SessionPage />);
     await flushAsyncWork();
 
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/projects",
-      expect.any(Object),
-    );
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/worker-1",
-      expect.any(Object),
-    );
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions?fresh=true",
-      expect.any(Object),
-    );
+    expect(fetch).toHaveBeenCalledWith("/api/projects", expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1", expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith("/api/sessions?fresh=true", expect.any(Object));
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?project=my-app&orchestratorOnly=true&fresh=true",
@@ -449,7 +440,6 @@ describe("SessionPage project polling", () => {
     expect(screen.getAllByText("Failed to load session").length).toBeGreaterThan(0);
   });
 
-
   it("revalidates projects and sidebar sessions on remount even when cache exists", async () => {
     const workerSession = makeWorkerSession();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -565,8 +555,6 @@ describe("SessionPage project polling", () => {
       expect.anything(),
     );
   });
-
-
 
   it("redirects the legacy session URL to the project-scoped route for clean projects", async () => {
     mockPathname = "/sessions/worker-1";

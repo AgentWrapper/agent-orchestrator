@@ -1,21 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  mkdirSync,
-  readFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
+import { writeMetadata, readMetadataRaw } from "../../metadata.js";
+import type { OrchestratorConfig, PluginRegistry, Runtime, Agent } from "../../types.js";
 import {
-  writeMetadata,
-  readMetadataRaw,
-} from "../../metadata.js";
-import type {
-  OrchestratorConfig,
-  PluginRegistry,
-  Runtime,
-  Agent,
-} from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode, installMockOpencodeSequence, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -101,7 +95,9 @@ describe("send", () => {
         runtimeHandle: makeHandle("rt-old"),
       });
 
-      vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-restored");
+      vi.mocked(mockRuntime.isAlive).mockImplementation(
+        async (handle) => handle.id !== "rt-restored",
+      );
       vi.mocked(mockAgent.isProcessRunning).mockImplementation(
         async (handle) => handle.id !== "rt-restored",
       );

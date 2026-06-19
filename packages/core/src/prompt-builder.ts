@@ -188,9 +188,10 @@ function readUserRules(project: ProjectConfig): string | null {
 /**
  * Compose a layered prompt for an agent session.
  */
-export function buildPrompt(
-  config: PromptBuildConfig,
-): { systemPrompt: string; taskPrompt?: string } {
+export function buildPrompt(config: PromptBuildConfig): {
+  systemPrompt: string;
+  taskPrompt?: string;
+} {
   const userRules = readUserRules(config.project);
   const systemSections: string[] = [];
 

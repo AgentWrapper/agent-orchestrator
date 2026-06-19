@@ -388,7 +388,10 @@ describe("isProcessRunning", () => {
     ["windows exe", "claude.exe"],
     ["js shim", "claude.js"],
     ["hyphenated name", "claude-code"],
-    ["node-shim npm install", "node /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+    [
+      "node-shim npm install",
+      "node /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+    ],
   ])("returns true for %s (%s)", async (_label, args) => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
@@ -530,9 +533,12 @@ describe("detectActivity (retired — see #1941)", () => {
     "     Retrying in 19s · attempt 7/10\n",
     "✻ Fluttering… (6m 49s · ↓ 26.9k tokens)\n",
     "some random terminal output\n",
-  ])("returns idle for ALL non-empty input (no terminal-regex active/waiting_input/blocked): %s", (input) => {
-    expect(agent.detectActivity(input)).toBe("idle");
-  });
+  ])(
+    "returns idle for ALL non-empty input (no terminal-regex active/waiting_input/blocked): %s",
+    (input) => {
+      expect(agent.detectActivity(input)).toBe("idle");
+    },
+  );
 });
 
 // =========================================================================
@@ -1066,25 +1072,22 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     expect(chmodCall![1]).toBe(0o755);
   });
 
-  it.each(ACTIVITY_EVENTS)(
-    "registers the activity-updater hook on %s",
-    async (event) => {
-      mockWriteFile.mockClear();
-      await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+  it.each(ACTIVITY_EVENTS)("registers the activity-updater hook on %s", async (event) => {
+    mockWriteFile.mockClear();
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
 
-      const settings = getParsedSettings();
-      const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
-        matcher: string;
-        hooks: Array<{ command: string; timeout?: number }>;
-      }>;
-      expect(hookGroup).toBeDefined();
-      const activity = hookGroup.flatMap((g) => g.hooks).find((h) => h.command === ACTIVITY_CMD_UNIX);
-      expect(activity).toBeDefined();
-      // The script does a single JSON parse + append — short timeout keeps a
-      // stuck hook from slowing the turn down.
-      expect(activity!.timeout).toBe(2000);
-    },
-  );
+    const settings = getParsedSettings();
+    const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string; timeout?: number }>;
+    }>;
+    expect(hookGroup).toBeDefined();
+    const activity = hookGroup.flatMap((g) => g.hooks).find((h) => h.command === ACTIVITY_CMD_UNIX);
+    expect(activity).toBeDefined();
+    // The script does a single JSON parse + append — short timeout keeps a
+    // stuck hook from slowing the turn down.
+    expect(activity!.timeout).toBe(2000);
+  });
 
   it("registers activity-updater PostToolUse alongside metadata-updater", async () => {
     mockWriteFile.mockClear();
@@ -1127,9 +1130,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
       const hookGroup = (settings.hooks as Record<string, unknown>)[event] as Array<{
         hooks: Array<{ command: string }>;
       }>;
-      const activityHooks = hookGroup.flatMap((g) => g.hooks).filter(
-        (h) => h.command === ACTIVITY_CMD_UNIX,
-      );
+      const activityHooks = hookGroup
+        .flatMap((g) => g.hooks)
+        .filter((h) => h.command === ACTIVITY_CMD_UNIX);
       expect(activityHooks).toHaveLength(1);
     }
   });
@@ -1215,9 +1218,7 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
       matcher: string;
       hooks: Array<{ command: string }>;
     }>;
-    const sharedEntry = pre.find((g) =>
-      g.hooks.some((h) => h.command === "echo user-edits-only"),
-    );
+    const sharedEntry = pre.find((g) => g.hooks.some((h) => h.command === "echo user-edits-only"));
     expect(sharedEntry).toBeDefined();
     // Matcher must NOT be overwritten — user's hook keeps firing on "Edit|Write"
     expect(sharedEntry!.matcher).toBe("Edit|Write");
@@ -1249,7 +1250,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     const stopGroup = (settings.hooks as Record<string, unknown>)["Stop"] as Array<{
       hooks: Array<{ command: string }>;
     }>;
-    expect(stopGroup.flatMap((g) => g.hooks).some((h) => h.command === ACTIVITY_CMD_WIN)).toBe(true);
+    expect(stopGroup.flatMap((g) => g.hooks).some((h) => h.command === ACTIVITY_CMD_WIN)).toBe(
+      true,
+    );
 
     mockIsWindows.mockReturnValue(false);
   });

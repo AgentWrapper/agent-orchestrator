@@ -340,13 +340,11 @@ export function readPREnrichmentFromMetadata(
       deletions: e.deletions ?? 0,
       isDraft: e.isDraft as boolean | undefined,
       ciStatus: e.ciStatus ?? "none",
-      ciChecks: (e.ciChecks ?? []).map(
-        (c: { name: string; status: string; url?: string }) => ({
-          name: c.name,
-          status: c.status,
-          url: c.url,
-        }),
-      ),
+      ciChecks: (e.ciChecks ?? []).map((c: { name: string; status: string; url?: string }) => ({
+        name: c.name,
+        status: c.status,
+        url: c.url,
+      })),
       reviewDecision: e.reviewDecision ?? "none",
       mergeability: {
         mergeable: e.mergeable ?? false,
@@ -368,9 +366,7 @@ export function readPREnrichmentFromMetadata(
  * The CLI lifecycle manager persists batch enrichment data to metadata files.
  * No GitHub API calls — reads from disk via the metadata already loaded.
  */
-export function enrichSessionPR(
-  dashboard: DashboardSession,
-): boolean {
+export function enrichSessionPR(dashboard: DashboardSession): boolean {
   if (!dashboard.pr) return false;
 
   const data = readPREnrichmentFromMetadata(dashboard.metadata);

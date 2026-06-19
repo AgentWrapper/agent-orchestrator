@@ -25,9 +25,7 @@ function StatusBadgeView({ session, spec, variant = "inline", className }: Statu
   const resolved = spec ?? (session ? getStatusSpec(session) : null);
   if (!resolved) return null;
 
-  const classes = ["status-badge", `status-badge--${variant}`, className]
-    .filter(Boolean)
-    .join(" ");
+  const classes = ["status-badge", `status-badge--${variant}`, className].filter(Boolean).join(" ");
 
   return (
     <span

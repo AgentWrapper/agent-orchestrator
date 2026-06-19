@@ -79,7 +79,7 @@ export function PullRequestsPage({
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
-        ? orchestratorLinks.find((orchestrator) => orchestrator.projectId === projectId) ?? null
+        ? (orchestratorLinks.find((orchestrator) => orchestrator.projectId === projectId) ?? null)
         : null,
     [orchestratorLinks, projectId],
   );
@@ -95,21 +95,30 @@ export function PullRequestsPage({
   const openPRs = useMemo(() => allPRs.filter((pr) => pr.state === "open"), [allPRs]);
   const mergedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "merged"), [allPRs]);
   const closedPRs = useMemo(() => allPRs.filter((pr) => pr.state === "closed"), [allPRs]);
-  const dashboardHref = projectId ? projectDashboardPath(projectId) : getProjectScopedHref("/", projectId);
+  const dashboardHref = projectId
+    ? projectDashboardPath(projectId)
+    : getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
     ? projectSessionPath(currentProjectOrchestrator.projectId, currentProjectOrchestrator.id)
     : null;
-  const activeMobilePRs = prFilter === "open" ? openPRs : prFilter === "merged" ? mergedPRs : prFilter === "closed" ? closedPRs : allPRs;
+  const activeMobilePRs =
+    prFilter === "open"
+      ? openPRs
+      : prFilter === "merged"
+        ? mergedPRs
+        : prFilter === "closed"
+          ? closedPRs
+          : allPRs;
 
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [searchParams]);
 
   return (
-      <div
-        className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
-      >
+    <div
+      className={`dashboard-shell flex h-screen${!isMobile && sidebarCollapsed ? " dashboard-shell--sidebar-collapsed" : ""}`}
+    >
       {showSidebar ? (
         <div className={`sidebar-wrapper${mobileMenuOpen ? " sidebar-wrapper--mobile-open" : ""}`}>
           <ProjectSidebar
@@ -128,7 +137,10 @@ export function PullRequestsPage({
         <div className="sidebar-mobile-backdrop" onClick={() => setMobileMenuOpen(false)} />
       )}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
-        <DynamicFavicon attentionLevels={attentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
+        <DynamicFavicon
+          attentionLevels={attentionLevels}
+          projectName={projectName ? `${projectName} PRs` : "Pull Requests"}
+        />
         {isMobile ? (
           <section className="mobile-pr-page-header">
             <div className="mobile-pr-page-header__top">
@@ -161,7 +173,8 @@ export function PullRequestsPage({
               </div>
             </div>
             <p className="mobile-pr-page-header__subtitle">
-              Open pull requests created by agents{allProjectsView ? " across projects" : " in this project"}.
+              Open pull requests created by agents
+              {allProjectsView ? " across projects" : " in this project"}.
             </p>
           </section>
         ) : (
@@ -189,9 +202,12 @@ export function PullRequestsPage({
               <div className="dashboard-hero__primary">
                 <div className="dashboard-hero__heading">
                   <div>
-                    <h1 className="dashboard-title">{projectName ? `${projectName} PRs` : "Pull Requests"}</h1>
+                    <h1 className="dashboard-title">
+                      {projectName ? `${projectName} PRs` : "Pull Requests"}
+                    </h1>
                     <p className="dashboard-subtitle">
-                      Open pull requests created by agents{allProjectsView ? " across all projects" : " in this project"}.
+                      Open pull requests created by agents
+                      {allProjectsView ? " across all projects" : " in this project"}.
                     </p>
                   </div>
                 </div>
@@ -237,7 +253,13 @@ export function PullRequestsPage({
                 data-active={isMobile ? String(prFilter === value) : undefined}
               >
                 {label}
-                <span className={isMobile ? "mobile-pr-filter-tab__count" : "rounded-full bg-[var(--color-chip-bg)] px-1.5 py-px text-[9.5px] font-mono text-[var(--color-text-muted)]"}>
+                <span
+                  className={
+                    isMobile
+                      ? "mobile-pr-filter-tab__count"
+                      : "rounded-full bg-[var(--color-chip-bg)] px-1.5 py-px text-[9.5px] font-mono text-[var(--color-text-muted)]"
+                  }
+                >
                   {count}
                 </span>
               </button>
@@ -288,9 +310,7 @@ export function PullRequestsPage({
                     </section>
                   )}
                   {allPRs.length === 0 && (
-                    <div className="mobile-pr-empty">
-                      No pull requests yet.
-                    </div>
+                    <div className="mobile-pr-empty">No pull requests yet.</div>
                   )}
                 </>
               ) : (
@@ -302,7 +322,11 @@ export function PullRequestsPage({
                   <div className="mobile-pr-list">
                     {activeMobilePRs.length > 0 ? (
                       activeMobilePRs.map((pr) => (
-                        <PRCard key={`${pr.owner}/${pr.repo}-${pr.number}`} pr={pr} muted={prFilter !== "open"} />
+                        <PRCard
+                          key={`${pr.owner}/${pr.repo}-${pr.number}`}
+                          pr={pr}
+                          muted={prFilter !== "open"}
+                        />
                       ))
                     ) : (
                       <div className="mobile-pr-empty">No pull requests in this view.</div>
@@ -341,7 +365,10 @@ export function PullRequestsPage({
                     <>
                       {prFilter === "all" && (
                         <tr>
-                          <td colSpan={6} className="border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                          <td
+                            colSpan={6}
+                            className="border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]"
+                          >
                             Open
                           </td>
                         </tr>
@@ -355,7 +382,10 @@ export function PullRequestsPage({
                     <>
                       {prFilter === "all" && (
                         <tr>
-                          <td colSpan={6} className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                          <td
+                            colSpan={6}
+                            className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]"
+                          >
                             Merged
                           </td>
                         </tr>
@@ -369,7 +399,10 @@ export function PullRequestsPage({
                     <>
                       {prFilter === "all" && (
                         <tr>
-                          <td colSpan={6} className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+                          <td
+                            colSpan={6}
+                            className="border-b border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-3 py-1.5 text-[9.5px] font-mono font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]"
+                          >
                             Closed
                           </td>
                         </tr>
@@ -381,7 +414,10 @@ export function PullRequestsPage({
                   )}
                   {allPRs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-6 text-[12px] text-[var(--color-text-secondary)]">
+                      <td
+                        colSpan={6}
+                        className="px-4 py-6 text-[12px] text-[var(--color-text-secondary)]"
+                      >
                         No pull requests yet.
                       </td>
                     </tr>

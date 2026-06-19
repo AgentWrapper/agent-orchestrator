@@ -430,7 +430,11 @@ async function resolveInteractiveToken(
 ): Promise<TokenInfo | "back"> {
   const providedToken = stringValue(opts.token);
   if (providedToken) {
-    return { value: providedToken, source: "cli", configPath: expandHomePath(initialOpenClawConfigPath) };
+    return {
+      value: providedToken,
+      source: "cli",
+      configPath: expandHomePath(initialOpenClawConfigPath),
+    };
   }
 
   let openclawConfigPath = initialOpenClawConfigPath;
@@ -451,7 +455,9 @@ async function resolveInteractiveToken(
         : []),
       {
         value: "check-config",
-        label: existingToken ? "Check OpenClaw config again" : "I added hooks.token to OpenClaw config",
+        label: existingToken
+          ? "Check OpenClaw config again"
+          : "I added hooks.token to OpenClaw config",
         hint: displayOpenClawConfigPath(openclawConfigPath),
       },
       {
@@ -525,7 +531,11 @@ async function resolveInteractiveToken(
       if (clack.isCancel(input)) {
         cancelSetup(clack);
       }
-      return { value: String(input), source: "manual", configPath: expandHomePath(openclawConfigPath) };
+      return {
+        value: String(input),
+        source: "manual",
+        configPath: expandHomePath(openclawConfigPath),
+      };
     }
   }
 }
@@ -549,7 +559,9 @@ async function resolveInteractiveRoutingPreset(
   return selection;
 }
 
-function resolveOpenClawRoutingPreset(value: string | undefined): OpenClawRoutingPreset | undefined {
+function resolveOpenClawRoutingPreset(
+  value: string | undefined,
+): OpenClawRoutingPreset | undefined {
   try {
     return resolveRoutingPresetOption(value, "OpenClaw") as OpenClawRoutingPreset | undefined;
   } catch (error) {
@@ -563,7 +575,9 @@ function printReview(resolved: ResolvedOpenClawSetup): void {
   console.log(`  Webhook URL: ${resolved.url}`);
   console.log(`  Token: configured from ${resolved.tokenSource}`);
   console.log(`  OpenClaw config: ${displayOpenClawConfigPath(resolved.openclawConfigPath)}`);
-  console.log(`  Routing: ${resolved.routingPreset ? routingLabel(resolved.routingPreset) : "unchanged"}`);
+  console.log(
+    `  Routing: ${resolved.routingPreset ? routingLabel(resolved.routingPreset) : "unchanged"}`,
+  );
   console.log(`  Setup probe: ${resolved.shouldSendTest ? "enabled" : "skipped"}`);
   console.log("");
 }
@@ -629,11 +643,7 @@ async function resolveInteractiveSetup(
     }
 
     if (step === "routing") {
-      const selectedRoutingPreset = await resolveInteractiveRoutingPreset(
-        clack,
-        opts,
-        rawConfig,
-      );
+      const selectedRoutingPreset = await resolveInteractiveRoutingPreset(clack, opts, rawConfig);
       if (selectedRoutingPreset === "back") {
         step = "token";
         continue;
@@ -706,9 +716,15 @@ async function resolveNonInteractiveSetup(
     );
   }
 
-  console.log(chalk.dim("Skipping setup probe in non-interactive mode. Run `ao setup openclaw --status` to verify."));
+  console.log(
+    chalk.dim(
+      "Skipping setup probe in non-interactive mode. Run `ao setup openclaw --status` to verify.",
+    ),
+  );
 
-  const routingPreset = resolveOpenClawRoutingPreset(opts.routingPreset) ?? (opts.refresh ? undefined : "urgent-action");
+  const routingPreset =
+    resolveOpenClawRoutingPreset(opts.routingPreset) ??
+    (opts.refresh ? undefined : "urgent-action");
 
   return {
     url,
@@ -738,7 +754,11 @@ function writeOpenClawConfig(
     retryDelayMs: 1000,
     wakeMode: "now",
   };
-  if (resolved.tokenSource === "cli" || resolved.tokenSource === "manual" || resolved.tokenSource === "yaml") {
+  if (
+    resolved.tokenSource === "cli" ||
+    resolved.tokenSource === "manual" ||
+    resolved.tokenSource === "yaml"
+  ) {
     openclawConfig["token"] = resolved.token;
   } else if (resolved.tokenSource === "env") {
     openclawConfig["token"] = "$" + "{OPENCLAW_HOOKS_TOKEN}";
@@ -827,7 +847,9 @@ async function printStatus(): Promise<void> {
   console.log(`  Config: ${context.configPath}`);
   console.log(`  Plugin: ${plugin ?? chalk.dim("not configured")}`);
   console.log(`  Webhook URL: ${configuredUrl ?? chalk.dim("not configured")}`);
-  console.log(`  Token: ${tokenInfo ? `configured from ${tokenInfo.source}` : chalk.dim("not configured")}`);
+  console.log(
+    `  Token: ${tokenInfo ? `configured from ${tokenInfo.source}` : chalk.dim("not configured")}`,
+  );
   console.log(
     `  OpenClaw config: ${openclawJson.exists ? displayOpenClawConfigPath(openclawJson.path) : chalk.dim(`${displayOpenClawConfigPath(openclawJson.path)} not found`)}`,
   );

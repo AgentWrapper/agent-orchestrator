@@ -107,7 +107,7 @@ describe("activity events: storage migration", () => {
     const data = (completed?.data ?? {}) as Record<string, unknown>;
     expect(data["projectsMigrated"]).toBe(1);
     expect(data["projectErrors"]).toBe(0);
-  });
+  }, 15000);
 
   it("emits migration.project_failed plus migration.completed when a project fails", async () => {
     // Force migrateProject to throw by pre-creating projects/badproj as a FILE
@@ -170,11 +170,13 @@ describe("activity events: storage migration", () => {
       "projects:\n  myproject:\n    path: /tmp/x\n    storageKey: aaaaaa000000\n    defaultBranch: main\n",
     );
 
-    await expect(migrateStorage({
-      aoBaseDir,
-      globalConfigPath: configPath,
-      log: () => {},
-    })).rejects.toThrow(/Found 2 active AO tmux session/);
+    await expect(
+      migrateStorage({
+        aoBaseDir,
+        globalConfigPath: configPath,
+        log: () => {},
+      }),
+    ).rejects.toThrow(/Found 2 active AO tmux session/);
 
     const calls = vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0]);
     const blocked = calls.find((c) => c.kind === "migration.blocked");

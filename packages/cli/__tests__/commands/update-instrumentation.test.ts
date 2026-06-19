@@ -190,9 +190,7 @@ describe("ao update — activity events", () => {
       checkedAt: null,
     });
 
-    await expect(program.parseAsync(["node", "ao", "update"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "ao", "update"])).rejects.toThrow("process.exit(1)");
 
     const events = recordedEvents();
     expect(events).toContainEqual(
@@ -212,9 +210,7 @@ describe("ao update — activity events", () => {
     mockDetectInstallMethod.mockReturnValue("npm-global");
     mockCheckForUpdate.mockRejectedValue(new Error("registry timeout"));
 
-    await expect(program.parseAsync(["node", "ao", "update"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "ao", "update"])).rejects.toThrow("process.exit(1)");
 
     const events = recordedEvents();
     expect(events).toContainEqual(

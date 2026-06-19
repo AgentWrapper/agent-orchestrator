@@ -379,7 +379,9 @@ describe("global-config storage identity", () => {
       ].join("\n"),
     );
 
-    expect(resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath)).toMatchObject({
+    expect(
+      resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath),
+    ).toMatchObject({
       resolveError: expect.stringContaining("wrapped projects: format"),
     });
 
@@ -393,7 +395,9 @@ describe("global-config storage identity", () => {
       orchestrator: { agent: "codex" },
       worker: { agent: "opencode" },
     });
-    expect(resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath)).toMatchObject({
+    expect(
+      resolveProjectIdentity(projectId, loadGlobalConfig(configPath)!, configPath),
+    ).toMatchObject({
       agent: "codex",
       runtime: "tmux",
       workspace: "worktree",

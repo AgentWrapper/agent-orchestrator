@@ -67,7 +67,8 @@ function buildCommandTree(command: Command, path: string[]): CompletionCommandNo
     .map((child) => buildCommandTree(child, [...path, child.name()]));
 
   return {
-    functionName: path.length === 0 ? "_ao" : `_ao_${path.join("_").replace(/[^a-zA-Z0-9_]/g, "_")}`,
+    functionName:
+      path.length === 0 ? "_ao" : `_ao_${path.join("_").replace(/[^a-zA-Z0-9_]/g, "_")}`,
     path,
     description: command.description() || "",
     options: command.options.filter((option) => !option.hidden),
@@ -121,7 +122,7 @@ function getArgumentAction(node: CompletionCommandNode, argumentIndex: number): 
   if (key === "session claim-pr" && argumentIndex === 1) return "_ao_complete_sessions";
 
   const argumentName =
-    argumentIndex >= 0 ? node.arguments[argumentIndex]?.name()?.toLowerCase() ?? "" : "";
+    argumentIndex >= 0 ? (node.arguments[argumentIndex]?.name()?.toLowerCase() ?? "") : "";
   if (
     argumentName.includes("path") ||
     argumentName.includes("file") ||
@@ -142,10 +143,7 @@ function getOptionAction(node: CompletionCommandNode, option: Option): string | 
   if (key === "verify" && (optionMatches(option, "-p") || optionMatches(option, "--project"))) {
     return "_ao_complete_projects";
   }
-  if (
-    key === "session ls" &&
-    (optionMatches(option, "-p") || optionMatches(option, "--project"))
-  ) {
+  if (key === "session ls" && (optionMatches(option, "-p") || optionMatches(option, "--project"))) {
     return "_ao_complete_projects";
   }
   if (
@@ -187,10 +185,11 @@ function renderOptionSpecs(node: CompletionCommandNode): string[] {
     const action = getOptionAction(node, option);
     const valueLabel = option.required || option.optional ? getValueLabel(option) : undefined;
 
-    for (const flag of [option.short, option.long].filter((entry): entry is string => Boolean(entry))) {
+    for (const flag of [option.short, option.long].filter((entry): entry is string =>
+      Boolean(entry),
+    )) {
       const base = `${flag}[${description}]`;
-      const spec =
-        valueLabel !== undefined ? `${base}:${valueLabel}:${action ?? ""}` : base;
+      const spec = valueLabel !== undefined ? `${base}:${valueLabel}:${action ?? ""}` : base;
       specs.push(spec);
     }
   }
@@ -242,7 +241,9 @@ function renderSubcommandCase(node: CompletionCommandNode): string[] {
 
   for (const child of node.children) {
     const description = child.description || "command";
-    lines.push(`        ${quoteForZsh(`${escapeDescribeText(child.path[child.path.length - 1] ?? "command")}:${escapeDescribeText(description)}`)}`);
+    lines.push(
+      `        ${quoteForZsh(`${escapeDescribeText(child.path[child.path.length - 1] ?? "command")}:${escapeDescribeText(description)}`)}`,
+    );
   }
 
   lines.push("      )");
@@ -255,7 +256,11 @@ function renderSubcommandCase(node: CompletionCommandNode): string[] {
 }
 
 function renderCommandFunction(node: CompletionCommandNode): string[] {
-  const lines = [`${node.functionName}() {`, "  local curcontext=\"$curcontext\" state line", "  typeset -A opt_args"];
+  const lines = [
+    `${node.functionName}() {`,
+    '  local curcontext="$curcontext" state line',
+    "  typeset -A opt_args",
+  ];
   const shiftCount = node.path.length;
 
   if (shiftCount > 0) {
@@ -268,7 +273,7 @@ function renderCommandFunction(node: CompletionCommandNode): string[] {
 
   if (node.children.length > 0) {
     lines.push('  local subcommand_name="${words[2]-}"');
-    lines.push("  case \"$subcommand_name\" in");
+    lines.push('  case "$subcommand_name" in');
     for (const child of node.children) {
       const childName = child.path[child.path.length - 1];
       lines.push(`    ${quoteForZsh(childName)} )`);
@@ -341,9 +346,11 @@ async function listProjects(): Promise<CompletionSuggestion[]> {
       if (globalConfig) {
         for (const [projectId, entry] of Object.entries(globalConfig.projects)) {
           if (seen.has(projectId)) continue;
-          const parts = [entry.displayName, entry.repo ? `${entry.repo.owner}/${entry.repo.name}` : undefined, entry.path].filter(
-            (v): v is string => typeof v === "string" && v.length > 0,
-          );
+          const parts = [
+            entry.displayName,
+            entry.repo ? `${entry.repo.owner}/${entry.repo.name}` : undefined,
+            entry.path,
+          ].filter((v): v is string => typeof v === "string" && v.length > 0);
           seen.set(projectId, {
             value: projectId,
             description: parts.length > 0 ? parts.join(" - ") : undefined,
@@ -400,11 +407,7 @@ async function listSessions(options: CompletionDataOptions): Promise<CompletionS
 
 async function listOpenTargets(): Promise<CompletionSuggestion[]> {
   const [projects, sessions] = await Promise.all([listProjects(), listSessions({})]);
-  return [
-    { value: "all", description: "Open every session" },
-    ...projects,
-    ...sessions,
-  ];
+  return [{ value: "all", description: "Open every session" }, ...projects, ...sessions];
 }
 
 export async function getCompletionSuggestions(

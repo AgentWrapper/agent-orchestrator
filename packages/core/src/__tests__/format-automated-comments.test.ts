@@ -48,18 +48,14 @@ describe("formatAutomatedCommentsMessage", () => {
   it("falls back to OWNER/REPO/PR placeholders when PR is absent", () => {
     const msg = formatAutomatedCommentsMessage([makeComment()]);
     expect(msg).toContain("gh api repos/OWNER/REPO/pulls/PR/reviews --paginate");
-    expect(msg).toContain(
-      "gh api repos/OWNER/REPO/pulls/PR/reviews/REVIEW_ID/comments --paginate",
-    );
+    expect(msg).toContain("gh api repos/OWNER/REPO/pulls/PR/reviews/REVIEW_ID/comments --paginate");
   });
 
   it("paginates every enumerated gh api command (fixes #895)", () => {
     // Regression: step 2 was previously missing --paginate, reintroducing the
     // exact pagination failure mode #895 is meant to fix.
     const msg = formatAutomatedCommentsMessage([makeComment()], prInfo);
-    const commandLines = msg
-      .split("\n")
-      .filter((l) => /^\s*\d+\.\s+`gh api/.test(l));
+    const commandLines = msg.split("\n").filter((l) => /^\s*\d+\.\s+`gh api/.test(l));
     expect(commandLines).toHaveLength(3);
     for (const line of commandLines) {
       expect(line).toContain("--paginate");

@@ -175,7 +175,11 @@ describe("buildTransitionMetadataPatch", () => {
     const decision: LifecycleDecision = {
       status: "detecting",
       evidence: "probe_failed",
-      detecting: { attempts: 2, startedAt: "2026-04-17T11:55:00.000Z", evidenceHash: "abc123def456" },
+      detecting: {
+        attempts: 2,
+        startedAt: "2026-04-17T11:55:00.000Z",
+        evidenceHash: "abc123def456",
+      },
       sessionState: "detecting",
       sessionReason: "probe_failure",
     };

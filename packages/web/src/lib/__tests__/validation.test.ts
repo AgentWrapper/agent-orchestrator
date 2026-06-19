@@ -13,9 +13,7 @@ describe("validateConfiguredProject", () => {
   });
 
   it("rejects prototype chain keys like 'constructor'", () => {
-    expect(validateConfiguredProject(projects, "constructor")).toBe(
-      "Unknown project: constructor",
-    );
+    expect(validateConfiguredProject(projects, "constructor")).toBe("Unknown project: constructor");
   });
 
   it("rejects prototype chain keys like 'toString'", () => {

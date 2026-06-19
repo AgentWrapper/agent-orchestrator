@@ -64,10 +64,7 @@ export function SessionTopStrip({
           <div className="session-detail-identity__pills">
             <div className={cn("session-detail-status-pill", activityStateClass(activityLabel))}>
               <span
-                className={cn(
-                  "session-detail-status-pill__dot",
-                  activityToneClass(activityColor),
-                )}
+                className={cn("session-detail-status-pill__dot", activityToneClass(activityColor))}
               />
               <span className="session-detail-status-pill__label">{activityLabel}</span>
             </div>

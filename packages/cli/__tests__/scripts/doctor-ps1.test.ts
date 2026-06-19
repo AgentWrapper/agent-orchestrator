@@ -13,9 +13,22 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scriptPath = join(packageRoot, "src", "assets", "scripts", "ao-doctor.ps1");
 
+function resolvePowerShellCommand(): string | null {
+  for (const candidate of ["pwsh", "powershell"]) {
+    const result = spawnSync(candidate, ["-NoProfile", "-Command", "exit 0"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (result.status === 0) return candidate;
+  }
+  return null;
+}
+
+const powerShellCommand = resolvePowerShellCommand();
+
 function runPwsh(args: string[], extraEnv: Record<string, string> = {}) {
   return spawnSync(
-    "pwsh",
+    powerShellCommand ?? "pwsh",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, ...args],
     {
       env: { ...process.env, ...extraEnv },
@@ -24,7 +37,7 @@ function runPwsh(args: string[], extraEnv: Record<string, string> = {}) {
   );
 }
 
-describe.runIf(process.platform === "win32")("ao-doctor.ps1", () => {
+describe.runIf(process.platform === "win32" && powerShellCommand !== null)("ao-doctor.ps1", () => {
   it("prints usage and exits 0 for --help", () => {
     const result = runPwsh(["--help"]);
     expect(result.status).toBe(0);

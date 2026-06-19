@@ -1,20 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { createInitialCanonicalLifecycle } from "../../lifecycle-state.js";
 import { getWorkspaceAgentsMdPath } from "../../opencode-agents-md.js";
 import { getProjectDir } from "../../paths.js";
-import {
-  writeMetadata,
-  readMetadataRaw,
-  updateMetadata,
-} from "../../metadata.js";
+import { writeMetadata, readMetadataRaw, updateMetadata } from "../../metadata.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -24,7 +15,12 @@ import {
   type Agent,
   type Workspace,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode, PATH_SEP } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -39,7 +35,16 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({
+    tmpDir,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  } = ctx);
 });
 
 afterEach(() => {
@@ -213,11 +218,17 @@ describe("restore", () => {
       get: vi.fn().mockImplementation((slot: string) => {
         if (slot === "runtime") return mockRuntime;
         if (slot === "agent") return mockAgent;
-        if (slot === "workspace") return {
-          ...mockWorkspace,
-          exists: vi.fn().mockResolvedValue(true),
-          restore: vi.fn().mockResolvedValue({ path: ws, branch: "main", sessionId: "app-1", projectId: "my-app" }),
-        };
+        if (slot === "workspace")
+          return {
+            ...mockWorkspace,
+            exists: vi.fn().mockResolvedValue(true),
+            restore: vi.fn().mockResolvedValue({
+              path: ws,
+              branch: "main",
+              sessionId: "app-1",
+              projectId: "my-app",
+            }),
+          };
         return null;
       }),
     };
@@ -345,9 +356,7 @@ describe("restore", () => {
 
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta).not.toBeNull();
-    expect(meta!["displayName"]).toBe(
-      "Refactor session manager to use flat metadata files",
-    );
+    expect(meta!["displayName"]).toBe("Refactor session manager to use flat metadata files");
   });
 
   it("throws for nonexistent session", async () => {

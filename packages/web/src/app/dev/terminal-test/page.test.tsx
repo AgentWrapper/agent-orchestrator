@@ -42,7 +42,9 @@ describe("TerminalTestPage", () => {
     expect(screen.getByText("Terminal Implementation Test & Documentation")).toBeInTheDocument();
     expect(screen.getByText(/Root Cause Analysis/i)).toBeInTheDocument();
     expect(screen.getByText(/The Debugging Journey/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /hide side-by-side comparison/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /hide side-by-side comparison/i }),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByTestId("legacy-terminal-ao-orchestrator")).toBeInTheDocument();

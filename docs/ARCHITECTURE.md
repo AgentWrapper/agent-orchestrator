@@ -1,6 +1,6 @@
-# Agent Orchestrator — Technical Architecture
+# AgentMesh — Technical Architecture
 
-This document explains how the various parts of the Agent Orchestrator communicate with each other: where HTTP is used, where WebSocket is used, and what each carries.
+This document explains how the various parts of AgentMesh communicate with each other: where HTTP is used, where WebSocket is used, and what each carries.
 
 ---
 
@@ -73,28 +73,38 @@ graph TB
 
 Used for all request-response interactions. The browser calls these on demand; the CLI and the WebSocket server also use them.
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/sessions` | GET | List all sessions (with PR / issue metadata) |
-| `/api/sessions/light` | GET | Lightweight session list (minimal fields) |
-| `/api/sessions/patches` | GET | Ultra-light patches (id, status, activity, attentionLevel) — polled by the WS server every 3s |
-| `/api/sessions/:id` | GET | Full session detail |
-| `/api/sessions/:id/message` | POST | Send a message/command to a live agent |
-| `/api/sessions/:id/restore` | POST | Respawn a terminated session |
-| `/api/sessions/:id/kill` | POST | Terminate a running session |
-| `/api/sessions/:id/files` | GET | Browse workspace files |
-| `/api/sessions/:id/diff/**` | GET | File diff view |
-| `/api/sessions/:id/sub-sessions` | GET / POST | List / create sub-sessions (forked agents) |
-| `/api/spawn` | POST | Spawn a new agent session |
-| `/api/projects` | GET | List configured projects |
-| `/api/agents` | GET | List registered agent plugins |
-| `/api/issues` | GET | Fetch backlog issues |
-| `/api/backlog` | GET | Backlog summary |
-| `/api/prs/:id/merge` | POST | Merge a PR |
-| `/api/observability` | GET | Health and metrics summary |
-| `/api/verify` | POST | Verify environment setup |
-| `/api/setup-labels` | POST | Set up GitHub labels |
-| `/api/webhooks/**` | POST | Inbound webhooks from GitHub / GitLab |
+**Implementation Status:** ✅ All documented endpoints are now implemented. New endpoints added: `/api/sessions/light`, `/api/sessions/:id/files`, `/api/sessions/:id/diff/**`, `/api/sessions/:id/sub-sessions`, `/api/agents`
+
+**Recently Added Endpoints:**
+
+- `/api/sessions/light` - Lightweight session list for performance optimization
+- `/api/sessions/:id/files` - Browse workspace files with directory traversal
+- `/api/sessions/:id/diff/**` - Git diff viewing with flexible path support
+- `/api/sessions/:id/sub-sessions` - Manage forked sub-sessions for specialized tasks
+- `/api/agents` - List all registered agent plugins with metadata
+
+| Endpoint                         | Method     | Purpose                                                                                       |
+| -------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| `/api/sessions`                  | GET        | List all sessions (with PR / issue metadata)                                                  |
+| `/api/sessions/light`            | GET        | Lightweight session list (minimal fields)                                                     |
+| `/api/sessions/patches`          | GET        | Ultra-light patches (id, status, activity, attentionLevel) — polled by the WS server every 3s |
+| `/api/sessions/:id`              | GET        | Full session detail                                                                           |
+| `/api/sessions/:id/message`      | POST       | Send a message/command to a live agent                                                        |
+| `/api/sessions/:id/restore`      | POST       | Respawn a terminated session                                                                  |
+| `/api/sessions/:id/kill`         | POST       | Terminate a running session                                                                   |
+| `/api/sessions/:id/files`        | GET        | Browse workspace files                                                                        |
+| `/api/sessions/:id/diff/**`      | GET        | File diff view                                                                                |
+| `/api/sessions/:id/sub-sessions` | GET / POST | List / create sub-sessions (forked agents)                                                    |
+| `/api/spawn`                     | POST       | Spawn a new agent session                                                                     |
+| `/api/projects`                  | GET        | List configured projects                                                                      |
+| `/api/agents`                    | GET        | List registered agent plugins                                                                 |
+| `/api/issues`                    | GET        | Fetch backlog issues                                                                          |
+| `/api/backlog`                   | GET        | Backlog summary                                                                               |
+| `/api/prs/:id/merge`             | POST       | Merge a PR                                                                                    |
+| `/api/observability`             | GET        | Health and metrics summary                                                                    |
+| `/api/verify`                    | POST       | Verify environment setup                                                                      |
+| `/api/setup-labels`              | POST       | Set up GitHub labels                                                                          |
+| `/api/webhooks/**`               | POST       | Inbound webhooks from GitHub / GitLab                                                         |
 
 ---
 
@@ -142,20 +152,20 @@ sequenceDiagram
 
 **Message types:**
 
-| Direction | Channel | Type | Payload |
-|-----------|---------|------|---------|
-| Client→Server | `terminal` | `open` | `{ id }` |
-| Client→Server | `terminal` | `data` | `{ id, data: string }` |
-| Client→Server | `terminal` | `resize` | `{ id, cols, rows }` |
-| Client→Server | `terminal` | `close` | `{ id }` |
-| Client→Server | `subscribe` | — | `{ topics: ["sessions"] }` |
-| Client→Server | `system` | `ping` | — |
-| Server→Client | `terminal` | `opened` | `{ id }` |
-| Server→Client | `terminal` | `data` | `{ id, data: string }` |
-| Server→Client | `terminal` | `exited` | `{ id, code }` |
-| Server→Client | `terminal` | `error` | `{ id, message }` |
-| Server→Client | `sessions` | `snapshot` | `{ sessions: SessionPatch[] }` |
-| Server→Client | `system` | `pong` | — |
+| Direction     | Channel     | Type       | Payload                        |
+| ------------- | ----------- | ---------- | ------------------------------ |
+| Client→Server | `terminal`  | `open`     | `{ id }`                       |
+| Client→Server | `terminal`  | `data`     | `{ id, data: string }`         |
+| Client→Server | `terminal`  | `resize`   | `{ id, cols, rows }`           |
+| Client→Server | `terminal`  | `close`    | `{ id }`                       |
+| Client→Server | `subscribe` | —          | `{ topics: ["sessions"] }`     |
+| Client→Server | `system`    | `ping`     | —                              |
+| Server→Client | `terminal`  | `opened`   | `{ id }`                       |
+| Server→Client | `terminal`  | `data`     | `{ id, data: string }`         |
+| Server→Client | `terminal`  | `exited`   | `{ id, code }`                 |
+| Server→Client | `terminal`  | `error`    | `{ id, message }`              |
+| Server→Client | `sessions`  | `snapshot` | `{ sessions: SessionPatch[] }` |
+| Server→Client | `system`    | `pong`     | —                              |
 
 ---
 
@@ -181,6 +191,7 @@ graph LR
 ```
 
 The CLI (`ao start`) forks two long-running processes:
+
 - **Next.js** on `:3000` — serves the dashboard and all REST routes
 - **Terminal WS server** on `:14801` — handles multiplexed WebSocket + PTY management + session patch polling. PTY transport is platform-specific: tmux via `node-pty` on Unix, named-pipe relay (`handleWindowsPipeMessage` → `\\.\pipe\ao-pty-{sessionId}`) on Windows. Both paths use the same outer mux protocol.
 
@@ -190,18 +201,18 @@ Both processes share no in-memory state; coordination happens through flat files
 
 ## Data Flow Summary
 
-| Scenario | Protocol | Path |
-|----------|----------|------|
-| Load dashboard | HTTP GET | Browser → `:3000/` (SSR page) |
-| List sessions | HTTP GET | Browser → `:3000/api/sessions` |
-| Spawn new agent | HTTP POST | Browser → `:3000/api/spawn` |
-| Send message to agent | HTTP POST | Browser → `:3000/api/sessions/:id/message` |
-| Real-time session status | WebSocket | Browser ← `:14801/mux` `sessions` sub-channel (pushed every 3s) |
-| Terminal output / input | WebSocket | Browser ↔ `:14801/mux` `terminal` sub-channel (bidirectional) |
-| WS server fetches patches | HTTP GET | `:14801` → `:3000/api/sessions/patches` (every 3s) |
-| WS server restores session | HTTP POST | `:14801` → `:3000/api/sessions/:id/restore` |
-| GitHub notifies of CI / PR | HTTP POST | GitHub → `:3000/api/webhooks/github` |
-| CLI queries sessions | HTTP GET | `ao` CLI → `:3000/api/sessions` |
+| Scenario                   | Protocol  | Path                                                            |
+| -------------------------- | --------- | --------------------------------------------------------------- |
+| Load dashboard             | HTTP GET  | Browser → `:3000/` (SSR page)                                   |
+| List sessions              | HTTP GET  | Browser → `:3000/api/sessions`                                  |
+| Spawn new agent            | HTTP POST | Browser → `:3000/api/spawn`                                     |
+| Send message to agent      | HTTP POST | Browser → `:3000/api/sessions/:id/message`                      |
+| Real-time session status   | WebSocket | Browser ← `:14801/mux` `sessions` sub-channel (pushed every 3s) |
+| Terminal output / input    | WebSocket | Browser ↔ `:14801/mux` `terminal` sub-channel (bidirectional)   |
+| WS server fetches patches  | HTTP GET  | `:14801` → `:3000/api/sessions/patches` (every 3s)              |
+| WS server restores session | HTTP POST | `:14801` → `:3000/api/sessions/:id/restore`                     |
+| GitHub notifies of CI / PR | HTTP POST | GitHub → `:3000/api/webhooks/github`                            |
+| CLI queries sessions       | HTTP GET  | `ao` CLI → `:3000/api/sessions`                                 |
 
 ---
 
@@ -209,7 +220,7 @@ Both processes share no in-memory state; coordination happens through flat files
 
 On Windows the high-level component map (HTTP API, mux WS server, dashboard, flat-file storage) is identical, but the **PTY transport layer is different** because tmux is not available natively. This section describes only what's different.
 
-> For the developer-facing rules of "how do I write code that works on both," see [`docs/CROSS_PLATFORM.md`](CROSS_PLATFORM.md). The section below is the architectural reference for *what was built*.
+> For the developer-facing rules of "how do I write code that works on both," see [`docs/CROSS_PLATFORM.md`](CROSS_PLATFORM.md). The section below is the architectural reference for _what was built_.
 
 ### Default runtime
 
@@ -249,16 +260,17 @@ Implemented in `packages/plugins/runtime-process/src/pty-host.ts` (also runnable
 
 The pty-host exposes a small binary protocol over `\\.\pipe\ao-pty-{sessionId}`. Messages share a 5-byte header — `[1-byte type][4-byte big-endian length]` — followed by the payload.
 
-| Type | Direction | Meaning |
-|------|-----------|---------|
-| `0x01` `MSG_TERMINAL_DATA` | host → client | Raw PTY output bytes |
-| `0x02` `MSG_TERMINAL_INPUT` | client → host | User keystrokes (chunked into ≤512 chars with 15 ms gaps to avoid ConPTY input-buffer truncation) |
-| `0x03` `MSG_RESIZE` | client → host | JSON `{cols, rows}` |
-| `0x04` / `0x05` `MSG_GET_OUTPUT_REQ` / `_RES` | client ↔ host | Request and return scrollback buffer |
-| `0x06` / `0x07` `MSG_STATUS_REQ` / `_RES` | client ↔ host | Liveness check (`{alive, pid, exitCode?}`) |
-| `0x08` `MSG_KILL_REQ` | client → host | Cooperative shutdown (host disposes ConPTY then exits) |
+| Type                                          | Direction     | Meaning                                                                                           |
+| --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------- |
+| `0x01` `MSG_TERMINAL_DATA`                    | host → client | Raw PTY output bytes                                                                              |
+| `0x02` `MSG_TERMINAL_INPUT`                   | client → host | User keystrokes (chunked into ≤512 chars with 15 ms gaps to avoid ConPTY input-buffer truncation) |
+| `0x03` `MSG_RESIZE`                           | client → host | JSON `{cols, rows}`                                                                               |
+| `0x04` / `0x05` `MSG_GET_OUTPUT_REQ` / `_RES` | client ↔ host | Request and return scrollback buffer                                                              |
+| `0x06` / `0x07` `MSG_STATUS_REQ` / `_RES`     | client ↔ host | Liveness check (`{alive, pid, exitCode?}`)                                                        |
+| `0x08` `MSG_KILL_REQ`                         | client → host | Cooperative shutdown (host disposes ConPTY then exits)                                            |
 
 Client helpers in `packages/plugins/runtime-process/src/pty-client.ts`:
+
 - `connectPtyHost`, `ptyHostSendMessage`, `ptyHostGetOutput`, `ptyHostIsAlive`, `ptyHostKill`, plus `getPipePath(sessionId)` → `\\.\pipe\ao-pty-{sessionId}`.
 - `MessageParser` skips interleaved data frames so request/response pairs work over a busy pipe.
 
@@ -276,6 +288,7 @@ Client helpers in `packages/plugins/runtime-process/src/pty-client.ts`:
 Because pty-hosts run detached, `taskkill /T` on the parent ao-start process cannot reach them. To allow `ao stop` to find and clean them up, every spawned pty-host is recorded in a small JSON registry.
 
 `packages/core/src/windows-pty-registry.ts`:
+
 - `registerWindowsPtyHost(entry)` — write/replace the entry on spawn.
 - `getWindowsPtyHosts()` — read all entries; auto-prune any whose PID is gone (probed via `process.kill(pid, 0)`, treating `EPERM` as alive).
 - `unregisterWindowsPtyHost(sessionId)` — remove on session destroy.
@@ -331,3 +344,114 @@ Args are inferred from the basename: `cmd` → `/c`, `bash`/`sh`/`zsh` → `-c`,
 - **Agent plugins** — `setupPathWrapperWorkspace()` generates `.cjs` + `.cmd` wrapper pairs (instead of bash scripts) for `gh`/`git` interception. `formatLaunchCommand` for codex / kimicode prepends `& ` so PowerShell parses the quoted binary path as a call expression. `agent-claude-code` ships a Node.js metadata-updater (`.cjs`) hook in place of the bash version; system-prompt files are inlined rather than `$(cat …)`-substituted.
 - **Path-equality** — `packages/cli/src/lib/path-equality.ts` (`pathsEqual`, `canonicalCompareKey`) handles NTFS case-insensitivity and drive-letter case differences when comparing project paths in `ao start`.
 - **`stopStaleWindowsPtyHosts(projectDir)`** in `packages/web/src/lib/windows-pty-cleanup.ts` is a defensive sweeper used by the dashboard to clean up orphan pty-hosts found via a PowerShell `Get-CimInstance Win32_Process` query.
+
+---
+
+## AgentMesh Coordination Layer
+
+AgentMesh is the product layer built on top of AO. AO solves the infrastructure problem (running agents in parallel, isolating workspaces, tracking PRs, reacting to CI). AgentMesh solves the coordination problem (making agents work together like an engineering team).
+
+See [`AGENTMESH.md`](AGENTMESH.md) for the full engineering reference. This section covers how AgentMesh integrates with the AO architecture described above.
+
+### High-level system diagram
+
+```
+User
+ ↓
+agentmesh CLI  ←→  AO CLI (ao commands still work independently)
+ ↓
+AgentMesh Core
+ ├── Task board (SQLite, .agentmesh/db.sqlite)
+ ├── Message bus (typed, logged, replayable)
+ ├── Role manager (builder, qa, planner, …)
+ ├── QA loop engine (state machine: building → qa_running → rework → pr_opening)
+ ├── Policy engine (blocks dangerous diffs before PR)
+ ├── PR gate (PR opens only after QA passes)
+ └── Timeline logger (every step as structured JSONL)
+ ↓
+AO Core Infrastructure (unchanged)
+ ├── Session Manager (CRUD, worktree isolation, metadata files)
+ ├── Lifecycle Manager (state machine, polling loop, reactions)
+ ├── Plugin Registry (8 slots: runtime, agent, workspace, tracker, SCM, notifier, terminal)
+ └── Config Loader (Zod-validated agent-orchestrator.yaml)
+ ↓
+Agent Adapters
+ ├── Claude Code (builder role — local terminal, ConPTY on Windows)
+ ├── Codex (QA role — local terminal)
+ ├── Devin (external — via GitHub issues/PRs/webhooks)
+ ├── Gemini CLI, OpenCode, Cursor Agent, Aider (V1)
+ └── future agents
+ ↓
+Git / GitHub / CI / PRs
+```
+
+### AgentMesh data flow for a single task
+
+```
+agentmesh run "Add password reset flow" --builder claude-code --qa codex
+  ↓
+AgentMesh: create TASK-001 in SQLite
+AgentMesh: call AO session.spawn() → Claude Code builder session
+  ↓
+AO: create worktree, set up branch, write system prompt, start Claude Code
+  ↓
+AgentMesh: poll builder output via AO session APIs
+AgentMesh: detect completion_claim from builder
+AgentMesh: capture diff, builder-summary.md, test logs
+  ↓
+AgentMesh: call AO session.spawn() → Codex QA session
+AgentMesh: send QA prompt (task + diff + builder_summary + builder_commands)
+  ↓
+AO: create worktree, set up branch, start Codex
+  ↓
+AgentMesh: poll QA output
+AgentMesh: parse verdict (PASS / FAIL / BLOCKED) from QA output
+  ↓
+PASS path:
+  AgentMesh: run policy engine against diff
+  AgentMesh: call AO SCM plugin → open PR
+  AgentMesh: wait for CI via AO lifecycle reactions
+  AgentMesh: mark task merge_ready
+FAIL path:
+  AgentMesh: save structured QA report
+  AgentMesh: send rework_request message to builder session
+  AgentMesh: builder fixes → QA retests (up to max_retries)
+  AgentMesh: if max_retries exhausted → task blocked
+```
+
+### What AgentMesh adds to AO's storage
+
+AO stores session metadata in `~/.agent-orchestrator/{hash}-{project}/sessions/`. AgentMesh stores task-level data inside the repo:
+
+```
+~/.agent-orchestrator/{hash}-{project}/   ← AO (unchanged)
+  sessions/{id}
+  worktrees/{id}/
+  archive/{id}_{ts}/
+
+.agentmesh/                               ← AgentMesh (new, inside repo)
+  db.sqlite                               ← task board, messages, QA reports
+  tasks/TASK-001/
+    attempts/attempt-1/
+      builder-output.log
+      diff.patch
+      qa-report.json
+    timeline.jsonl
+    messages.jsonl
+```
+
+### Integration contract: AgentMesh → AO
+
+AgentMesh calls these AO interfaces and must not break them:
+
+| AO API                    | AgentMesh use                                    |
+| ------------------------- | ------------------------------------------------ |
+| `SessionManager.spawn()`  | Start builder and QA sessions                    |
+| `SessionManager.send()`   | Deliver prompts and rework requests              |
+| `SessionManager.kill()`   | Stop sessions on task completion or block        |
+| `SessionManager.list()`   | Poll session status and activity state           |
+| `SCM.createPullRequest()` | Open PR after QA pass                            |
+| `Lifecycle` reactions     | Receive CI failures and review comments back     |
+| `Tracker.getIssue()`      | Seed task descriptions from GitHub/Linear issues |
+
+AgentMesh never modifies `session-manager.ts` or `lifecycle-manager.ts` internals in the MVP. It wraps them from outside.

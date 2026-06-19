@@ -163,7 +163,15 @@ export async function runRepoScript(scriptName: string, args: string[]): Promise
       // avoids machine policy blocking unsigned bundled scripts.
       return await spawnAndWait(
         ps,
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, ...args],
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          scriptPath,
+          ...args,
+        ],
         repoRoot,
         scriptLayout,
       );

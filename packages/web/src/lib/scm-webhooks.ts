@@ -62,10 +62,21 @@ export function findAffectedSessions(
   return sessions.filter((session) => {
     if (session.projectId !== projectId) return false;
     if (TERMINAL_STATUSES.has(session.status)) return false;
-    if (event.prNumber !== undefined && (
-      (session.pr?.number === event.prNumber && (!event.repository || `${session.pr.owner}/${session.pr.repo}`.toLowerCase() === `${event.repository.owner}/${event.repository.name}`.toLowerCase())) ||
-      session.prs?.some((p) => p.number === event.prNumber && (!event.repository || `${p.owner}/${p.repo}`.toLowerCase() === `${event.repository.owner}/${event.repository.name}`.toLowerCase()))
-    )) return true;
+    if (
+      event.prNumber !== undefined &&
+      ((session.pr?.number === event.prNumber &&
+        (!event.repository ||
+          `${session.pr.owner}/${session.pr.repo}`.toLowerCase() ===
+            `${event.repository.owner}/${event.repository.name}`.toLowerCase())) ||
+        session.prs?.some(
+          (p) =>
+            p.number === event.prNumber &&
+            (!event.repository ||
+              `${p.owner}/${p.repo}`.toLowerCase() ===
+                `${event.repository.owner}/${event.repository.name}`.toLowerCase()),
+        ))
+    )
+      return true;
     if (event.branch && session.branch === event.branch) return true;
     return false;
   });

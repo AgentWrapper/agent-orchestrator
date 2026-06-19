@@ -31,12 +31,22 @@ import {
   isOrchestratorSession,
   TERMINAL_STATUSES,
 } from "@aoagents/ao-core";
+import { CoordinationService } from "@aoagents/agentmesh-core";
+import {
+  ClaudeCodeAdapter,
+  AiderAdapter,
+  CursorAdapter,
+  CodexAdapter,
+  OpenCodeAdapter,
+  KimiCodeAdapter,
+} from "@aoagents/agentmesh-adapters";
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@aoagents/ao-plugin-runtime-tmux";
 import pluginRuntimeProcess from "@aoagents/ao-plugin-runtime-process";
 import pluginAgentClaudeCode from "@aoagents/ao-plugin-agent-claude-code";
 import pluginAgentCodex from "@aoagents/ao-plugin-agent-codex";
+import pluginAgentAider from "@aoagents/ao-plugin-agent-aider";
 import pluginAgentCursor from "@aoagents/ao-plugin-agent-cursor";
 import pluginAgentKimicode from "@aoagents/ao-plugin-agent-kimicode";
 import pluginAgentGrok from "@aoagents/ao-plugin-agent-grok";
@@ -51,6 +61,7 @@ export interface Services {
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
+  coordinationService: CoordinationService;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -110,6 +121,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginRuntimeProcess);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentCodex);
+  registry.register(pluginAgentAider);
   registry.register(pluginAgentCursor);
   registry.register(pluginAgentKimicode);
   registry.register(pluginAgentGrok);
@@ -121,6 +133,26 @@ async function initServices(): Promise<Services> {
 
   const sessionManager = createSessionManager({ config, registry });
 
+  // Initialize AgentMesh CoordinationService
+  const coordinationService = new CoordinationService(
+    sessionManager,
+    "agentmesh",
+    undefined, // Use default base path
+  );
+
+  // Register agent adapters with CoordinationService. These mirror the local
+  // agent plugins that have a runtime-process/tmux launch path.
+  coordinationService.registerAdapter("claude-code", new ClaudeCodeAdapter(sessionManager));
+  coordinationService.registerAdapter("aider", new AiderAdapter(sessionManager));
+  coordinationService.registerAdapter("cursor", new CursorAdapter(sessionManager));
+  coordinationService.registerAdapter("codex", new CodexAdapter(sessionManager));
+  coordinationService.registerAdapter("opencode", new OpenCodeAdapter(sessionManager));
+  coordinationService.registerAdapter("kimicode", new KimiCodeAdapter(sessionManager));
+  // DevinAdapter and GeminiAdapter are intentionally NOT registered here:
+  // Devin is an external API-based agent (no local session to coordinate) and
+  // the Gemini CLI must be installed and authenticated separately. They are
+  // exported from @aoagents/agentmesh-adapters for direct/manual use only.
+
   // Lifecycle manager for webhook-triggered checks only — no independent polling.
   // The CLI process (`ao`) runs the 30s polling loop and writes PR enrichment
   // data to session metadata files. The dashboard reads from metadata instead
@@ -130,7 +162,7 @@ async function initServices(): Promise<Services> {
   // metadata the CLI has written — stale data is expected when CLI is down.
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
 
-  return { config, registry, sessionManager, lifecycleManager };
+  return { config, registry, sessionManager, lifecycleManager, coordinationService };
 }
 
 function loadDashboardConfig(): LoadedConfig {

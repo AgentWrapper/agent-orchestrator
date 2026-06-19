@@ -46,9 +46,7 @@ describe("activity events: agent-report", () => {
     ).toThrow();
 
     const calls = vi.mocked(recordActivityEvent).mock.calls.map((c) => c[0]);
-    const rejected = calls.find(
-      (c) => c.kind === "api.agent_report.transition_rejected",
-    );
+    const rejected = calls.find((c) => c.kind === "api.agent_report.transition_rejected");
     expect(rejected).toBeDefined();
     expect(rejected?.sessionId).toBe(sessionId);
     expect(rejected?.source).toBe("api");

@@ -93,13 +93,25 @@ function tryAcquire(lockFile: string): (() => void) | null {
     try {
       writeFileSync(fd, JSON.stringify(metadata), "utf-8");
     } catch {
-      try { unlinkSync(lockFile); } catch { /* best effort */ }
+      try {
+        unlinkSync(lockFile);
+      } catch {
+        /* best effort */
+      }
       return null;
     } finally {
-      try { closeSync(fd); } catch { /* best effort */ }
+      try {
+        closeSync(fd);
+      } catch {
+        /* best effort */
+      }
     }
     return () => {
-      try { unlinkSync(lockFile); } catch { /* best effort */ }
+      try {
+        unlinkSync(lockFile);
+      } catch {
+        /* best effort */
+      }
     };
   } catch {
     return null;
@@ -126,9 +138,12 @@ async function acquireLock(
     if (release) return release;
 
     const owner = readLockMetadata(lockFile);
-    if ((!owner && isStaleUnparseableLock(lockFile))
-      || (owner && !isProcessAlive(owner.pid))) {
-      try { unlinkSync(lockFile); } catch { /* ignore */ }
+    if ((!owner && isStaleUnparseableLock(lockFile)) || (owner && !isProcessAlive(owner.pid))) {
+      try {
+        unlinkSync(lockFile);
+      } catch {
+        /* ignore */
+      }
       const retryRelease = tryAcquire(lockFile);
       if (retryRelease) return retryRelease;
     }
@@ -171,7 +186,11 @@ function readState(): RunningState | null {
 function writeState(state: RunningState | null): void {
   ensureDir();
   if (state === null) {
-    try { unlinkSync(STATE_FILE); } catch { /* file may not exist */ }
+    try {
+      unlinkSync(STATE_FILE);
+    } catch {
+      /* file may not exist */
+    }
   } else {
     // Atomic temp+rename so a crash mid-write cannot leave torn JSON
     // that makes `getRunning()` silently return `null` and orphan a
@@ -331,7 +350,13 @@ export async function readLastStop(): Promise<LastStopState | null> {
   try {
     const raw = readFileSync(LAST_STOP_FILE, "utf-8");
     const state = JSON.parse(raw) as LastStopState;
-    if (!state || typeof state.stoppedAt !== "string" || !state.projectId || !Array.isArray(state.sessionIds)) return null;
+    if (
+      !state ||
+      typeof state.stoppedAt !== "string" ||
+      !state.projectId ||
+      !Array.isArray(state.sessionIds)
+    )
+      return null;
     return state;
   } catch {
     return null;
@@ -346,7 +371,11 @@ export async function readLastStop(): Promise<LastStopState | null> {
 export async function clearLastStop(): Promise<void> {
   const release = await acquireLock(LAST_STOP_LOCK_FILE, 5000, "last-stop.json lock");
   try {
-    try { unlinkSync(LAST_STOP_FILE); } catch { /* file may not exist */ }
+    try {
+      unlinkSync(LAST_STOP_FILE);
+    } catch {
+      /* file may not exist */
+    }
   } finally {
     release();
   }

@@ -265,13 +265,17 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (projectId-based architecture)", 
     const sessionAName = `${sessionPrefix}-a-1`;
     writeFileSync(
       join(sessionsDirA, `${sessionAName}.json`),
-      JSON.stringify({
-        worktree: `${tmpDir}/a`,
-        branch: "feat/A-100",
-        status: "working",
-        project: "project-a",
-        issue: "A-100",
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: `${tmpDir}/a`,
+          branch: "feat/A-100",
+          status: "working",
+          project: "project-a",
+          issue: "A-100",
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     // Write metadata for project B
@@ -281,13 +285,17 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (projectId-based architecture)", 
     const sessionBName = `${sessionPrefix}-b-1`;
     writeFileSync(
       join(sessionsDirB, `${sessionBName}.json`),
-      JSON.stringify({
-        worktree: `${tmpDir}/b`,
-        branch: "feat/B-100",
-        status: "working",
-        project: "project-b",
-        issue: "B-100",
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: `${tmpDir}/b`,
+          branch: "feat/B-100",
+          status: "working",
+          project: "project-b",
+          issue: "B-100",
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     const registry = createPluginRegistry();

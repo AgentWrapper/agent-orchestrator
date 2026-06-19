@@ -39,9 +39,9 @@ describe("isOrchestratorSession", () => {
   // and fail the public predicate — which is exactly what prevents them from
   // leaking into the dashboard/CLI and causing the id divergence in #1048.
   it("rejects bare {projectId}-orchestrator legacy ids without role metadata", () => {
-    expect(
-      isOrchestratorSession({ id: "integrator-orchestrator", metadata: {} }, "int"),
-    ).toBe(false);
+    expect(isOrchestratorSession({ id: "integrator-orchestrator", metadata: {} }, "int")).toBe(
+      false,
+    );
   });
 
   it("accepts bare legacy ids when role metadata is explicitly stamped", () => {

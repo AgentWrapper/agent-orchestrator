@@ -83,10 +83,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // Shared helper: connect a client to a fake process (handshake)
 // ---------------------------------------------------------------------------
-async function connectClient(
-  client: CodexAppServerClient,
-  proc: FakeProcess,
-): Promise<void> {
+async function connectClient(client: CodexAppServerClient, proc: FakeProcess): Promise<void> {
   const connectPromise = client.connect();
   await new Promise((r) => setTimeout(r, 10));
   const initReq = findRequest(proc, "initialize");
@@ -96,10 +93,7 @@ async function connectClient(
   await connectPromise;
 }
 
-async function closeClient(
-  client: CodexAppServerClient,
-  proc: FakeProcess,
-): Promise<void> {
+async function closeClient(client: CodexAppServerClient, proc: FakeProcess): Promise<void> {
   const closePromise = client.close();
   proc.simulateExit(0);
   await closePromise;
@@ -178,10 +172,14 @@ describe("CodexAppServerClient", () => {
       });
       await connectClient(client, proc);
 
-      expect(mockSpawn).toHaveBeenCalledWith("codex", ["app-server"], expect.objectContaining({
-        cwd: "/my/project",
-        stdio: ["pipe", "pipe", "pipe"],
-      }));
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "codex",
+        ["app-server"],
+        expect.objectContaining({
+          cwd: "/my/project",
+          stdio: ["pipe", "pipe", "pipe"],
+        }),
+      );
       // env should merge with process.env
       const spawnCall = mockSpawn.mock.calls[0];
       expect(spawnCall[2].env).toBeDefined();
@@ -276,10 +274,12 @@ describe("CodexAppServerClient", () => {
       const req = msgs.find((m) => m["method"] === "thread/list");
       expect(req).toBeDefined();
 
-      proc.sendLine(JSON.stringify({
-        id: req!["id"],
-        result: { threads: [{ id: "t-1" }] },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: req!["id"],
+          result: { threads: [{ id: "t-1" }] },
+        }),
+      );
 
       const result = await promise;
       expect(result).toEqual({ threads: [{ id: "t-1" }] });
@@ -292,10 +292,12 @@ describe("CodexAppServerClient", () => {
       const msgs = parseStdinMessages(proc);
       const req = msgs.find((m) => m["method"] === "thread/start");
 
-      proc.sendLine(JSON.stringify({
-        id: req!["id"],
-        error: { code: -32600, message: "Invalid params" },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: req!["id"],
+          error: { code: -32600, message: "Invalid params" },
+        }),
+      );
 
       await expect(promise).rejects.toThrow("Invalid params");
     });
@@ -522,10 +524,12 @@ describe("CodexAppServerClient", () => {
       await connectPromise;
 
       // Server sends a notification
-      proc.sendLine(JSON.stringify({
-        method: "turn/completed",
-        params: { threadId: "t-1", turnId: "turn-1" },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          method: "turn/completed",
+          params: { threadId: "t-1", turnId: "turn-1" },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       expect(notifications).toHaveLength(1);
@@ -554,10 +558,12 @@ describe("CodexAppServerClient", () => {
         events.push([method, params]);
       });
 
-      proc.sendLine(JSON.stringify({
-        method: "thread/tokenUsage/updated",
-        params: { inputTokens: 100 },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          method: "thread/tokenUsage/updated",
+          params: { inputTokens: 100 },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       expect(events).toHaveLength(1);
@@ -584,11 +590,13 @@ describe("CodexAppServerClient", () => {
       await connectPromise;
 
       // Server sends approval request
-      proc.sendLine(JSON.stringify({
-        id: 0,
-        method: "item/fileChange/requestApproval",
-        params: { path: "test.ts" },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: 0,
+          method: "item/fileChange/requestApproval",
+          params: { path: "test.ts" },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       // Should have auto-responded with accept
@@ -611,11 +619,13 @@ describe("CodexAppServerClient", () => {
 
       await connectClient(client, proc);
 
-      proc.sendLine(JSON.stringify({
-        id: 99,
-        method: "item/fileChange/requestApproval",
-        params: { path: "dangerous.ts" },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: 99,
+          method: "item/fileChange/requestApproval",
+          params: { path: "dangerous.ts" },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       // Should have responded with "decline" due to handler error
@@ -629,17 +639,22 @@ describe("CodexAppServerClient", () => {
       const proc = createFakeProcess();
       const client = new CodexAppServerClient({ requestTimeout: 500 });
       const events: Array<[string | number, string, Record<string, unknown>]> = [];
-      client.on("approval", (id: string | number, method: string, params: Record<string, unknown>) => {
-        events.push([id, method, params]);
-      });
+      client.on(
+        "approval",
+        (id: string | number, method: string, params: Record<string, unknown>) => {
+          events.push([id, method, params]);
+        },
+      );
 
       await connectClient(client, proc);
 
-      proc.sendLine(JSON.stringify({
-        id: 7,
-        method: "item/commandExecution/requestApproval",
-        params: { command: ["ls"] },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: 7,
+          method: "item/commandExecution/requestApproval",
+          params: { command: ["ls"] },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       expect(events).toHaveLength(1);
@@ -666,11 +681,13 @@ describe("CodexAppServerClient", () => {
       proc.sendLine(JSON.stringify({ id: initReq!["id"], result: {} }));
       await connectPromise;
 
-      proc.sendLine(JSON.stringify({
-        id: 42,
-        method: "item/commandExecution/requestApproval",
-        params: { command: ["rm", "-rf", "/"] },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: 42,
+          method: "item/commandExecution/requestApproval",
+          params: { command: ["rm", "-rf", "/"] },
+        }),
+      );
       await new Promise((r) => setTimeout(r, 10));
 
       expect(decisions).toEqual(["decline"]);
@@ -918,10 +935,12 @@ describe("CodexAppServerClient", () => {
       const req = findRequest(proc, "model/list");
       expect(req).toBeDefined();
 
-      proc.sendLine(JSON.stringify({
-        id: req!["id"],
-        result: { models: [{ id: "o3-mini" }, { id: "gpt-4o" }] },
-      }));
+      proc.sendLine(
+        JSON.stringify({
+          id: req!["id"],
+          result: { models: [{ id: "o3-mini" }, { id: "gpt-4o" }] },
+        }),
+      );
 
       const result = await promise;
       expect(result).toEqual({ models: [{ id: "o3-mini" }, { id: "gpt-4o" }] });

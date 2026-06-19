@@ -7,7 +7,15 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { isOrchestratorSession, type CanonicalSessionLifecycle, type PortfolioProject, type PortfolioSession, type RuntimeHandle, type Session, type SessionMetadata } from "./types.js";
+import {
+  isOrchestratorSession,
+  type CanonicalSessionLifecycle,
+  type PortfolioProject,
+  type PortfolioSession,
+  type RuntimeHandle,
+  type Session,
+  type SessionMetadata,
+} from "./types.js";
 import { getProjectSessionsDir } from "./paths.js";
 import { deriveLegacyStatus } from "./lifecycle-state.js";
 import { flattenToStringRecord } from "./utils/metadata-flatten.js";
@@ -16,7 +24,11 @@ import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 const JSON_EXTENSION = ".json";
 
 function tryParseJson<T>(value: string): T | undefined {
-  try { return JSON.parse(value) as T; } catch { return undefined; }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 const DEFAULT_PER_PROJECT_TIMEOUT_MS = 3_000;
@@ -91,9 +103,12 @@ async function loadProjectSessions(project: PortfolioProject): Promise<Portfolio
 }
 
 function rawToMetadata(raw: Record<string, string>): SessionMetadata {
-  const lifecycle = raw["lifecycle"] ? tryParseJson<CanonicalSessionLifecycle>(raw["lifecycle"]) : undefined;
+  const lifecycle = raw["lifecycle"]
+    ? tryParseJson<CanonicalSessionLifecycle>(raw["lifecycle"])
+    : undefined;
   const storedStatus = raw["status"];
-  const status = (lifecycle ? deriveLegacyStatus(lifecycle) : undefined) ?? storedStatus ?? "unknown";
+  const status =
+    (lifecycle ? deriveLegacyStatus(lifecycle) : undefined) ?? storedStatus ?? "unknown";
 
   return {
     worktree: raw["worktree"] ?? "",
@@ -106,7 +121,9 @@ function rawToMetadata(raw: Record<string, string>): SessionMetadata {
     project: raw["project"],
     agent: raw["agent"],
     createdAt: raw["createdAt"],
-    runtimeHandle: raw["runtimeHandle"] ? tryParseJson<RuntimeHandle>(raw["runtimeHandle"]) : undefined,
+    runtimeHandle: raw["runtimeHandle"]
+      ? tryParseJson<RuntimeHandle>(raw["runtimeHandle"])
+      : undefined,
     restoredAt: raw["restoredAt"],
     role: raw["role"],
     lifecycle,
@@ -130,14 +147,19 @@ function metadataToRecord(metadata: SessionMetadata): Record<string, string> {
 }
 
 /** Convert raw metadata to a Session object (lightweight, no plugin init) */
-function metadataToSession(sessionId: string, project: PortfolioProject, metadata: SessionMetadata): Session {
+function metadataToSession(
+  sessionId: string,
+  project: PortfolioProject,
+  metadata: SessionMetadata,
+): Session {
   // Use the most recent timestamp available as lastActivityAt
   const timestamps = [metadata.createdAt, metadata.restoredAt].filter(
     (timestamp): timestamp is string => typeof timestamp === "string" && timestamp.length > 0,
   );
-  const lastActivity = timestamps.length > 0
-    ? new Date(Math.max(...timestamps.map((timestamp) => new Date(timestamp).getTime())))
-    : new Date();
+  const lastActivity =
+    timestamps.length > 0
+      ? new Date(Math.max(...timestamps.map((timestamp) => new Date(timestamp).getTime())))
+      : new Date();
 
   return sessionFromMetadata(sessionId, metadataToRecord(metadata), {
     projectId: project.id,
@@ -151,7 +173,9 @@ function metadataToSession(sessionId: string, project: PortfolioProject, metadat
   });
 }
 
-export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): Promise<Record<string, { total: number; active: number }>> {
+export async function getPortfolioSessionCounts(
+  portfolio: PortfolioProject[],
+): Promise<Record<string, { total: number; active: number }>> {
   const counts: Record<string, { total: number; active: number }> = {};
   const TERMINAL = new Set(["killed", "terminated", "done", "cleanup", "errored", "merged"]);
 

@@ -165,7 +165,7 @@ This part is now mechanically straightforward because `claimPR(...)` exists.
 If the old session owns PR `#123`, replacement should do:
 
 ```ts
-claimPR(newSessionId, "123", { takeover: true })
+claimPR(newSessionId, "123", { takeover: true });
 ```
 
 Expected result:
@@ -190,10 +190,12 @@ There are several possible levels of context carry-over.
 AO spawns a fresh session and only tells it what PR/issue to work on.
 
 **Pros**
+
 - simplest implementation
 - lowest coupling to agent internals
 
 **Cons**
+
 - replacement session starts cold
 - loses reasoning trail, failed attempts, prior decisions
 - more likely to repeat work or miss subtle repo context
@@ -236,11 +238,13 @@ You now own this PR. Continue from the current branch state. First inspect CI fa
 ```
 
 **Pros**
+
 - explicit and portable across agents
 - works even without native resume support
 - keeps the product behavior understandable
 
 **Cons**
+
 - summary may omit useful detail
 - quality depends on how good the summary extraction is
 
@@ -267,10 +271,12 @@ Open questions:
 - Can the runtime/plugin reliably expose the old thread ID for successor use?
 
 **Pros**
+
 - highest continuity if it works reliably
 - preserves reasoning and full tool-use context
 
 **Cons**
+
 - agent-specific
 - potentially fragile across workspace changes
 - harder to reason about operationally
@@ -351,7 +357,7 @@ Possible return shape:
 Potential helper for context packaging:
 
 ```ts
-buildSessionHandoffContext(oldSession, project)
+buildSessionHandoffContext(oldSession, project);
 ```
 
 Output could be structured JSON or a formatted prompt block.

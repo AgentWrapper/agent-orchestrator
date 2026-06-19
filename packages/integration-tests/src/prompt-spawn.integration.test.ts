@@ -132,7 +132,10 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
       // NOTE: no userPrompt key — this is the main behavior gap
     };
 
-    writeFileSync(join(sessionsDir, `${sessionId}.json`), JSON.stringify(mainStyleMetadata, null, 2) + "\n");
+    writeFileSync(
+      join(sessionsDir, `${sessionId}.json`),
+      JSON.stringify(mainStyleMetadata, null, 2) + "\n",
+    );
 
     const config = makeConfig();
     const registry = createPluginRegistry();
@@ -154,15 +157,19 @@ describe("BLUE — main behavior: session metadata written without userPrompt", 
 
     writeFileSync(
       join(sessionsDir, `${sessionId}.json`),
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: "feat/ISSUE-42",
-        status: "working",
-        project: "test-project",
-        issue: "https://github.com/acme/repo/issues/42",
-        createdAt: new Date().toISOString(),
-        // No userPrompt
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: "feat/ISSUE-42",
+          status: "working",
+          project: "test-project",
+          issue: "https://github.com/acme/repo/issues/42",
+          createdAt: new Date().toISOString(),
+          // No userPrompt
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     const config = makeConfig();
@@ -200,7 +207,10 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
       userPrompt, // NEW: persisted by our PR
     };
 
-    writeFileSync(join(sessionsDir, `${sessionId}.json`), JSON.stringify(newStyleMetadata, null, 2) + "\n");
+    writeFileSync(
+      join(sessionsDir, `${sessionId}.json`),
+      JSON.stringify(newStyleMetadata, null, 2) + "\n",
+    );
 
     const config = makeConfig();
     const registry = createPluginRegistry();
@@ -223,14 +233,18 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
 
     writeFileSync(
       join(sessionsDir, `${sessionId}.json`),
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: `session/${sessionId}`,
-        status: "spawning",
-        project: "test-project",
-        createdAt: new Date().toISOString(),
-        userPrompt,
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: `session/${sessionId}`,
+          status: "spawning",
+          project: "test-project",
+          createdAt: new Date().toISOString(),
+          userPrompt,
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     const config = makeConfig();
@@ -256,14 +270,18 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
 
     writeFileSync(
       metadataPath,
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: `session/${sessionId}`,
-        status: "spawning",
-        project: "test-project",
-        createdAt: new Date().toISOString(),
-        userPrompt,
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: `session/${sessionId}`,
+          status: "spawning",
+          project: "test-project",
+          createdAt: new Date().toISOString(),
+          userPrompt,
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     // Verify on disk — this is the ground truth that proves persistence.
@@ -282,15 +300,19 @@ describe("GREEN — branch behavior: session metadata persists userPrompt", () =
 
     writeFileSync(
       join(sessionsDir, `${sessionId}.json`),
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: "feat/ISSUE-99",
-        status: "working",
-        project: "test-project",
-        issue: "https://github.com/acme/repo/issues/99",
-        createdAt: new Date().toISOString(),
-        userPrompt,
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: "feat/ISSUE-99",
+          status: "working",
+          project: "test-project",
+          issue: "https://github.com/acme/repo/issues/99",
+          createdAt: new Date().toISOString(),
+          userPrompt,
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     const config = makeConfig();
@@ -322,26 +344,34 @@ describe("DELTA — before vs after: same session-manager, different metadata", 
     // OLD WAY (main): no userPrompt in metadata
     writeFileSync(
       join(sessionsDir, `${oldSessionId}.json`),
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: `session/${oldSessionId}`,
-        status: "working",
-        project: "test-project",
-        createdAt: new Date().toISOString(),
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: `session/${oldSessionId}`,
+          status: "working",
+          project: "test-project",
+          createdAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     // NEW WAY (this PR): userPrompt persisted
     writeFileSync(
       join(sessionsDir, `${newSessionId}.json`),
-      JSON.stringify({
-        worktree: tmpDir,
-        branch: `session/${newSessionId}`,
-        status: "working",
-        project: "test-project",
-        createdAt: new Date().toISOString(),
-        userPrompt: prompt,
-      }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          worktree: tmpDir,
+          branch: `session/${newSessionId}`,
+          status: "working",
+          project: "test-project",
+          createdAt: new Date().toISOString(),
+          userPrompt: prompt,
+        },
+        null,
+        2,
+      ) + "\n",
     );
 
     const config = makeConfig();

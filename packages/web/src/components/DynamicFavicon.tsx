@@ -49,12 +49,7 @@ function generateFaviconSvg(initial: string, color: string): string {
 export function countNeedingAttention(levels: AttentionMap): number {
   let count = 0;
   for (const level of Object.values(levels)) {
-    if (
-      level === "respond" ||
-      level === "review" ||
-      level === "action" ||
-      level === "merge"
-    ) {
+    if (level === "respond" || level === "review" || level === "action" || level === "merge") {
       count++;
     }
   }

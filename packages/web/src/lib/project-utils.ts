@@ -39,7 +39,9 @@ export function getProjectScopedHref(
   basePath: "/" | "/prs",
   projectId: string | undefined,
 ): string {
-  return projectId ? `${basePath}?project=${encodeURIComponent(projectId)}` : `${basePath}?project=all`;
+  return projectId
+    ? `${basePath}?project=${encodeURIComponent(projectId)}`
+    : `${basePath}?project=all`;
 }
 
 export function filterWorkerSessions<T extends SessionLike>(

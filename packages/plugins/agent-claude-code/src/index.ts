@@ -29,7 +29,11 @@ import {
   toClaudeProjectPath,
 } from "./activity-detection.js";
 
-export { resetPsCache, resolveWorkspaceForClaude, toClaudeProjectPath } from "./activity-detection.js";
+export {
+  resetPsCache,
+  resolveWorkspaceForClaude,
+  toClaudeProjectPath,
+} from "./activity-detection.js";
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -867,10 +871,7 @@ interface HookRegistration {
  * only update our def's `command`/`timeout` so their hook keeps firing on
  * the matchers they chose.
  */
-function upsertHookEntry(
-  hooks: Record<string, unknown>,
-  reg: HookRegistration,
-): void {
+function upsertHookEntry(hooks: Record<string, unknown>, reg: HookRegistration): void {
   const existing = hooks[reg.event];
   const entries: Array<unknown> = Array.isArray(existing) ? existing : [];
 
@@ -1152,7 +1153,9 @@ function createClaudeCodeAgent(): Agent {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
+      const projectPath = toClaudeProjectPath(
+        await resolveWorkspaceForClaude(session.workspacePath),
+      );
       const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
       // Find the latest session JSONL file
@@ -1182,7 +1185,9 @@ function createClaudeCodeAgent(): Agent {
         if (!session.workspacePath) return null;
 
         // Find Claude's project directory for this workspace
-        const projectPath = toClaudeProjectPath(await resolveWorkspaceForClaude(session.workspacePath));
+        const projectPath = toClaudeProjectPath(
+          await resolveWorkspaceForClaude(session.workspacePath),
+        );
         const projectDir = join(homedir(), ".claude", "projects", projectPath);
 
         // Find the latest session JSONL file

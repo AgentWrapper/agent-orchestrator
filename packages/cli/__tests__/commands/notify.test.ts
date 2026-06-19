@@ -9,19 +9,19 @@ const {
   mockRecordNotificationDelivery,
   mockRegistry,
 } = vi.hoisted(() => ({
-    mockCreatePluginRegistry: vi.fn(),
-    mockCreateProjectObserver: vi.fn(),
-    mockFindConfigFile: vi.fn(),
-    mockLoadConfig: vi.fn(),
-    mockRecordNotificationDelivery: vi.fn(),
-    mockRegistry: {
-      loadFromConfig: vi.fn(),
-      get: vi.fn(),
-      list: vi.fn(),
-      register: vi.fn(),
-      loadBuiltins: vi.fn(),
-    },
-  }));
+  mockCreatePluginRegistry: vi.fn(),
+  mockCreateProjectObserver: vi.fn(),
+  mockFindConfigFile: vi.fn(),
+  mockLoadConfig: vi.fn(),
+  mockRecordNotificationDelivery: vi.fn(),
+  mockRegistry: {
+    loadFromConfig: vi.fn(),
+    get: vi.fn(),
+    list: vi.fn(),
+    register: vi.fn(),
+    loadBuiltins: vi.fn(),
+  },
+}));
 
 vi.mock("@aoagents/ao-core", () => {
   function buildSubject(input: {

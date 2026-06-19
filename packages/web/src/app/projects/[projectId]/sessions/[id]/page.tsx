@@ -5,11 +5,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { isOrchestratorSession } from "@aoagents/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
-import {
-  type DashboardSession,
-  type ActivityState,
-  getAttentionLevel,
-} from "@/lib/types";
+import { type DashboardSession, type ActivityState, getAttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
 import { getSessionTitle } from "@/lib/format";
@@ -373,7 +369,12 @@ export default function ProjectSessionPage() {
     };
   }, []);
 
-  if (loading) return <div className="dashboard-main--desktop"><LoadingContent /></div>;
+  if (loading)
+    return (
+      <div className="dashboard-main--desktop">
+        <LoadingContent />
+      </div>
+    );
 
   if (sessionMissing) {
     return (

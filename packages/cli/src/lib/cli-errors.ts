@@ -14,7 +14,9 @@ export function formatCommandError(err: unknown, options: CommandErrorOptions): 
   const command = [options.cmd, ...(options.args ?? [])].join(" ").trim();
   const action = options.action ?? "run the command";
   const code =
-    err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : undefined;
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: unknown }).code)
+      : undefined;
   const message = err instanceof Error ? err.message : String(err);
 
   if (code === "ENOENT") {

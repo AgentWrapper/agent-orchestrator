@@ -113,7 +113,11 @@ describe("SessionDetail merge conflict actions", () => {
       />,
     );
 
-    expect(screen.queryByRole("link", { name: /Compare with base branch/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Copy head branch name/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Compare with base branch/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Copy head branch name/i }),
+    ).not.toBeInTheDocument();
   });
 });

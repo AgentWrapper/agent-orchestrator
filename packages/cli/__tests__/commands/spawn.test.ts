@@ -1015,9 +1015,7 @@ describe("spawn daemon-polling enforcement", () => {
   it("refuses to spawn when no AO daemon is running", async () => {
     mockGetRunning.mockResolvedValue(null);
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -1036,9 +1034,7 @@ describe("spawn daemon-polling enforcement", () => {
       projects: ["other-project"],
     });
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)

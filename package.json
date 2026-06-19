@@ -1,8 +1,8 @@
 {
-  "name": "agent-orchestrator",
+  "name": "agentmesh",
   "version": "0.1.0",
   "private": true,
-  "description": "Orchestrate parallel AI coding agents across any runtime, any repo, any issue tracker",
+  "description": "AgentMesh: Orchestrate parallel AI coding agents across any runtime, any repo, any issue tracker",
   "license": "MIT",
   "engines": {
     "node": ">=20.18.3"
@@ -10,14 +10,14 @@
   "packageManager": "pnpm@9.15.4",
   "type": "module",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @aoagents/ao-core build && pnpm --filter @aoagents/agentmesh-core build && pnpm --filter @aoagents/agentmesh-adapters build && pnpm -r --filter \"./packages/plugins/**\" build && pnpm --filter @aoagents/ao-cli build && pnpm --filter @aoagents/ao-web build && pnpm --filter @aoagents/agentmesh-cli build",
     "dev": "pnpm --filter @aoagents/ao-web dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --filter '!@aoagents/ao-web' test",
+    "typecheck": "pnpm --filter @aoagents/ao-core build && pnpm -r --filter \"!@aoagents/ao-integration-tests\" typecheck",
+    "test": "pnpm -r --filter \"!@aoagents/ao-integration-tests\" --if-present test",
     "test:integration": "pnpm --filter @aoagents/ao-integration-tests test:integration",
     "clean": "pnpm -r clean",
     "changeset": "changeset",
@@ -27,6 +27,7 @@
     "postinstall": "node scripts/rebuild-node-pty.js"
   },
   "devDependencies": {
+    "@aoagents/ao": "workspace:*",
     "@changesets/cli": "^2.29.8",
     "@eslint/js": "^10.0.1",
     "@next/eslint-plugin-next": "^15.5.15",

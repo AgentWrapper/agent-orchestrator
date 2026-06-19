@@ -66,11 +66,7 @@ export type ApprovalHandler = (
 ) => Promise<ApprovalDecision>;
 
 /** Approval decision values */
-export type ApprovalDecision =
-  | "accept"
-  | "acceptForSession"
-  | "decline"
-  | "cancel";
+export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
 /** Options for creating a CodexAppServerClient */
 export interface AppServerClientOptions {
@@ -331,7 +327,10 @@ export class CodexAppServerClient extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   /** Send a JSON-RPC request and wait for the response */
-  async sendRequest(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  async sendRequest(
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
     if (!this.initialized && method !== "initialize") {
       throw new Error("Client not initialized — call connect() first");
     }
@@ -419,9 +418,7 @@ export class CodexAppServerClient extends EventEmitter {
         clearTimeout(pending.timer);
 
         if ("error" in msg && msg.error) {
-          pending.reject(
-            new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`),
-          );
+          pending.reject(new Error(`JSON-RPC error ${msg.error.code}: ${msg.error.message}`));
         } else {
           pending.resolve((msg as JsonRpcResponse).result ?? {});
         }

@@ -379,8 +379,7 @@ export async function getClaudeActivityState(
   // disambiguates multi-session-per-worktree, where newest-mtime would pick
   // the wrong session's JSONL whenever its sibling has just written.
   const rawUuid = session.metadata?.["claudeSessionUuid"];
-  const preferredUuid =
-    typeof rawUuid === "string" && rawUuid.trim() ? rawUuid.trim() : undefined;
+  const preferredUuid = typeof rawUuid === "string" && rawUuid.trim() ? rawUuid.trim() : undefined;
   const sessionFile = await findLatestSessionFile(projectDir, preferredUuid);
   let staleNativeState: ActivityDetection | null = null;
   if (sessionFile) {

@@ -26,7 +26,10 @@ describe("portfolio-projects", () => {
   let oldUserProfile: string | undefined;
 
   beforeEach(() => {
-    tempRoot = join(tmpdir(), `ao-portfolio-projects-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    tempRoot = join(
+      tmpdir(),
+      `ao-portfolio-projects-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     mkdirSync(tempRoot, { recursive: true });
     oldGlobalConfig = process.env["AO_GLOBAL_CONFIG"];
     oldConfigPath = process.env["AO_CONFIG_PATH"];
