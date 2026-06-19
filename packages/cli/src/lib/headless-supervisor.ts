@@ -13,7 +13,6 @@
  * headless daemon is structurally incapable of touching `@aoagents/ao-web`.
  */
 
-import { existsSync } from "node:fs";
 import chalk from "chalk";
 import ora from "ora";
 import {
@@ -51,13 +50,29 @@ export interface HeadlessSupervisorOptions {
  * registry (the canonical ~/.agent-orchestrator config that lists every
  * registered project); falls back to a cwd-walk `loadConfig()` for setups that
  * only have a local agent-orchestrator.yaml.
+ *
+ * Mirrors `loadSupervisorConfig()` in project-supervisor.ts: an ENOENT-aware
+ * try/catch rather than an `existsSync` pre-check. This keeps the two config
+ * loaders consistent, avoids a TOCTOU window between the existence check and
+ * the read, and still surfaces any non-ENOENT load error (e.g. malformed YAML)
+ * instead of silently falling back to cwd discovery.
  */
 function loadAllProjectsConfig(): OrchestratorConfig {
   const globalPath = getGlobalConfigPath();
-  if (existsSync(globalPath)) {
+  try {
     return loadConfig(globalPath);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT" &&
+      "path" in error &&
+      error.path === globalPath
+    ) {
+      return loadConfig();
+    }
+    throw error;
   }
-  return loadConfig();
 }
 
 /**
@@ -175,8 +190,20 @@ export async function runHeadlessSupervisor(
     await register({
       pid: process.pid,
       configPath: config.configPath,
+      // Vestigial in headless mode. `ao daemon` (no dashboard) starts no HTTP
+      // listener, so nothing actually binds this port — it's recorded only to
+      // keep running.json's shape uniform with the dashboard `ao start` path.
+      // Front-ends (Maestro) must NOT infer "a dashboard is serving here" from
+      // a registered port.
       port: config.port ?? DEFAULT_PORT,
       startedAt: new Date().toISOString(),
+      // ACTIVE projects only. `listLifecycleWorkers()` returns the projects that
+      // currently have a lifecycle worker attached (i.e. a non-terminal
+      // session), NOT every supervised/configured project. With zero active
+      // sessions this is `[]`, even though the daemon supervises every project
+      // in the config. Front-ends must enumerate projects from the config
+      // (global registry), not from `running.projects` — the latter only tells
+      // you which projects have live sessions right now.
       projects: listLifecycleWorkers(),
     });
 
