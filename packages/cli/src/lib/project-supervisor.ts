@@ -51,6 +51,21 @@ export interface StartProjectSupervisorOptions {
   intervalMs?: number;
   /** See {@link ReconcileProjectSupervisorOptions.configPath}. */
   configPath?: string;
+  /**
+   * Keep the Node event loop alive via the reconcile interval timer.
+   *
+   * Default (false): the timer is `unref()`'d, matching the dashboard /
+   * single-project `ao start` paths where something else (a dashboard child
+   * process or an attached lifecycle worker's ref'd poll timer) keeps the
+   * process running.
+   *
+   * The headless multi-project daemon (`ao daemon` / `ao start --all`) may
+   * boot with zero active sessions — no lifecycle worker is attached, so
+   * nothing else refs the loop. Setting this `true` lets the supervisor's own
+   * timer hold the process open until SIGINT/SIGTERM, so the daemon survives
+   * and keeps reconciling while front-ends spawn orchestrators on demand.
+   */
+  keepProcessAlive?: boolean;
 }
 
 function isMissingConfigError(error: unknown): boolean {
@@ -218,7 +233,11 @@ export async function startProjectSupervisor(
   const timer = setInterval(() => {
     void run({ swallowErrors: true });
   }, intervalMs);
-  timer.unref?.();
+  // Headless daemon mode keeps the loop alive via this timer; every other
+  // caller unrefs it so it never blocks process exit on its own.
+  if (!options.keepProcessAlive) {
+    timer.unref?.();
+  }
 
   const handle: SupervisorHandle = {
     stop: () => {

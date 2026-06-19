@@ -127,9 +127,6 @@ importers:
       '@aoagents/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
-      '@aoagents/ao-web':
-        specifier: workspace:*
-        version: link:../web
       '@clack/prompts':
         specifier: ^0.9.1
         version: 0.9.1

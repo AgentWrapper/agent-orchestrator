@@ -179,9 +179,14 @@ export async function buildDashboardEnv(
  * Locate the @aoagents/ao-web package directory.
  * Uses createRequire for ESM-compatible require.resolve, with fallback
  * to sibling package paths that work from both src/ and dist/.
+ *
+ * The dashboard (@aoagents/ao-web) is OPTIONAL: the CLI no longer depends on
+ * it, and the headless engine (`ao daemon` / `ao start --all`) never calls
+ * this function. Only the dashboard paths (`ao dashboard`, `ao start` with a
+ * dashboard) reach here, and they surface the error below when web is absent.
  */
 export function findWebDir(): string {
-  // Try to resolve from node_modules first (installed as workspace dep)
+  // Try to resolve from node_modules first (may be present as a hoisted dep)
   try {
     const pkgJson = require.resolve("@aoagents/ao-web/package.json");
     return resolve(pkgJson, "..");
@@ -199,9 +204,10 @@ export function findWebDir(): string {
       }
     }
     throw new Error(
-      "Could not find @aoagents/ao-web package.\n" +
-      "  If installed via npm:    npm install -g @aoagents/ao\n" +
-      "  If cloned from source:   pnpm install && pnpm build",
+      "The AO dashboard (@aoagents/ao-web) is not available — it is optional and\n" +
+      "  not bundled with the headless engine. The native front-end (Maestro) uses\n" +
+      "  `ao daemon` instead and needs no dashboard.\n" +
+      "  To run the dashboard from a source checkout: pnpm install && pnpm build:dashboard",
     );
   }
 }

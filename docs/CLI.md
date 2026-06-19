@@ -8,15 +8,49 @@ The `ao` CLI is the control interface for Agent Orchestrator. Most commands are 
 ao start                               # Auto-detect, generate config, start dashboard + orchestrator
 ao start <url>                         # Clone repo, auto-configure, and start
 ao start ~/other-repo                  # Add a new project and start
+ao daemon                              # Headless: supervise ALL projects, no dashboard (for native front-ends)
 ao stop                                # Stop everything (dashboard, orchestrator, lifecycle worker)
 ao status                              # Overview of all sessions
 ao status --watch                      # Live-updating terminal status view
-ao dashboard                           # Open web dashboard in browser
+ao dashboard                           # Open web dashboard in browser (optional package, see note)
 ao setup dashboard                     # Configure dashboard notification retention/routing
 ao setup desktop                       # Install/configure native macOS desktop notifications
 ao notify test --to desktop            # Send a manual notifier test without starting AO
 ao completion zsh                      # Print the zsh completion script
 ```
+
+### Headless multi-project mode (`ao daemon`)
+
+`ao daemon` runs a long-lived **headless supervisor for every configured project
+without the web dashboard**. It is the stable entry point for native front-ends
+(e.g. the Maestro macOS app) that replace the dashboard entirely.
+
+```bash
+ao daemon                              # Supervise all projects headlessly (recommended for Maestro)
+ao daemon --orchestrate-all            # Also ensure an orchestrator session for every project at startup
+ao start --all                         # Equivalent flag form on `ao start` (implies --no-dashboard)
+ao start --all --orchestrate-all       # ...with eager orchestrator spawn
+```
+
+Behavior:
+
+- Reuses the global project supervisor (`reconcileProjectSupervisor`), which
+  reconciles **all** configured projects and attaches a lifecycle worker to each
+  one that has an active session.
+- By default it does **not** auto-spawn orchestrators — parity with the dashboard
+  server. Front-ends spawn orchestrators on demand via `ao start <projectId>`
+  (which attaches to the running daemon); the supervisor picks up their lifecycle
+  within ~60s. Pass `--orchestrate-all` to eagerly ensure an orchestrator session
+  for every configured project at startup.
+- Registers in `~/.agent-orchestrator/running.json`, so `ao stop` and
+  `ao start <projectId>` work against it exactly as with `ao start`.
+- Single-project `ao start [project]` (with or without `--no-dashboard`) is
+  unchanged.
+
+> **Dashboard is optional.** The CLI no longer depends on `@aoagents/ao-web`.
+> `ao dashboard` and `ao start` (with a dashboard) only work when the web package
+> is present/built (`pnpm build:dashboard` from a source checkout). The headless
+> engine (`ao daemon`) never needs it.
 
 ## Commands the orchestrator agent uses
 

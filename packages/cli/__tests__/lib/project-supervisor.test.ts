@@ -545,4 +545,32 @@ describe("project-supervisor", () => {
     expect(secondResolved).toBe(true);
     handle.stop();
   });
+
+  it("unrefs the reconcile timer by default so it never blocks process exit", async () => {
+    const unref = vi.fn();
+    const spy = vi
+      .spyOn(globalThis, "setInterval")
+      .mockReturnValue({ unref } as unknown as ReturnType<typeof setInterval>);
+
+    const handle = await startProjectSupervisor({ intervalMs: 1_000 });
+
+    expect(unref).toHaveBeenCalledTimes(1);
+    handle.stop();
+    spy.mockRestore();
+  });
+
+  it("keeps the reconcile timer ref'd when keepProcessAlive is set (headless daemon)", async () => {
+    // The headless daemon may boot with zero active sessions, so no lifecycle
+    // worker refs the loop — the supervisor's own timer must keep it alive.
+    const unref = vi.fn();
+    const spy = vi
+      .spyOn(globalThis, "setInterval")
+      .mockReturnValue({ unref } as unknown as ReturnType<typeof setInterval>);
+
+    const handle = await startProjectSupervisor({ intervalMs: 1_000, keepProcessAlive: true });
+
+    expect(unref).not.toHaveBeenCalled();
+    handle.stop();
+    spy.mockRestore();
+  });
 });

@@ -8,7 +8,7 @@ import { registerReviewCheck } from "./commands/review-check.js";
 import { registerReview } from "./commands/review.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
-import { registerStart, registerStop } from "./commands/start.js";
+import { registerStart, registerStop, registerDaemon } from "./commands/start.js";
 import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
@@ -33,6 +33,7 @@ export function createProgram(): Command {
 
   registerStart(program);
   registerStop(program);
+  registerDaemon(program);
   registerStatus(program);
   registerSpawn(program);
   registerBatchSpawn(program);

@@ -208,3 +208,43 @@ ao daemon
 4. Развязка web: убрать ребро cli→web, исключить web из build/dev, мягкая деградация.
 5. Тесты (§5) + зелёные `pnpm build/lint/test` в worktree.
 6. `ao report ready-for-review`.
+
+---
+
+## Приложение A. Точный follow-up для ПОЛНОГО физического удаления `packages/web`
+
+Решение по этому PR — **исключение** (§2, option b), web НЕ удаляется физически.
+Ниже — точный механический чек-лист, если команда позже решит окончательно
+разойтись с upstream и вырезать дашборд целиком. Делать отдельным PR.
+
+**Удалить каталоги:**
+- `packages/web/` (Next.js-приложение + `packages/web/server/` — там же бывший HTTP REST API).
+- (Оценить) `packages/plugins/terminal-web/` — провайдер web-терминала для дашборда; если
+  никто, кроме дашборда, его не использует — удалить и снять из зависимостей/реестра cli.
+
+**Файлы CLI:**
+- `packages/cli/src/commands/dashboard.ts` + снять `registerDashboard` из `program.ts`.
+- `packages/cli/src/lib/dashboard-rebuild.ts` (кэш/ребилд дашборда).
+- `packages/cli/src/lib/dashboard-url.ts` — но `dashboardUrl()` используется в сводке
+  `runStartup` и в attach-пути (`attachAndSpawnOrchestrator`); сначала заменить вызовы.
+- `packages/cli/src/lib/web-dir.ts` — **НЕ удалять целиком**: `isPortAvailable`,
+  `findFreePort`, `openUrl`, `waitForPortAndOpen` используются вне дашборда. Удалить только
+  web-специфичные `findWebDir`/`buildDashboardEnv` (и `MAX_PORT_SCAN`/`findAvailablePortPair`
+  при необходимости пересмотреть).
+- В `runStartup` (`start.ts`) убрать блок старта дашборда (`if (opts.dashboard !== false)`)
+  и связанные опции `--rebuild`/`--dev`/`--no-dashboard` (или оставить `--no-dashboard`
+  как no-op для совместимости). Проверить `ao open` на ссылки на дашборд.
+
+**Core (строковые упоминания, безопасны, но для чистоты):**
+- `packages/core/src/update-cache.ts` — резолв `@aoagents/ao-web` для dev-режима.
+- `packages/core/src/daemon-children.ts` — матчинг имён процессов дашборда (можно оставить,
+  чтобы продолжать подметать легаси-дашборды).
+
+**Корневой `package.json`:**
+- Удалить `build:dashboard`, `dev:dashboard`; вернуть `build` к `pnpm -r build`
+  (после удаления web фильтр `'!@aoagents/ao-web'` не нужен); проверить `test`/`release`.
+- Удалить devDep `@next/eslint-plugin-next` (нужен только web) и web-специфичные настройки
+  в `eslint.config.js`.
+
+**Прочее:** `pnpm-workspace.yaml` менять не нужно (web уходит вместе с каталогом из
+`packages/*`); прогнать `pnpm install`, `pnpm build`, `pnpm lint`, `pnpm test`.
