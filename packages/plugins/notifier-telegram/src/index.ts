@@ -14,6 +14,7 @@ import {
   truncate,
   TELEGRAM_MESSAGE_MAX,
 } from "./shared.js";
+import { createNotificationGate } from "./filter.js";
 import { maybeStartListener } from "./listener.js";
 
 export const manifest = {
@@ -121,6 +122,14 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
+  // Actionable-only gate: drops lifecycle pulses, never pings about a stuck
+  // orchestrator, throttles worker-stuck, and dedups identical bursts. Lives for
+  // the notifier's lifetime so its dedup/throttle clock persists across events.
+  const gate = createNotificationGate({
+    dedupWindowMs: config?.dedupWindowMs as number | undefined,
+    stuckThrottleMs: config?.stuckThrottleMs as number | undefined,
+  });
+
   if (!botToken || !chatId) {
     console.warn(
       "[notifier-telegram] Not configured — notifications will be no-ops.\n" +
@@ -140,6 +149,25 @@ export function create(config?: Record<string, unknown>): Notifier {
     actions?: NotifyAction[],
   ): Promise<void> {
     if (!botToken || !chatId) return;
+
+    // Suppress non-actionable noise before it ever hits the wire.
+    const decision = gate.evaluate(event, Date.now());
+    if (!decision.send) {
+      recordActivityEvent({
+        source: "notifier",
+        kind: "notifier.filtered",
+        level: "debug",
+        summary: `Telegram skipped ${event.type} (${decision.reason})`,
+        data: {
+          plugin: "notifier-telegram",
+          reason: decision.reason,
+          eventType: event.type,
+          key: decision.key,
+        },
+      });
+      return;
+    }
+
     const text = buildMessageText(event);
     const replyMarkup = buildInlineKeyboard(event.sessionId, extractOptions(event), actions);
     const body: Record<string, unknown> = {

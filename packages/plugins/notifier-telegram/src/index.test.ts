@@ -140,4 +140,51 @@ describe("notifier-telegram", () => {
     const notifier = create({ botToken: TOKEN, chatId: "999", retries: 0 });
     await expect(notifier.notify(makeEvent())).rejects.toThrow(/chat not found/);
   });
+
+  // -------------------------------------------------------------------------
+  // Actionable-only filtering (anti-spam)
+  // -------------------------------------------------------------------------
+
+  it("does not send a lifecycle pulse (session.working)", async () => {
+    const fetchMock = okFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ botToken: TOKEN, chatId: "999" });
+    await notifier.notify(makeEvent({ type: "session.working", priority: "info" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never sends a stuck verdict about the orchestrator", async () => {
+    const fetchMock = okFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ botToken: TOKEN, chatId: "999" });
+    await notifier.notify(
+      makeEvent({ type: "session.stuck", sessionId: "mae-orchestrator", priority: "warning" }),
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("dedups identical actionable events fired back-to-back", async () => {
+    const fetchMock = okFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ botToken: TOKEN, chatId: "999" });
+    await notifier.notify(makeEvent({ type: "pr.created", sessionId: "mae-13" }));
+    await notifier.notify(makeEvent({ type: "pr.created", sessionId: "mae-13" }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("still sends a worker stuck (throttled, not dropped)", async () => {
+    const fetchMock = okFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ botToken: TOKEN, chatId: "999" });
+    await notifier.notify(makeEvent({ type: "session.stuck", sessionId: "mae-13" }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });
