@@ -374,6 +374,12 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /**
+   * Short, explicit human-readable title for the session ("what it's working
+   * on"), set at spawn time. Distinct from the auto-derived `displayName`:
+   * persisted verbatim and surfaced on dashboard/Maestro kanban cards.
+   */
+  title?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
@@ -1822,6 +1828,12 @@ export interface SessionMetadata {
   restoreFallbackReason?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  /**
+   * Explicit short title for the session, set at spawn time (`ao spawn --title`).
+   * Unlike `displayName` (auto-derived from issue/prompt), this is a verbatim,
+   * user-supplied "what it's working on" label surfaced on kanban cards.
+   */
+  title?: string;
   /**
    * Human-readable display name for the session.
    *

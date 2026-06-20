@@ -317,6 +317,7 @@ export function writeMetadata(
   if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
   if (metadata.pinnedSummary) data["pinnedSummary"] = metadata.pinnedSummary;
   if (metadata.userPrompt) data["userPrompt"] = metadata.userPrompt;
+  if (metadata.title) data["title"] = metadata.title;
   if (metadata.displayName) data["displayName"] = metadata.displayName;
   if (metadata.displayNameUserSet !== undefined)
     data["displayNameUserSet"] = metadata.displayNameUserSet;

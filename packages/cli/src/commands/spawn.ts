@@ -204,6 +204,7 @@ async function spawnSession(
   agent?: string,
   claimOptions?: SpawnClaimOptions,
   prompt?: string,
+  title?: string,
 ): Promise<void> {
   const spinner = ora("Creating session").start();
 
@@ -215,6 +216,13 @@ async function spawnSession(
     const sanitizedPrompt = prompt?.replace(/[\r\n]/g, " ").trim() || undefined;
     if (sanitizedPrompt && sanitizedPrompt.length > 4096) {
       throw new Error("Prompt must be at most 4096 characters");
+    }
+
+    // Short, explicit title ("what it's working on"). Single-line, capped so it
+    // fits kanban cards / tabs (matches the displayName length budget).
+    const sanitizedTitle = title?.replace(/[\r\n]/g, " ").trim() || undefined;
+    if (sanitizedTitle && sanitizedTitle.length > 80) {
+      throw new Error("Title must be at most 80 characters");
     }
 
     recordActivityEvent({
@@ -236,6 +244,7 @@ async function spawnSession(
       issueId,
       agent,
       prompt: sanitizedPrompt,
+      title: sanitizedTitle,
     });
 
     let claimedPrUrl: string | null = null;
@@ -308,6 +317,10 @@ export function registerSpawn(program: Command): void {
       "--prompt <text>",
       "Initial prompt/instructions for the agent (use instead of an issue)",
     )
+    .option(
+      "--title <text>",
+      "Short human-readable title (\"what it's working on\"), shown on cards (max 80 chars)",
+    )
     .action(
       async (
         issue: string | undefined,
@@ -317,6 +330,7 @@ export function registerSpawn(program: Command): void {
           claimPr?: string;
           assignOnGithub?: boolean;
           prompt?: string;
+          title?: string;
         },
         command: Command,
       ) => {
@@ -381,6 +395,7 @@ export function registerSpawn(program: Command): void {
             opts.agent,
             claimOptions,
             opts.prompt,
+            opts.title,
           );
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
