@@ -227,6 +227,21 @@ function inferPriority(type: EventType): EventPriority {
   return "info";
 }
 
+/**
+ * Notifier names forced into every dispatch via `AO_NOTIFIERS_ALLOW`
+ * (comma-separated). Mirrors the same env the plugin registry uses to register
+ * an allow-listed notifier in an otherwise-disabled daemon, so a native
+ * front-end gets that notifier's events without rewriting notificationRouting.
+ */
+function forcedNotifierNames(): string[] {
+  const v = process.env["AO_NOTIFIERS_ALLOW"];
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Create an OrchestratorEvent with defaults filled in. */
 function createEvent(
   type: EventType,
@@ -2501,7 +2516,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
-    const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    // Routing decides which notifiers fire per priority. A process-scoped
+    // `AO_NOTIFIERS_ALLOW` (used by native front-ends like Maestro that run a
+    // single AO notifier in an otherwise-disabled daemon) is unioned in so that
+    // allow-listed notifier always receives events without the front-end having
+    // to also rewrite notificationRouting in the config file.
+    const routed = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    const notifierNames = [...new Set([...routed, ...forcedNotifierNames()])];
 
     for (const name of notifierNames) {
       const target = resolveNotifierTarget(config, name);

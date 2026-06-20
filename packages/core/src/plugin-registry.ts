@@ -65,6 +65,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "notifier", name: "discord", pkg: "@aoagents/ao-plugin-notifier-discord" },
   { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
   { slot: "notifier", name: "slack", pkg: "@aoagents/ao-plugin-notifier-slack" },
+  { slot: "notifier", name: "telegram", pkg: "@aoagents/ao-plugin-notifier-telegram" },
   { slot: "notifier", name: "webhook", pkg: "@aoagents/ao-plugin-notifier-webhook" },
   // Terminals
   { slot: "terminal", name: "iterm2", pkg: "@aoagents/ao-plugin-terminal-iterm2" },
@@ -107,6 +108,28 @@ function hasExplicitConflictingNotifierEntry(
 function notifiersDisabledByEnv(): boolean {
   const v = process.env["AO_DISABLE_NOTIFIERS"];
   return v === "1" || v === "true" || v === "yes";
+}
+
+/**
+ * An explicit notifier allow-list scoped to this process via `AO_NOTIFIERS_ALLOW`
+ * (comma-separated manifest names), or null when unset/empty.
+ *
+ * A native front-end (e.g. Maestro) owns most user-facing notifications itself and
+ * launches the daemon with `AO_DISABLE_NOTIFIERS=1`, but may still want exactly one
+ * AO notifier running in-process — e.g. Telegram, which also hosts the inbound
+ * reply listener. Setting `AO_NOTIFIERS_ALLOW=telegram` registers *only* that
+ * notifier and skips every other one, overriding `AO_DISABLE_NOTIFIERS` for the
+ * named plugins. When unset, behaviour is unchanged (disable-all or normal). Like
+ * the disable flag this is process-scoped via env; the global config is untouched.
+ */
+function notifierAllowList(): Set<string> | null {
+  const v = process.env["AO_NOTIFIERS_ALLOW"];
+  if (!v) return null;
+  const names = v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return names.length > 0 ? new Set(names) : null;
 }
 
 function collectNotifierRegistrations(
@@ -449,10 +472,17 @@ export function createPluginRegistry(): PluginRegistry {
     config: OrchestratorConfig,
     isExternalLoad = false,
   ): void {
-    // Native front-ends launch the daemon with AO_DISABLE_NOTIFIERS=1 to own
-    // notifications themselves. Skip all notifier registration when set.
-    if (notifiersDisabledByEnv()) return;
     const { manifest } = plugin;
+    // An explicit allow-list (AO_NOTIFIERS_ALLOW) wins over everything: register
+    // only the named notifiers, even if AO_DISABLE_NOTIFIERS is also set. With no
+    // allow-list, native front-ends launch the daemon with AO_DISABLE_NOTIFIERS=1
+    // to own notifications themselves, so skip all notifier registration.
+    const allow = notifierAllowList();
+    if (allow) {
+      if (!allow.has(manifest.name)) return;
+    } else if (notifiersDisabledByEnv()) {
+      return;
+    }
     const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
     if (registrations.length === 0) {
