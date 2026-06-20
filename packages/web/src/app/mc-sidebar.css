@@ -140,10 +140,11 @@
 }
 
 /* On hover the action icons reveal over the right slot — reserve room so the
-   project name re-truncates (ellipsis) instead of running under the icons. */
+   project name re-truncates (ellipsis) instead of running under the icons.
+   3 icons × 24px + 2 gaps × 1px + 6px right offset = 80px; pad a bit more. */
 .project-sidebar__proj-row:hover .project-sidebar__proj-toggle,
 .project-sidebar__proj-row:focus-within .project-sidebar__proj-toggle {
-  padding-right: 78px;
+  padding-right: 84px;
 }
 
 .project-sidebar__proj-toggle:hover {
@@ -191,6 +192,7 @@
 .project-sidebar__proj-row:hover .project-sidebar__proj-count,
 .project-sidebar__proj-row:focus-within .project-sidebar__proj-count {
   opacity: 0;
+  pointer-events: none;
 }
 
 /* ── Per-project action icons — out of flow, revealed on hover ────────── */
@@ -205,6 +207,10 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
+  /* z-index ensures icons paint above sibling session rows that come later
+     in the DOM and have position: relative (which would otherwise stack on
+     top and intercept hover/click events over the action icons). */
+  z-index: 10;
 }
 
 .project-sidebar__proj-row:hover .project-sidebar__proj-actions,
