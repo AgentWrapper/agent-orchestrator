@@ -48,6 +48,7 @@
     "@aoagents/ao-plugin-notifier-discord": "workspace:*",
     "@aoagents/ao-plugin-notifier-openclaw": "workspace:*",
     "@aoagents/ao-plugin-notifier-slack": "workspace:*",
+    "@aoagents/ao-plugin-notifier-telegram": "workspace:*",
     "@aoagents/ao-plugin-notifier-webhook": "workspace:*",
     "@aoagents/ao-plugin-runtime-process": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",

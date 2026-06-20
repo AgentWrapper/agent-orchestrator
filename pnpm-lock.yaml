@@ -97,6 +97,9 @@ importers:
       '@aoagents/ao-plugin-notifier-slack':
         specifier: workspace:*
         version: link:../plugins/notifier-slack
+      '@aoagents/ao-plugin-notifier-telegram':
+        specifier: workspace:*
+        version: link:../plugins/notifier-telegram
       '@aoagents/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
