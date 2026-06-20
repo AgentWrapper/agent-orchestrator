@@ -23,6 +23,7 @@ import {
   generateExternalId,
   getDefaultRuntime,
   recordActivityEvent,
+  sanitizeProjectId,
   type SessionManager,
 } from "@aoagents/ao-core";
 
@@ -2462,7 +2463,7 @@ describe("start command — autoCreateConfig", () => {
       process.env["AO_GLOBAL_CONFIG"]!,
       [
         "projects:",
-        `  ${basename(tmpDir)}:`,
+        `  ${sanitizeProjectId(basename(tmpDir))}:`,
         `    path: ${join(tmpDir, "other-repo")}`,
         "",
       ].join("\n"),
@@ -3080,6 +3081,86 @@ describe("start command — path-based deduplication in addProjectToConfig", () 
       const content = readFileSync(configPath, "utf-8");
       const parsed = parseYaml(content) as { projects: Record<string, unknown> };
       expect(Object.keys(parsed.projects)).toEqual(["old-name"]);
+    } finally {
+      if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
+      else process.env["AO_CONFIG_PATH"] = origEnv;
+    }
+  });
+
+  it("sanitizes dotted directory names before adding a local project key", async () => {
+    const repoDir = join(tmpDir, "llama.cpp");
+    createFakeRepo(repoDir, "https://github.com/org/llama.cpp.git");
+
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    const { stringify: yamlStringify } = await import("yaml");
+    writeFileSync(
+      configPath,
+      yamlStringify(
+        {
+          defaults: {
+            runtime: "process",
+            agent: "claude-code",
+            workspace: "worktree",
+            notifiers: [],
+          },
+          projects: {
+            "my-app": {
+              name: "My App",
+              repo: "org/my-app",
+              path: join(tmpDir, "my-app"),
+              defaultBranch: "main",
+              sessionPrefix: "app",
+            },
+          },
+        },
+        { indent: 2 },
+      ),
+    );
+
+    const shell = await import("../../src/lib/shell.js");
+    vi.mocked(shell.git).mockImplementation(async (args: string[], workingDir?: string) => {
+      if (args[0] === "rev-parse" && args[1] === "--git-dir" && workingDir === repoDir) {
+        return ".git";
+      }
+      if (
+        args[0] === "remote" &&
+        args[1] === "get-url" &&
+        args[2] === "origin" &&
+        workingDir === repoDir
+      ) {
+        return "https://github.com/org/llama.cpp.git";
+      }
+      if (args[0] === "symbolic-ref" && workingDir === repoDir) {
+        return "refs/remotes/origin/main";
+      }
+      if (args[0] === "rev-parse" && args[1] === "--verify" && workingDir === repoDir) {
+        return "abc";
+      }
+      return null;
+    });
+
+    const origEnv = process.env["AO_CONFIG_PATH"];
+    process.env["AO_CONFIG_PATH"] = configPath;
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "start",
+        repoDir,
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]);
+
+      const content = readFileSync(configPath, "utf-8");
+      const parsed = parseYaml(content) as { projects: Record<string, Record<string, unknown>> };
+      expect(parsed.projects["llama.cpp"]).toBeUndefined();
+      expect(parsed.projects["llama-cpp"]).toMatchObject({
+        name: "llama-cpp",
+        path: repoDir,
+        defaultBranch: "main",
+        sessionPrefix: "lc",
+      });
     } finally {
       if (origEnv === undefined) delete process.env["AO_CONFIG_PATH"];
       else process.env["AO_CONFIG_PATH"] = origEnv;

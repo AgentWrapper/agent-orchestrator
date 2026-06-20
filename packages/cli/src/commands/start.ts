@@ -34,6 +34,7 @@ import {
   loadLocalProjectConfigDetailed,
   recordActivityEvent,
   registerProjectInGlobalConfig,
+  sanitizeProjectId,
   getGlobalConfigPath,
   type OrchestratorConfig,
   type LocalProjectConfig,
@@ -141,6 +142,10 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
   writeLocalProjectConfig(projectPath, config);
 }
 
+function deriveProjectIdFromPath(projectPath: string): string {
+  return sanitizeProjectId(basename(projectPath)) || "project";
+}
+
 /**
  * Register a flat local config (agent-orchestrator.yaml without `projects:`)
  * into the global config so loadConfig can resolve it.
@@ -148,7 +153,7 @@ function writeProjectBehaviorConfig(projectPath: string, config: LocalProjectCon
  */
 async function registerFlatConfig(configPath: string): Promise<string | null> {
   const projectPath = resolve(dirname(configPath));
-  const projectId = basename(projectPath);
+  const projectId = deriveProjectIdFromPath(projectPath);
 
   // Read flat config fields
   const raw = readFileSync(configPath, "utf-8");
@@ -537,7 +542,7 @@ export async function autoCreateConfig(workingDir: string): Promise<Orchestrator
   const agentRules = generateRulesFromTemplates(projectType);
 
   // Build config with smart defaults
-  const projectId = basename(workingDir);
+  const projectId = deriveProjectIdFromPath(workingDir);
   let repo: string | undefined = env.ownerRepo ?? undefined;
   const path = workingDir;
   const defaultBranch = env.defaultBranch || "main";
@@ -662,7 +667,7 @@ async function addProjectToConfig(
 
   await ensureGit("adding projects");
 
-  let projectId = basename(resolvedPath);
+  let projectId = deriveProjectIdFromPath(resolvedPath);
 
   // Avoid overwriting an existing project with the same directory name
   if (config.projects[projectId]) {
