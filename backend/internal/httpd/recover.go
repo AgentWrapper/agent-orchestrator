@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler) http.Handler {
@@ -29,6 +30,8 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 						"stack", stack,
 					)
 					if sink != nil {
+						path := telemetrymeta.RoutePattern(r)
+						panicKind := telemetrymeta.PanicKind(rec)
 						sink.Emit(r.Context(), ports.TelemetryEvent{
 							Name:       "ao.daemon.panic",
 							Source:     "http",
@@ -36,9 +39,13 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 							Level:      ports.TelemetryLevelError,
 							RequestID:  middleware.GetReqID(r.Context()),
 							Payload: map[string]any{
-								"method":     r.Method,
-								"path":       r.URL.Path,
-								"panic_kind": telemetryPanicKind(rec),
+								"component":         "httpd",
+								"operation":         "http_request_panic",
+								"method":            r.Method,
+								"path":              path,
+								"panic_kind":        panicKind,
+								"stack_fingerprint": telemetrymeta.Fingerprint("httpd", "http_request_panic", path, panicKind, stack),
+								"fingerprint":       telemetrymeta.Fingerprint("httpd", "http_request_panic", r.Method, path, panicKind),
 							},
 						})
 					}
@@ -47,17 +54,6 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 			}()
 			next.ServeHTTP(w, r)
 		})
-	}
-}
-
-func telemetryPanicKind(rec any) string {
-	switch rec.(type) {
-	case error:
-		return "error"
-	case string:
-		return "string"
-	default:
-		return "other"
 	}
 }
 

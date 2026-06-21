@@ -1,16 +1,16 @@
 package httpd
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // requestLogger emits one structured access-log line per request via the
@@ -48,21 +48,23 @@ func requestLogger(log *slog.Logger, sink ports.EventSink) func(http.Handler) ht
 				}
 				log.Info("http request", attrs...)
 				if sink != nil && ww.Status() >= http.StatusInternalServerError {
+					path := telemetrymeta.RoutePattern(r)
 					payload := map[string]any{
-						"method":   r.Method,
-						"path":     r.URL.Path,
-						"status":   ww.Status(),
-						"duration": time.Since(start).Milliseconds(),
+						"component":     "httpd",
+						"operation":     "http_request",
+						"method":        r.Method,
+						"path":          path,
+						"status":        ww.Status(),
+						"status_family": telemetrymeta.StatusFamily(ww.Status()),
+						"duration":      time.Since(start).Milliseconds(),
 					}
 					if err := capturedErr(); err != nil {
-						payload["error_kind"] = "internal"
-						var apiErr *apierr.Error
-						if errors.As(err, &apiErr) {
-							payload["error_kind"] = telemetryErrorKind(apiErr.Kind)
-							if apiErr.Code != "" {
-								payload["error_code"] = apiErr.Code
-							}
+						errorKind, errorCode := telemetrymeta.ErrorKindAndCode(err)
+						payload["error_kind"] = errorKind
+						if errorCode != "" {
+							payload["error_code"] = errorCode
 						}
+						payload["fingerprint"] = telemetrymeta.Fingerprint("httpd", "http_request", r.Method, path, strconv.Itoa(ww.Status()), errorKind, errorCode)
 					}
 					sink.Emit(r.Context(), ports.TelemetryEvent{
 						Name:       "ao.http.5xx",
@@ -76,18 +78,5 @@ func requestLogger(log *slog.Logger, sink ports.EventSink) func(http.Handler) ht
 			}()
 			next.ServeHTTP(ww, r)
 		})
-	}
-}
-
-func telemetryErrorKind(kind apierr.Kind) string {
-	switch kind {
-	case apierr.KindInvalid:
-		return "invalid"
-	case apierr.KindNotFound:
-		return "not_found"
-	case apierr.KindConflict:
-		return "conflict"
-	default:
-		return "internal"
 	}
 }

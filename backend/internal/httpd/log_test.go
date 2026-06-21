@@ -57,6 +57,31 @@ func TestRequestLoggerRecords5xxCause(t *testing.T) {
 			if len(sink.events) != 1 || sink.events[0].Name != "ao.http.5xx" {
 				t.Fatalf("telemetry events = %#v, want one ao.http.5xx event", sink.events)
 			}
+			payload := sink.events[0].Payload
+			if got := payload["component"]; got != "httpd" {
+				t.Fatalf("payload.component = %#v, want httpd", got)
+			}
+			if got := payload["operation"]; got != "http_request" {
+				t.Fatalf("payload.operation = %#v, want http_request", got)
+			}
+			if got := payload["method"]; got != http.MethodPost {
+				t.Fatalf("payload.method = %#v, want POST", got)
+			}
+			if got := payload["path"]; got != "/api/v1/sessions/x/kill" {
+				t.Fatalf("payload.path = %#v, want request path fallback", got)
+			}
+			if got := payload["status"]; got != http.StatusInternalServerError {
+				t.Fatalf("payload.status = %#v, want 500", got)
+			}
+			if got := payload["status_family"]; got != "5xx" {
+				t.Fatalf("payload.status_family = %#v, want 5xx", got)
+			}
+			if got := payload["error_kind"]; got != "internal" {
+				t.Fatalf("payload.error_kind = %#v, want internal", got)
+			}
+			if got := payload["fingerprint"]; got == "" {
+				t.Fatalf("payload.fingerprint = %#v, want non-empty", got)
+			}
 		})
 	}
 }

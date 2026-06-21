@@ -73,6 +73,25 @@ func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].Name != "ao.cli.usage_errors" {
 		t.Fatalf("events = %#v, want one ao.cli.usage_errors event", sink.events)
 	}
+	payload := sink.events[0].Payload
+	if got := payload["component"]; got != "cli" {
+		t.Fatalf("payload.component = %#v, want cli", got)
+	}
+	if got := payload["operation"]; got != "command_parse" {
+		t.Fatalf("payload.operation = %#v, want command_parse", got)
+	}
+	if got := payload["command_path"]; got != "ao status" {
+		t.Fatalf("payload.command_path = %#v, want ao status", got)
+	}
+	if got := payload["error_kind"]; got != "usage" {
+		t.Fatalf("payload.error_kind = %#v, want usage", got)
+	}
+	if got := payload["fingerprint"]; got == "" {
+		t.Fatalf("payload.fingerprint = %#v, want non-empty", got)
+	}
+	if _, ok := payload["error"]; ok {
+		t.Fatalf("payload leaked raw error text: %#v", payload)
+	}
 }
 
 func TestRecoverTelemetryEmitsPanicEvent(t *testing.T) {
@@ -90,19 +109,43 @@ func TestRecoverTelemetryEmitsPanicEvent(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	var sawPanic, saw5xx bool
+	var panicPayload, fiveXXPayload map[string]any
 	for _, ev := range sink.events {
 		switch ev.Name {
 		case "ao.daemon.panic":
-			sawPanic = true
+			panicPayload = ev.Payload
 		case "ao.http.5xx":
-			saw5xx = true
+			fiveXXPayload = ev.Payload
 		}
 	}
-	if !sawPanic {
+	if panicPayload == nil {
 		t.Fatalf("events = %#v, want ao.daemon.panic", sink.events)
 	}
-	if !saw5xx {
+	if fiveXXPayload == nil {
 		t.Fatalf("events = %#v, want ao.http.5xx after recovery", sink.events)
+	}
+	if got := panicPayload["component"]; got != "httpd" {
+		t.Fatalf("panic payload.component = %#v, want httpd", got)
+	}
+	if got := panicPayload["operation"]; got != "http_request_panic" {
+		t.Fatalf("panic payload.operation = %#v, want http_request_panic", got)
+	}
+	if got := panicPayload["path"]; got != "/panic" {
+		t.Fatalf("panic payload.path = %#v, want /panic", got)
+	}
+	if got := panicPayload["panic_kind"]; got != "string" {
+		t.Fatalf("panic payload.panic_kind = %#v, want string", got)
+	}
+	if got := panicPayload["fingerprint"]; got == "" {
+		t.Fatalf("panic payload.fingerprint = %#v, want non-empty", got)
+	}
+	if got := panicPayload["stack_fingerprint"]; got == "" {
+		t.Fatalf("panic payload.stack_fingerprint = %#v, want non-empty", got)
+	}
+	if got := fiveXXPayload["path"]; got != "/panic" {
+		t.Fatalf("5xx payload.path = %#v, want /panic", got)
+	}
+	if got := fiveXXPayload["status_family"]; got != "5xx" {
+		t.Fatalf("5xx payload.status_family = %#v, want 5xx", got)
 	}
 }

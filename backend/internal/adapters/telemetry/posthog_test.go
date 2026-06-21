@@ -93,11 +93,15 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 		OccurredAt: time.Unix(1700000000, 0).UTC(),
 		Level:      ports.TelemetryLevelError,
 		Payload: map[string]any{
-			"method":     http.MethodGet,
-			"path":       "/api/v1/sessions/demo",
-			"panic_kind": "error",
-			"panic":      "open /Users/name/private: no such file",
-			"stack":      "stack trace with local path",
+			"component":         "httpd",
+			"operation":         "http_request_panic",
+			"method":            http.MethodGet,
+			"path":              "/api/v1/sessions/demo",
+			"panic_kind":        "error",
+			"fingerprint":       "abc123",
+			"stack_fingerprint": "def456",
+			"panic":             "open /Users/name/private: no such file",
+			"stack":             "stack trace with local path",
 		},
 	})
 	if err := sink.Close(context.Background()); err != nil {
@@ -110,8 +114,14 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 		if !ok {
 			t.Fatalf("properties type = %T, want map[string]any", req["properties"])
 		}
+		if props["component"] != "httpd" || props["operation"] != "http_request_panic" {
+			t.Fatalf("sanitized properties = %#v, want allowlisted metadata", props)
+		}
 		if props["method"] != http.MethodGet || props["path"] != "/api/v1/sessions/demo" || props["panic_kind"] != "error" {
 			t.Fatalf("sanitized properties = %#v, want allowlisted fields", props)
+		}
+		if props["fingerprint"] != "abc123" || props["stack_fingerprint"] != "def456" {
+			t.Fatalf("sanitized properties = %#v, want exported fingerprints", props)
 		}
 		if _, ok := props["panic"]; ok {
 			t.Fatalf("panic property should be dropped: %#v", props)

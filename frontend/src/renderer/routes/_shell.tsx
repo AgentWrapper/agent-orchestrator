@@ -9,7 +9,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
-import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
+import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
@@ -57,6 +57,11 @@ function ShellLayout() {
 
 	const createProject = useCallback(
 		async (input: { path: string; workerAgent: string; orchestratorAgent: string }) => {
+			void addRendererExceptionStep("Project add requested", {
+				source: "project-add",
+				operation: "project_add",
+				surface: "project_board",
+			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
@@ -69,7 +74,11 @@ function ShellLayout() {
 			});
 			if (error) {
 				const failure = new Error(apiErrorMessage(error));
-				void captureRendererException(failure, { source: "project-add" });
+				void captureRendererException(failure, {
+					source: "project-add",
+					operation: "project_add",
+					surface: "project_board",
+				});
 				throw failure;
 			}
 			if (!data?.project) throw new Error("Project creation returned no project");
@@ -101,12 +110,23 @@ function ShellLayout() {
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			void addRendererExceptionStep("Project removal requested", {
+				source: "project-remove",
+				operation: "project_remove",
+				surface: "project_board",
+				project_id: projectId,
+			});
 			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
 			if (error) {
 				const failure = new Error(apiErrorMessage(error));
-				void captureRendererException(failure, { source: "project-remove", project_id: projectId });
+				void captureRendererException(failure, {
+					source: "project-remove",
+					operation: "project_remove",
+					surface: "project_board",
+					project_id: projectId,
+				});
 				throw failure;
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });

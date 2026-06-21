@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -187,9 +188,12 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			Level:      ports.TelemetryLevelWarn,
 			RequestID:  middleware.GetReqID(req.Context()),
 			Payload: map[string]any{
+				"component":    "cli",
+				"operation":    "command_parse",
 				"command":      body.Command,
 				"command_path": body.CommandPath,
 				"error_kind":   "usage",
+				"fingerprint":  telemetrymeta.Fingerprint("cli", "command_parse", body.CommandPath, "usage"),
 			},
 		})
 		w.WriteHeader(http.StatusAccepted)

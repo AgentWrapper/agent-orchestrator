@@ -337,6 +337,15 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 	if got := sink.events[0].Payload["error_kind"]; got != "internal" {
 		t.Fatalf("spawn_failed error_kind = %#v, want internal", got)
 	}
+	if got := sink.events[0].Payload["component"]; got != "session_service" {
+		t.Fatalf("spawn_failed component = %#v, want session_service", got)
+	}
+	if got := sink.events[0].Payload["operation"]; got != "spawn_session" {
+		t.Fatalf("spawn_failed operation = %#v, want spawn_session", got)
+	}
+	if got := sink.events[0].Payload["fingerprint"]; got == "" {
+		t.Fatalf("spawn_failed fingerprint = %#v, want non-empty", got)
+	}
 }
 
 func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
@@ -395,8 +404,44 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	if got := ev.Payload["error_kind"]; got != "internal" {
 		t.Fatalf("event payload error_kind = %#v, want internal", got)
 	}
+	if got := ev.Payload["component"]; got != "session_service" {
+		t.Fatalf("event payload component = %#v, want session_service", got)
+	}
+	if got := ev.Payload["operation"]; got != "spawn_session" {
+		t.Fatalf("event payload operation = %#v, want spawn_session", got)
+	}
+	if got := ev.Payload["fingerprint"]; got == "" {
+		t.Fatalf("event payload fingerprint = %#v, want non-empty", got)
+	}
 	if _, ok := ev.Payload["error"]; ok {
 		t.Fatalf("event payload leaked raw error: %+v", ev.Payload)
+	}
+}
+
+func TestSpawnEmitsTypedErrorCodeOnFailure(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{spawnErr: fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus")}
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err == nil {
+		t.Fatal("Spawn error = nil, want failure")
+	}
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	ev := ts.events[0]
+	if got := ev.Payload["error_kind"]; got != "invalid" {
+		t.Fatalf("event payload error_kind = %#v, want invalid", got)
+	}
+	if got := ev.Payload["error_code"]; got != "UNKNOWN_HARNESS" {
+		t.Fatalf("event payload error_code = %#v, want UNKNOWN_HARNESS", got)
 	}
 }
 
