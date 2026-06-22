@@ -682,6 +682,31 @@ describe("getSessionInfo", () => {
     });
   });
 
+  describe("detectRestorePromptKeys", () => {
+    const agent = create();
+    const selector = [
+      "This session is 1d old and 515.1k tokens.",
+      "❯ 1. Resume from summary (recommended)",
+      "  2. Resume full session as-is",
+      "  3. Don't ask me again",
+      "",
+      "Enter to confirm · Esc to cancel",
+    ].join("\n");
+
+    it("returns ['Enter'] on the full resume selector (accept the default)", () => {
+      expect(agent.detectRestorePromptKeys!(selector)).toEqual(["Enter"]);
+    });
+
+    it("returns null for ordinary agent output", () => {
+      expect(agent.detectRestorePromptKeys!("✻ Thinking…\n⏺ Running tests")).toBeNull();
+    });
+
+    it("returns null when only some markers are present (partial render)", () => {
+      const partial = "Resume from summary\nResume full session as-is";
+      expect(agent.detectRestorePromptKeys!(partial)).toBeNull();
+    });
+  });
+
   describe("cost estimation", () => {
     it("aggregates usage.input_tokens and usage.output_tokens", async () => {
       const jsonl = [

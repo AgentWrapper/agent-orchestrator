@@ -417,6 +417,16 @@ export interface Runtime {
   /** Capture recent output from the session */
   getOutput(handle: RuntimeHandle, lines?: number): Promise<string>;
 
+  /**
+   * Optional: send raw key token(s) to the session, without sendMessage()'s
+   * framing (no clear-line, no implicit trailing Enter). Each element is a
+   * tmux-style key name ("Enter", "Down", "C-c") or a literal string. Used to
+   * answer interactive TUI prompts — e.g. confirming Claude Code's
+   * resume-from-summary selector — where sendMessage()'s C-u + Enter would
+   * corrupt the selection.
+   */
+  sendKeys?(handle: RuntimeHandle, keys: string[]): Promise<void>;
+
   /** Check if the session environment is still alive */
   isAlive(handle: RuntimeHandle): Promise<boolean>;
 
@@ -534,6 +544,19 @@ export interface Agent {
    * Returns null if no previous session is found (caller falls back to getLaunchCommand).
    */
   getRestoreCommand?(session: Session, project: ProjectConfig): Promise<string | null>;
+
+  /**
+   * Optional: given recent terminal output captured shortly after a RESTORE
+   * launch, decide whether the agent is blocked on an interactive
+   * resume/continue prompt that should be auto-confirmed (no human is at the
+   * pane), and return the key token(s) to send — e.g. ["Enter"] to accept the
+   * pre-highlighted default. Return null when no such prompt is present.
+   *
+   * The signature MUST be specific enough never to fire on ordinary agent
+   * output; the caller sends the returned keys blindly via Runtime.sendKeys.
+   * Only consulted on the restore path (getRestoreCommand was used).
+   */
+  detectRestorePromptKeys?(recentOutput: string): string[] | null;
 
   /**
    * Optional: run setup BEFORE the agent process is launched.

@@ -1213,6 +1213,31 @@ function createClaudeCodeAgent(): Agent {
       return parts.join(" ");
     },
 
+    detectRestorePromptKeys(recentOutput: string): string[] | null {
+      // `claude --resume <uuid>` on an old/large session opens a BLOCKING
+      // resume selector before the agent is usable:
+      //
+      //   This session is 1d old and 515.1k tokens.
+      //   ❯ 1. Resume from summary (recommended)
+      //     2. Resume full session as-is
+      //     3. Don't ask me again
+      //   Enter to confirm · Esc to cancel
+      //
+      // Claude Code 2.1.x exposes no flag, settings key, or env to pre-select
+      // an option or skip the prompt (verified against 2.1.185), so with no
+      // human at the pane we confirm the pre-highlighted default ("Resume from
+      // summary") by sending Enter. The five-marker signature is strict enough
+      // that it never matches ordinary agent output; the worst a mis-detection
+      // could do is submit one empty line (a no-op in Claude's composer).
+      const isResumeSelector =
+        recentOutput.includes("Resume from summary") &&
+        recentOutput.includes("Resume full session as-is") &&
+        recentOutput.includes("Don't ask me again") &&
+        recentOutput.includes("Enter to confirm") &&
+        recentOutput.includes("Esc to cancel");
+      return isResumeSelector ? ["Enter"] : null;
+    },
+
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
       // Hook commands use $CLAUDE_PROJECT_DIR (the worktree root, set by Claude
       // Code) rather than the literal workspace path: the command string is then

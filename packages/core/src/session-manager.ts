@@ -295,6 +295,49 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const RESTORE_PROMPT_TIMEOUT_MS = 30_000;
+const RESTORE_PROMPT_POLL_MS = 1_000;
+
+/**
+ * After a native-restore launch, some agents (Claude Code) block on an
+ * interactive resume-confirmation prompt; with no human at the pane the agent
+ * would hang forever. Poll the pane briefly and, the first time the agent
+ * recognizes its own resume prompt in the captured output, send the
+ * confirmation key(s) via the runtime, then stop.
+ *
+ * Best-effort and bounded: a small/recent session resumes with no prompt, so
+ * the signature never matches and we send nothing before the timeout. Caller
+ * pre-checks that both optional capabilities exist; we re-check to satisfy the
+ * type system and stay safe if called directly.
+ */
+async function confirmRestorePrompt(
+  runtime: Runtime,
+  handle: RuntimeHandle,
+  agent: Agent,
+): Promise<void> {
+  if (!runtime.sendKeys || !agent.detectRestorePromptKeys) return;
+  const deadline = Date.now() + RESTORE_PROMPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await sleep(RESTORE_PROMPT_POLL_MS);
+    let output: string;
+    try {
+      output = await runtime.getOutput(handle, 60);
+    } catch {
+      continue; // transient capture failure — keep polling until the deadline
+    }
+    const keys = agent.detectRestorePromptKeys(output);
+    if (keys && keys.length > 0) {
+      try {
+        await runtime.sendKeys(handle, keys);
+      } catch {
+        // Best-effort: if the key send fails the prompt stays up, but we've
+        // done no harm. Stop either way — re-sending risks a double answer.
+      }
+      return;
+    }
+  }
+}
+
 async function isAgentProcessNotDefinitelyMissing(
   agent: Agent,
   handle: RuntimeHandle,
@@ -3541,6 +3584,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    // True once we launch via the agent's native restore command (vs. a fresh
+    // launch). Gates the post-launch resume-prompt auto-confirm below.
+    let usedRestore = false;
     const projectConfigForLaunch: ProjectConfig = {
       ...project,
       agentConfig: {
@@ -3582,6 +3628,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const restoreCmd = await plugins.agent.getRestoreCommand(session, projectConfigForLaunch);
       if (restoreCmd) {
         launchCommand = restoreCmd;
+        usedRestore = true;
         updateMetadata(sessionsDir, sessionId, { restoreFallbackReason: "" });
       } else {
         // Agents with native restore can still launch fresh when no resumable
@@ -3638,6 +3685,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
+
+    // 8b. Auto-confirm an interactive resume prompt (e.g. Claude Code's
+    // "Resume from summary" selector), which blocks the restored agent until
+    // answered. Only on the native-restore path, only when both the agent can
+    // recognize its own prompt and the runtime can send raw keys. Fire-and-
+    // forget: the poll runs in the background so restore returns promptly; the
+    // strict per-agent signature means it sends nothing unless the prompt is
+    // actually on screen.
+    if (usedRestore && plugins.agent.detectRestorePromptKeys && plugins.runtime.sendKeys) {
+      void confirmRestorePrompt(plugins.runtime, handle, plugins.agent);
+    }
 
     // 9. Update metadata — reset lifecycle to working state
     const now = new Date().toISOString();

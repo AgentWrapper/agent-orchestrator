@@ -189,6 +189,14 @@ export function create(): Runtime {
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
 
+    async sendKeys(handle: RuntimeHandle, keys: string[]): Promise<void> {
+      if (keys.length === 0) return;
+      // No -l: tmux interprets key names ("Enter", "Down", "C-c"). Unlike
+      // sendMessage() this sends nothing else — no C-u clear, no extra Enter —
+      // so it answers a TUI selector without disturbing the selection.
+      await tmux("send-keys", "-t", handle.id, ...keys);
+    },
+
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
       try {
         return await tmux("capture-pane", "-t", handle.id, "-p", "-S", `-${lines}`);
