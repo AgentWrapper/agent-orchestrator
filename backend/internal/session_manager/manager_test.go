@@ -117,6 +117,7 @@ func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID)
 type fakeLCM struct {
 	store        *fakeStore
 	completed    int
+	terminated   int
 	termErr      error
 	termFailures int
 	termAlways   bool
@@ -134,6 +135,7 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
+	l.terminated++
 	if l.termErr != nil && l.termAlways {
 		return l.termErr
 	}
@@ -607,12 +609,17 @@ func TestRetireOrchestrator_TerminatesOldOrchestratorWhenDestroySucceeds(t *test
 func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
 	m, st, rt, _ := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
+	lcm := &fakeLCM{store: st}
+	m.lcm = lcm
 	rt.alive = true
-	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrSessionStillAlive) {
-		t.Fatalf("RetireOrchestrator err = %v, want ErrSessionStillAlive", err)
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetiredSessionStillAlive) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrRetiredSessionStillAlive", err)
 	}
-	if rt.destroyed != orchestratorRetireAttempts {
-		t.Fatalf("destroy attempts = %d, want %d", rt.destroyed, orchestratorRetireAttempts)
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
+	if lcm.terminated != 1 {
+		t.Fatalf("termination records = %d, want 1", lcm.terminated)
 	}
 	if got := st.sessions["mer-1"]; !got.IsTerminated {
 		t.Fatalf("retired session = %+v, want terminated after destroy intent", got)

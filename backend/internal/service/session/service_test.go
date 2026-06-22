@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -254,6 +255,52 @@ func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, 
 	return false, false, nil
 }
 
+type blockingSpawnCommander struct {
+	mu           sync.Mutex
+	blockProject domain.ProjectID
+	release      chan struct{}
+	spawnEntered chan domain.ProjectID
+	spawnCount   int
+}
+
+func newBlockingSpawnCommander(blockProject domain.ProjectID) *blockingSpawnCommander {
+	return &blockingSpawnCommander{
+		blockProject: blockProject,
+		release:      make(chan struct{}),
+		spawnEntered: make(chan domain.ProjectID, 10),
+	}
+}
+
+func (f *blockingSpawnCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	f.mu.Lock()
+	f.spawnCount++
+	id := domain.SessionID(fmt.Sprintf("%s-%d", cfg.ProjectID, f.spawnCount))
+	f.mu.Unlock()
+
+	f.spawnEntered <- cfg.ProjectID
+	if cfg.ProjectID == f.blockProject {
+		<-f.release
+	}
+	return domain.SessionRecord{ID: id, ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
+}
+
+func (f *blockingSpawnCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
+	return domain.SessionRecord{}, nil
+}
+func (f *blockingSpawnCommander) Kill(context.Context, domain.SessionID) (bool, error) {
+	return true, nil
+}
+func (f *blockingSpawnCommander) RetireOrchestrator(context.Context, domain.SessionID) error {
+	return nil
+}
+func (f *blockingSpawnCommander) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *blockingSpawnCommander) Cleanup(context.Context, domain.ProjectID) (sessionmanager.CleanupResult, error) {
+	return sessionmanager.CleanupResult{}, nil
+}
+func (f *blockingSpawnCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
+	return false, false, nil
+}
+
 // TestCleanupMapsManagerResult: the service forwards both reclaimed and
 // skipped sessions, with non-nil slices so the wire shape stays stable.
 func TestCleanupMapsManagerResult(t *testing.T) {
@@ -330,6 +377,86 @@ func TestSpawnOrchestratorCleanSpawnsBeforeRetiringActiveOrchestrators(t *testin
 	}
 }
 
+func TestSpawnOrchestratorSerializesSameProjectCutovers(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := newBlockingSpawnCommander("mer")
+	svc := &Service{manager: fc, store: st}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		firstDone <- err
+	}()
+
+	if got := <-fc.spawnEntered; got != "mer" {
+		t.Fatalf("first spawn project = %q, want mer", got)
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		secondDone <- err
+	}()
+
+	select {
+	case got := <-fc.spawnEntered:
+		t.Fatalf("same-project spawn entered before first cutover completed: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(fc.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first SpawnOrchestrator: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second SpawnOrchestrator: %v", err)
+	}
+}
+
+func TestSpawnOrchestratorAllowsDifferentProjectsDuringCutover(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.projects["other"] = domain.ProjectRecord{ID: "other"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := newBlockingSpawnCommander("mer")
+	svc := &Service{manager: fc, store: st}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		firstDone <- err
+	}()
+
+	if got := <-fc.spawnEntered; got != "mer" {
+		t.Fatalf("first spawn project = %q, want mer", got)
+	}
+
+	otherDone := make(chan error, 1)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "other", true)
+		otherDone <- err
+	}()
+
+	select {
+	case got := <-fc.spawnEntered:
+		if got != "other" {
+			t.Fatalf("second spawn project = %q, want other", got)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("different-project spawn was blocked by mer cutover")
+	}
+	if err := <-otherDone; err != nil {
+		t.Fatalf("other SpawnOrchestrator: %v", err)
+	}
+
+	close(fc.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first SpawnOrchestrator: %v", err)
+	}
+}
+
 func TestSpawnOrchestratorCleanSpawnFailureKeepsExistingOrchestrators(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -376,6 +503,23 @@ func TestSpawnOrchestratorCleanRetireUnrecordedReturnsRecoveryError(t *testing.T
 	}
 	if !strings.Contains(e.Message, "was stopped") {
 		t.Fatalf("message = %q, want stopped recovery message", e.Message)
+	}
+}
+
+func TestSpawnOrchestratorCleanRetiredStillAliveReturnsRecoveryError(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	fc := &fakeCommander{retireErr: fmt.Errorf("retire mer-1: %w", sessionmanager.ErrRetiredSessionStillAlive)}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Code != "ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED" {
+		t.Fatalf("err = %v, want ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED", err)
+	}
+	if !strings.Contains(e.Message, "marked terminated") || !strings.Contains(e.Message, "still appeared alive") {
+		t.Fatalf("message = %q, want terminated-but-alive recovery message", e.Message)
 	}
 }
 

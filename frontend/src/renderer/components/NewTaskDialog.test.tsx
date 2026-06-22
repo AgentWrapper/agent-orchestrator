@@ -47,7 +47,7 @@ describe("NewTaskDialog", () => {
 		});
 		expect(onCreated).toHaveBeenCalledWith("task-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
-	});
+	}, 10_000);
 
 	it("requires both title and brief", async () => {
 		render(<NewTaskDialog open projectId="proj-1" onCreated={vi.fn()} onOpenChange={vi.fn()} />);

@@ -45,6 +45,11 @@ var (
 	// ErrSessionStillAlive means teardown could not prove the runtime is gone
 	// even after destroy was attempted.
 	ErrSessionStillAlive = errors.New("session: runtime still alive after destroy")
+	// ErrRetiredSessionStillAlive means replacement cutover durably marked the
+	// old orchestrator terminated, but its runtime still appeared alive after
+	// destroy. Recovery tooling must retry the runtime kill because active-list
+	// scans will no longer surface the terminated row.
+	ErrRetiredSessionStillAlive = errors.New("session: terminated runtime still alive after destroy")
 	// ErrRetireTerminationUnrecorded means replacement cutover destroyed the old
 	// orchestrator runtime but could not update durable session state. Callers
 	// must not claim the previous orchestrator was preserved.
@@ -512,10 +517,7 @@ func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) e
 			m.logger.Warn("session manager: old orchestrator probe failed after runtime destroy",
 				"session", id, "err", err)
 		} else if alive {
-			if attempt == orchestratorRetireAttempts-1 {
-				return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
-			}
-			continue
+			return fmt.Errorf("retire %s: %w", id, ErrRetiredSessionStillAlive)
 		}
 		if err := m.workspace.Destroy(ctx, ws); err != nil && !errors.Is(err, ports.ErrWorkspaceDirty) {
 			m.logger.Warn("session manager: old orchestrator workspace destroy failed after runtime exit",

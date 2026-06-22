@@ -5,22 +5,31 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSummary } from "../types/workspace";
+import { agentsQueryKey } from "../hooks/useAgentsQuery";
 
-const { navigateMock, mockParams } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-}));
+const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigateMock: vi.fn() }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => mockParams,
+		useParams: () => ({}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: { GET: getMock },
+	apiErrorMessage: (error: unknown) => {
+		if (error instanceof Error) return error.message;
+		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+			return error.message;
+		}
+		return "Request failed";
+	},
+}));
 
 const workspace: WorkspaceSummary = {
 	id: "proj-1",
@@ -35,13 +44,31 @@ type RemoveProjectHandler = (projectId: string) => Promise<void>;
 function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	seedAgents = true,
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
+	seedAgents?: boolean;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
+	if (seedAgents) {
+		queryClient.setQueryData(agentsQueryKey, {
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+		});
+	}
 	render(
 		<QueryClientProvider client={queryClient}>
 			<SidebarProvider>
@@ -63,8 +90,25 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 }
 
 beforeEach(() => {
+	getMock.mockReset();
+	getMock.mockResolvedValue({
+		data: {
+			supported: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code" },
+				{ id: "codex", label: "Codex" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "authorized" },
+			],
+		},
+		error: undefined,
+	});
 	navigateMock.mockReset();
-	mockParams.projectId = undefined;
 	vi.spyOn(window, "confirm").mockReturnValue(true);
 	vi.spyOn(window, "alert").mockImplementation(() => undefined);
 });
@@ -126,8 +170,8 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		const dialog = screen.getByRole("dialog", { name: "Project agents" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
@@ -139,26 +183,58 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("opens global settings from the footer menu when no project is selected", async () => {
+	it("updates project agent options when the catalog loads after the dialog opens", async () => {
 		const user = userEvent.setup();
-		renderSidebar();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		let resolveAgents!: (value: {
+			data: {
+				supported: { id: string; label: string }[];
+				installed: { id: string; label: string }[];
+				authorized: { id: string; label: string; authStatus: "authorized" }[];
+			};
+			error: undefined;
+		}) => void;
+		getMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveAgents = resolve;
+			}),
+		);
+		renderSidebar({ onCreateProject, seedAgents: false });
 
-		await user.click(screen.getAllByLabelText("Settings")[0]);
-		await user.click(await screen.findByRole("menuitem", { name: "Global settings" }));
+		await user.click(screen.getByLabelText("New project"));
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
-	});
+		resolveAgents({
+			data: {
+				supported: [
+					{ id: "claude-code", label: "Claude Code" },
+					{ id: "codex", label: "Codex" },
+				],
+				installed: [
+					{ id: "claude-code", label: "Claude Code" },
+					{ id: "codex", label: "Codex" },
+				],
+				authorized: [
+					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+					{ id: "codex", label: "Codex", authStatus: "authorized" },
+				],
+			},
+			error: undefined,
+		});
 
-	it("shows both project and global settings in the footer menu when a project is selected", async () => {
-		mockParams.projectId = "proj-1";
-		const user = userEvent.setup();
-		renderSidebar();
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
-		await user.click(screen.getAllByLabelText("Settings")[0]);
-		expect(await screen.findByRole("menuitem", { name: "Project settings" })).toBeInTheDocument();
-		await user.click(await screen.findByRole("menuitem", { name: "Global settings" }));
-
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/new-project",
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+			}),
+		);
 	});
 
 	it("always shows action icons and reserves padding for them", () => {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -82,12 +83,14 @@ type scmProvider interface {
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager   commander
-	store     Store
-	prClaimer ports.PRClaimer
-	scm       scmProvider
-	clock     func() time.Time
-	telemetry ports.EventSink
+	manager             commander
+	store               Store
+	prClaimer           ports.PRClaimer
+	scm                 scmProvider
+	clock               func() time.Time
+	telemetry           ports.EventSink
+	orchestratorLocksMu sync.Mutex
+	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -265,7 +268,10 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // an active orchestrator already exists it is returned as-is. This business rule
 // belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	if err := s.requireProject(ctx, projectID); err != nil {
+	unlock := s.lockOrchestratorProject(projectID)
+	defer unlock()
+
+	if _, err := s.requireProject(ctx, projectID); err != nil {
 		return domain.Session{}, err
 	}
 	active := true
@@ -285,6 +291,13 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			continue
 		}
 		if err := s.manager.RetireOrchestrator(ctx, orch.ID); err != nil {
+			if errors.Is(err, sessionmanager.ErrRetiredSessionStillAlive) {
+				return domain.Session{}, apierr.Conflict(
+					"ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
+					fmt.Sprintf("Replacement orchestrator started and previous orchestrator %s was marked terminated, but its runtime still appeared alive after destroy", orch.ID),
+					map[string]any{"oldOrchestratorId": orch.ID},
+				)
+			}
 			if errors.Is(err, sessionmanager.ErrRetireTerminationUnrecorded) {
 				return domain.Session{}, apierr.Conflict(
 					"ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
@@ -300,6 +313,22 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		}
 	}
 	return sess, nil
+}
+
+func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
+	s.orchestratorLocksMu.Lock()
+	if s.orchestratorLocks == nil {
+		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
+	}
+	projectLock := s.orchestratorLocks[projectID]
+	if projectLock == nil {
+		projectLock = &sync.Mutex{}
+		s.orchestratorLocks[projectID] = projectLock
+	}
+	s.orchestratorLocksMu.Unlock()
+
+	projectLock.Lock()
+	return projectLock.Unlock
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.

@@ -63,6 +63,10 @@ function ShellLayout() {
 				surface: "project_board",
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
+			const status = await refreshDaemonStatus();
+			if (status.state !== "ready" || !status.port) {
+				throw new Error(status.message || "AO daemon is not ready.");
+			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
@@ -147,6 +151,7 @@ function ShellLayout() {
 		agentCatalogPortRef.current = daemonStatus.port;
 		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
 		void queryClient.ensureQueryData(agentsQueryOptions);
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance only until the user picks a theme explicitly.
