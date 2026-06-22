@@ -5,10 +5,13 @@
  * or a named pipe (Windows), bidirectional. One complete JSON object per line.
  *
  * Snapshot -> live handshake (host -> subscriber, in order on connect):
- *   1. { type: "hello", role: "host", session_id, seq_head }
+ *   1. { type: "hello", role: "host", session_id, seq_head, epoch, resumed, resumed_from }
  *   2. replay of every buffered NormalizedEvent so far (one line each)
  *   3. { type: "snapshot-complete", seq }
  *   4. live NormalizedEvents forever
+ *
+ * `epoch` advances per host instance so a subscriber detects a resurrected host
+ * (seq/turn reset to 0) deterministically instead of guessing from seq_head.
  *
  * Control lines (subscriber -> host); a pure subscriber sends none:
  *   { cmd: "send", text }                          push a user turn
@@ -21,8 +24,9 @@
  * provider session id (which is unknown until the first turn produces init).
  */
 
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { NormalizedEvent } from "./event-schema.js";
 
 export const ONLY_SESSION_ID = /^[A-Za-z0-9_-]+$/;
@@ -65,23 +69,40 @@ export function sessionPaths(aoSessionId: string, env: EnvLike = process.env): S
     base,
     eventLog: join(base, "events.ndjson"),
     sessionInfo: join(base, "session.json"),
-    socket: socketAddress(aoSessionId, base),
+    socket: socketAddress(aoSessionId, env),
   };
 }
 
 /**
- * Socket address. On Windows we use a named pipe (no path-length limit). On
- * POSIX we keep the socket inside the session dir, but Unix socket paths are
- * capped (~104 bytes on macOS); if the in-dir path is too long we fall back to
- * a short name under the OS temp dir.
+ * Short directory for live sockets. Deterministic and independent of $TMPDIR so
+ * the host and a separate subscriber (e.g. Maestro) compute the SAME path
+ * without sharing a temp dir. Override with AO_SDK_SOCK_DIR (set it identically
+ * on both sides if their $HOME differs, e.g. an app sandbox).
  */
-export function socketAddress(aoSessionId: string, base: string): string {
+export function socketRoot(env: EnvLike = process.env): string {
+  return env.AO_SDK_SOCK_DIR || join(homedir(), ".ao-sdk");
+}
+
+/**
+ * 16-hex socket name component, sha256(aoSessionId) truncated. Keeps the POSIX
+ * socket path well under the ~104-byte sockaddr_un limit regardless of how long
+ * the AO session id is, and is computed identically on both sides.
+ */
+export function socketNameComponent(aoSessionId: string): string {
+  return createHash("sha256").update(aoSessionId).digest("hex").slice(0, 16);
+}
+
+/**
+ * Deterministic socket address. POSIX: `<socketRoot>/<hash16>.sock`. Windows:
+ * named pipe `\\.\pipe\ao-sdk-<hash16>` (no length limit, hashed for parity).
+ * No conditional fallback — both sides derive the identical path.
+ */
+export function socketAddress(aoSessionId: string, env: EnvLike = process.env): string {
+  const name = socketNameComponent(aoSessionId);
   if (process.platform === "win32") {
-    return `\\\\.\\pipe\\ao-sdk-${aoSessionId}`;
+    return `\\\\.\\pipe\\ao-sdk-${name}`;
   }
-  const inDir = join(base, "host.sock");
-  if (Buffer.byteLength(inDir) <= 100) return inDir;
-  return join(tmpdir(), `ao-sdk-${aoSessionId}.sock`);
+  return join(socketRoot(env), `${name}.sock`);
 }
 
 /** Persisted session metadata. */
@@ -92,6 +113,8 @@ export interface SessionInfo {
   hostPid: number;
   startedAt: string;
   resumedFrom: string | null;
+  /** Host-instance epoch (advances per host process; see HelloMessage.epoch). */
+  epoch: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +126,17 @@ export interface HelloMessage {
   role: "host";
   session_id: string | null;
   seq_head: number;
+  /**
+   * Monotonic host-instance id for this AO session. Advances every time a new
+   * host process starts (incl. resume). On a fresh host `seq`/`turn` reset to 0;
+   * a subscriber compares `epoch` against the last one it saw to detect the new
+   * instance deterministically (no seq_head heuristic).
+   */
+  epoch: number;
+  /** True when this host started by resuming a prior provider session. */
+  resumed: boolean;
+  /** The provider session id resumed from, or null for a fresh session. */
+  resumed_from: string | null;
 }
 export interface SnapshotCompleteMessage {
   type: "snapshot-complete";

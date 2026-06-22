@@ -5,6 +5,8 @@ import {
   assertValidSessionId,
   sessionPaths,
   socketAddress,
+  socketRoot,
+  socketNameComponent,
   sdkHome,
   encodeLine,
   LineParser,
@@ -53,13 +55,30 @@ describe("path derivation", () => {
     expect(p.sessionInfo).toBe(join("/base", "sess1", "session.json"));
   });
 
-  it("uses a named pipe on win32 and a socket file on posix", () => {
-    const base = "/base/sess1";
+  it("derives a deterministic, short, hashed socket address", () => {
+    const name = socketNameComponent("sess1");
+    expect(name).toMatch(/^[0-9a-f]{16}$/);
+    expect(socketNameComponent("sess1")).toBe(name); // deterministic
+    expect(socketNameComponent("sess2")).not.toBe(name); // id-sensitive
+
     if (process.platform === "win32") {
-      expect(socketAddress("sess1", base)).toBe("\\\\.\\pipe\\ao-sdk-sess1");
+      expect(socketAddress("sess1")).toBe(`\\\\.\\pipe\\ao-sdk-${name}`);
     } else {
-      expect(socketAddress("sess1", base)).toBe(join(base, "host.sock"));
+      expect(socketAddress("sess1")).toBe(join(socketRoot(), `${name}.sock`));
     }
+  });
+
+  it("socket root defaults to ~/.ao-sdk and honors AO_SDK_SOCK_DIR", () => {
+    delete process.env.AO_SDK_SOCK_DIR;
+    expect(socketRoot()).toBe(join(homedir(), ".ao-sdk"));
+    expect(socketRoot({ AO_SDK_SOCK_DIR: "/run/ao" })).toBe("/run/ao");
+  });
+
+  it("keeps the POSIX socket path well under the sockaddr_un limit for long ids", () => {
+    if (process.platform === "win32") return;
+    const longId = "a".repeat(120);
+    const addr = socketAddress(longId, { AO_SDK_SOCK_DIR: "/tmp/ao-sock" });
+    expect(Buffer.byteLength(addr)).toBeLessThan(104);
   });
 });
 

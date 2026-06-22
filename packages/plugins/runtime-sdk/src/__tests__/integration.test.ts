@@ -76,13 +76,19 @@ const distHost = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "d
       expect(init?.session_id).toBeTruthy();
       const sdkSessionId = init!.session_id;
 
+      // the user turns are in the transcript (GAP #1)
+      const userEvents = events.filter((e) => e.type === "user");
+      expect(userEvents.length).toBeGreaterThanOrEqual(2);
+      expect((userEvents[0] as { subtype: string }).subtype).toBe("input");
+
       sub.close();
       await runtime.destroy(handle);
 
-      // --- session 2: resume by provider id ---
+      // --- resume: SAME AO session id (host restart on the same socket) ---
       const resumeEvents: NormalizedEvent[] = [];
+      let resumeHello: { epoch?: number; resumed?: boolean; resumed_from?: string } | undefined;
       const handle2 = await runtime.create({
-        sessionId: "it-sess-2",
+        sessionId: "it-sess-1",
         workspacePath: work,
         launchCommand: "",
         environment: { ...baseEnv, AO_SDK_RESUME: sdkSessionId },
@@ -90,6 +96,11 @@ const distHost = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "d
       const sub2 = await subscribeSession(
         (handle2.data as { socketPath: string }).socketPath,
         (e) => resumeEvents.push(e),
+        (msg) => {
+          if (msg.type === "hello") {
+            resumeHello = msg as { epoch?: number; resumed?: boolean; resumed_from?: string };
+          }
+        },
       );
 
       const resumeDone = new Promise<void>((res) => {
@@ -112,6 +123,11 @@ const distHost = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "d
         .join("");
       expect(finalText.toUpperCase()).toContain("ALPHA");
       expect(finalText.toUpperCase()).toContain("BETA");
+
+      // GAP #2: the resurrected host advertises a higher epoch + resume markers
+      expect(resumeHello?.epoch).toBeGreaterThanOrEqual(1);
+      expect(resumeHello?.resumed).toBe(true);
+      expect(resumeHello?.resumed_from).toBe(sdkSessionId);
 
       sub2.close();
       await runtime.destroy(handle2);

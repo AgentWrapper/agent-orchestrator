@@ -19,7 +19,8 @@ const env = { AO_SDK_PERMISSION_MODE: "bypassPermissions", AO_SDK_HOME: join(wor
 const runtime = create();
 
 function render(tag, e) {
-  if (e.type === "text-delta") process.stdout.write(e.text);
+  if (e.type === "user") console.log(`\n[${tag}] > ${e.text}`);
+  else if (e.type === "text-delta") process.stdout.write(e.text);
   else if (e.type === "reasoning") process.stdout.write(`\x1b[2m${e.text}\x1b[0m`);
   else if (e.type === "session") console.log(`\n[${tag}] session/${e.subtype} id=${e.session_id}`);
   else if (e.type === "tool_use") console.log(`\n[${tag}] tool_use ${e.name} ${JSON.stringify(e.input)}`);

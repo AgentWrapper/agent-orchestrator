@@ -70,6 +70,45 @@ describe("SessionHost turns", () => {
     host.submitTurn("again");
     expect(host.status().turns).toBe(2);
   });
+
+  it("emits a user/input event on submitTurn (complete transcript)", () => {
+    const { host, persisted } = makeHost();
+    host.submitTurn("first turn text");
+    const ev = persisted.map((l) => JSON.parse(l)).find((e) => e.type === "user");
+    expect(ev).toMatchObject({
+      type: "user",
+      subtype: "input",
+      text: "first turn text",
+      turn: 1,
+      seq: 0,
+    });
+  });
+});
+
+describe("SessionHost hello frame (epoch + resume markers)", () => {
+  it("marks a fresh, non-resumed host", () => {
+    const { host } = makeHost();
+    const lines: Array<Record<string, unknown>> = [];
+    host.subscribe((l) => lines.push(JSON.parse(l)));
+    expect(lines[0]).toMatchObject({
+      type: "hello",
+      epoch: 0,
+      resumed: false,
+      resumed_from: null,
+    });
+  });
+
+  it("advertises the host-instance epoch and resume markers", () => {
+    const { host } = makeHost({ epoch: 3, resumeFrom: "sdk-prev" });
+    const lines: Array<Record<string, unknown>> = [];
+    host.subscribe((l) => lines.push(JSON.parse(l)));
+    expect(lines[0]).toMatchObject({
+      type: "hello",
+      epoch: 3,
+      resumed: true,
+      resumed_from: "sdk-prev",
+    });
+  });
 });
 
 describe("SessionHost.consume", () => {

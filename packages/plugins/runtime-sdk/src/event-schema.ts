@@ -19,6 +19,7 @@ export const SCHEMA_VERSION = 1;
 /** The discriminator values that may appear on the wire as `type`. */
 export type NormalizedEventType =
   | "session"
+  | "user"
   | "text-delta"
   | "reasoning"
   | "tool_use"
@@ -56,6 +57,18 @@ export interface SessionEventBody {
   cwd?: string;
   permission_mode?: string;
   tools?: string[];
+}
+
+/**
+ * A user turn submitted into the session. Emitted on every turn (including the
+ * initial prompt and post-resume turns) so the NDJSON log is a COMPLETE
+ * transcript — not just assistant + tool events. Model-agnostic: a future
+ * non-Claude adapter emits the same `user`/`input` event.
+ */
+export interface UserInputEventBody {
+  type: "user";
+  subtype: "input";
+  text: string;
 }
 
 /** A chunk of streamed assistant answer text. */
@@ -140,6 +153,7 @@ export interface ErrorEventBody {
 
 export type EventBody =
   | SessionEventBody
+  | UserInputEventBody
   | TextDeltaEventBody
   | ReasoningEventBody
   | ToolUseEventBody

@@ -15,7 +15,15 @@
  * host can reattach via `options.resume`.
  */
 
-import { appendFileSync, mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+} from "node:fs";
+import { dirname } from "node:path";
 import net from "node:net";
 import {
   query,
@@ -49,6 +57,13 @@ export interface SessionHostOptions {
   now?: () => Date;
   /** ms to wait for a human/UI permission answer before defaulting. 0 = wait. */
   permissionTimeoutMs?: number;
+  /**
+   * Monotonic host-instance id for this AO session, advertised in the `hello`
+   * frame so subscribers detect a resurrected host deterministically (instead
+   * of heuristically from seq_head). Increments per host process; 0 for the
+   * first instance.
+   */
+  epoch?: number;
 }
 
 interface PushableInput extends AsyncIterable<SDKUserMessage> {
@@ -113,13 +128,17 @@ export class SessionHost {
     (result: PermissionResult) => void
   >();
   private permissionCounter = 0;
+  private readonly epoch: number;
+  private readonly resumedFrom: string | null;
   readonly input: PushableInput = makePushableInput();
 
   constructor(opts: SessionHostOptions) {
     this.opts = opts;
     this.now = opts.now ?? (() => new Date());
-    this.sdkSessionId = opts.resumeFrom ?? null;
+    this.resumedFrom = opts.resumeFrom ?? null;
+    this.sdkSessionId = this.resumedFrom;
     this.model = opts.model ?? null;
+    this.epoch = opts.epoch ?? 0;
   }
 
   // --- emission ---------------------------------------------------------
@@ -156,6 +175,9 @@ export class SessionHost {
         role: "host",
         session_id: this.sdkSessionId,
         seq_head: this.seq > 0 ? this.seq - 1 : -1,
+        epoch: this.epoch,
+        resumed: this.resumedFrom !== null,
+        resumed_from: this.resumedFrom,
       }),
     );
     for (const event of this.events) send(encodeLine(event));
@@ -170,6 +192,10 @@ export class SessionHost {
   submitTurn(text: string): void {
     if (this.ended) return;
     this.turn += 1;
+    // Emit the user turn so events.ndjson is a complete transcript (and live
+    // subscribers can render it without an optimistic echo). Stamped with the
+    // just-incremented turn.
+    this.emit({ type: "user", subtype: "input", text });
     this.input.push(text);
   }
 
@@ -290,6 +316,9 @@ export class SessionHost {
     const out: string[] = [];
     for (const e of this.events) {
       switch (e.type) {
+        case "user":
+          out.push(`\n> ${e.text}\n`);
+          break;
         case "text-delta":
           out.push(e.text);
           break;
@@ -344,12 +373,25 @@ async function runStandalone(): Promise<void> {
   const initialPrompt = process.env.AO_SDK_INITIAL_PROMPT || null;
   const permissionTimeoutMs = Number(process.env.AO_SDK_PERMISSION_TIMEOUT_MS || "0") || 0;
 
+  // Host-instance epoch: read the prior value from session.json (if any) and
+  // advance it. Each host process for this AO session gets a higher epoch, so
+  // subscribers detect a resurrected host deterministically.
+  let priorEpoch = -1;
+  try {
+    const prev = JSON.parse(readFileSync(paths.sessionInfo, "utf-8")) as Partial<SessionInfo>;
+    if (typeof prev.epoch === "number") priorEpoch = prev.epoch;
+  } catch {
+    /* no prior session.json — fresh epoch */
+  }
+  const epoch = priorEpoch + 1;
+
   const host = new SessionHost({
     aoSessionId,
     permissionMode,
     resumeFrom,
     model,
     permissionTimeoutMs,
+    epoch,
     persist: (line) => appendFileSync(paths.eventLog, line),
   });
 
@@ -361,6 +403,7 @@ async function runStandalone(): Promise<void> {
       hostPid: process.pid,
       startedAt: new Date().toISOString(),
       resumedFrom: resumeFrom,
+      epoch,
     };
     try {
       writeFileSync(paths.sessionInfo, JSON.stringify(info, null, 2));
@@ -372,6 +415,11 @@ async function runStandalone(): Promise<void> {
   writeSessionInfo(resumeFrom, model);
 
   // --- net server: subscribers + control commands ---
+  // The socket may live in a short, hashed dir distinct from the session base
+  // (see protocol.socketAddress) — ensure it exists on POSIX.
+  if (process.platform !== "win32") {
+    mkdirSync(dirname(paths.socket), { recursive: true });
+  }
   if (process.platform !== "win32" && existsSync(paths.socket)) {
     try {
       unlinkSync(paths.socket);

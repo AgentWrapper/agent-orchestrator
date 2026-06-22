@@ -42,6 +42,7 @@ Model-agnostic NDJSON — one JSON object per line, on disk and on the wire. `ru
 
 | `type` | extra fields |
 |--------|--------------|
+| `user` | `subtype:"input"`, `text:string` — a user turn (emitted on every `submitTurn` / `{cmd:"send"}`, incl. the initial prompt and post-resume turns) |
 | `text-delta` | `block:number`, `text:string` — streaming assistant answer |
 | `reasoning` | `block:number`, `text:string` — streaming thinking |
 | `tool_use` | `block:number`, `id:string`, `name:string`, `input:object` |
@@ -58,7 +59,7 @@ Model-agnostic NDJSON — one JSON object per line, on disk and on the wire. `ru
 | `permission_resolved` | `request_id:string`, `behavior:"allow"\|"deny"`, `message?` |
 | `error` | `message:string`, `fatal:boolean` |
 
-`block` is the content-block index within the current assistant message (groups consecutive `text-delta` / `reasoning` into one bubble). Note: in streaming-input mode the SDK emits one `session/init` per turn — `session_id` is stable, so consumers may treat repeats as turn boundaries.
+`block` is the content-block index within the current assistant message (groups consecutive `text-delta` / `reasoning` into one bubble). The `user` event makes `events.ndjson` a **complete transcript** (user turns + assistant + tool events), so a consumer needs no optimistic echo. Note: in streaming-input mode the SDK emits one `session/init` per turn — `session_id` is stable, so consumers may treat repeats as turn boundaries.
 
 ## Paths (per session)
 
@@ -71,19 +72,34 @@ base = <AO_SDK_HOME>/<aoSessionId>/
 | file | purpose |
 |------|---------|
 | `<base>/events.ndjson` | append-only event log (full history incl. resumes) |
-| `<base>/session.json` | `{ aoSessionId, sdkSessionId, model, hostPid, startedAt, resumedFrom }` |
-| `<base>/host.sock` (POSIX) · `\\.\pipe\ao-sdk-<aoSessionId>` (Windows) | live event socket |
+| `<base>/session.json` | `{ aoSessionId, sdkSessionId, model, hostPid, startedAt, resumedFrom, epoch }` |
 
-Paths key off the **ao session id** (known at `create()`), not the provider `session_id` (unknown until the first turn produces `init`). The SDK's own resume transcript lives separately at `~/.claude/projects/<encoded-cwd>/<sdkSessionId>.jsonl`; resume passes `options.resume = sdkSessionId`.
+The event log and `session.json` key off the **ao session id** (known at `create()`), not the provider `session_id` (unknown until the first turn produces `init`). The SDK's own resume transcript lives separately at `~/.claude/projects/<encoded-cwd>/<sdkSessionId>.jsonl`; resume passes `options.resume = sdkSessionId`.
+
+### Live socket — deterministic derivation
+
+The socket address is computed **identically by both sides** (host and subscriber) with **no dependence on `$TMPDIR`** and stays well under the POSIX `sockaddr_un` ~104-byte limit regardless of how long the AO session id is:
+
+```
+name  = sha256(aoSessionId).hex.slice(0, 16)            // 16 hex chars
+POSIX:    <socketRoot>/<name>.sock
+Windows:  \\.\pipe\ao-sdk-<name>
+
+socketRoot = $AO_SDK_SOCK_DIR || <homedir>/.ao-sdk
+```
+
+A subscriber (Maestro) computes the same path from just `aoSessionId` (+ the same `socketRoot`). `socketRoot` defaults to `~/.ao-sdk` and resolves identically for the same OS user. **If the two processes run with different `$HOME`** (e.g. an app sandbox), set `AO_SDK_SOCK_DIR` to the same absolute path on both sides. `$TMPDIR` is no longer used for the socket. (The host inherits the spawning `ao` process environment, including `$TMPDIR`/`$HOME`, since `runtime.create()` spawns it as a child.)
 
 ## Subscription protocol
 
 Line-delimited JSON (NDJSON) over the socket / pipe, UTF-8, `\n`-terminated, bidirectional. On connect the host pushes, in order:
 
-1. `{ type:"hello", role:"host", session_id, seq_head }`
+1. `{ type:"hello", role:"host", session_id, seq_head, epoch, resumed, resumed_from }`
 2. replay of every buffered event so far (one line each) — the **snapshot** (incl. the in-progress turn, so late subscribers miss nothing)
 3. `{ type:"snapshot-complete", seq }` — everything after is **live**
 4. live events forever
+
+**`hello.epoch`** is a monotonic host-instance id (persisted in `session.json`, advances per host process for the AO session). On a fresh host `seq`/`turn` reset to 0; a subscriber compares `epoch` to the last one it saw on this socket to detect a **resurrected host deterministically** (no `seq_head` heuristic). `resumed` is true when the host started from `options.resume`; `resumed_from` is the resumed provider `session_id` (or `null`). (Replaying pre-resume history into the new host's snapshot is M3; for now a new epoch signals "snapshot starts fresh".)
 
 Client → host control lines (a pure subscriber sends none):
 
@@ -110,7 +126,8 @@ Managed/autonomous sessions default to **`bypassPermissions`** (equivalent to to
 | `AO_SDK_RESUME` | — | provider `session_id` to resume |
 | `AO_SDK_MODEL` | — | model id override |
 | `AO_SDK_CWD` | workspace path | working dir for the session |
-| `AO_SDK_HOME` / `AO_HOME` | `~/.agent-orchestrator` | state root |
+| `AO_SDK_HOME` / `AO_HOME` | `~/.agent-orchestrator` | state root (event log + session.json) |
+| `AO_SDK_SOCK_DIR` | `~/.ao-sdk` | live-socket root; set identically on both sides if `$HOME` differs |
 | `AO_SDK_PERMISSION_TIMEOUT_MS` | `0` (wait) | deny timeout for unanswered approvals |
 | `AO_SDK_HOST_SCRIPT` | bundled `dist/sdk-host.js` | override host script path (tests/dev) |
 
