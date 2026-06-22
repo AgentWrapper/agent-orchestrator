@@ -69,6 +69,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { seedRlmContext } from "./rlm-seed.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -1464,6 +1465,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(orchestratorExists && { orchestratorSessionId }),
       });
 
+      // Auto-seed rlm context (worker spawns only — this path is always a
+      // worker; the orchestrator has its own spawn function). Query
+      // maestro-search for transcripts relevant to this task and prepend the
+      // top snippets to the task prompt. FAIL-OPEN: a missing binary, error,
+      // timeout, or empty result leaves the prompt untouched (seedRlmContext
+      // returns null), so seeding never breaks the spawn.
+      let seededTaskPrompt = taskPrompt;
+      if (selection.role !== "orchestrator") {
+        try {
+          const rlmBlock = await seedRlmContext({
+            projectId: spawnConfig.projectId,
+            taskText: spawnConfig.prompt ?? resolvedIssue?.title,
+          });
+          if (rlmBlock) {
+            seededTaskPrompt = taskPrompt ? `${rlmBlock}\n\n${taskPrompt}` : rlmBlock;
+          }
+        } catch {
+          // Belt-and-suspenders: seedRlmContext is already fail-open and never
+          // throws, but the spawn must never break on seeding regressions.
+        }
+      }
+
       const baseDir = getProjectDir(spawnConfig.projectId);
       mkdirSync(baseDir, { recursive: true });
       const systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
@@ -1500,7 +1523,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
         workspacePath,
         issueId: spawnConfig.issueId,
-        prompt: taskPrompt,
+        prompt: seededTaskPrompt,
         systemPromptFile,
         permissions: selection.permissions,
         model: selection.model,
