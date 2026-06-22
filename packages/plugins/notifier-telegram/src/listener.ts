@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -371,8 +372,39 @@ async function sendMessage(botToken: string, chatId: string, text: string): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Single-instance lock
+// Single-instance lock + owner-aware eviction
 // ---------------------------------------------------------------------------
+//
+// The inbound listener is spawned *detached* so it can route replies even while
+// the daemon is busy — but that also means it OUTLIVES the daemon. When a new
+// daemon boots after a restart (most painfully, an engine upgrade) it would find
+// the *previous* daemon's listener still holding the lock and, under the old
+// logic, decline to start its own. The stale listener (old engine code, e.g.
+// missing `/orc` / answered-question deletion) then keeps running until someone
+// restarts it by hand.
+//
+// Fix: stamp the lock with the identity of the daemon that owns the listener. A
+// later daemon compares — a listener it doesn't own is evicted and replaced with
+// one running the current code; its own listener is left alone (single-instance).
+//
+// Owner identity is `pid:random`, not the bare pid, so that a fresh daemon which
+// happens to reuse a dead daemon's PID still gets a *distinct* id and correctly
+// evicts the orphaned listener instead of mistaking it for its own.
+
+/** Stable identity of THIS process for the lifetime of the process. */
+const OWNER_ID = `${process.pid}:${randomBytes(4).toString("hex")}`;
+
+/** Env var by which a daemon hands its identity down to the listener it spawns. */
+const OWNER_ENV = "AO_TELEGRAM_OWNER_ID";
+
+/**
+ * The owner the listener should record. When spawned by a daemon it adopts that
+ * daemon's identity (so the daemon recognises the listener as its own); run
+ * standalone (`ao-telegram-listen`) it owns itself.
+ */
+function listenerOwnerId(): string {
+  return process.env[OWNER_ENV] || OWNER_ID;
+}
 
 function lockPath(): string {
   return join(stateRoot(), "telegram-listener.pid");
@@ -387,14 +419,86 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-/** Acquire the listener lock; false if another live listener already holds it. */
-export function acquireListenerLock(path = lockPath()): boolean {
+export interface ListenerLock {
+  listenerPid: number;
+  /** Identity of the daemon that owns this listener; absent in legacy locks. */
+  ownerId?: string;
+}
+
+/**
+ * Read and parse the listener lock. Tolerates the legacy bare-pid format written
+ * by older engines: such a lock has no owner, so it is treated as belonging to an
+ * *unknown* (previous) daemon and gets evicted by the current one — which is
+ * exactly the upgrade case we are fixing.
+ */
+export function readListenerLock(path = lockPath()): ListenerLock | null {
   try {
-    if (existsSync(path)) {
-      const pid = parseInt(readFileSync(path, "utf8").trim(), 10);
-      if (!Number.isNaN(pid) && pid !== process.pid && isPidAlive(pid)) return false;
+    if (!existsSync(path)) return null;
+    const raw = readFileSync(path, "utf8").trim();
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return { listenerPid: parseInt(raw, 10) }; // legacy bare pid
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const listenerPid = typeof obj.listenerPid === "number" ? obj.listenerPid : NaN;
+    if (Number.isNaN(listenerPid)) return null;
+    return {
+      listenerPid,
+      ownerId: typeof obj.ownerId === "string" ? obj.ownerId : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeListenerLock(path: string, listenerPid: number, ownerId: string): void {
+  writeFileSync(path, JSON.stringify({ listenerPid, ownerId }));
+}
+
+export type ListenerAction = "spawn" | "skip" | "evict";
+
+/**
+ * Pure decision for the daemon side (`maybeStartListener`): given the current lock,
+ * our identity, and a liveness probe, decide what to do.
+ *   - "skip"  → a listener WE own is already live → do nothing (single-instance).
+ *   - "evict" → a live listener owned by a *different* daemon (or a legacy/no-owner
+ *               lock) → stop it and spawn ours so the current code takes over.
+ *   - "spawn" → no live listener → just spawn ours.
+ */
+export function decideListenerAction(
+  lock: ListenerLock | null,
+  myOwnerId: string,
+  alive: (pid: number) => boolean,
+): ListenerAction {
+  if (!lock || !alive(lock.listenerPid)) return "spawn";
+  return lock.ownerId === myOwnerId ? "skip" : "evict";
+}
+
+/**
+ * Acquire the listener lock for THIS process.
+ *   - A live listener of the *same* owner already holds it → refuse (`false`): two
+ *     listeners for one daemon would double-poll Telegram.
+ *   - A live listener of a *different* owner holds it → take over: the daemon that
+ *     spawned us has already signalled the old one, so we overwrite the lock. This
+ *     also tolerates the handoff race where the evicted listener has not finished
+ *     exiting yet — we claim the lock rather than bailing on its lingering pid.
+ *   - Otherwise (free / dead / legacy holder) → claim it.
+ * `alive` is injectable for tests; production uses the real pid probe.
+ */
+export function acquireListenerLock(
+  path = lockPath(),
+  alive: (pid: number) => boolean = isPidAlive,
+): boolean {
+  try {
+    const mine = listenerOwnerId();
+    const existing = readListenerLock(path);
+    if (
+      existing &&
+      existing.listenerPid !== process.pid &&
+      alive(existing.listenerPid) &&
+      existing.ownerId === mine
+    ) {
+      return false; // a sibling listener of the same daemon is already live
     }
-    writeFileSync(path, String(process.pid));
+    writeListenerLock(path, process.pid, mine);
     return true;
   } catch {
     // If we can't use a lockfile, allow running (better to listen than not).
@@ -404,9 +508,8 @@ export function acquireListenerLock(path = lockPath()): boolean {
 
 function releaseListenerLock(path = lockPath()): void {
   try {
-    if (existsSync(path) && readFileSync(path, "utf8").trim() === String(process.pid)) {
-      unlinkSync(path);
-    }
+    const existing = readListenerLock(path);
+    if (existing && existing.listenerPid === process.pid) unlinkSync(path);
   } catch {
     /* ignore */
   }
@@ -503,8 +606,12 @@ function delay(ms: number): Promise<void> {
 
 /**
  * Spawn the inbound listener as a detached child of the daemon, unless: we're
- * under a test runner, listening is opted out, credentials are missing, or a
- * listener already holds the lock. Idempotent and side-effect-safe.
+ * under a test runner, listening is opted out, or credentials are missing.
+ *
+ * A live listener owned by THIS daemon is left alone (single-instance). A live
+ * listener owned by a *different/previous* daemon — or a legacy lock with no owner
+ * — is evicted first, so after any restart (notably an engine upgrade) the listener
+ * runs the current code rather than the stale detached process. Idempotent.
  */
 export function maybeStartListener(config?: Record<string, unknown>): void {
   if (process.env.VITEST || process.env.AO_TELEGRAM_NO_LISTEN) return;
@@ -513,15 +620,23 @@ export function maybeStartListener(config?: Record<string, unknown>): void {
   const chatId = config?.chatId;
   if (!botToken || chatId == null || chatId === "") return;
 
-  // Don't spawn a second listener if one is already alive.
+  let existing: ListenerLock | null = null;
   try {
-    const lp = lockPath();
-    if (existsSync(lp)) {
-      const pid = parseInt(readFileSync(lp, "utf8").trim(), 10);
-      if (!Number.isNaN(pid) && isPidAlive(pid)) return;
-    }
+    existing = readListenerLock();
   } catch {
-    /* fall through to spawn */
+    /* unreadable lock — treat as none and spawn */
+  }
+  const action = decideListenerAction(existing, OWNER_ID, isPidAlive);
+  if (action === "skip") return; // our own listener is already running
+  if (action === "evict" && existing) {
+    // Stop the previous daemon's listener. The listener we spawn below takes over
+    // the lock (see acquireListenerLock), which also covers the brief window where
+    // the evicted process is still shutting down.
+    try {
+      process.kill(existing.listenerPid, "SIGTERM");
+    } catch {
+      /* already gone or not killable — spawn anyway */
+    }
   }
 
   try {
@@ -532,6 +647,9 @@ export function maybeStartListener(config?: Record<string, unknown>): void {
     const argv1 = process.argv[1];
     if (argv1 && /\.(c|m)?js$/.test(argv1) && existsSync(argv1)) childEnv.AO_CLI ??= argv1;
     if (typeof config?.configPath === "string") childEnv.AO_CONFIG_PATH ??= config.configPath;
+    // Stamp the listener with OUR identity (overwrite, not ??=, so each daemon owns
+    // the listener it spawns) — a later daemon uses this to recognise its own.
+    childEnv[OWNER_ENV] = OWNER_ID;
 
     const child = spawn(process.execPath, [cliPath], {
       detached: true,

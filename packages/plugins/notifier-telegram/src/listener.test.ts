@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,6 +11,9 @@ import {
   parseOrcCommand,
   readProjectsRegistry,
   buildOrcResolver,
+  readListenerLock,
+  acquireListenerLock,
+  decideListenerAction,
   type OrcResolver,
 } from "./listener.js";
 import {
@@ -310,5 +313,100 @@ describe("decideRoute — deleteMessageId", () => {
       callbackId: "cb9",
       deleteMessageId: 77,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Listener lock: owner mark + durable-restart eviction
+// ---------------------------------------------------------------------------
+
+describe("listener lock — owner mark round-trip", () => {
+  it("writes and reads back the owner mark via acquire", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-tg-lock-"));
+    const path = join(dir, "telegram-listener.pid");
+    process.env.AO_TELEGRAM_OWNER_ID = "owner-mae";
+    try {
+      expect(acquireListenerLock(path)).toBe(true);
+      expect(readListenerLock(path)).toEqual({ listenerPid: process.pid, ownerId: "owner-mae" });
+    } finally {
+      delete process.env.AO_TELEGRAM_OWNER_ID;
+    }
+  });
+
+  it("reads a legacy bare-pid lock as an owner-less holder", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-tg-lock-"));
+    const path = join(dir, "telegram-listener.pid");
+    writeFileSync(path, "424242");
+    expect(readListenerLock(path)).toEqual({ listenerPid: 424242, ownerId: undefined });
+  });
+
+  it("returns null for an absent lock", () => {
+    expect(readListenerLock(join(tmpdir(), "no-such-listener-lock-xyz.pid"))).toBeNull();
+  });
+});
+
+describe("decideListenerAction", () => {
+  const live = () => true;
+  const dead = () => false;
+
+  it("spawns when there is no lock", () => {
+    expect(decideListenerAction(null, "me", live)).toBe("spawn");
+  });
+
+  it("spawns when the holder is dead", () => {
+    expect(decideListenerAction({ listenerPid: 4242, ownerId: "other" }, "me", dead)).toBe("spawn");
+  });
+
+  it("skips (no double-spawn) when a live listener of the same owner holds the lock", () => {
+    expect(decideListenerAction({ listenerPid: 4242, ownerId: "me" }, "me", live)).toBe("skip");
+  });
+
+  it("evicts a live listener owned by a different daemon", () => {
+    expect(decideListenerAction({ listenerPid: 4242, ownerId: "other" }, "me", live)).toBe("evict");
+  });
+
+  it("evicts a live legacy (owner-less) listener", () => {
+    expect(decideListenerAction({ listenerPid: 4242 }, "me", live)).toBe("evict");
+  });
+});
+
+describe("acquireListenerLock — eviction & single-instance", () => {
+  beforeEach(() => {
+    process.env.AO_TELEGRAM_OWNER_ID = "owner-mine";
+  });
+  afterEach(() => {
+    delete process.env.AO_TELEGRAM_OWNER_ID;
+  });
+
+  function lockFile(): string {
+    return join(mkdtempSync(join(tmpdir(), "ao-tg-lock-")), "telegram-listener.pid");
+  }
+
+  it("claims a free lock and stamps our pid + owner", () => {
+    const path = lockFile();
+    expect(acquireListenerLock(path)).toBe(true);
+    expect(readListenerLock(path)).toEqual({ listenerPid: process.pid, ownerId: "owner-mine" });
+  });
+
+  it("refuses when a live listener of the SAME owner already holds it", () => {
+    const path = lockFile();
+    writeFileSync(path, JSON.stringify({ listenerPid: 999999, ownerId: "owner-mine" }));
+    expect(acquireListenerLock(path, () => true)).toBe(false);
+    // Lock is left untouched — we must not steal it from our live sibling.
+    expect(readListenerLock(path)).toEqual({ listenerPid: 999999, ownerId: "owner-mine" });
+  });
+
+  it("takes over when a live listener of a DIFFERENT owner holds it", () => {
+    const path = lockFile();
+    writeFileSync(path, JSON.stringify({ listenerPid: 999999, ownerId: "owner-prev-daemon" }));
+    expect(acquireListenerLock(path, () => true)).toBe(true);
+    expect(readListenerLock(path)).toEqual({ listenerPid: process.pid, ownerId: "owner-mine" });
+  });
+
+  it("claims a lock whose holder is dead, regardless of owner", () => {
+    const path = lockFile();
+    writeFileSync(path, JSON.stringify({ listenerPid: 999999, ownerId: "owner-mine" }));
+    expect(acquireListenerLock(path, () => false)).toBe(true);
+    expect(readListenerLock(path)).toEqual({ listenerPid: process.pid, ownerId: "owner-mine" });
   });
 });
