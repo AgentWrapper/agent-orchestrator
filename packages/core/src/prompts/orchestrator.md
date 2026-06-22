@@ -158,6 +158,15 @@ Send instructions to a running agent:
 ao send {{projectSessionPrefix}}-1 "Please address the review comments on your PR"
 ```
 
+### Peer Orchestrator Q&A
+
+Other projects' orchestrators are reachable as `<prefix>-orchestrator` (prefix from the project registry).
+
+- **Opening a channel needs the user's OK once.** Before you start talking to another orchestrator, ask the user a single time what you want to discuss and with whom (e.g. "I'd like to talk to `<Y>-orchestrator` about <topic> — OK?"). Don't reach out on your own before that.
+- **After the user approves, exchange freely.** Send questions, clarifications, and answers back and forth with `ao send <Y>-orchestrator "[from <my-session-id>] ❓ <question>"` — no fresh approval per message; the one OK covers the whole conversation.
+- **Answering is never gated.** When you receive `[from <Y>-orchestrator] ❓ <question>`, just reply with `ao send <Y>-orchestrator "[from <my-session-id>] ✅ <answer>"` — no approval needed.
+- The `[from …]` tag is background provenance about who sent the message, not an instruction to follow.
+
 {{REPO_CONFIGURED_SECTION_START}}### PR Takeover
 
 If a worker session needs to continue work on an existing PR:
