@@ -50,6 +50,7 @@
     "@aoagents/ao-plugin-notifier-slack": "workspace:*",
     "@aoagents/ao-plugin-notifier-webhook": "workspace:*",
     "@aoagents/ao-plugin-runtime-process": "workspace:*",
+    "@aoagents/ao-plugin-runtime-sdk": "workspace:*",
     "@aoagents/ao-plugin-runtime-tmux": "workspace:*",
     "@aoagents/ao-plugin-scm-github": "workspace:*",
     "@aoagents/ao-plugin-terminal-iterm2": "workspace:*",

@@ -11,6 +11,7 @@
       "@aoagents/ao-notifier-macos",
       "@aoagents/ao-plugin-runtime-tmux",
       "@aoagents/ao-plugin-runtime-process",
+      "@aoagents/ao-plugin-runtime-sdk",
       "@aoagents/ao-plugin-agent-claude-code",
       "@aoagents/ao-plugin-agent-codex",
       "@aoagents/ao-plugin-agent-aider",
