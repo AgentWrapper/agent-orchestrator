@@ -85,7 +85,11 @@ let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 const STORAGE_KEY = "111111111113";
 
 import { Command } from "commander";
-import { registerSpawn, registerBatchSpawn } from "../../src/commands/spawn.js";
+import {
+  registerSpawn,
+  registerBatchSpawn,
+  resolvePromptInput,
+} from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -686,6 +690,123 @@ describe("spawn command", () => {
     expect(errors).toContain(
       "Session app-1 was created, but failed to claim PR 123: already tracked by app-9",
     );
+  });
+});
+
+describe("resolvePromptInput", () => {
+  it("reads a multi-line file verbatim — no newline collapse, no 4096 cap", async () => {
+    const promptPath = join(tmpDir, "task.md");
+    // Well over the inline 4096 cap, with many newlines that must survive.
+    const body = Array.from({ length: 200 }, (_, i) => `line ${i}: ${"x".repeat(40)}`).join("\n");
+    writeFileSync(promptPath, body);
+
+    const resolved = await resolvePromptInput({ promptFile: promptPath });
+
+    expect(resolved).toBe(body);
+    expect(resolved!.length).toBeGreaterThan(4096);
+    expect(resolved).toContain("\n");
+  });
+
+  it("replaces newlines with spaces and trims for an inline --prompt", async () => {
+    const resolved = await resolvePromptInput({ prompt: "  one\ntwo\nthree  " });
+    expect(resolved).toBe("one two three");
+    // No multi-line content survives the inline path.
+    expect(resolved).not.toContain("\n");
+  });
+
+  it("rejects passing both --prompt and --prompt-file", async () => {
+    await expect(
+      resolvePromptInput({ prompt: "hi", promptFile: join(tmpDir, "task.md") }),
+    ).rejects.toThrow("mutually exclusive");
+  });
+
+  it("rejects an inline --prompt longer than 4096 characters", async () => {
+    await expect(resolvePromptInput({ prompt: "z".repeat(4097) })).rejects.toThrow(
+      "at most 4096 characters",
+    );
+  });
+
+  it("rejects a prompt file over the sanity bound", async () => {
+    const promptPath = join(tmpDir, "huge.md");
+    writeFileSync(promptPath, "a".repeat(1_000_001));
+    await expect(resolvePromptInput({ promptFile: promptPath })).rejects.toThrow("maximum is");
+  });
+
+  it("rejects an empty prompt file", async () => {
+    const promptPath = join(tmpDir, "empty.md");
+    writeFileSync(promptPath, "   \n  ");
+    await expect(resolvePromptInput({ promptFile: promptPath })).rejects.toThrow("is empty");
+  });
+
+  it("surfaces a clear error when the prompt file does not exist", async () => {
+    await expect(
+      resolvePromptInput({ promptFile: join(tmpDir, "does-not-exist.md") }),
+    ).rejects.toThrow("Failed to read --prompt-file");
+  });
+
+  it("returns undefined when neither option is provided", async () => {
+    expect(await resolvePromptInput({})).toBeUndefined();
+  });
+});
+
+describe("spawn --prompt-file", () => {
+  function makeFakeSession(): Session {
+    return {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+  }
+
+  it("delivers a large multi-line prompt file whole to sessionManager.spawn()", async () => {
+    const promptPath = join(tmpDir, "spec.md");
+    const body = Array.from({ length: 150 }, (_, i) => `step ${i}: ${"y".repeat(50)}`).join("\n");
+    writeFileSync(promptPath, body);
+
+    mockSessionManager.spawn.mockResolvedValue(makeFakeSession());
+
+    await program.parseAsync(["node", "test", "spawn", "--prompt-file", promptPath]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "my-app", prompt: body }),
+    );
+    const passed = mockSessionManager.spawn.mock.calls[0]?.[0] as { prompt: string };
+    expect(passed.prompt.length).toBeGreaterThan(4096);
+    expect(passed.prompt).toContain("\n");
+  });
+
+  it("exits with an error when both --prompt and --prompt-file are passed", async () => {
+    const promptPath = join(tmpDir, "spec.md");
+    writeFileSync(promptPath, "do the thing");
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "test",
+        "spawn",
+        "--prompt",
+        "inline",
+        "--prompt-file",
+        promptPath,
+      ]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("mutually exclusive");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 });
 

@@ -40,6 +40,7 @@ import {
   type ProjectConfig,
   type Runtime,
   type Agent,
+  type AgentLimits,
   type Workspace,
   type WorkspaceCreateConfig,
   type Tracker,
@@ -1012,6 +1013,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
+  }
+
+  /**
+   * Read the capability limits of the agent plugin active for a project.
+   * Provider-independent seam: the core can consult these without knowing which
+   * agent is configured. Returns undefined for an unknown project or an agent
+   * that declares no limits.
+   */
+  function getAgentLimits(projectId: string): AgentLimits | undefined {
+    const project = config.projects[projectId];
+    if (!project) return undefined;
+    return resolvePlugins(project).agent?.limits;
   }
 
   function resolveSelectionForSession(
@@ -3802,5 +3815,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     send,
     claimPR,
     remap,
+    getAgentLimits,
   };
 }

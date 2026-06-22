@@ -223,6 +223,16 @@ describe("plugin manifest & exports", () => {
     expect(agent.processName).toBe("claude");
   });
 
+  it("declares capability limits (provider-independent scaling seam)", () => {
+    const agent = create();
+    expect(agent.limits).toEqual({
+      contextTokens: 1_000_000,
+      maxRequestBytes: 33_554_432,
+      maxFileBytes: 524_288_000,
+      supportedFileTypes: ["pdf", "png", "jpg", "jpeg", "gif", "webp", "txt"],
+    });
+  });
+
   it("default export is a valid PluginModule", () => {
     expect(defaultExport.manifest).toBe(manifest);
     expect(typeof defaultExport.create).toBe("function");
@@ -281,6 +291,14 @@ describe("getLaunchCommand", () => {
   it("handles prompts starting with dashes safely via -- separator", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "--investigate this" }));
     expect(cmd).toContain("-- '--investigate this'");
+  });
+
+  it("embeds a multi-line prompt whole, preserving newlines (no collapse/truncation)", () => {
+    const multiline = "Step 1: do X\nStep 2: do Y\n\nNotes:\n- keep newlines";
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: multiline }));
+    // shellEscape single-quotes the whole prompt; newlines stay literal inside.
+    expect(cmd).toContain(`-- '${multiline}'`);
+    expect(cmd).toContain("\n");
   });
 
   it("omits --dangerously-skip-permissions when permissions=default", () => {

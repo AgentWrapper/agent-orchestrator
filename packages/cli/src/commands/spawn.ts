@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   loadConfig,
@@ -17,6 +18,96 @@ import { getPluginRegistry, getSessionManager } from "../lib/create-session-mana
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { getRunning } from "../lib/running-state.js";
 import { projectSessionUrl } from "../lib/routes.js";
+
+/**
+ * Inline `--prompt` is a single-line metadata-safe argument: newlines are
+ * collapsed and it is capped tightly. A large multi-line task spec must go
+ * through `--prompt-file` instead, which preserves the content verbatim.
+ */
+const MAX_INLINE_PROMPT_CHARS = 4096;
+
+/**
+ * Generous sanity bound for `--prompt-file`. Far above any realistic task spec,
+ * but guards against accidentally piping a huge/binary file into a session.
+ */
+const MAX_PROMPT_FILE_CHARS = 1_000_000;
+
+/** Read all of stdin to a string (used for `--prompt-file -`). */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+/**
+ * Resolve the task prompt from the mutually-exclusive `--prompt` / `--prompt-file`
+ * options into the final string handed to the session.
+ *
+ * - `--prompt <text>`: single-line, newlines collapsed, capped at
+ *   MAX_INLINE_PROMPT_CHARS (unchanged legacy behavior).
+ * - `--prompt-file <path>` (or `-` for stdin): delivered whole — newlines are
+ *   preserved and there is no inline cap, only a MAX_PROMPT_FILE_CHARS sanity
+ *   bound. This is the path for large multi-line task specs.
+ *
+ * Throws (with an actionable message) on conflicting options, an unreadable or
+ * empty file, or an over-bound file.
+ */
+export async function resolvePromptInput(opts: {
+  prompt?: string;
+  promptFile?: string;
+}): Promise<string | undefined> {
+  const { prompt, promptFile } = opts;
+
+  if (prompt !== undefined && promptFile !== undefined) {
+    throw new Error("--prompt and --prompt-file are mutually exclusive — pass only one.");
+  }
+
+  if (promptFile !== undefined) {
+    let raw: string;
+    if (promptFile === "-") {
+      raw = await readStdin();
+    } else {
+      try {
+        raw = readFileSync(resolve(promptFile), "utf-8");
+      } catch (err) {
+        throw new Error(
+          `Failed to read --prompt-file "${promptFile}": ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+    }
+    if (raw.length > MAX_PROMPT_FILE_CHARS) {
+      throw new Error(
+        `--prompt-file content is ${raw.length} characters; the maximum is ${MAX_PROMPT_FILE_CHARS}.`,
+      );
+    }
+    if (!raw.trim()) {
+      throw new Error(
+        promptFile === "-"
+          ? "--prompt-file - (stdin) was empty."
+          : `--prompt-file "${promptFile}" is empty.`,
+      );
+    }
+    // Delivered whole: preserve newlines and all whitespace, no inline cap.
+    return raw;
+  }
+
+  if (prompt !== undefined) {
+    // Strip newlines to keep the inline prompt single-line (metadata-safe).
+    const sanitized = prompt.replace(/[\r\n]/g, " ").trim();
+    if (sanitized.length > MAX_INLINE_PROMPT_CHARS) {
+      throw new Error(
+        `--prompt must be at most ${MAX_INLINE_PROMPT_CHARS} characters. ` +
+          `For a large task spec, use --prompt-file <path> (or --prompt-file - to read stdin).`,
+      );
+    }
+    return sanitized || undefined;
+  }
+
+  return undefined;
+}
 
 /**
  * Auto-detect the project ID from the config.
@@ -212,11 +303,9 @@ async function spawnSession(
     const sm = await getSessionManager(config);
     spinner.text = "Spawning session via core";
 
-    // Validate and sanitize prompt (strip newlines to prevent metadata injection)
-    const sanitizedPrompt = prompt?.replace(/[\r\n]/g, " ").trim() || undefined;
-    if (sanitizedPrompt && sanitizedPrompt.length > 4096) {
-      throw new Error("Prompt must be at most 4096 characters");
-    }
+    // Prompt is already resolved (inline `--prompt` vs `--prompt-file`/stdin)
+    // and validated by resolvePromptInput() in the action handler.
+    const sanitizedPrompt = prompt;
 
     // Short, explicit title ("what it's working on"). Single-line, capped so it
     // fits kanban cards / tabs (matches the displayName length budget).
@@ -315,7 +404,11 @@ export function registerSpawn(program: Command): void {
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option(
       "--prompt <text>",
-      "Initial prompt/instructions for the agent (use instead of an issue)",
+      "Initial prompt/instructions for the agent (use instead of an issue). Single-line, max 4096 chars.",
+    )
+    .option(
+      "--prompt-file <path>",
+      "Read the task prompt from a file (or '-' for stdin), delivered whole with newlines preserved. Use for large task specs. Mutually exclusive with --prompt.",
     )
     .option(
       "--title <text>",
@@ -330,6 +423,7 @@ export function registerSpawn(program: Command): void {
           claimPr?: string;
           assignOnGithub?: boolean;
           prompt?: string;
+          promptFile?: string;
           title?: string;
         },
         command: Command,
@@ -357,6 +451,17 @@ export function registerSpawn(program: Command): void {
 
         if (!opts.claimPr && opts.assignOnGithub) {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
+          process.exit(1);
+        }
+
+        let resolvedPrompt: string | undefined;
+        try {
+          resolvedPrompt = await resolvePromptInput({
+            prompt: opts.prompt,
+            promptFile: opts.promptFile,
+          });
+        } catch (err) {
+          console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);
         }
 
@@ -394,7 +499,7 @@ export function registerSpawn(program: Command): void {
             opts.open,
             opts.agent,
             claimOptions,
-            opts.prompt,
+            resolvedPrompt,
             opts.title,
           );
         } catch (err) {

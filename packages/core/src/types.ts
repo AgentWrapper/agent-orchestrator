@@ -495,6 +495,26 @@ export function isProcessProbeIndeterminate(
   return result === PROCESS_PROBE_INDETERMINATE;
 }
 
+/**
+ * Static capability descriptor for an agent plugin.
+ *
+ * Provider-independent scaling seam: each agent plugin declares the limits of
+ * the model/CLI it drives so the core can reason about how much it may hand an
+ * agent (large task specs, attachments, etc.) without hard-coding any one
+ * provider's numbers. The core only reads these — enforcement is intentionally
+ * not wired up yet.
+ */
+export interface AgentLimits {
+  /** Maximum context window, in tokens, the agent's model supports. */
+  contextTokens: number;
+  /** Optional: max bytes accepted in a single request to the agent's API. */
+  maxRequestBytes?: number;
+  /** Optional: max bytes of a single file/attachment the agent can ingest. */
+  maxFileBytes?: number;
+  /** Optional: file extensions the agent can read directly (lowercase, no dot). */
+  supportedFileTypes?: string[];
+}
+
 export interface Agent {
   readonly name: string;
 
@@ -507,6 +527,13 @@ export interface Agent {
    * Use post-launch for interactive CLIs that must start first and receive input over stdin.
    */
   readonly promptDelivery?: "inline" | "post-launch";
+
+  /**
+   * Optional: static capability limits for this agent (context window, request
+   * size, attachment size, supported file types). Undefined when the plugin has
+   * not declared them. Read-only descriptor — see {@link AgentLimits}.
+   */
+  readonly limits?: AgentLimits;
 
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
@@ -1935,6 +1962,13 @@ export interface OpenCodeSessionManager extends SessionManager {
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
   listCached(projectId?: string): Promise<Session[]>;
   invalidateCache(): void;
+  /**
+   * Read the capability limits of the agent plugin active for a project
+   * (the project's configured agent, or the default). Returns undefined when
+   * the project is unknown or the resolved agent declares no limits. This is
+   * the core-facing seam for limit-aware behavior — nothing enforces it yet.
+   */
+  getAgentLimits(projectId: string): AgentLimits | undefined;
 }
 
 export interface ClaimPROptions {

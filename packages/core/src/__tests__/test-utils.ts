@@ -523,5 +523,6 @@ export function createMockSessionManager(): OpenCodeSessionManager {
       githubAssigned: true,
       takenOverFrom: [],
     }),
+    getAgentLimits: vi.fn().mockReturnValue(undefined),
   } as OpenCodeSessionManager;
 }
