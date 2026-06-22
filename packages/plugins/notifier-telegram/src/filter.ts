@@ -96,6 +96,14 @@ export interface GateConfig {
   dedupWindowMs?: number;
   /** Override the throttle window (ms) for worker `stuck` pings. */
   stuckThrottleMs?: number;
+  /**
+   * Orchestrator-only mode (default off). When `true`, Telegram carries *only*
+   * events from orchestrator sessions (its `needs_input` = it is asking the human;
+   * its questions/updates) and every worker event is suppressed, killing the
+   * per-worker firehose. Off by default, so it never changes current behaviour
+   * until the user opts in.
+   */
+  orchestratorOnly?: boolean;
 }
 
 export interface GateDecision {
@@ -108,7 +116,8 @@ export interface GateDecision {
     | "lifecycle"
     | "orchestrator-stuck"
     | "stuck-throttled"
-    | "duplicate";
+    | "duplicate"
+    | "worker-suppressed";
   /** The `${sessionId}::${kind}` key the decision keyed on. */
   key: string;
 }
@@ -130,6 +139,7 @@ function positiveOr(value: unknown, fallback: number): number {
 export function createNotificationGate(config: GateConfig = {}): NotificationGate {
   const dedupWindowMs = positiveOr(config.dedupWindowMs, DEFAULT_DEDUP_WINDOW_MS);
   const stuckThrottleMs = positiveOr(config.stuckThrottleMs, DEFAULT_STUCK_THROTTLE_MS);
+  const orchestratorOnly = config.orchestratorOnly === true;
   // last *delivered* timestamp per `${sessionId}::${kind}` — anchors the window
   // on the last send, not the last attempt, so a flood never resets the clock.
   const lastSent = new Map<string, number>();
@@ -144,6 +154,13 @@ export function createNotificationGate(config: GateConfig = {}): NotificationGat
       const type = effectiveType(event);
       const key = `${event.sessionId}::${type}`;
       const cls = classify(event);
+
+      // Orchestrator-only mode: suppress every worker event so Telegram carries
+      // only the orchestrator's own pings (it asks the human; its updates).
+      // Orchestrator events fall through to the normal actionable/stuck logic.
+      if (orchestratorOnly && !isOrchestratorSessionId(event.sessionId)) {
+        return { send: false, reason: "worker-suppressed", key };
+      }
 
       if (cls === "drop") {
         return { send: false, reason: "lifecycle", key };

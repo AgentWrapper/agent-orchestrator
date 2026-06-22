@@ -128,6 +128,9 @@ export function create(config?: Record<string, unknown>): Notifier {
   const gate = createNotificationGate({
     dedupWindowMs: config?.dedupWindowMs as number | undefined,
     stuckThrottleMs: config?.stuckThrottleMs as number | undefined,
+    // notifiers.telegram.orchestratorOnly — when true, suppress every worker event
+    // and ping only on orchestrator-session events. Default off (undefined → false).
+    orchestratorOnly: config?.orchestratorOnly as boolean | undefined,
   });
 
   if (!botToken || !chatId) {

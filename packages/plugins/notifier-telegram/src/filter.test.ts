@@ -162,4 +162,36 @@ describe("createNotificationGate", () => {
     expect(gate.evaluate(dup(), t0 + 50).send).toBe(false);
     expect(gate.evaluate(dup(), t0 + 101).send).toBe(true);
   });
+
+  describe("orchestratorOnly mode", () => {
+    it("suppresses worker events, passes orchestrator events", () => {
+      const gate = createNotificationGate({ orchestratorOnly: true });
+
+      // A worker's actionable event is suppressed as worker-suppressed.
+      const worker = gate.evaluate(
+        makeEvent({ type: "pr.created", sessionId: "mae-13" }),
+        t0,
+      );
+      expect(worker.send).toBe(false);
+      expect(worker.reason).toBe("worker-suppressed");
+
+      // The orchestrator's own event falls through to normal actionable logic.
+      const orch = gate.evaluate(
+        makeEvent({ type: "session.needs_input", sessionId: "mae-orchestrator" }),
+        t0,
+      );
+      expect(orch.send).toBe(true);
+      expect(orch.reason).toBe("actionable");
+    });
+
+    it("is off by default — worker events still flow", () => {
+      const gate = createNotificationGate();
+      const worker = gate.evaluate(
+        makeEvent({ type: "pr.created", sessionId: "mae-13" }),
+        t0,
+      );
+      expect(worker.send).toBe(true);
+      expect(worker.reason).toBe("actionable");
+    });
+  });
 });
