@@ -75,6 +75,30 @@ export function parseCallbackData(data: string | undefined | null): CallbackTarg
 }
 
 // ---------------------------------------------------------------------------
+// Pending-choice callback data
+//
+// Fuzzy `/orc` candidate buttons must deliver the human's ORIGINAL message,
+// which can be arbitrarily long — too long for the 64-byte callback_data. So the
+// button carries only a short opaque id; the listener keeps the (session, text)
+// pair in memory and looks it up on press. A distinct prefix keeps these disjoint
+// from the direct-value callbacks above (`ao` vs `aop`).
+// ---------------------------------------------------------------------------
+
+const PENDING_PREFIX = "aop";
+
+export function encodePendingCallback(id: string): string {
+  return `${PENDING_PREFIX}${CALLBACK_SEP}${id}`;
+}
+
+/** Recover a pending-choice id from callback data, or null if it isn't one. */
+export function parsePendingCallback(data: string | undefined | null): string | null {
+  if (!data) return null;
+  const parts = data.split(CALLBACK_SEP);
+  if (parts.length !== 2 || parts[0] !== PENDING_PREFIX) return null;
+  return parts[1] || null;
+}
+
+// ---------------------------------------------------------------------------
 // Choice options
 //
 // `session.needs_input` carries no structured options today (see

@@ -14,6 +14,7 @@ import {
   readListenerLock,
   acquireListenerLock,
   decideListenerAction,
+  PendingChoices,
   type OrcResolver,
 } from "./listener.js";
 import {
@@ -21,6 +22,8 @@ import {
   parseSessionTag,
   encodeCallbackData,
   parseCallbackData,
+  encodePendingCallback,
+  parsePendingCallback,
 } from "./shared.js";
 
 describe("session tag round-trip", () => {
@@ -231,6 +234,51 @@ describe("readProjectsRegistry / buildOrcResolver", () => {
   });
 });
 
+describe("buildOrcResolver — fuzzy candidates", () => {
+  const entries = [
+    { projectId: "boschcenter_kz_1", displayName: "boschcenter.kz", sessionPrefix: "bos" },
+    { projectId: "boston_2", displayName: "Boston", sessionPrefix: "bst" },
+    { projectId: "maestro_x", displayName: "Maestro", sessionPrefix: "mae" },
+  ];
+  const resolve = buildOrcResolver(entries);
+
+  it("returns no candidates on an exact match (routes directly)", () => {
+    const r = resolve("Maestro");
+    expect(r.sessionId).toBe("mae-orchestrator");
+    expect(r.candidates).toEqual([]);
+  });
+
+  it("finds a single subsequence candidate: bosh → boschcenter.kz", () => {
+    const r = resolve("bosh");
+    expect(r.sessionId).toBeNull();
+    expect(r.candidates).toEqual([{ sessionId: "bos-orchestrator", label: "boschcenter.kz" }]);
+  });
+
+  it("finds multiple substring candidates and skips non-matches", () => {
+    // "os" is a substring of boschcenter.kz and Boston, but of no field exactly
+    // (so it is not an exact match) and not of Maestro.
+    const r = resolve("os");
+    expect(r.sessionId).toBeNull();
+    expect(r.candidates).toEqual([
+      { sessionId: "bos-orchestrator", label: "boschcenter.kz" },
+      { sessionId: "bst-orchestrator", label: "Boston" },
+    ]);
+  });
+
+  it("returns zero candidates when nothing matches", () => {
+    const r = resolve("zzz");
+    expect(r.sessionId).toBeNull();
+    expect(r.candidates).toEqual([]);
+    expect(r.available).toEqual(["boschcenter.kz", "Boston", "Maestro"]);
+  });
+
+  it("ignores entries without a sessionPrefix (unroutable)", () => {
+    const r = buildOrcResolver([{ projectId: "noprefix_kz", displayName: "noprefix.kz" }])("noprefix");
+    expect(r.sessionId).toBeNull();
+    expect(r.candidates).toEqual([]);
+  });
+});
+
 describe("decideRoute — /orc command", () => {
   const chat = "999";
   const resolveOrc: OrcResolver = (project) => ({
@@ -278,10 +326,124 @@ describe("decideRoute — /orc command", () => {
   });
 });
 
-describe("decideRoute — deleteMessageId", () => {
+describe("decideRoute — fuzzy /orc → reply with buttons", () => {
+  const chat = "999";
+  const resolveOrc: OrcResolver = (project) => {
+    const token = project.toLowerCase();
+    if (token === "maestro") return { sessionId: "mae-orchestrator", candidates: [], available: ["Maestro"] };
+    if (token === "bosh")
+      return {
+        sessionId: null,
+        candidates: [{ sessionId: "bos-orchestrator", label: "boschcenter.kz" }],
+        available: ["Maestro", "boschcenter.kz"],
+      };
+    return { sessionId: null, candidates: [], available: ["Maestro", "boschcenter.kz"] };
+  };
+
+  it("offers candidate buttons carrying the original message when the match is fuzzy", () => {
+    const parsed = parseUpdate({
+      update_id: 30,
+      message: { message_id: 5, chat: { id: 999 }, text: "/orc bosh статус?" },
+    })!;
+    expect(decideRoute(parsed, chat, resolveOrc)).toEqual({
+      sessionId: "",
+      value: "",
+      replyButtons: [{ sessionId: "bos-orchestrator", label: "boschcenter.kz" }],
+      replyButtonsValue: "статус?",
+    });
+  });
+
+  it("still routes an exact match directly (no buttons)", () => {
+    const parsed = parseUpdate({
+      update_id: 31,
+      message: { message_id: 6, chat: { id: 999 }, text: "/orc maestro deploy now" },
+    })!;
+    expect(decideRoute(parsed, chat, resolveOrc)).toEqual({ sessionId: "mae-orchestrator", value: "deploy now" });
+  });
+
+  it("falls back to the Unknown-project menu when there are no candidates", () => {
+    const parsed = parseUpdate({
+      update_id: 32,
+      message: { message_id: 7, chat: { id: 999 }, text: "/orc ghost hi" },
+    })!;
+    const route = decideRoute(parsed, chat, resolveOrc)!;
+    expect(route.replyButtons).toBeUndefined();
+    expect(route.replyText).toBe('Unknown project "ghost". Available: Maestro, boschcenter.kz');
+  });
+});
+
+describe("PendingChoices store", () => {
+  it("round-trips a (session, value) pair and consumes it on take", () => {
+    const store = new PendingChoices();
+    const id = store.put({ sessionId: "bos-orchestrator", value: "статус? " + "x".repeat(200) });
+    expect(store.take(id)).toEqual({ sessionId: "bos-orchestrator", value: "статус? " + "x".repeat(200) });
+    expect(store.take(id)).toBeNull(); // one-shot
+  });
+
+  it("returns null for an unknown id", () => {
+    expect(new PendingChoices().take("nope")).toBeNull();
+  });
+
+  it("evicts the oldest entry past its cap", () => {
+    const store = new PendingChoices(2);
+    const a = store.put({ sessionId: "a", value: "1" });
+    store.put({ sessionId: "b", value: "2" });
+    store.put({ sessionId: "c", value: "3" }); // evicts `a`
+    expect(store.take(a)).toBeNull();
+  });
+});
+
+describe("pending callback data", () => {
+  it("round-trips a pending id within the 64-byte budget", () => {
+    const data = encodePendingCallback("abc123def456");
+    expect(parsePendingCallback(data)).toBe("abc123def456");
+    expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+  });
+
+  it("is disjoint from direct value callbacks", () => {
+    // a pending payload is not a direct callback, and vice-versa
+    expect(parseCallbackData(encodePendingCallback("id1"))).toBeNull();
+    expect(parsePendingCallback(encodeCallbackData("mae-10", "Postgres"))).toBeNull();
+    expect(parsePendingCallback("garbage")).toBeNull();
+  });
+});
+
+describe("decideRoute — fuzzy button press delivers the original question", () => {
   const chat = "999";
 
-  it("carries the quoted message id on a tagged reply", () => {
+  it("resolves a pending callback to its session + original (long) text", () => {
+    const store = new PendingChoices();
+    const longText = "статус? " + "y".repeat(300);
+    const id = store.put({ sessionId: "bos-orchestrator", value: longText });
+    const parsed = parseUpdate({
+      update_id: 40,
+      callback_query: {
+        id: "cbX",
+        data: encodePendingCallback(id),
+        message: { message_id: 88, chat: { id: 999 } },
+      },
+    })!;
+    const route = decideRoute(parsed, chat, undefined, (pid) => store.take(pid));
+    expect(route).toEqual({
+      sessionId: "bos-orchestrator",
+      value: longText,
+      callbackId: "cbX",
+    });
+  });
+
+  it("drops a stale/expired pending press (nothing in the store)", () => {
+    const parsed = parseUpdate({
+      update_id: 41,
+      callback_query: { id: "cbY", data: encodePendingCallback("gone"), message: { chat: { id: 999 } } },
+    })!;
+    expect(decideRoute(parsed, chat, undefined, () => null)).toBeNull();
+  });
+});
+
+describe("decideRoute — answered messages are preserved (no deletion)", () => {
+  const chat = "999";
+
+  it("routes a tagged reply without asking to delete the quoted question", () => {
     const parsed = parseUpdate({
       update_id: 20,
       message: {
@@ -291,14 +453,11 @@ describe("decideRoute — deleteMessageId", () => {
         reply_to_message: { message_id: 42, text: encodeSessionTag("mae-10") },
       },
     })!;
-    expect(decideRoute(parsed, chat)).toEqual({
-      sessionId: "mae-10",
-      value: "use Postgres",
-      deleteMessageId: 42,
-    });
+    // No deleteMessageId — the question + answer stay in the chat history.
+    expect(decideRoute(parsed, chat)).toEqual({ sessionId: "mae-10", value: "use Postgres" });
   });
 
-  it("carries the keyboard message id on a button press", () => {
+  it("routes a button press without asking to delete the keyboard message", () => {
     const parsed = parseUpdate({
       update_id: 21,
       callback_query: {
@@ -307,12 +466,7 @@ describe("decideRoute — deleteMessageId", () => {
         message: { message_id: 77, chat: { id: 999 } },
       },
     })!;
-    expect(decideRoute(parsed, chat)).toEqual({
-      sessionId: "mae-10",
-      value: "SQLite",
-      callbackId: "cb9",
-      deleteMessageId: 77,
-    });
+    expect(decideRoute(parsed, chat)).toEqual({ sessionId: "mae-10", value: "SQLite", callbackId: "cb9" });
   });
 });
 
