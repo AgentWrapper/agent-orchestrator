@@ -3,9 +3,12 @@ import {
   createDetectingDecision,
   hashEvidence,
   isDetectingTimedOut,
+  resolveProbeDecision,
   DETECTING_MAX_ATTEMPTS,
   DETECTING_MAX_DURATION_MS,
+  RUNTIME_LOST_GRACE_ATTEMPTS,
 } from "../lifecycle-status-decisions.js";
+import { createActivitySignal } from "../activity-signal.js";
 
 describe("hashEvidence", () => {
   it("returns a 12-character hex string", () => {
@@ -214,5 +217,117 @@ describe("createDetectingDecision", () => {
 
       expect(result.detecting.startedAt).toBe(previousStartedAt);
     });
+  });
+});
+
+describe("resolveProbeDecision", () => {
+  const probeBase = {
+    canProbeRuntimeIdentity: true,
+    activitySignal: createActivitySignal("unavailable"),
+    activityEvidence: "activity_signal=unavailable",
+    idleWasBlocked: false,
+  };
+
+  it("returns null when both probes are alive (no transition)", () => {
+    const decision = resolveProbeDecision({
+      ...probeBase,
+      currentAttempts: 0,
+      runtimeProbe: { state: "alive", failed: false },
+      processProbe: { state: "alive", failed: false },
+    });
+    expect(decision).toBeNull();
+  });
+
+  it("terminates as runtime_lost when both probes are dead", () => {
+    const decision = resolveProbeDecision({
+      ...probeBase,
+      currentAttempts: 0,
+      runtimeProbe: { state: "dead", failed: false },
+      processProbe: { state: "dead", failed: false },
+    });
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "killed",
+        sessionState: "terminated",
+        sessionReason: "runtime_lost",
+      }),
+    );
+  });
+
+  it("does not terminate a spawning session (canProbeRuntimeIdentity=false)", () => {
+    const decision = resolveProbeDecision({
+      ...probeBase,
+      canProbeRuntimeIdentity: false,
+      currentAttempts: 0,
+      runtimeProbe: { state: "dead", failed: false },
+      processProbe: { state: "unknown", failed: false },
+    });
+    expect(decision).toBeNull();
+  });
+
+  describe("runtime dead + process unknown", () => {
+    it("stays in detecting for the first grace cycle", () => {
+      const decision = resolveProbeDecision({
+        ...probeBase,
+        currentAttempts: 0,
+        runtimeProbe: { state: "dead", failed: false },
+        processProbe: { state: "unknown", failed: false },
+      });
+      expect(decision).toEqual(
+        expect.objectContaining({
+          status: "detecting",
+          sessionState: "detecting",
+          sessionReason: "runtime_lost",
+          detecting: expect.objectContaining({ attempts: RUNTIME_LOST_GRACE_ATTEMPTS }),
+        }),
+      );
+    });
+
+    it("terminates as runtime_lost once the grace window is exhausted", () => {
+      // currentAttempts === grace → createDetectingDecision yields attempts > grace.
+      const decision = resolveProbeDecision({
+        ...probeBase,
+        currentAttempts: RUNTIME_LOST_GRACE_ATTEMPTS,
+        runtimeProbe: { state: "dead", failed: false },
+        processProbe: { state: "unknown", failed: false },
+      });
+      expect(decision).toEqual(
+        expect.objectContaining({
+          status: "killed",
+          sessionState: "terminated",
+          sessionReason: "runtime_lost",
+        }),
+      );
+      // It must reach a terminal state, NOT loop in detecting forever.
+      expect(decision?.sessionState).not.toBe("detecting");
+    });
+
+    it("terminates (never escalates to stuck) when the attempt budget is blown", () => {
+      const decision = resolveProbeDecision({
+        ...probeBase,
+        currentAttempts: DETECTING_MAX_ATTEMPTS,
+        runtimeProbe: { state: "dead", failed: false },
+        processProbe: { state: "unknown", failed: false },
+      });
+      expect(decision?.sessionState).toBe("terminated");
+      expect(decision?.sessionReason).toBe("runtime_lost");
+      expect(decision?.status).not.toBe("stuck");
+    });
+  });
+
+  it("keeps detecting (signal_disagreement) when runtime is dead but process is alive", () => {
+    const decision = resolveProbeDecision({
+      ...probeBase,
+      currentAttempts: 0,
+      runtimeProbe: { state: "dead", failed: false },
+      processProbe: { state: "alive", failed: false },
+    });
+    expect(decision).toEqual(
+      expect.objectContaining({
+        status: "detecting",
+        sessionState: "detecting",
+        sessionReason: "runtime_lost",
+      }),
+    );
   });
 });

@@ -686,6 +686,87 @@ describe("check (single session)", () => {
     expect(meta?.["detectingEscalatedAt"]).toBeDefined();
   });
 
+  it("terminates a dead-runtime session as runtime_lost once the grace cycle is exhausted (#8)", async () => {
+    // No agent → process probe stays "unknown" while the runtime is dead. A prior
+    // detecting attempt is persisted, so this poll exhausts the one-cycle grace and
+    // must reach a terminal state (runtime_lost) instead of looping in detecting or
+    // escalating to stuck — the bug this fixes.
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, _name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+      metaOverrides: { detectingAttempts: "1" },
+      registry: registryWithoutAgent,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_unknown");
+    const lifecycle = JSON.parse(meta?.["lifecycle"] ?? "{}");
+    expect(lifecycle.session.state).toBe("terminated");
+    expect(lifecycle.session.reason).toBe("runtime_lost");
+  });
+
+  it("reconciles an orphaned detecting session to terminated on startup (#8)", async () => {
+    // Simulate a daemon restart: an orphan persisted as detecting/runtime_lost with a
+    // dead runtime (sm.list() enrichment, #1735) and a prior detecting attempt. The
+    // first poll on start() must reconcile it to a terminal state.
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, _name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const baseLifecycle = makeSession().lifecycle;
+    const orphanLifecycle = {
+      ...baseLifecycle,
+      session: { ...baseLifecycle.session, state: "detecting" as const, reason: "runtime_lost" as const },
+      runtime: { ...baseLifecycle.runtime, state: "missing" as const, reason: "tmux_missing" as const },
+    };
+    const orphan = makeSession({ status: "detecting", lifecycle: orphanLifecycle });
+
+    const lm = setupPollCheck("app-1", {
+      session: orphan,
+      metaOverrides: { status: "detecting", detectingAttempts: "1" },
+      registry: registryWithoutAgent,
+    });
+
+    try {
+      lm.start(60_000);
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        if (lm.getStates().get("app-1") === "killed") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(lm.getStates().get("app-1")).toBe("killed");
+      const lifecycle = JSON.parse(readMetadataRaw(env.sessionsDir, "app-1")?.["lifecycle"] ?? "{}");
+      expect(lifecycle.session.state).toBe("terminated");
+      expect(lifecycle.session.reason).toBe("runtime_lost");
+      expect(recordActivityEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "lifecycle.startup_reconcile" }),
+      );
+    } finally {
+      lm.stop();
+    }
+  });
+
   it("stays working when agent is idle but process is still running (fallback path)", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");

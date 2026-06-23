@@ -553,6 +553,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  let startupReconcilePending = true; // emit a one-time orphan reconcile on the first poll
   const branchAdoptionReservations = new Map<string, SessionId>();
 
   /**
@@ -3255,6 +3256,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         return tracked !== undefined && tracked !== s.status;
       });
 
+      // Startup reconcile (one-time, on the first poll after start). The in-memory
+      // `states` map is empty after a daemon restart, so orphans whose runtime died
+      // while the daemon was down — persisted as `detecting`/runtime_lost by
+      // sm.list() enrichment (#1735) — are reconciled here. They are already part of
+      // `sessionsToCheck` (detecting is non-terminal), so the checkSession pass below
+      // drives them through the probe pipeline: with a prior detecting attempt they
+      // terminate (runtime_lost) on this very poll; a fresh one gets one grace cycle
+      // first. This is observability + intent only — no extra session list call, and
+      // every terminal decision is still made by resolveProbeDecision (preserves
+      // #1735). (#8)
+      if (startupReconcilePending) {
+        startupReconcilePending = false;
+        const orphans = sessionsToCheck.filter((s) => {
+          const runtimeState = s.lifecycle?.runtime.state;
+          const runtimeDead = runtimeState === "missing" || runtimeState === "exited";
+          const detectingRuntimeLost =
+            s.lifecycle?.session.state === "detecting" &&
+            s.lifecycle?.session.reason === "runtime_lost";
+          return runtimeDead || detectingRuntimeLost;
+        });
+        if (orphans.length > 0) {
+          recordActivityEvent({
+            projectId: scopedProjectId,
+            source: "lifecycle",
+            kind: "lifecycle.startup_reconcile",
+            level: "info",
+            summary: `reconciling ${orphans.length} orphaned dead-runtime session(s) on startup`,
+            data: { count: orphans.length, sessionIds: orphans.map((s) => s.id) },
+          });
+        }
+      }
+
       await Promise.allSettled(
         sessionsToCheck.map((session) => refreshTrackedBranch(session, sessions)),
       );
@@ -3389,7 +3422,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     start(intervalMs = 30_000): void {
       if (pollTimer) return; // Already running
       pollTimer = setInterval(() => void pollAll(), intervalMs);
-      // Run immediately on start
+      // Run immediately on start. This first poll also performs the orphan
+      // reconcile (see startupReconcilePending in pollAll): sessions whose runtime
+      // died while the daemon was down — persisted as `detecting`/runtime_lost by
+      // sm.list() (#1735) — are driven through the probe pipeline so they reach a
+      // terminal state instead of lingering in `detecting`. (#8)
       void pollAll();
     },
 
