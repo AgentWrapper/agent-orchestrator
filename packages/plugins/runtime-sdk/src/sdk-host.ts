@@ -116,7 +116,17 @@ export class SessionHost {
   private readonly opts: SessionHostOptions;
   private readonly now: () => Date;
   private seq = 0;
-  private turn = 0;
+  /** Count of user turns submitted (drives the user/input echo stamp). */
+  private submittedTurns = 0;
+  /**
+   * The user turn whose response is currently streaming. Response events are
+   * stamped with THIS, not submittedTurns — otherwise back-to-back submits
+   * (turns 1/2/3 pushed before turn 1 finishes) would stamp every response with
+   * the latest submitted turn, collapsing distinct answers into one bubble.
+   */
+  private respondingTurn = 0;
+  /** True while inside a turn's response (between its first event and `result`). */
+  private turnInProgress = false;
   private sdkSessionId: string | null;
   private model: string | null;
   private ended = false;
@@ -144,14 +154,14 @@ export class SessionHost {
   // --- emission ---------------------------------------------------------
 
   /** Stamp the envelope, buffer, persist, and broadcast one event body. */
-  emit(body: EventBody): NormalizedEvent {
+  emit(body: EventBody, turn: number = this.respondingTurn): NormalizedEvent {
     const event = {
       ...body,
       v: SCHEMA_VERSION,
       seq: this.seq++,
       ts: this.now().toISOString(),
       session_id: this.sdkSessionId,
-      turn: this.turn,
+      turn,
     } as NormalizedEvent;
     this.events.push(event);
     const line = encodeLine(event);
@@ -191,11 +201,12 @@ export class SessionHost {
   /** Push a user turn into the streaming input. */
   submitTurn(text: string): void {
     if (this.ended) return;
-    this.turn += 1;
+    this.submittedTurns += 1;
     // Emit the user turn so events.ndjson is a complete transcript (and live
-    // subscribers can render it without an optimistic echo). Stamped with the
-    // just-incremented turn.
-    this.emit({ type: "user", subtype: "input", text });
+    // subscribers can render it without an optimistic echo). The echo is stamped
+    // with the just-submitted turn (its own number), independent of which turn's
+    // response is currently streaming.
+    this.emit({ type: "user", subtype: "input", text }, this.submittedTurns);
     this.input.push(text);
   }
 
@@ -256,7 +267,8 @@ export class SessionHost {
   /** Drive the normalized event stream from the SDK message iterable. */
   async consume(messages: AsyncIterable<SDKMessage>): Promise<void> {
     if (this.opts.resumeFrom) {
-      this.emit({ type: "session", subtype: "resumed", session_id: this.opts.resumeFrom });
+      // Pre-turn lifecycle marker — stamp 0; no turn's response is streaming yet.
+      this.emit({ type: "session", subtype: "resumed", session_id: this.opts.resumeFrom }, 0);
     }
     try {
       for await (const msg of messages) {
@@ -265,7 +277,23 @@ export class SessionHost {
           this.model = msg.model;
           this.writeSessionInfo();
         }
-        for (const body of translateSdkMessage(msg, this.model)) this.emit(body);
+        const bodies = translateSdkMessage(msg, this.model);
+        // Advance the responding turn at each turn boundary: the first message of
+        // a new turn (the first overall, and the first after every `result`)
+        // belongs to the next submitted user turn. Done per-message, not per-body,
+        // so a result message's trailing `usage` body stays on the turn that just
+        // ended. Bounded by submittedTurns so a stray event after a turn ends
+        // stamps with the last turn instead of over-counting.
+        if (bodies.length > 0 && !this.turnInProgress && this.respondingTurn < this.submittedTurns) {
+          this.respondingTurn += 1;
+          this.turnInProgress = true;
+        }
+        let endsTurn = false;
+        for (const body of bodies) {
+          this.emit(body);
+          if (body.type === "result") endsTurn = true;
+        }
+        if (endsTurn) this.turnInProgress = false;
       }
     } catch (err) {
       this.emit({
@@ -307,7 +335,7 @@ export class SessionHost {
       alive: !this.ended,
       session_id: this.sdkSessionId,
       seq: this.seq > 0 ? this.seq - 1 : -1,
-      turns: this.turn,
+      turns: this.submittedTurns,
     };
   }
 

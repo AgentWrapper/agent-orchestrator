@@ -681,7 +681,7 @@ describe("runtime.sendMessage()", () => {
     );
   });
 
-  it("stops after the retry budget when the composer never clears (no hang)", async () => {
+  it("throws after the retry budget when the composer never clears (fail-loud, no hang)", async () => {
     const runtime = create();
     const handle = makeHandle("msg-jammed");
     const stuckPane = "│ > jammed message │\n? for shortcuts";
@@ -698,9 +698,12 @@ describe("runtime.sendMessage()", () => {
     mockTmuxSuccess(stuckPane); // capture 3 → stuck
     mockTmuxSuccess(); // retry Enter 3
 
-    await runtime.sendMessage(handle, "jammed message");
+    // An un-submittable message must fail loud, not be silently dropped.
+    await expect(runtime.sendMessage(handle, "jammed message")).rejects.toThrow(
+      /stayed in the composer/,
+    );
 
-    // C-u, -l, first Enter, then 3×(capture + Enter) = 9 calls, then it gives up.
+    // C-u, -l, first Enter, then 3×(capture + Enter) = 9 calls, then it throws.
     expect(mockExecFileCustom).toHaveBeenCalledTimes(9);
 
     // Total Enter presses are bounded: 1 initial + 3 retries = 4.
@@ -710,7 +713,7 @@ describe("runtime.sendMessage()", () => {
     expect(enterCalls).toHaveLength(4);
   });
 
-  it("treats an unreadable pane as submitted and does not retry Enter", async () => {
+  it("fails loud when the pane is unreadable and never blind-presses Enter", async () => {
     const runtime = create();
     const handle = makeHandle("msg-blind");
 
@@ -718,18 +721,48 @@ describe("runtime.sendMessage()", () => {
     mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
-    // capture-pane fails — can't verify, so we must NOT risk a duplicate Enter
+    // Every verify capture fails — submission can't be confirmed. We must NOT
+    // blind-press Enter (no duplicate submit) and must fail loud rather than
+    // silently treat the message as delivered (the old line-106 silent-drop).
+    mockTmuxError("capture-pane: no server running");
+    mockTmuxError("capture-pane: no server running");
     mockTmuxError("capture-pane: no server running");
 
-    await runtime.sendMessage(handle, "blind send");
+    await expect(runtime.sendMessage(handle, "blind send")).rejects.toThrow(/pane unreadable/);
 
-    // C-u, -l, Enter, capture(failed) = 4 calls, no retry Enter.
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(4);
-    expect(mockExecFileCustom).toHaveBeenLastCalledWith(
-      "tmux",
-      ["capture-pane", "-t", "msg-blind", "-p"],
-      expectedTmuxOptions,
+    // C-u, -l, Enter, then 3 capture attempts (all failed) = 6 calls.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(6);
+
+    // Only the initial Enter — no retry Enter fired on an unreadable probe.
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && (c[1] as string[]).join(" ") === "send-keys -t msg-blind Enter",
     );
+    expect(enterCalls).toHaveLength(1);
+  });
+
+  it("recovers when an unreadable probe clears on retry (no throw, no blind Enter)", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-recover");
+
+    // C-u, -l, Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // capture 1 → unreadable (must retry capture, not blind-press); capture 2 →
+    // composer cleared, so the submit is confirmed and the send resolves.
+    mockTmuxError("capture-pane: transient");
+    mockTmuxSuccess("> \n? for shortcuts");
+
+    await runtime.sendMessage(handle, "recover send");
+
+    // C-u, -l, Enter, capture(fail), capture(gone) = 5 calls.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
+
+    // Only the initial Enter — the unreadable probe did not trigger a retry Enter.
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && (c[1] as string[]).join(" ") === "send-keys -t msg-recover Enter",
+    );
+    expect(enterCalls).toHaveLength(1);
   });
 });
 

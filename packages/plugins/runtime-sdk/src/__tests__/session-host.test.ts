@@ -156,6 +156,68 @@ describe("SessionHost.consume", () => {
     const events = persisted.map((l) => JSON.parse(l));
     expect(events.some((e) => e.type === "error" && e.fatal === true && e.message === "stream broke")).toBe(true);
   });
+
+  it("attributes back-to-back turn responses to the turn being answered (not the latest submit)", async () => {
+    const { host, persisted } = makeHost();
+    // Three turns submitted back-to-back before any response streams — the repro
+    // for the turn-accounting bug (every response previously stamped turn=3).
+    host.submitTurn("ALPHA");
+    host.submitTurn("BETA");
+    host.submitTurn("GAMMA");
+    expect(host.status().turns).toBe(3);
+
+    const result = (text: string, n: number): unknown => ({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: text,
+      num_turns: n,
+      duration_ms: 1,
+      total_cost_usd: 0.1,
+      usage: {},
+      modelUsage: { "claude-opus-4-8": {} },
+    });
+    const delta = (text: string): unknown => ({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+    });
+
+    // The SDK answers the queued turns sequentially: init once, then each turn
+    // is (assistant delta, result+usage).
+    await host.consume(
+      iter(
+        { type: "system", subtype: "init", session_id: "sdk-x", model: "claude-opus-4-8", cwd: "/w", permissionMode: "bypassPermissions", tools: [] },
+        delta("ans-A"),
+        result("ans-A", 1),
+        delta("ans-B"),
+        result("ans-B", 2),
+        delta("ans-C"),
+        result("ans-C", 3),
+      ),
+    );
+
+    const events = persisted.map((l) => JSON.parse(l));
+
+    // User echoes keep their own submit-turn number.
+    expect(events.filter((e) => e.type === "user").map((e) => [e.text, e.turn])).toEqual([
+      ["ALPHA", 1],
+      ["BETA", 2],
+      ["GAMMA", 3],
+    ]);
+
+    // Each turn's response delta is attributed to the turn it answers — not 3.
+    expect(events.filter((e) => e.type === "text-delta").map((e) => [e.text, e.turn])).toEqual([
+      ["ans-A", 1],
+      ["ans-B", 2],
+      ["ans-C", 3],
+    ]);
+
+    // init belongs to the first turn; each result and its trailing usage stay on
+    // the turn that just ended (usage must not leak onto the next turn).
+    expect(events.find((e) => e.type === "session" && e.subtype === "init").turn).toBe(1);
+    expect(events.filter((e) => e.type === "result").map((e) => e.turn)).toEqual([1, 2, 3]);
+    expect(events.filter((e) => e.type === "usage").map((e) => e.turn)).toEqual([1, 2, 3]);
+  });
 });
 
 describe("SessionHost permission seam", () => {
