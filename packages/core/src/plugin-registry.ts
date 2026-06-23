@@ -35,6 +35,26 @@ function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
 }
 
+/**
+ * Distinguish "plugin package simply isn't installed" (expected for optional
+ * builtins — skip quietly) from "package is present but failed to import"
+ * (a real defect — must be surfaced loudly). A genuine absence shows up as a
+ * module-resolution error (Node sets code ERR_MODULE_NOT_FOUND / MODULE_NOT_FOUND,
+ * message "Cannot find module/package …"). Anything else — a SyntaxError, a bad
+ * export, a failed native binding — means the plugin IS there but broken.
+ *
+ * Known limitation: a missing TRANSITIVE dependency of an installed plugin also
+ * surfaces as MODULE_NOT_FOUND and is treated as "not installed". That trade-off
+ * keeps the common optional-plugin case quiet; the louder defects (the class that
+ * makes a runtime/agent silently vanish) are still caught.
+ */
+function isPluginNotInstalled(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /cannot find (module|package)|module not found|not installed|^not found:/i.test(message);
+}
+
 /** Built-in plugin package names, mapped to their npm package */
 const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = [
   // Runtimes
@@ -533,8 +553,32 @@ export function createPluginRegistry(): PluginRegistry {
         let mod;
         try {
           mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
-        } catch {
-          // Plugin not installed — that's fine, only load what's available
+        } catch (error) {
+          if (isPluginNotInstalled(error)) {
+            // Plugin not installed — that's fine, only load what's available.
+            continue;
+          }
+          // Installed but failed to import (syntax error, bad export, broken
+          // native/transitive dep). Surface loudly and keep going — a silently
+          // dropped runtime/agent plugin is near-impossible to diagnose later.
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(
+            `[plugin-registry] Failed to import built-in plugin "${builtin.name}" (${builtin.pkg}): ${error}\n`,
+          );
+          recordActivityEvent({
+            source: "plugin-registry",
+            kind: "plugin-registry.load_failed",
+            level: "error",
+            summary: `built-in plugin ${builtin.name} failed to import`,
+            data: {
+              plugin: builtin.name,
+              slot: builtin.slot,
+              pkg: builtin.pkg,
+              builtin: true,
+              stage: "import",
+              error: message,
+            },
+          });
           continue;
         }
 
