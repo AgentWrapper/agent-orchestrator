@@ -8,6 +8,8 @@ import type {
 import { recordActivityEvent } from "../activity-events.js";
 import { updateMetadata } from "../metadata.js";
 import { getProjectSessionsDir } from "../paths.js";
+import { resolveAgentSelectionForSession } from "../agent-selection.js";
+import { resolveRuntimeName } from "../runtime-resolution.js";
 import { validateStatus } from "../utils/validation.js";
 import { sessionFromMetadata } from "../utils/session-from-metadata.js";
 import {
@@ -204,7 +206,18 @@ export async function cleanupSession(
         error: `Unknown project: ${projectId}`,
       };
     }
-    const runtimeName = project.runtime ?? config.defaults.runtime;
+    const agentName = resolveAgentSelectionForSession({
+      sessionId,
+      metadata: rawMetadata,
+      project,
+      defaults: config.defaults,
+      allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
+    }).agentName;
+    // Prefer the persisted handle's runtime (the runtime the session was actually
+    // spawned on); fall back to per-agent resolution (claude-code -> sdk) rather
+    // than the back-filled project.runtime, which would target the wrong runtime.
+    const runtimeName =
+      assessment.runtimeHandle?.runtimeName ?? resolveRuntimeName(project, config, agentName);
     const workspaceName = project.workspace ?? config.defaults.workspace;
     const runtime = registry.get<Runtime>("runtime", runtimeName);
     const workspace = registry.get<Workspace>("workspace", workspaceName);

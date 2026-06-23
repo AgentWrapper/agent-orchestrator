@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import {
   loadConfig,
   recordActivityEvent,
+  resolveRuntimeName,
   resolveSpawnTarget,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
@@ -249,8 +250,12 @@ async function runSpawnPreflight(
   const registry = await getPluginRegistry(config);
   // DefaultPluginsSchema (config.ts) defaults runtime/agent/workspace via
   // .default(), so these are guaranteed strings — no literal fallback needed.
-  const runtimeName = project.runtime ?? config.defaults.runtime;
   const agentName = project.agent ?? config.defaults.agent;
+  // Resolve the runtime per-agent (claude-code -> sdk), matching what the spawn
+  // will actually use — NOT a raw `project.runtime ?? defaults.runtime`, which is
+  // back-filled to the platform default and would preflight the wrong runtime
+  // (e.g. demand tmux on a tmux-less SDK host).
+  const runtimeName = resolveRuntimeName(project, config, agentName);
   const workspaceName = project.workspace ?? config.defaults.workspace;
   const trackerName = project.tracker?.plugin;
   const scmName = project.scm?.plugin;

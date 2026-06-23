@@ -1173,13 +1173,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!handleFromMetadata) {
       session.runtimeHandle = {
         id: sessionName,
-        runtimeName: project.runtime ?? config.defaults.runtime,
+        runtimeName: resolveRuntimeName(project, config, effectiveAgentName),
         data: {},
       };
     } else if (!session.runtimeHandle && hasTmuxNameFromMetadata) {
       session.runtimeHandle = {
         id: tmuxNameFromMetadata,
-        runtimeName: project.runtime ?? config.defaults.runtime,
+        runtimeName: resolveRuntimeName(project, config, effectiveAgentName),
         data: {},
       };
     }
@@ -1379,7 +1379,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
 
     if (!plugins.agent) {
@@ -1844,7 +1846,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
@@ -2676,8 +2680,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (handle) {
         const runtimePlugin = registry.get<Runtime>(
           "runtime",
-          handle.runtimeName ??
-            (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
+          handle.runtimeName ?? resolveRuntimeName(project, config, cleanupAgent),
         );
         if (runtimePlugin) {
           try {
@@ -3011,7 +3014,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const parsedHandle = raw["runtimeHandle"]
       ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
       : null;
-    const runtimeName = parsedHandle?.runtimeName ?? project.runtime ?? config.defaults.runtime;
+    const runtimeName =
+      parsedHandle?.runtimeName ?? resolveRuntimeName(project, config, selectedAgent);
     const agentName = selectedAgent;
 
     const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
@@ -3570,7 +3574,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 4. Validate required plugins (plugins already resolved above for enrichment)
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
