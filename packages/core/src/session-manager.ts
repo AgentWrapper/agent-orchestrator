@@ -298,6 +298,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const POST_LAUNCH_READY_TIMEOUT_MS = 15_000;
+const POST_LAUNCH_READY_POLL_MS = 400;
+const POST_LAUNCH_READY_STABLE_POLLS = 2;
+
+/**
+ * Poll a freshly-launched runtime until its output is non-empty and stable
+ * across consecutive polls, signalling the agent's interactive composer has
+ * rendered and can accept typed input. Used before post-launch initial-prompt
+ * delivery (e.g. grok) so the prompt lands in a ready composer instead of being
+ * typed into a not-yet-initialized pane and silently lost — the back-to-back
+ * spawn race. Best-effort and bounded: returns once stable, on a dead runtime,
+ * or at timeout. The subsequent sendMessage still fails loud if it cannot
+ * confirm the submit, so a genuinely un-ready agent surfaces as a spawn error
+ * rather than a dropped task.
+ */
+export async function waitForComposerReady(
+  runtime: Pick<Runtime, "getOutput" | "isAlive">,
+  handle: RuntimeHandle,
+  timeoutMs: number = POST_LAUNCH_READY_TIMEOUT_MS,
+  pollMs: number = POST_LAUNCH_READY_POLL_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastOutput: string | null = null;
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    const alive = await runtime.isAlive(handle).catch(() => true);
+    if (!alive) return;
+    const output = (await runtime.getOutput(handle).catch(() => "")).trimEnd();
+    if (output.length > 0 && output === lastOutput) {
+      stablePolls += 1;
+      if (stablePolls >= POST_LAUNCH_READY_STABLE_POLLS) return;
+    } else {
+      stablePolls = 0;
+    }
+    lastOutput = output;
+  }
+}
+
 const RESTORE_PROMPT_TIMEOUT_MS = 30_000;
 const RESTORE_PROMPT_POLL_MS = 1_000;
 
@@ -1668,6 +1707,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+        // Post-launch agents (e.g. grok) receive the initial task by typing it
+        // into the freshly-launched TUI. Wait for the composer to render before
+        // sending so the prompt lands instead of being typed into a not-yet-ready
+        // pane and silently lost (the back-to-back spawn race). sendMessage then
+        // fails loud if the submit can't be confirmed, so the spawn rolls back
+        // rather than starting an agent with no task.
+        await waitForComposerReady(plugins.runtime, handle);
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       }
 
@@ -3183,7 +3229,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
       const baselineUpdatedAt = await getOpenCodeSessionUpdatedAt();
 
-      await runtimePlugin.sendMessage(handle, message);
+      // The runtime now throws when it cannot confirm the submit (e.g. the tmux
+      // composer probe failed or the text stayed stuck). Don't fail yet — the
+      // message may still have landed; fall through to output-based confirmation
+      // and only propagate if that also can't confirm delivery.
+      let sendError: unknown;
+      try {
+        await runtimePlugin.sendMessage(handle, message);
+      } catch (err) {
+        sendError = err;
+      }
 
       for (let attempt = 1; attempt <= SEND_CONFIRMATION_ATTEMPTS; attempt++) {
         // Sleep before each check (including the first) so the runtime has time
@@ -3207,11 +3262,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
-      // Message was already sent via runtimePlugin.sendMessage above — if we
-      // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
-      // as a soft success rather than throwing.  Throwing here caused the caller
-      // to report failure, which prevented the dispatch-hash from updating and
-      // led to duplicate messages on the next poll cycle.
+      // Could not confirm delivery via output. If the runtime itself also
+      // reported the send as unconfirmable, fail loud so the task isn't silently
+      // dropped (this is the back-to-back / not-ready race). Otherwise — the
+      // runtime resolved cleanly but the agent is just slow to echo — keep the
+      // existing soft-success behavior, which prevents the dispatch-hash from
+      // going stale and re-dispatching a duplicate message on the next cycle.
+      if (sendError) {
+        throw sendError instanceof Error
+          ? sendError
+          : new Error(`runtime sendMessage failed: ${String(sendError)}`);
+      }
       return;
     };
 
