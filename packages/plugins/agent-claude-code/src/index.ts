@@ -1053,6 +1053,15 @@ function createClaudeCodeAgent(): Agent {
   return {
     name: "claude-code",
     processName: "claude",
+    // Static capability descriptor (provider-independent scaling seam). Numbers
+    // reflect the Claude Code CLI / Claude model family: 1M-token context, 32MB
+    // max request body, 500MB max file, and the directly-readable file types.
+    limits: {
+      contextTokens: 1_000_000,
+      maxRequestBytes: 33_554_432,
+      maxFileBytes: 524_288_000,
+      supportedFileTypes: ["pdf", "png", "jpg", "jpeg", "gif", "webp", "txt"],
+    },
     getLaunchCommand(config: AgentLaunchConfig): string {
       // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
       // This command must be safe for both shell and execFile contexts.

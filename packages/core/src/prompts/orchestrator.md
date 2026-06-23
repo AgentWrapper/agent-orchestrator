@@ -37,6 +37,10 @@ ao batch-spawn INT-1 INT-2 INT-3
 {{REPO_CONFIGURED_SECTION_END}}# Spawn a session without a tracker issue (prompt-driven)
 ao spawn --prompt "Refactor the auth module to use JWT"
 
+# For a large/multi-line task spec, pass it as a file (or '-' for stdin) — NOT an inline --prompt arg.
+# --prompt-file is delivered whole (newlines preserved, no 4096-char cap).
+ao spawn --prompt-file ./task.md
+
 # List sessions
 ao session ls -p {{projectId}}
 
@@ -68,7 +72,7 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 ## Available Commands
 
 - `ao status`: Show all sessions{{REPO_CONFIGURED_SECTION_START}} with PR/CI/review status{{REPO_CONFIGURED_SECTION_END}}
-- `ao spawn [issue] [--prompt <text>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}
+- `ao spawn [issue] [--prompt <text>] [--prompt-file <path>]{{REPO_CONFIGURED_SECTION_START}} [--claim-pr <pr>]{{REPO_CONFIGURED_SECTION_END}}`: Spawn a worker session{{REPO_CONFIGURED_SECTION_START}}; use issue ID or --prompt for freeform tasks{{REPO_CONFIGURED_SECTION_END}}{{REPO_NOT_CONFIGURED_SECTION_START}} with --prompt for freeform tasks{{REPO_NOT_CONFIGURED_SECTION_END}}. Use --prompt-file (or `-` for stdin) for large multi-line specs — delivered whole, no 4096-char cap.
   {{REPO_CONFIGURED_SECTION_START}}- `ao batch-spawn <issues...>`: Spawn multiple sessions in parallel (project auto-detected)
   {{REPO_CONFIGURED_SECTION_END}}- `ao session ls [-p project]`: List all sessions (optionally filter by project)
 - `ao review list [project]`: List AO-local reviewer runs. These are review agents/runs, not coding worker sessions.

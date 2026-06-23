@@ -533,6 +533,51 @@ describe("runtime.sendMessage()", () => {
     );
   });
 
+  it("delivers a large multi-line task spec whole via the buffer path (no truncation/collapse)", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-big");
+    // ~50KB multi-line spec — the kind of large task prompt the orchestrator
+    // now hands an agent. It must reach the pane byte-for-byte: written whole to
+    // the temp file and pasted via load-buffer (never typed char-by-char).
+    const bigSpec = Array.from(
+      { length: 800 },
+      (_, i) => `## Section ${i}\n- requirement ${i}: ${"z".repeat(40)}`,
+    ).join("\n\n");
+
+    mockTmuxSuccess(); // C-u
+    mockTmuxSuccess(); // load-buffer
+    mockTmuxSuccess(); // paste-buffer
+    mockTmuxSuccess(); // delete-buffer (finally)
+    mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("> \n? for shortcuts"); // capture-pane verify — submitted
+
+    await runtime.sendMessage(handle, bigSpec);
+
+    // Buffer path, not literal send-keys typing.
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      [
+        "load-buffer",
+        "-b",
+        "ao-test-uuid-1234",
+        expect.stringContaining("ao-send-test-uuid-1234.txt"),
+      ],
+      expectedTmuxOptions,
+    );
+    // The exact, full payload is written to the temp file (no slice/collapse).
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("ao-send-test-uuid-1234.txt"),
+      bigSpec,
+      { encoding: "utf-8", mode: 0o600 },
+    );
+    // No literal `send-keys -l` of the body — it never gets typed in.
+    const literalSend = mockExecFileCustom.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("-l"),
+    );
+    expect(literalSend).toBeUndefined();
+  });
+
   it("cleans up buffer and temp file on paste failure", async () => {
     const runtime = create();
     const handle = makeHandle("msg-fail");
