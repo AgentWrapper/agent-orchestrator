@@ -18,6 +18,15 @@ export const DETECTING_MAX_ATTEMPTS = 3;
 /** Hard time cap for detecting state — escalate after this regardless of attempts. */
 export const DETECTING_MAX_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Grace polls before a session whose runtime is dead but whose process can no
+ * longer be probed (process state "unknown", because the host runtime is gone)
+ * is terminated as runtime_lost. One cycle absorbs a transient runtime-probe blip
+ * (e.g. tmux server momentarily unavailable right after a daemon restart) before
+ * committing to the terminal decision. (#8)
+ */
+export const RUNTIME_LOST_GRACE_ATTEMPTS = 1;
+
 type ProbeState = "alive" | "dead" | "unknown";
 type PRReviewDecision = PREnrichmentData["reviewDecision"];
 type LifecycleSessionState = CanonicalSessionState;
@@ -320,14 +329,44 @@ export function resolveProbeDecision(input: ProbeDecisionInput): LifecycleDecisi
     input.processProbe.state === "unknown" &&
     input.canProbeRuntimeIdentity
   ) {
-    return createDetectingDecision({
+    // The runtime is definitively gone — a runtime probe *failure* would have been
+    // routed to the detecting branch above (via `failed`), and a live-activity
+    // disagreement is consumed by the branch above (so recentActivitySupportsLiveness
+    // is already false here). The process probe is "unknown" precisely because its
+    // host runtime no longer exists, so it can never recover to a known state.
+    //
+    // Previously this returned createDetectingDecision() unconditionally, so the
+    // session looped in `detecting` and at most escalated to `stuck` — never
+    // reaching a terminal state. Orphaned sessions (dead tmux, e.g. after a daemon
+    // restart) therefore hung in the dashboard forever. Treat process-unknown as
+    // effectively dead and terminate as runtime_lost, but allow one grace cycle
+    // first so a single transient runtime-probe blip cannot kill a live session.
+    const evidence = `runtime_dead process_unknown ${input.activityEvidence}`;
+    const detectingDecision = createDetectingDecision({
       currentAttempts: input.currentAttempts,
       idleWasBlocked: input.idleWasBlocked,
-      evidence: `runtime_dead process_unknown ${input.activityEvidence}`,
+      evidence,
       reason: "runtime_lost",
       detectingStartedAt: input.detectingStartedAt,
       previousEvidenceHash: input.previousEvidenceHash,
     });
+    // Stay in detecting only while inside the grace window. Once the grace is
+    // exhausted (attempt budget passed, or createDetectingDecision already
+    // escalated on the attempt/time budget) terminate as runtime_lost instead of
+    // going stuck — a dead runtime must reach a terminal state, never `stuck`.
+    const graceExhausted =
+      detectingDecision.detecting.attempts > RUNTIME_LOST_GRACE_ATTEMPTS ||
+      detectingDecision.sessionState === "stuck";
+    if (graceExhausted) {
+      return createLifecycleDecision({
+        status: SESSION_STATUS.KILLED,
+        evidence,
+        detecting: { attempts: 0 },
+        sessionState: "terminated",
+        sessionReason: "runtime_lost",
+      });
+    }
+    return detectingDecision;
   }
 
   if (
