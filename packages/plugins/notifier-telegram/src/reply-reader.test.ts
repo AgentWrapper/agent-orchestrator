@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { snapshotReplyCursor, readReplyAfter } from "./reply-reader.js";
+import { snapshotReplyCursor, readReplyAfter, sdkEventLogPath } from "./reply-reader.js";
 
 const SESSION = "mae-orchestrator";
 
@@ -31,6 +31,34 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+// Pins the event-log path contract that MUST match runtime-sdk's sdkHome() +
+// sessionPaths().eventLog (runtime-sdk/src/protocol.ts, pinned there by
+// protocol.test.ts). The path is duplicated to avoid a plugin→plugin runtime
+// dependency; this test makes any drift in the telegram copy fail loudly.
+describe("sdkEventLogPath (path contract — keep in sync with runtime-sdk sdkHome)", () => {
+  const SID = "sess-1";
+  it("defaults to <home>/.agent-orchestrator/runtime-sdk/<sid>/events.ndjson", () => {
+    expect(sdkEventLogPath(SID, {})).toBe(
+      join(homedir(), ".agent-orchestrator", "runtime-sdk", SID, "events.ndjson"),
+    );
+  });
+  it("uses HOME for the .agent-orchestrator base when set", () => {
+    expect(sdkEventLogPath(SID, { HOME: "/home/u" })).toBe(
+      join("/home/u", ".agent-orchestrator", "runtime-sdk", SID, "events.ndjson"),
+    );
+  });
+  it("prefers AO_HOME over HOME (still under runtime-sdk/)", () => {
+    expect(sdkEventLogPath(SID, { AO_HOME: "/x/ao", HOME: "/home/u" })).toBe(
+      join("/x/ao", "runtime-sdk", SID, "events.ndjson"),
+    );
+  });
+  it("treats AO_SDK_HOME as the explicit root, taking precedence over AO_HOME", () => {
+    expect(sdkEventLogPath(SID, { AO_SDK_HOME: "/explicit/sdk", AO_HOME: "/x/ao" })).toBe(
+      join("/explicit/sdk", SID, "events.ndjson"),
+    );
+  });
 });
 
 describe("snapshotReplyCursor", () => {

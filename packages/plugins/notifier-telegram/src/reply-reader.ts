@@ -15,7 +15,11 @@
  *
  * NOTE: the path resolution below MUST stay in sync with runtime-sdk's
  * `sdkHome()` (packages/plugins/runtime-sdk/src/protocol.ts). It is duplicated
- * rather than imported to avoid a plugin→plugin dependency.
+ * rather than imported to avoid a plugin→plugin runtime dependency. The exact
+ * path contract (default home, AO_HOME, AO_SDK_HOME precedence) is pinned by
+ * unit tests on BOTH sides — `sdkEventLogPath` in reply-reader.test.ts here and
+ * runtime-sdk's protocol.test.ts — so drift in either copy surfaces as a test
+ * failure rather than a silently broken reply path.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -35,8 +39,11 @@ interface NormalizedEvent {
   text?: string;
 }
 
-/** Mirror of runtime-sdk `sdkHome()` + the per-session event-log path. */
-function sdkEventLogPath(sessionId: string, env: EnvLike = process.env): string {
+/**
+ * Mirror of runtime-sdk `sdkHome()` + the per-session event-log path. Exported
+ * so the path contract can be pinned by a unit test (see the NOTE above).
+ */
+export function sdkEventLogPath(sessionId: string, env: EnvLike = process.env): string {
   const root = env.AO_SDK_HOME
     ? env.AO_SDK_HOME
     : join(env.AO_HOME || join(env.HOME || homedir(), ".agent-orchestrator"), "runtime-sdk");

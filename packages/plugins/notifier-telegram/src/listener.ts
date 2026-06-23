@@ -205,20 +205,36 @@ export interface ParsedCallback {
 
 export type ParsedUpdate = ParsedMessage | ParsedCallback;
 
+/** Minimal shape of the raw Telegram update fields parseUpdate reads. */
+interface RawTelegramChat {
+  id?: string | number | null;
+}
+interface RawTelegramMessage {
+  text?: unknown;
+  chat?: RawTelegramChat;
+  reply_to_message?: { text?: unknown };
+}
+interface RawTelegramUpdate {
+  update_id?: unknown;
+  callback_query?: { id?: unknown; data?: unknown; message?: RawTelegramMessage };
+  message?: RawTelegramMessage;
+  edited_message?: RawTelegramMessage;
+}
+
 /** Normalise a raw Telegram update into the parts we route on, or null. */
 export function parseUpdate(update: unknown): ParsedUpdate | null {
   if (!update || typeof update !== "object") return null;
-  const u = update as Record<string, any>;
+  const u = update as RawTelegramUpdate;
   const updateId = typeof u.update_id === "number" ? u.update_id : -1;
 
   if (u.callback_query && typeof u.callback_query === "object") {
-    const cq = u.callback_query as Record<string, any>;
+    const cq = u.callback_query;
     if (typeof cq.id !== "string" || typeof cq.data !== "string") return null;
     const chatId = cq.message?.chat?.id;
     return {
       kind: "callback",
       updateId,
-      chatId: chatId != null ? String(chatId) : undefined,
+      chatId: chatId !== undefined && chatId !== null ? String(chatId) : undefined,
       callbackId: cq.id,
       data: cq.data,
     };
@@ -226,10 +242,10 @@ export function parseUpdate(update: unknown): ParsedUpdate | null {
 
   const msg = u.message ?? u.edited_message;
   if (msg && typeof msg === "object") {
-    const m = msg as Record<string, any>;
+    const m = msg;
     if (typeof m.text !== "string") return null;
     const chatId = m.chat?.id;
-    if (chatId == null) return null;
+    if (chatId === undefined || chatId === null) return null;
     return {
       kind: "message",
       updateId,
@@ -782,7 +798,7 @@ export function maybeStartListener(config?: Record<string, unknown>): void {
   if (config?.listen === false) return;
   const botToken = config?.botToken;
   const chatId = config?.chatId;
-  if (!botToken || chatId == null || chatId === "") return;
+  if (!botToken || chatId === undefined || chatId === null || chatId === "") return;
 
   let existing: ListenerLock | null = null;
   try {
