@@ -140,7 +140,7 @@ $schema: https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/sc
 port: 3000
 
 defaults:
-  runtime: tmux       # default on macOS / Linux; on Windows the default is `process` (ConPTY)
+  runtime: tmux       # default on macOS / Linux; on Windows the default is `process` (ConPTY). With agent claude-code and no explicit runtime, `sdk` (Claude via Agent SDK) is used.
   agent: claude-code
   workspace: worktree
   notifiers: [desktop]

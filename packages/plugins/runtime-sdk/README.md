@@ -2,7 +2,18 @@
 
 Runtime plugin that drives **Claude via [`@anthropic-ai/claude-agent-sdk`](https://code.claude.com/docs/en/agent-sdk/overview)** instead of a tmux PTY. It is the **first streaming runtime adapter** for AO: **no terminal**, token-level events, and a live, subscribable normalized-event stream that a real-time chat UI (Maestro) connects to directly.
 
-`runtime-tmux` stays the default; select this runtime with `defaults.runtime: sdk` (or `runtime: sdk` per session).
+## When this runtime is used
+
+The default runtime is **per-agent**, not global. `getDefaultRuntime()` stays `tmux` (non-Windows) / `process` (Windows), but the `claude-code` agent **prefers `sdk`**: a `claude-code` session with no explicit `runtime` uses `runtime-sdk`. Other agents (codex/aider/cursor/…) keep the platform default and their own CLI. The preference lives in core's `AGENT_PREFERRED_RUNTIME` map and is applied by `resolveRuntimeName()`.
+
+Resolution order (highest precedence first):
+
+1. explicit project-level `runtime` — always wins
+2. explicit defaults-level `runtime` — a value differing from the platform default
+3. the agent's preferred runtime — `claude-code` → `sdk`
+4. `getDefaultRuntime()` — `tmux` non-Windows / `process` Windows
+
+A `defaults.runtime` equal to the platform default is treated as unconfigured, so the agent preference still applies. To force `tmux`/`process` for `claude-code`, set `runtime` at the **project** level (it always wins). You can also select this runtime for any agent with `runtime: sdk`.
 
 ## Authentication
 

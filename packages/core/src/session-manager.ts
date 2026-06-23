@@ -13,6 +13,7 @@
 
 import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
+import { resolveRuntimeName } from "./runtime-resolution.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -998,8 +999,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   /** Resolve which plugins to use for a project. */
   function resolvePlugins(project: ProjectConfig, agentName?: string) {
-    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-    const agent = registry.get<Agent>("agent", agentName ?? project.agent ?? config.defaults.agent);
+    // Runtime is resolved per-agent: claude-code defaults to runtime-sdk, other
+    // agents keep the platform default. An explicit project/defaults runtime wins.
+    const effectiveAgent = agentName ?? project.agent ?? config.defaults.agent;
+    const runtime = registry.get<Runtime>(
+      "runtime",
+      resolveRuntimeName(project, config, effectiveAgent),
+    );
+    const agent = registry.get<Agent>("agent", effectiveAgent);
     const workspace = registry.get<Workspace>(
       "workspace",
       project.workspace ?? config.defaults.workspace,

@@ -16,10 +16,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import {
   getAoBaseDir,
-  getDefaultRuntime,
   getGlobalConfigPath,
   inventoryHashDirs,
   isWindows,
+  resolveRuntimeName,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
 import { execSilent } from "./shell.js";
@@ -282,7 +282,10 @@ export async function warnAboutOpenClawStatus(config: OrchestratorConfig): Promi
  * for the lifetime of the process.
  */
 export async function runtimePreflight(config: OrchestratorConfig): Promise<void> {
-  const runtime = config.defaults?.runtime ?? getDefaultRuntime();
+  // Agent-aware: a claude-code default resolves to runtime-sdk (no terminal), so
+  // we must NOT demand tmux for it. Mirrors the per-agent runtime resolution
+  // used at session spawn.
+  const runtime = resolveRuntimeName(undefined, config, config.defaults?.agent);
   if (runtime === "tmux") {
     const result = await ensureTmux(config.configPath);
     if (result.switchedToProcess) {

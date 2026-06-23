@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { recordActivityEvent } from "./activity-events.js";
+import { resolveRuntimeName } from "./runtime-resolution.js";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -1081,7 +1082,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     let runtimeProbe: ProbeResult = { state: "unknown", failed: false };
     if (session.runtimeHandle && canProbeRuntimeIdentity) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+      const runtime = registry.get<Runtime>("runtime", resolveRuntimeName(project, config, agentName));
       if (runtime) {
         try {
           const alive = await runtime.isAlive(session.runtimeHandle);
@@ -1131,7 +1132,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           try {
             const runtime = registry.get<Runtime>(
               "runtime",
-              project.runtime ?? config.defaults.runtime,
+              resolveRuntimeName(project, config, agentName),
             );
             const terminalOutput = runtime
               ? await runtime.getOutput(session.runtimeHandle, 10)
@@ -1198,7 +1199,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           activityEvidence = formatActivitySignalEvidence(activitySignal);
           const runtime = registry.get<Runtime>(
             "runtime",
-            project.runtime ?? config.defaults.runtime,
+            resolveRuntimeName(project, config, agentName),
           );
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {

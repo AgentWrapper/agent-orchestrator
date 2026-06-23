@@ -215,6 +215,15 @@ On Windows the high-level component map (HTTP API, mux WS server, dashboard, fla
 
 `getDefaultRuntime()` from `@aoagents/ao-core` returns `"process"` on Windows and `"tmux"` everywhere else. A fresh Windows install therefore loads the `runtime-process` plugin without requiring YAML edits. Users on Unix who want the process runtime opt in via `runtime: process` in `agent-orchestrator.yaml`.
 
+**Per-agent override.** `resolveRuntimeName()` (`@aoagents/ao-core`) picks a session's runtime per-agent: the `claude-code` agent prefers `runtime-sdk` (Claude via the Agent SDK, no terminal), so when it runs with no explicit `runtime` in config it uses `sdk` instead of the platform default. Other agents (codex/aider/cursor/…) are unaffected and keep the platform default + their own CLI. The preference is a single source of truth in core — the `AGENT_PREFERRED_RUNTIME` map (`{ "claude-code": "sdk" }`) — keyed by agent name so it resolves identically at session spawn, lifecycle probes, and startup preflight without loading the plugin registry. Resolution order:
+
+1. explicit project-level `runtime` (always wins)
+2. explicit defaults-level `runtime` (a value differing from the platform default)
+3. the agent's preferred runtime (`claude-code` → `sdk`)
+4. `getDefaultRuntime()` (`tmux` non-Windows / `process` Windows)
+
+A `defaults.runtime` equal to the platform default is treated as unconfigured (config generators write `getDefaultRuntime()` there), so the agent preference still applies. To pin a runtime for an agent that has a preference, set `runtime` at the **project** level.
+
 ### The pty-host helper process
 
 Because `node-pty` ConPTY sessions are tied to the lifetime of the host Node process, the orchestrator can't simply spawn ConPTY directly inside Next.js or the mux WS server: those processes restart, get killed by `taskkill /T`, etc. Instead, each AO session on Windows owns a small dedicated helper process — the **pty-host**.
