@@ -64,6 +64,17 @@ export function create(): Runtime {
         ...config.environment,
         AO_SDK_CWD: config.workspacePath,
       } as Record<string, string>;
+      // AO_SDK_* control vars must come ONLY from config.environment (the per-session intent
+      // set by session-manager) — never be inherited from the spawning process. Otherwise a
+      // worker spawned by an orchestrator inherits the orchestrator's AO_SDK_RESUME (or
+      // INITIAL_PROMPT) from process.env and RESUMES the orchestrator's conversation instead of
+      // running its own task — every spawned worker became a copy of the orchestrator once the
+      // SDK runtime went live. Strip any inherited value not set explicitly for THIS session.
+      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE"]) {
+        if (!config.environment || !(key in config.environment)) {
+          delete hostEnv[key];
+        }
+      }
       const paths = sessionPaths(config.sessionId, hostEnv);
 
       // AO_SDK_HOST_SCRIPT lets tests / dev runs point at a prebuilt host
