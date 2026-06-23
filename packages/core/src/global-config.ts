@@ -222,6 +222,10 @@ export const GlobalConfigSchema = z
         notifiers: z.array(z.string()).default(["composio", "desktop"]),
         orchestrator: z.object({ agent: z.string().optional() }).optional(),
         worker: z.object({ agent: z.string().optional() }).optional(),
+        // Shared rules a project inherits when it declares none of its own.
+        // Optional + additive: existing config.yaml files stay valid.
+        orchestratorRules: z.string().optional(),
+        agentRules: z.string().optional(),
       })
       .default({}),
     /** Project registry — map key is the canonical project ID. */
@@ -933,6 +937,18 @@ export function resolveProjectIdentity(
     if (merged["runtime"] === undefined) merged["runtime"] = defaults.runtime;
     if (merged["agent"] === undefined) merged["agent"] = defaults.agent;
     if (merged["workspace"] === undefined) merged["workspace"] = defaults.workspace;
+
+    // Rules backfill: a project without its own rules inherits the global default
+    // (same precedence as runtime/agent above — a project that sets its own keeps
+    // it). Gives fresh-install parity, e.g. a shared "orchestrators maintain
+    // .maestro/tasks.md" rule reaches every project, not just the one whose local
+    // yaml happens to declare it.
+    if (merged["orchestratorRules"] === undefined && defaults.orchestratorRules !== undefined) {
+      merged["orchestratorRules"] = defaults.orchestratorRules;
+    }
+    if (merged["agentRules"] === undefined && defaults.agentRules !== undefined) {
+      merged["agentRules"] = defaults.agentRules;
+    }
 
     const orchestrator = {
       ...(defaults.orchestrator ?? {}),
