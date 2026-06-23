@@ -15,6 +15,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { recordActivityEvent } from "./activity-events.js";
 import { resolveRuntimeName } from "./runtime-resolution.js";
+import { getOrchestratorSessionId } from "./orchestrator-session-strategy.js";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -296,6 +297,40 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
     default:
       return null;
   }
+}
+
+/**
+ * Worker statuses that must reliably reach the orchestrator session: the worker
+ * has finished (done/merged) or cannot proceed without attention (needs_input/
+ * stuck/errored). The engine guarantees this signal so the orchestrator learns
+ * about it even when the agent forgets to `ao send` a report itself.
+ */
+const ORCHESTRATOR_SIGNAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  SESSION_STATUS.NEEDS_INPUT,
+  SESSION_STATUS.STUCK,
+  SESSION_STATUS.ERRORED,
+  SESSION_STATUS.DONE,
+  SESSION_STATUS.MERGED,
+]);
+
+/** Human-readable line the engine sends to the orchestrator on a worker signal. */
+function buildOrchestratorSignalMessage(session: Session, status: SessionStatus): string {
+  const label = session.metadata["displayName"] || session.metadata["userPrompt"] || session.id;
+  const detail =
+    status === SESSION_STATUS.NEEDS_INPUT
+      ? "needs input and is waiting"
+      : status === SESSION_STATUS.STUCK
+        ? "appears stuck"
+        : status === SESSION_STATUS.ERRORED
+          ? "hit an error"
+          : status === SESSION_STATUS.MERGED
+            ? "had its PR merged"
+            : "finished its work";
+  return (
+    `[ao] Worker "${session.id}" (${label}) ${detail} (lifecycle: ${status}). ` +
+    `It will not proceed on its own — review it and decide next steps. ` +
+    `(automatic lifecycle signal)`
+  );
 }
 
 function prStateToEventType(
@@ -1874,6 +1909,78 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     session.status = deriveLegacyStatus(session.lifecycle);
   }
 
+  /**
+   * Guarantee the orchestrator session learns when one of its workers finishes
+   * or gets blocked, instead of relying on the agent to `ao send` a report
+   * itself (which it may forget — the completion-signal gap). Runs every poll
+   * for the session and is idempotent: a metadata latch
+   * (`orchestratorSignaledStatus`) fires the signal once per status episode and
+   * doubles as a retry latch — on a failed delivery the latch stays unset so the
+   * next poll retries until the orchestrator is reliably notified. The latch
+   * resets when the worker leaves a signal-worthy status, so a later re-entry
+   * (e.g. needs_input → working → needs_input) signals again.
+   */
+  async function signalOrchestratorIfNeeded(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    if (!ORCHESTRATOR_SIGNAL_STATUSES.has(newStatus)) {
+      if (session.metadata["orchestratorSignaledStatus"]) {
+        updateSessionMetadata(session, { orchestratorSignaledStatus: "" });
+      }
+      return;
+    }
+
+    // The orchestrator's own lifecycle isn't signaled to itself.
+    if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+      return;
+    }
+
+    // Already signaled this status episode — nothing to do.
+    if (session.metadata["orchestratorSignaledStatus"] === newStatus) return;
+
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    const orchestratorSessionId = getOrchestratorSessionId(project);
+    const orchestrator = await sessionManager.get(orchestratorSessionId).catch(() => null);
+    // No orchestrator running for this project, or it's already dead — nobody to
+    // signal. Leave the latch unset so a relaunched orchestrator gets notified.
+    if (!orchestrator || TERMINAL_STATUSES.has(orchestrator.status)) return;
+
+    try {
+      await sessionManager.send(
+        orchestratorSessionId,
+        buildOrchestratorSignalMessage(session, newStatus),
+      );
+      updateSessionMetadata(session, { orchestratorSignaledStatus: newStatus });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle-manager",
+        kind: "orchestrator.signaled",
+        summary: `signaled orchestrator: ${session.id} → ${newStatus}`,
+        data: { status: newStatus, orchestrator: orchestratorSessionId },
+      });
+    } catch (err) {
+      // Fail loud (visible) but don't drop: the latch stays unset, so the next
+      // poll retries until delivery is confirmed.
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle-manager",
+        kind: "orchestrator.signal_failed",
+        level: "warn",
+        summary: `failed to signal orchestrator: ${session.id} → ${newStatus}`,
+        data: {
+          status: newStatus,
+          orchestrator: orchestratorSessionId,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
+  }
+
   function makeFingerprint(ids: string[]): string {
     return [...ids].sort().join(",");
   }
@@ -2995,6 +3102,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         await notifyHuman(prEvent, inferPriority(prEventType));
       }
     }
+
+    // Guarantee the orchestrator learns when this worker finished or got blocked,
+    // even if the agent never `ao send`s a report itself. Idempotent + retrying.
+    await signalOrchestratorIfNeeded(session, newStatus);
 
     // Pin first quality summary for title stability
     if (

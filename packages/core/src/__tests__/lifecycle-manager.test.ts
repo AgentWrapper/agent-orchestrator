@@ -4743,3 +4743,63 @@ describe("multi-PR state machine aggregation", () => {
     }
   });
 });
+
+describe("orchestrator completion-signal", () => {
+  it("signals the orchestrator when a worker reaches needs_input", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      expect.stringContaining("-orchestrator"),
+      expect.stringContaining("app-1"),
+    );
+  });
+
+  it("latches the signal so a worker stuck in the same status isn't re-notified every poll", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["orchestratorSignaledStatus"]).toBe("needs_input");
+  });
+
+  it("does not signal the orchestrator about the orchestrator's own state", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-orchestrator", {
+      session: makeSession({
+        id: "app-orchestrator",
+        status: "working",
+        metadata: { role: "orchestrator" },
+      }),
+    });
+
+    await lm.check("app-orchestrator");
+
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
+  it("does not signal for a non-actionable status like working", async () => {
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    const orchestratorSends = vi
+      .mocked(mockSessionManager.send)
+      .mock.calls.filter(([id]) => typeof id === "string" && id.endsWith("-orchestrator"));
+    expect(orchestratorSends).toHaveLength(0);
+  });
+});
