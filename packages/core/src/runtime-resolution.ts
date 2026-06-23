@@ -39,32 +39,40 @@ interface RuntimeResolutionConfig {
  * Resolve the runtime plugin name for a session.
  *
  * Order (highest precedence first):
- *   1. explicit project-level `runtime`            — always wins
- *   2. explicit defaults-level `runtime`           — a value the user chose, i.e.
- *      one that differs from the platform default
+ *   1. project-level `runtime` DIFFERENT from the platform default
+ *   2. defaults-level `runtime` DIFFERENT from the platform default
  *   3. the agent's preferred runtime               — claude-code -> sdk
  *   4. getDefaultRuntime()                         — tmux (non-Windows) / process (Windows)
  *
- * A `defaults.runtime` equal to the platform default is treated as unconfigured
- * (config generators write `getDefaultRuntime()` there), so the agent preference
- * still applies. To pin a runtime for an agent that has a preference, set it at
- * the PROJECT level — `project.runtime` always wins.
+ * A `runtime` (project- OR defaults-level) equal to the platform default is
+ * treated as UNCONFIGURED, so the per-agent preference still applies. This is
+ * deliberate: config loaders back-fill BOTH `defaults.runtime` (config-generator)
+ * AND `project.runtime` (global-config `applyBehaviorDefaults`) with
+ * `getDefaultRuntime()`, so a platform-default value is a generated default, not
+ * a real user choice — honoring it as an explicit pin silently defeated the agent
+ * preference (claude-code spawned on tmux instead of sdk). To pin a runtime for an
+ * agent that has a preference, choose a NON-default value; the platform default
+ * itself cannot be force-pinned (and need not be — it's what you get by default).
  */
 export function resolveRuntimeName(
   project: RuntimeResolutionProject | null | undefined,
   config: RuntimeResolutionConfig,
   agentName?: string | null,
 ): string {
-  if (project?.runtime) return project.runtime;
+  const platformDefault = getDefaultRuntime();
+
+  // An explicit project-level runtime wins — unless it merely equals the platform
+  // default (a back-filled value, not a user choice; see the note above).
+  if (project?.runtime && project.runtime !== platformDefault) return project.runtime;
 
   const configured = config.defaults?.runtime;
   const effectiveAgent = agentName ?? project?.agent ?? config.defaults?.agent;
   const preferred = agentPreferredRuntime(effectiveAgent);
 
-  // The agent preference applies only when the user has NOT chosen a runtime —
-  // i.e. defaults.runtime is absent or merely the platform default.
-  if (preferred && (!configured || configured === getDefaultRuntime())) {
+  // The agent preference applies when the user has NOT chosen a runtime — i.e.
+  // neither project nor defaults runtime carries a non-platform-default value.
+  if (preferred && (!configured || configured === platformDefault)) {
     return preferred;
   }
-  return configured ?? getDefaultRuntime();
+  return configured ?? platformDefault;
 }

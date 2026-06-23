@@ -44,14 +44,29 @@ describe("resolveRuntimeName", () => {
     expect(resolveRuntimeName(null, cfg(), undefined)).toBe("tmux");
   });
 
-  it("an explicit project-level runtime always wins (even for claude-code)", () => {
-    setPlatform("linux");
-    expect(resolveRuntimeName({ runtime: "tmux" }, cfg(undefined, "claude-code"), "claude-code")).toBe(
-      "tmux",
-    );
+  it("a NON-default project-level runtime wins (even for claude-code)", () => {
+    setPlatform("linux"); // platform default = tmux
     expect(
       resolveRuntimeName({ runtime: "process" }, cfg("sdk", "claude-code"), "claude-code"),
     ).toBe("process");
+    // sdk is itself non-default, so an explicit project sdk also wins for any agent
+    expect(resolveRuntimeName({ runtime: "sdk" }, cfg(undefined, "codex"), "codex")).toBe("sdk");
+  });
+
+  it("a project runtime equal to the platform default is treated as unconfigured (back-fill)", () => {
+    // global-config `applyBehaviorDefaults` back-fills project.runtime with
+    // defaults.runtime (= the platform default) for every project — that generated
+    // value must NOT be honored as an explicit pin, or it silently defeats the
+    // per-agent preference (the v0.1.2 bug: claude-code spawned on tmux not sdk).
+    setPlatform("linux"); // platform default = tmux
+    expect(resolveRuntimeName({ runtime: "tmux" }, cfg("tmux", "claude-code"), "claude-code")).toBe(
+      "sdk",
+    );
+    expect(resolveRuntimeName({ runtime: "tmux" }, cfg("tmux", "codex"), "codex")).toBe("tmux");
+    setPlatform("win32"); // platform default = process
+    expect(
+      resolveRuntimeName({ runtime: "process" }, cfg("process", "claude-code"), "claude-code"),
+    ).toBe("sdk");
   });
 
   it("an explicit defaults runtime differing from the platform default wins", () => {
