@@ -146,6 +146,43 @@ describe("loadBuiltins", () => {
     await expect(registry.loadBuiltins(undefined, importUnavailable)).resolves.toBeUndefined();
   });
 
+  it("surfaces a loud diagnostic (and keeps loading) when an installed builtin fails to import", async () => {
+    const registry = createPluginRegistry();
+    const fakeCodex = makePlugin("agent", "codex");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      if (pkg === "@aoagents/ao-plugin-agent-codex") return fakeCodex;
+      // claude-code is installed but broken (e.g. syntax error) — a real defect,
+      // NOT a missing package, so it must be reported rather than swallowed.
+      if (pkg === "@aoagents/ao-plugin-agent-claude-code")
+        throw new SyntaxError("Unexpected token");
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to import built-in plugin "claude-code"'),
+    );
+    stderrSpy.mockRestore();
+
+    // The broken import did not abort the loop — healthy plugins still loaded.
+    expect(registry.get("agent", "codex")).not.toBeNull();
+  });
+
+  it("stays silent for genuinely not-installed packages (ERR_MODULE_NOT_FOUND)", async () => {
+    const registry = createPluginRegistry();
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      const err = new Error(`Cannot find package '${pkg}'`) as Error & { code?: string };
+      err.code = "ERR_MODULE_NOT_FOUND";
+      throw err;
+    });
+
+    expect(stderrSpy).not.toHaveBeenCalled();
+    stderrSpy.mockRestore();
+  });
+
   it("registers multiple agent plugins from importFn", async () => {
     const registry = createPluginRegistry();
 
