@@ -110,12 +110,25 @@ async function refExists(cwd: string, ref: string): Promise<boolean> {
   }
 }
 
+/** True iff `ancestor` is an ancestor of (or equal to) `descendant`. */
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    // `merge-base --is-ancestor` exits 0 when the relationship holds, non-zero
+    // otherwise (which git() surfaces as a throw).
+    await git(cwd, "merge-base", "--is-ancestor", ancestor, descendant);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveBaseRef(
   repoPath: string,
   defaultBranch: string,
   options?: { branch?: string; hasOrigin?: boolean },
 ): Promise<string> {
   const hasOrigin = options?.hasOrigin ?? (await hasOriginRemote(repoPath));
+  const localDefaultBranch = `refs/heads/${defaultBranch}`;
 
   if (hasOrigin) {
     if (options?.branch) {
@@ -124,10 +137,21 @@ async function resolveBaseRef(
     }
 
     const remoteDefaultBranch = `origin/${defaultBranch}`;
-    if (await refExists(repoPath, remoteDefaultBranch)) return remoteDefaultBranch;
+    if (await refExists(repoPath, remoteDefaultBranch)) {
+      // Prefer the LOCAL default branch when it is ahead of (or equal to) the
+      // remote — i.e. origin/<db> is an ancestor of refs/heads/<db>. Workers
+      // must start from the freshest code; an unpushed-ahead local default
+      // branch would otherwise spawn them on a stale origin/<db>
+      // (base-staleness). When local is behind, has diverged, or doesn't exist,
+      // keep origin/<db> — the freshly-fetched remote tip is the shared
+      // integration point. (isAncestor returns false for a missing local ref.)
+      if (await isAncestor(repoPath, remoteDefaultBranch, localDefaultBranch)) {
+        return localDefaultBranch;
+      }
+      return remoteDefaultBranch;
+    }
   }
 
-  const localDefaultBranch = `refs/heads/${defaultBranch}`;
   if (await refExists(repoPath, localDefaultBranch)) return localDefaultBranch;
 
   throw new Error(`Unable to resolve base ref for default branch "${defaultBranch}"`);
