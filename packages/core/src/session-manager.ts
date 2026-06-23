@@ -3789,6 +3789,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        // runtime-sdk resume: a restored session that already has a provider
+        // session id (claudeSessionUuid) must resume it — otherwise the SDK
+        // runtime opens a FRESH conversation and the agent loses all prior
+        // context on engine restart. (The tmux runtime resumes via
+        // getRestoreCommand's `claude --resume`; the SDK runtime reads this env.)
+        ...(typeof raw["claudeSessionUuid"] === "string" && raw["claudeSessionUuid"]
+          ? { AO_SDK_RESUME: raw["claudeSessionUuid"] }
+          : {}),
         AO_CALLER_TYPE: "agent",
         ...(projectId && { AO_PROJECT_ID: projectId }),
         AO_CONFIG_PATH: config.configPath,
