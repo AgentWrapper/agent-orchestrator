@@ -1243,13 +1243,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: OK
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: Created
         "404":
           content:
@@ -1636,7 +1636,7 @@ components:
           type: string
         reviews:
           items:
-            $ref: '#/components/schemas/ReviewRun'
+            $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
@@ -1771,6 +1771,30 @@ components:
       required:
       - id
       - projectId
+      type: object
+    PRReviewState:
+      properties:
+        latestRun:
+          $ref: '#/components/schemas/ReviewRun'
+        prNumber:
+          type: integer
+        prUrl:
+          type: string
+        status:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
+        targetSha:
+          type: string
+      required:
+      - prUrl
+      - prNumber
+      - targetSha
+      - status
       type: object
     Project:
       properties:
@@ -2402,6 +2426,18 @@ components:
       - verdict
       - body
       - githubReviewId
+      type: object
+    TriggerReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
       type: object
     WorkspaceRepo:
       properties:

@@ -22,7 +22,7 @@ UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WH
 UPDATE review_run SET status = 'failed', body = ? WHERE id = ? AND verdict = '' AND status != 'failed';
 
 -- name: SupersedeStaleRunningReviewRuns :execrows
-UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = '';
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND pr_url = ? AND target_sha != ? AND status = 'running' AND verdict = '';
 
 -- name: MarkReviewRunDelivered :execrows
 UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'complete' AND delivered_at IS NULL;
@@ -31,9 +31,9 @@ UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND st
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
 FROM review_run WHERE id = ?;
 
--- name: GetReviewRunBySessionAndSHA :one
+-- name: GetReviewRunBySessionPRAndSHA :one
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
-FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1;
+FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1;
 
 -- name: ListReviewRunsBySession :many
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at

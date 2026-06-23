@@ -41,7 +41,7 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 }
 
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
-// (session_id, target_sha) index (migration 0013) is surfaced as the sentinel
+// (session_id, pr_url, target_sha) index (migration 0020) is surfaced as the sentinel
 // domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.
 func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	s.writeMu.Lock()
@@ -60,7 +60,7 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		CreatedAt:      r.CreatedAt,
 	})
 	if isSQLiteUnique(err) {
-		return fmt.Errorf("insert review run for session %s sha %s: %w", r.SessionID, r.TargetSHA, domain.ErrDuplicateReviewRun)
+		return fmt.Errorf("insert review run for session %s pr %s sha %s: %w", r.SessionID, r.PRURL, r.TargetSHA, domain.ErrDuplicateReviewRun)
 	}
 	return err
 }
@@ -100,12 +100,13 @@ func (s *Store) SupersedeReviewRun(ctx context.Context, id, body string) (bool, 
 
 // SupersedeStaleRunningReviewRuns marks older running unverdicted passes for a
 // worker failed before starting a review for a newer commit.
-func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error) {
+func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.SupersedeStaleRunningReviewRuns(ctx, gen.SupersedeStaleRunningReviewRunsParams{
 		Body:      body,
 		SessionID: sessionID,
+		PRURL:     prURL,
 		TargetSha: targetSHA,
 	})
 }
@@ -137,16 +138,17 @@ func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, 
 	return reviewRunFromRow(row), true, nil
 }
 
-// GetReviewRunBySessionAndSHA returns the most recent review pass for a worker
-// session at a specific commit, ok=false if none. It lets a repeat trigger for
-// the same PR head short-circuit to the existing run.
-func (s *Store) GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error) {
-	row, err := s.qr.GetReviewRunBySessionAndSHA(ctx, gen.GetReviewRunBySessionAndSHAParams{SessionID: id, TargetSha: targetSHA})
+// GetReviewRunBySessionPRAndSHA returns the most recent review pass for a
+// worker session, PR, and commit, ok=false if none. It lets a repeat trigger for
+// the same PR head short-circuit to the existing run without colliding with
+// another PR that happens to share the same head commit.
+func (s *Store) GetReviewRunBySessionPRAndSHA(ctx context.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunBySessionPRAndSHA(ctx, gen.GetReviewRunBySessionPRAndSHAParams{SessionID: id, PRURL: prURL, TargetSha: targetSHA})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ReviewRun{}, false, nil
 	}
 	if err != nil {
-		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s sha %s: %w", id, targetSHA, err)
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s pr %s sha %s: %w", id, prURL, targetSHA, err)
 	}
 	return reviewRunFromRow(row), true, nil
 }

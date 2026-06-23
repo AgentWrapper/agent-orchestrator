@@ -543,8 +543,10 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
 	}
 	got := msg.msgs[0]
-	if !strings.Contains(got, "[AO reviewer]") || !strings.Contains(got, "fix the bug") || !strings.Contains(got, "98[2J765") {
-		t.Fatalf("AO review nudge missing label/body/review id: %q", got)
+	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("AO review nudge missing %q: %q", want, got)
+		}
 	}
 	if strings.Contains(got, "\x1b") {
 		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)

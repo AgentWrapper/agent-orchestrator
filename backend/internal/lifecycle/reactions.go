@@ -154,13 +154,14 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if m.messenger == nil {
 		return ReviewDeliveryNoop, nil
 	}
-	msg := "[AO reviewer] AO's internal code reviewer requested changes on your PR. Review the feedback below and address it."
+	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
 	if r.GithubReviewID != "" {
 		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
-		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
+		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
+		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
 	}
 	if r.Body != "" {
-		msg += "\n\n" + domain.SanitizeControlChars(r.Body)
+		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")

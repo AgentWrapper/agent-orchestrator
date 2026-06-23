@@ -1,6 +1,9 @@
 package review
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // reviewTexts returns the user-facing prompt and the system prompt to deliver to
 // a reviewer, authored in one place — the reviewer analogue of
@@ -18,7 +21,9 @@ You are an AO code reviewer. You review a single pull request's changes in the c
 
 Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
 
+	queueText := reviewQueueText(spec)
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
+%s
 
 Do these steps in order:
 1. Post your review on the pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address. Send the review as a JSON body so the inline comments form a proper array of objects:
@@ -38,6 +43,26 @@ Do these steps in order:
     MD
 
 Only if step 1 genuinely fails on the provider, still run step 2 (without --review-id) so the result is recorded.`,
-		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
+		spec.PRURL, spec.TargetSHA, queueText, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
+}
+
+func reviewQueueText(spec LaunchSpec) string {
+	if len(spec.ReviewQueue) <= 1 {
+		return "\nThis is the only review task in the current trigger."
+	}
+	current := spec.ReviewIndex + 1
+	if current < 1 || current > len(spec.ReviewQueue) {
+		current = 1
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nAO created %d review tasks for this worker session. This is task %d of %d; complete and submit this task before moving to the next queued task.\n\nReview task queue:\n", len(spec.ReviewQueue), current, len(spec.ReviewQueue))
+	for i, task := range spec.ReviewQueue {
+		marker := " "
+		if i == current-1 {
+			marker = "*"
+		}
+		fmt.Fprintf(&b, "%s %d. %s (head commit %s, run %s)\n", marker, i+1, task.PRURL, task.TargetSHA, task.RunID)
+	}
+	return b.String()
 }

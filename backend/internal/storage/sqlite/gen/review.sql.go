@@ -59,18 +59,19 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 	return i, err
 }
 
-const getReviewRunBySessionAndSHA = `-- name: GetReviewRunBySessionAndSHA :one
+const getReviewRunBySessionPRAndSHA = `-- name: GetReviewRunBySessionPRAndSHA :one
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
-FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
+FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
 `
 
-type GetReviewRunBySessionAndSHAParams struct {
+type GetReviewRunBySessionPRAndSHAParams struct {
 	SessionID domain.SessionID
+	PRURL     string
 	TargetSha string
 }
 
-func (q *Queries) GetReviewRunBySessionAndSHA(ctx context.Context, arg GetReviewRunBySessionAndSHAParams) (ReviewRun, error) {
-	row := q.db.QueryRowContext(ctx, getReviewRunBySessionAndSHA, arg.SessionID, arg.TargetSha)
+func (q *Queries) GetReviewRunBySessionPRAndSHA(ctx context.Context, arg GetReviewRunBySessionPRAndSHAParams) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRunBySessionPRAndSHA, arg.SessionID, arg.PRURL, arg.TargetSha)
 	var i ReviewRun
 	err := row.Scan(
 		&i.ID,
@@ -201,17 +202,23 @@ func (q *Queries) SupersedeReviewRun(ctx context.Context, arg SupersedeReviewRun
 }
 
 const supersedeStaleRunningReviewRuns = `-- name: SupersedeStaleRunningReviewRuns :execrows
-UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = ''
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND pr_url = ? AND target_sha != ? AND status = 'running' AND verdict = ''
 `
 
 type SupersedeStaleRunningReviewRunsParams struct {
 	Body      string
 	SessionID domain.SessionID
+	PRURL     string
 	TargetSha string
 }
 
 func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg SupersedeStaleRunningReviewRunsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, supersedeStaleRunningReviewRuns, arg.Body, arg.SessionID, arg.TargetSha)
+	result, err := q.db.ExecContext(ctx, supersedeStaleRunningReviewRuns,
+		arg.Body,
+		arg.SessionID,
+		arg.PRURL,
+		arg.TargetSha,
+	)
 	if err != nil {
 		return 0, err
 	}

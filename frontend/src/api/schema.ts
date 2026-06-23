@@ -564,7 +564,7 @@ export interface components {
         };
         ListReviewsResponse: {
             reviewerHandleId: string;
-            reviews: components["schemas"]["ReviewRun"][];
+            reviews: components["schemas"]["PRReviewState"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];
@@ -616,6 +616,14 @@ export interface components {
             id: string;
             projectId: string;
             projectName?: string;
+        };
+        PRReviewState: {
+            latestRun?: components["schemas"]["ReviewRun"];
+            prNumber: number;
+            prUrl: string;
+            /** @enum {string} */
+            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+            targetSha: string;
         };
         Project: {
             agent?: string;
@@ -853,6 +861,10 @@ export interface components {
             runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
+        };
+        TriggerReviewResponse: {
+            reviewerHandleId: string;
+            reviews: components["schemas"]["PRReviewState"][];
         };
         WorkspaceRepo: {
             name: string;
@@ -2425,7 +2437,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewRunResponse"];
+                    "application/json": components["schemas"]["TriggerReviewResponse"];
                 };
             };
             /** @description Created */
@@ -2434,7 +2446,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewRunResponse"];
+                    "application/json": components["schemas"]["TriggerReviewResponse"];
                 };
             };
             /** @description Not Found */

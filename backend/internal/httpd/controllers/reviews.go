@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
@@ -17,15 +18,22 @@ import (
 // reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
 // attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
-	ReviewerHandleID string             `json:"reviewerHandleId"`
-	Reviews          []domain.ReviewRun `json:"reviews"`
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
-// ReviewRunResponse is the body of trigger (200/201) and submit (200). It
-// carries the run plus the reviewer pane handle so the UI can attach a terminal.
+// ReviewRunResponse is the body of submit (200). It carries the run plus the
+// reviewer pane handle so the UI can attach a terminal.
 type ReviewRunResponse struct {
 	Review           domain.ReviewRun `json:"review"`
 	ReviewerHandleID string           `json:"reviewerHandleId"`
+}
+
+// TriggerReviewResponse is the body of trigger (200/201). reviews carries the
+// PR-scoped review state after the trigger.
+type TriggerReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
@@ -58,11 +66,11 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 		writeReviewError(w, r, err)
 		return
 	}
-	runs := res.Runs
-	if runs == nil {
-		runs = []domain.ReviewRun{}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: runs})
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews})
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +89,14 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	if res.Created {
 		status = http.StatusCreated
 	}
-	envelope.WriteJSON(w, status, ReviewRunResponse{Review: res.Run, ReviewerHandleID: res.ReviewerHandleID})
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	envelope.WriteJSON(w, status, TriggerReviewResponse{
+		ReviewerHandleID: res.ReviewerHandleID,
+		Reviews:          reviews,
+	})
 }
 
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
