@@ -15,7 +15,7 @@
  */
 
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { EventBody } from "./event-schema.js";
+import type { EventBody, ModelUsageBreakdown } from "./event-schema.js";
 
 /** Minimal structural views of the nested SDK payloads we read. */
 interface StreamDelta {
@@ -61,8 +61,11 @@ function stringifyToolContent(content: unknown): string {
 /**
  * Translate one SDK message into zero or more normalized event bodies.
  * The host stamps the envelope (v / seq / ts / session_id / turn).
+ *
+ * @param sessionModel the model from `system/init`, threaded so the usage event
+ *   can prefer it as a tie-break when picking the primary model.
  */
-export function translateSdkMessage(msg: SDKMessage): EventBody[] {
+export function translateSdkMessage(msg: SDKMessage, sessionModel?: string | null): EventBody[] {
   switch (msg.type) {
     case "system": {
       if (msg.subtype === "init") {
@@ -140,6 +143,7 @@ export function translateSdkMessage(msg: SDKMessage): EventBody[] {
           duration_ms: msg.duration_ms,
         },
       ];
+      const models = summarizeModels(msg.modelUsage);
       events.push({
         type: "usage",
         input_tokens: usage?.input_tokens ?? 0,
@@ -147,7 +151,8 @@ export function translateSdkMessage(msg: SDKMessage): EventBody[] {
         cache_read_input_tokens: usage?.cache_read_input_tokens ?? 0,
         cache_creation_input_tokens: usage?.cache_creation_input_tokens ?? 0,
         total_cost_usd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : 0,
-        model: extractModel(msg.modelUsage),
+        model: pickPrimaryModel(models, sessionModel),
+        models,
       });
       return events;
     }
@@ -157,10 +162,46 @@ export function translateSdkMessage(msg: SDKMessage): EventBody[] {
   }
 }
 
-function extractModel(modelUsage: unknown): string {
-  if (isRecord(modelUsage)) {
-    const keys = Object.keys(modelUsage);
-    if (keys.length > 0) return keys[0];
-  }
-  return "";
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** Normalize the SDK's per-model usage map into a model-agnostic breakdown. */
+function summarizeModels(modelUsage: unknown): ModelUsageBreakdown[] {
+  if (!isRecord(modelUsage)) return [];
+  return Object.entries(modelUsage).map(([model, u]) => {
+    const r = isRecord(u) ? u : {};
+    return {
+      model,
+      input_tokens: num(r.inputTokens),
+      output_tokens: num(r.outputTokens),
+      cache_read_input_tokens: num(r.cacheReadInputTokens),
+      cache_creation_input_tokens: num(r.cacheCreationInputTokens),
+      cost_usd: num(r.costUSD),
+    };
+  });
+}
+
+/**
+ * Pick the PRIMARY model for the turn. A Claude turn runs on a main model AND an
+ * auxiliary background model (e.g. opus main + haiku aux), so the first map key
+ * is NOT reliably the primary. Choose the highest cost; fall back to highest
+ * input+output tokens when costs are absent; tie-break to the session/init model
+ * when known; else the first entry.
+ */
+export function pickPrimaryModel(
+  models: ModelUsageBreakdown[],
+  sessionModel?: string | null,
+): string {
+  if (models.length === 0) return sessionModel ?? "";
+  if (models.length === 1) return models[0].model;
+
+  const anyCost = models.some((m) => m.cost_usd > 0);
+  const score = (m: ModelUsageBreakdown): number =>
+    anyCost ? m.cost_usd : m.input_tokens + m.output_tokens;
+
+  const maxScore = Math.max(...models.map(score));
+  const tied = models.filter((m) => score(m) === maxScore);
+  if (sessionModel && tied.some((m) => m.model === sessionModel)) return sessionModel;
+  return tied[0].model;
 }

@@ -48,7 +48,7 @@ Model-agnostic NDJSON — one JSON object per line, on disk and on the wire. `ru
 | `tool_use` | `block:number`, `id:string`, `name:string`, `input:object` |
 | `tool_result` | `tool_use_id:string`, `is_error:boolean`, `content:string` |
 | `result` | `subtype:string`, `is_error:boolean`, `text:string`, `num_turns:number`, `duration_ms:number` |
-| `usage` | `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `total_cost_usd`, `model` |
+| `usage` | `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `total_cost_usd`, `model` (primary), `models` (per-model breakdown — see Model story) |
 | `permission_request` | `request_id:string`, `tool_name:string`, `input:object`, `suggestions?:array` |
 
 **Lifecycle / control types** (model-agnostic, beyond the 7 core):
@@ -59,7 +59,20 @@ Model-agnostic NDJSON — one JSON object per line, on disk and on the wire. `ru
 | `permission_resolved` | `request_id:string`, `behavior:"allow"\|"deny"`, `message?` |
 | `error` | `message:string`, `fatal:boolean` |
 
-`block` is the content-block index within the current assistant message (groups consecutive `text-delta` / `reasoning` into one bubble). The `user` event makes `events.ndjson` a **complete transcript** (user turns + assistant + tool events), so a consumer needs no optimistic echo. Note: in streaming-input mode the SDK emits one `session/init` per turn — `session_id` is stable, so consumers may treat repeats as turn boundaries.
+The `user` event makes `events.ndjson` a **complete transcript** (user turns + assistant + tool events), so a consumer needs no optimistic echo. Note: in streaming-input mode the SDK emits one `session/init` per turn — `session_id` is stable, so consumers may treat repeats as turn boundaries.
+
+### Block-index semantics
+
+`block` is the content-block index **within a single assistant message**. It **restarts at 0 for each new assistant message** — e.g. the answer that follows a tool call is a fresh assistant message, so its first `text-delta` is `block:0` again. So `block` is **not** monotonic across a turn. Consumers should **group `text-delta` / `reasoning` by `(turn, block)`** to assemble a bubble, and **order strictly by `seq`** (the only globally monotonic field). Do not assume one block per turn or that block numbers increase across tool boundaries.
+
+### Model story (primary vs auxiliary)
+
+A Claude turn runs on a **main** model (e.g. `claude-opus-4-8[1m]`) and Claude Code also uses an **auxiliary** background model (e.g. `claude-haiku-4-5`). The SDK's `result.modelUsage` is a per-model map containing **both**, and its key order is not reliable. So:
+
+- `usage.model` = the **primary** model, chosen as the **highest-cost** entry (fallback: highest `input+output` tokens; tie-break: the `session/init` model; else first entry). This is the value to show on a model chip.
+- `usage.models` = the full per-model breakdown: `[{ model, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, cost_usd }]` — render main + auxiliary honestly if desired.
+
+(Model **selection** per session via `RuntimeCreateConfig` is a later multi-model milestone; the `AO_SDK_MODEL → options.model` seam already exists.)
 
 ## Paths (per session)
 

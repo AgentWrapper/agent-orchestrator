@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { translateSdkMessage } from "../sdk-translator.js";
+import { translateSdkMessage, pickPrimaryModel } from "../sdk-translator.js";
+import type { UsageEventBody } from "../event-schema.js";
 
 // Helper: cast loose fixtures to SDKMessage (full SDK shapes are huge; we only
 // read the fields the translator touches).
@@ -140,6 +141,16 @@ describe("translateSdkMessage", () => {
       cache_creation_input_tokens: 2,
       total_cost_usd: 0.5,
       model: "claude-opus-4-8",
+      models: [
+        {
+          model: "claude-opus-4-8",
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cost_usd: 0,
+        },
+      ],
     });
   });
 
@@ -158,8 +169,82 @@ describe("translateSdkMessage", () => {
     expect(out[0]).toMatchObject({ type: "result", subtype: "error_max_turns", is_error: true, text: "" });
   });
 
+  it("usage.model = PRIMARY model by max cost, not the first map key", () => {
+    // Real-world shape: opus main + haiku auxiliary; haiku is the first key.
+    const out = translateSdkMessage(
+      m({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "x",
+        num_turns: 1,
+        duration_ms: 1,
+        total_cost_usd: 0.0464,
+        usage: {},
+        modelUsage: {
+          "claude-haiku-4-5": {
+            costUSD: 0.00058,
+            inputTokens: 507,
+            outputTokens: 10,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          "claude-opus-4-8[1m]": {
+            costUSD: 0.0458,
+            inputTokens: 5808,
+            outputTokens: 34,
+            cacheReadInputTokens: 15246,
+            cacheCreationInputTokens: 0,
+          },
+        },
+      }),
+    );
+    const usage = out.find((e) => e.type === "usage") as UsageEventBody | undefined;
+    expect(usage?.model).toBe("claude-opus-4-8[1m]"); // NOT "claude-haiku-4-5" (keys[0])
+    expect(usage?.models.map((x) => x.model).sort()).toEqual([
+      "claude-haiku-4-5",
+      "claude-opus-4-8[1m]",
+    ]);
+    expect(usage?.models.find((x) => x.model === "claude-opus-4-8[1m]")).toMatchObject({
+      input_tokens: 5808,
+      cache_read_input_tokens: 15246,
+      cost_usd: 0.0458,
+    });
+  });
+
   it("returns [] for unhandled message types", () => {
     expect(translateSdkMessage(m({ type: "system", subtype: "status" }))).toEqual([]);
     expect(translateSdkMessage(m({ type: "rate_limit_event" }))).toEqual([]);
+  });
+});
+
+describe("pickPrimaryModel", () => {
+  const model = (m: string, cost: number, inTok = 0, outTok = 0) => ({
+    model: m,
+    input_tokens: inTok,
+    output_tokens: outTok,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cost_usd: cost,
+  });
+
+  it("picks the highest-cost model", () => {
+    expect(pickPrimaryModel([model("aux", 0.0006), model("main", 0.045)])).toBe("main");
+  });
+
+  it("falls back to highest input+output tokens when no costs", () => {
+    expect(pickPrimaryModel([model("aux", 0, 5, 1), model("main", 0, 500, 50)])).toBe("main");
+  });
+
+  it("prefers the session/init model on a cost tie", () => {
+    expect(pickPrimaryModel([model("a", 0.01), model("b", 0.01)], "b")).toBe("b");
+    // without a hint, the first tied entry wins
+    expect(pickPrimaryModel([model("a", 0.01), model("b", 0.01)])).toBe("a");
+  });
+
+  it("handles single and empty maps", () => {
+    expect(pickPrimaryModel([model("only", 0)])).toBe("only");
+    expect(pickPrimaryModel([], "fallback")).toBe("fallback");
+    expect(pickPrimaryModel([])).toBe("");
   });
 });

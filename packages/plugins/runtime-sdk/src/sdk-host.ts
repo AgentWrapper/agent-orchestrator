@@ -265,7 +265,7 @@ export class SessionHost {
           this.model = msg.model;
           this.writeSessionInfo();
         }
-        for (const body of translateSdkMessage(msg)) this.emit(body);
+        for (const body of translateSdkMessage(msg, this.model)) this.emit(body);
       }
     } catch (err) {
       this.emit({

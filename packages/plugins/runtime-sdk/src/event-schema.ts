@@ -116,6 +116,16 @@ export interface ResultEventBody {
   duration_ms: number;
 }
 
+/** Per-model usage line (one provider may run a main + auxiliary model). */
+export interface ModelUsageBreakdown {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  cost_usd: number;
+}
+
 /** Token / cost accounting, emitted alongside `result`. */
 export interface UsageEventBody {
   type: "usage";
@@ -124,7 +134,14 @@ export interface UsageEventBody {
   cache_read_input_tokens: number;
   cache_creation_input_tokens: number;
   total_cost_usd: number;
+  /**
+   * The PRIMARY model for the turn (the model chip). A turn may run on a main
+   * model plus an auxiliary background model; this is the primary, chosen by
+   * highest cost (see `models` for the full per-model breakdown).
+   */
   model: string;
+  /** Per-model breakdown so a consumer can render main + auxiliary honestly. */
+  models: ModelUsageBreakdown[];
 }
 
 /** A tool requires approval (the canUseTool seam). Answered out-of-band. */
