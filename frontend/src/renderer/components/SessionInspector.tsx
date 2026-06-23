@@ -26,7 +26,6 @@ import { cn } from "../lib/utils";
 import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-type ReviewRun = components["schemas"]["ReviewRun"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
@@ -388,7 +387,8 @@ function ReviewsView({
 		enabled: hasPr,
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
-			return data?.reviews.some((review) => review.status === "running") ? 2500 : false;
+			const reviews = data?.reviews ?? [];
+			return reviews.some((review) => review.status === "running") ? 2500 : false;
 		},
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
@@ -423,17 +423,18 @@ function ReviewsView({
 		onSuccess: ({ data, reused }) => {
 			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			if (reused) {
-				setReviewNotice("Review is already up to date for this commit.");
+			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
+			if (reused || !started?.latestRun) {
+				setReviewNotice("No needed reviews were started.");
 				return;
 			}
 			if (data?.reviewerHandleId) {
-				const harness = latestReview(data.reviews)?.harness || "reviewer";
+				const harness = started.latestRun.harness || "reviewer";
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 	});
-	const reviews = reviewsQuery.data?.reviews ?? [];
+	const reviewStates = reviewsQuery.data?.reviews ?? [];
 
 	return (
 		<div role="tabpanel">
@@ -446,7 +447,7 @@ function ReviewsView({
 					onOpenTerminal={onOpenReviewerTerminal}
 					onTrigger={() => triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
-					reviews={reviews}
+					reviewStates={reviewStates}
 					notice={reviewNotice}
 					session={session}
 				/>
@@ -463,7 +464,7 @@ function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | und
 function ReviewPanel({
 	session,
 	config,
-	reviews,
+	reviewStates,
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
@@ -474,7 +475,7 @@ function ReviewPanel({
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
-	reviews: PRReviewState[];
+	reviewStates: PRReviewState[];
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
@@ -490,111 +491,98 @@ function ReviewPanel({
 		return <p className="inspector-empty">Loading reviews...</p>;
 	}
 
-	const latest = latestReview(reviews);
+	const latest = reviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
+	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 
 	return (
 		<div className="reviewer-list">
 			{error ? <p className="reviewer-error">{apiErrorMessage(error, "Review request failed")}</p> : null}
 			{notice ? <p className="reviewer-notice">{notice}</p> : null}
-			<ReviewerCard
-				handleId={reviewerHandleId}
-				harness={harness}
-				isTriggering={isTriggering}
-				onOpenTerminal={onOpenTerminal}
-				onTrigger={onTrigger}
-				review={latest}
-			/>
-		</div>
-	);
-}
-
-function latestReview(reviews: PRReviewState[]): ReviewRun | undefined {
-	return reviews
-		.map((review) => review.latestRun)
-		.filter((review): review is ReviewRun => Boolean(review))
-		.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-}
-
-function ReviewerCard({
-	harness,
-	review,
-	handleId,
-	isTriggering,
-	onTrigger,
-	onOpenTerminal,
-}: {
-	harness: string;
-	review?: ReviewRun;
-	handleId: string;
-	isTriggering: boolean;
-	onTrigger: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
-}) {
-	const status = reviewStatus(review);
-	const terminalEnabled = Boolean(handleId && onOpenTerminal);
-	const runLabel = review ? "Re-run review" : "Run review";
-
-	return (
-		<div className={cn("reviewer-card", status.tone && `reviewer-card--${status.tone}`)}>
-			<div className="reviewer-card__top">
-				<div className="reviewer-card__name">
-					<Shield aria-hidden="true" />
-					<span>{harness}</span>
+			<div className="reviewer-card">
+				<div className="reviewer-card__top">
+					<div className="reviewer-card__name">
+						<Shield aria-hidden="true" />
+						<span>{harness}</span>
+					</div>
+					<span className="reviewer-status reviewer-status--neutral">{reviewStates.length} PRs</span>
 				</div>
-				<span className={cn("reviewer-status", `reviewer-status--${status.tone}`)}>
-					{status.icon}
-					{status.label}
-				</span>
-			</div>
-			<div className="reviewer-card__actions">
-				<button
-					className="reviewer-card__action reviewer-card__action--primary"
-					disabled={isTriggering}
-					onClick={onTrigger}
-					type="button"
-				>
-					<Play aria-hidden="true" />
-					{isTriggering ? "Starting..." : runLabel}
-				</button>
-				{review ? (
+				<div className="reviewer-card__actions">
+					<button
+						className="reviewer-card__action reviewer-card__action--primary"
+						disabled={isTriggering}
+						onClick={onTrigger}
+						type="button"
+					>
+						<Play aria-hidden="true" />
+						{isTriggering ? "Starting..." : "Run needed reviews"}
+					</button>
 					<button
 						className="reviewer-card__action"
 						disabled={!terminalEnabled}
 						onClick={() => {
 							if (!terminalEnabled) return;
-							onOpenTerminal?.({ handleId, harness });
+							onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 						}}
 						type="button"
 					>
 						<Terminal aria-hidden="true" />
 						Open terminal
 					</button>
-				) : null}
+				</div>
+			</div>
+			<div className="flex flex-col gap-2">
+				{reviewStates.length === 0 ? <p className="inspector-empty">No review state loaded yet.</p> : null}
+				{reviewStates.map((reviewState) => (
+					<ReviewStateCard key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
+				))}
 			</div>
 		</div>
 	);
 }
 
-function reviewStatus(review?: ReviewRun): {
+function ReviewStateCard({ reviewState }: { reviewState: PRReviewState }) {
+	const status = reviewStateStatus(reviewState);
+	return (
+		<div className={cn("reviewer-card", status.tone && `reviewer-card--${status.tone}`, reviewState.status === "ineligible" && "opacity-70")}>
+			<div className="reviewer-card__top">
+				<div className="reviewer-card__name">
+					<GitPullRequest aria-hidden="true" />
+					<span>PR #{reviewState.prNumber}</span>
+				</div>
+				<span className={cn("reviewer-status", `reviewer-status--${status.tone}`)}>
+					{status.icon}
+					{status.label}
+				</span>
+			</div>
+			<div className="mt-2 min-w-0 truncate font-mono text-[10.5px] text-passive">
+				<a href={reviewState.prUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+					{reviewState.prUrl}
+				</a>
+				{reviewState.targetSha ? <span className="ml-2">{reviewState.targetSha.slice(0, 7)}</span> : null}
+			</div>
+		</div>
+	);
+}
+
+function reviewStateStatus(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 	icon: ReactNode;
 } {
-	if (!review) return { label: "Not run", tone: "neutral", icon: null };
-	if (review.status === "running") {
-		return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
+	switch (reviewState.status) {
+		case "needs_review":
+			return { label: "Needs review", tone: "neutral", icon: null };
+		case "running":
+			return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
+		case "up_to_date":
+			return { label: "Up to date", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
+		case "changes_requested":
+			return { label: "Changes requested", tone: "danger", icon: <CircleMinus aria-hidden="true" /> };
+		case "ineligible":
+			return { label: "Ineligible", tone: "neutral", icon: <AlertCircle aria-hidden="true" /> };
 	}
-	if (review.status === "failed") {
-		return { label: "Failed", tone: "danger", icon: <AlertCircle aria-hidden="true" /> };
-	}
-	if (review.verdict === "approved") {
-		return { label: "Approved", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
-	}
-	if (review.verdict === "changes_requested") {
-		return { label: "Changes requested", tone: "danger", icon: <CircleMinus aria-hidden="true" /> };
-	}
-	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
+	return { label: reviewState.status, tone: "neutral", icon: null };
 }
 
 function BrowserView({
