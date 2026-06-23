@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import {
   parseSessionTag,
+  encodeSessionTag,
   parseCallbackData,
   encodePendingCallback,
   parsePendingCallback,
@@ -14,6 +15,7 @@ import {
   TELEGRAM_BUTTON_LABEL_MAX,
   type CallbackTarget,
 } from "./shared.js";
+import { snapshotReplyCursor, readReplyAfter } from "./reply-reader.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -637,6 +639,11 @@ function releaseListenerLock(path = lockPath()): void {
 // ---------------------------------------------------------------------------
 
 const POLL_TIMEOUT_SEC = 25;
+// While awaiting an orchestrator reply to forward, poll on a short cycle so the
+// answer reaches the chat within a couple of seconds instead of up to 25s.
+const REPLY_POLL_TIMEOUT_SEC = 2;
+// Stop waiting to forward a reply after this long (orchestrator never answered).
+const REPLY_WAIT_MS = 10 * 60_000;
 
 /** Run the inbound listener until the process is signalled. */
 export async function runListener(cfg: TelegramListenerConfig = readTelegramConfig()): Promise<void> {
@@ -662,6 +669,10 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
   // Holds the (session, original-text) behind each fuzzy-choice button until pressed.
   const pending = new PendingChoices();
   const resolvePending = (id: string): CallbackTarget | null => pending.take(id);
+  // Outbound `/orc` replies: after injecting a message into a session, remember
+  // the chat + transcript head so we can forward the orchestrator's answer back.
+  // Keyed by sessionId — a newer inject supersedes an older pending wait.
+  const pendingReplies = new Map<string, { chatId: string; sinceSeq: number; deadlineMs: number }>();
   let running = true;
   const stop = () => {
     running = false;
@@ -677,7 +688,8 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
 
   while (running) {
     try {
-      const res = await fetch(getUpdatesUrl(botToken, offset, POLL_TIMEOUT_SEC));
+      const pollTimeout = pendingReplies.size > 0 ? REPLY_POLL_TIMEOUT_SEC : POLL_TIMEOUT_SEC;
+      const res = await fetch(getUpdatesUrl(botToken, offset, pollTimeout));
       const json = (await res.json()) as { ok: boolean; result?: unknown[]; description?: string };
       if (!json.ok) {
         console.error(`[telegram-listener] getUpdates not ok: ${json.description ?? ""}`);
@@ -705,13 +717,39 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
           continue;
         }
 
+        // Snapshot the transcript head BEFORE delivery so the reply we later
+        // forward is the one THIS message triggers, not an earlier turn.
+        const replyCursor = snapshotReplyCursor(route.sessionId);
         const ok = await sendToSession(route.sessionId, route.value, ao);
         console.error(
           `[telegram-listener] ${ok ? "delivered" : "FAILED"} → ${route.sessionId}: ${route.value.slice(0, 80)}`,
         );
+        if (ok) {
+          pendingReplies.set(route.sessionId, {
+            chatId,
+            sinceSeq: replyCursor,
+            deadlineMs: Date.now() + REPLY_WAIT_MS,
+          });
+        }
         // Acknowledge a button press ("Sent ✅"); the question message itself is
         // kept so the chat preserves the full history of asks and answers.
         if (route.callbackId) await answerCallback(botToken, route.callbackId);
+      }
+
+      // Forward any orchestrator replies that completed since their inject, and
+      // drop waits that have timed out. Runs every poll cycle (short cycle while
+      // a reply is pending — see pollTimeout above). The session tag lets the
+      // human reply in-thread, exactly like a lifecycle notification.
+      for (const [sid, p] of pendingReplies) {
+        const reply = readReplyAfter(sid, p.sinceSeq);
+        if (reply) {
+          await sendMessage(botToken, p.chatId, `${reply}\n\n${encodeSessionTag(sid)}`);
+          pendingReplies.delete(sid);
+          console.error(`[telegram-listener] forwarded reply ← ${sid}`);
+        } else if (Date.now() > p.deadlineMs) {
+          pendingReplies.delete(sid);
+          console.error(`[telegram-listener] gave up waiting for reply ← ${sid}`);
+        }
       }
     } catch (err) {
       // Network blip or aborted long-poll; back off and retry.
