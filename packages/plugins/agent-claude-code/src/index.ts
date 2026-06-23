@@ -1121,6 +1121,20 @@ function createClaudeCodeAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
+      // runtime-sdk parity. The tmux runtime gets the task/model from the launch
+      // command (getLaunchCommand: positional [prompt], --model). The SDK runtime
+      // has no launch command — sdk-host reads these from the environment instead.
+      // Without AO_SDK_INITIAL_PROMPT a spawned SDK session starts idle (host
+      // signals READY but never submits the first turn, so it does no work). The
+      // host defaults permission mode to bypassPermissions (autonomous), matching
+      // AO workers; AO_SDK_RESUME is set by the caller when resuming.
+      if (config.prompt) {
+        env["AO_SDK_INITIAL_PROMPT"] = config.prompt;
+      }
+      if (config.model) {
+        env["AO_SDK_MODEL"] = config.model;
+      }
+
       return env;
     },
 
