@@ -6,20 +6,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ReviewStateStatus is the per-PR review planning state.
-type ReviewStateStatus string
+// StateStatus is the per-PR review planning state.
+type StateStatus string
 
 const (
 	// ReviewStateNeedsReview means an eligible PR has no current AO approval or running pass.
-	ReviewStateNeedsReview ReviewStateStatus = "needs_review"
+	ReviewStateNeedsReview StateStatus = "needs_review"
 	// ReviewStateRunning means a review run is already active for the PR's current head.
-	ReviewStateRunning ReviewStateStatus = "running"
+	ReviewStateRunning StateStatus = "running"
 	// ReviewStateUpToDate means AO approved the PR's current head.
-	ReviewStateUpToDate ReviewStateStatus = "up_to_date"
+	ReviewStateUpToDate StateStatus = "up_to_date"
 	// ReviewStateChangesRequested means AO requested changes on the PR's current head.
-	ReviewStateChangesRequested ReviewStateStatus = "changes_requested"
+	ReviewStateChangesRequested StateStatus = "changes_requested"
 	// ReviewStateIneligible means the PR is draft, closed, merged, or missing required facts.
-	ReviewStateIneligible ReviewStateStatus = "ineligible"
+	ReviewStateIneligible StateStatus = "ineligible"
 )
 
 // PRReviewState is one PR-scoped review decision for a worker session.
@@ -27,7 +27,7 @@ type PRReviewState struct {
 	PRURL     string            `json:"prUrl"`
 	PRNumber  int               `json:"prNumber"`
 	TargetSHA string            `json:"targetSha"`
-	Status    ReviewStateStatus `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	Status    StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
 	LatestRun *domain.ReviewRun `json:"latestRun,omitempty"`
 }
 

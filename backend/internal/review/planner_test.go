@@ -13,7 +13,7 @@ func TestPlanStatuses(t *testing.T) {
 		name string
 		pr   domain.PullRequest
 		runs []domain.ReviewRun
-		want ReviewStateStatus
+		want StateStatus
 	}{
 		{name: "open needs review", pr: planPR("pr1", 1, "sha1"), want: ReviewStateNeedsReview},
 		{name: "draft ineligible", pr: withDraft(planPR("pr1", 1, "sha1")), want: ReviewStateIneligible},
