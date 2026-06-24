@@ -1119,4 +1119,135 @@ describe("restore", () => {
     expect(meta!["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
     expect(meta!["opencodeSessionId"]).toBe("ses_from_post_launch");
   });
+
+  describe("force restore and polling (account-switch recovery)", () => {
+    it("restore(id, true) bypasses isRestorable for a stuck 'working' session", async () => {
+      const wsPath = join(tmpDir, "ws-force-working");
+      mkdirSync(wsPath, { recursive: true });
+
+      // Session appears 'working' and runtime isAlive=true — would normally be rejected
+      const aliveRuntime: Runtime = {
+        ...mockRuntime,
+        isAlive: vi.fn().mockResolvedValue(true),
+        destroy: vi.fn().mockResolvedValue(undefined),
+        create: vi.fn().mockResolvedValue(makeHandle("rt-force-new")),
+      };
+
+      const registry: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return aliveRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-old"),
+      });
+
+      const sm = createSessionManager({ config, registry });
+      // force=true must not throw even though session is 'working' and isAlive=true
+      const restored = await sm.restore("app-1", true);
+      expect(restored.id).toBe("app-1");
+      expect(aliveRuntime.create).toHaveBeenCalled();
+    });
+
+    it("restore(id, false) succeeds after polling when runtime becomes dead", async () => {
+      const wsPath = join(tmpDir, "ws-poll-dead");
+      mkdirSync(wsPath, { recursive: true });
+
+      // isAlive returns true once (stale), then false (host actually dead)
+      const dyingRuntime: Runtime = {
+        ...mockRuntime,
+        isAlive: vi.fn()
+          .mockResolvedValueOnce(true)   // first enrichment: still appears alive
+          .mockResolvedValue(false),      // subsequent polls: host confirmed dead
+        destroy: vi.fn().mockResolvedValue(undefined),
+        create: vi.fn().mockResolvedValue(makeHandle("rt-poll-new")),
+      };
+
+      const registry: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return dyingRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-old"),
+      });
+
+      const sm = createSessionManager({ config, registry });
+      // Without force — polling should detect dead host on second isAlive call
+      const restored = await sm.restore("app-1", false);
+      expect(restored.id).toBe("app-1");
+      expect(dyingRuntime.isAlive).toHaveBeenCalledTimes(2);
+      expect(dyingRuntime.create).toHaveBeenCalled();
+    }, 10_000);
+
+    it("restore(id, false) throws SessionNotRestorableError when host stays alive throughout polling", async () => {
+      const wsPath = join(tmpDir, "ws-poll-alive");
+      mkdirSync(wsPath, { recursive: true });
+
+      // Runtime isAlive always returns true — session is genuinely live
+      const aliveRuntime: Runtime = {
+        ...mockRuntime,
+        isAlive: vi.fn().mockResolvedValue(true),
+      };
+
+      const registry: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return aliveRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: wsPath,
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: makeHandle("rt-old"),
+      });
+
+      const sm = createSessionManager({ config, registry });
+      // Session is genuinely live — should throw even after polling
+      await expect(sm.restore("app-1", false)).rejects.toThrow(SessionNotRestorableError);
+      // isAlive called 1 (initial) + 5 (poll) = 6 times total
+      expect(aliveRuntime.isAlive).toHaveBeenCalledTimes(6);
+    }, 10_000);
+
+    it("restore(id, false) skips polling when no runtimeHandle (can't detect host death)", async () => {
+      // No runtimeHandle → isAlive is never called → polling would be pointless
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        // no runtimeHandle
+      });
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      // Should throw immediately — no polling delay when handle is missing
+      await expect(sm.restore("app-1", false)).rejects.toThrow(SessionNotRestorableError);
+      // isAlive must not have been called (no runtimeHandle)
+      expect(mockRuntime.isAlive).not.toHaveBeenCalled();
+    });
+  });
 });

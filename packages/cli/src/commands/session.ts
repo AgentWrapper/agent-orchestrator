@@ -507,12 +507,16 @@ export function registerSession(program: Command): void {
     .command("restore")
     .description("Restore a terminated/crashed session in-place")
     .argument("<session>", "Session name to restore")
-    .action(async (sessionName: string) => {
+    .option(
+      "--force",
+      "Force restore even if session state appears non-terminal (use after account switch or crash)",
+    )
+    .action(async (sessionName: string, opts: { force?: boolean }) => {
       const config = loadConfig();
       const sm = await getSessionManager(config);
 
       try {
-        const restored = await sm.restore(sessionName);
+        const restored = await sm.restore(sessionName, opts.force === true);
         console.log(chalk.green(`\nSession ${sessionName} restored.`));
         if (restored.workspacePath) {
           console.log(chalk.dim(`  Worktree: ${restored.workspacePath}`));
@@ -525,6 +529,14 @@ export function registerSession(program: Command): void {
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));
+          if (!opts.force) {
+            console.error(
+              chalk.yellow(`\nSession appears stuck (host may be dead after account switch or crash).`),
+            );
+            console.error(
+              chalk.yellow(`Re-run with --force to restore anyway: ao session restore ${sessionName} --force`),
+            );
+          }
         } else if (err instanceof WorkspaceMissingError) {
           console.error(chalk.red(`Workspace missing: ${err.message}`));
         } else {

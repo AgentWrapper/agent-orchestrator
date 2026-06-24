@@ -1978,7 +1978,7 @@ export interface SessionManager {
    * `orchestratorSessionStrategy` — replacement is the whole point.
    */
   relaunchOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
-  restore(sessionId: SessionId): Promise<Session>;
+  restore(sessionId: SessionId, force?: boolean): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;

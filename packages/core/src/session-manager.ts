@@ -3539,7 +3539,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return discovered;
   }
 
-  async function restore(sessionId: SessionId): Promise<Session> {
+  async function restore(sessionId: SessionId, force?: boolean): Promise<Session> {
     // 1. Find session metadata across all projects
     const activeRecord = findSessionRecord(sessionId);
     if (!activeRecord) {
@@ -3582,7 +3582,27 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     await enrichSessionWithRuntimeState(session, plugins, true, sessionsDir);
 
     // 3. Validate restorability
-    if (!isRestorable(session)) {
+    // When force=true the caller (setModel) has already destroyed the host — we
+    // trust it and skip the check, because the runtime process may not have had
+    // time to flush its exit state into the lifecycle events yet.
+    //
+    // Without force: if the session still appears non-restorable after the first
+    // enrichment and it has a runtimeHandle, the host may be mid-shutdown (isAlive
+    // can briefly return true right after the process is killed). Poll up to 5× with
+    // 400 ms gaps so the runtime has time to fully exit and the lifecycle state can
+    // flip to terminal. Sessions without a runtimeHandle can't benefit from polling
+    // (no isAlive check is possible), so we skip the loop for them.
+    if (!force && !isRestorable(session) && session.runtimeHandle) {
+      const POLL_ATTEMPTS = 5;
+      const POLL_INTERVAL_MS = 400;
+      for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+        await enrichSessionWithRuntimeState(session, plugins, true, sessionsDir);
+        if (isRestorable(session)) break;
+      }
+    }
+
+    if (!force && !isRestorable(session)) {
       const reason = NON_RESTORABLE_STATUSES.has(session.status)
         ? `status "${session.status}" is not restorable`
         : `session is not in a terminal state (status: "${session.status}", activity: "${session.activity}")`;
@@ -3942,10 +3962,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     invalidateCache();
 
     // 3. Destroy the live runtime so the host is dead before restore() probes it.
-    //    restore() calls enrichSessionWithRuntimeState → isAlive → false →
-    //    lifecycle.runtime.state = "missing" → isRestorable passes → new host
-    //    boots with AO_SDK_MODEL + AO_SDK_RESUME (conversation preserved).
     //    We deliberately skip kill() to avoid destroying the worktree.
+    //    After destroy() we pass force=true to restore() so the restorability check
+    //    is skipped — the runtime process may not have flushed its exit state to
+    //    the lifecycle events yet, but the host is confirmed dead at this point.
     const runtimeHandleRaw = raw["runtimeHandle"];
     if (runtimeHandleRaw) {
       const handle = safeJsonParse<RuntimeHandle>(runtimeHandleRaw);
@@ -3958,12 +3978,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           } catch {
             // Best-effort — host may already be gone
           }
+          // Give the process a moment to fully exit so the next runtime boot
+          // does not collide with the old one (e.g. same tmux window name).
+          await new Promise<void>((r) => setTimeout(r, 500));
         }
       }
     }
 
-    // 4. Re-start on the new model (conversation preserved via AO_SDK_RESUME)
-    return restore(sessionId);
+    // 4. Re-start on the new model (conversation preserved via AO_SDK_RESUME).
+    //    force=true: skip isRestorable — we just destroyed the host above.
+    return restore(sessionId, true);
   }
 
   return {
