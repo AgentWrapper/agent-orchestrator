@@ -1,7 +1,13 @@
 -- Review runs are PR-scoped. Two PRs in one worker session can legitimately
--- share a head SHA, so the idempotency index must include pr_url.
+-- share a head SHA, so the idempotency index must include pr_url. Runs created
+-- by one trigger also share batch_id so worker feedback can be delivered once
+-- after the whole trigger batch finishes.
 
 -- +goose Up
+-- +goose StatementBegin
+ALTER TABLE review_run ADD COLUMN batch_id TEXT NOT NULL DEFAULT '';
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 DROP INDEX idx_review_run_session_sha;
 -- +goose StatementEnd
@@ -33,7 +39,17 @@ CREATE UNIQUE INDEX idx_review_run_session_pr_sha
     WHERE target_sha != '' AND status != 'failed';
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+CREATE INDEX idx_review_run_session_batch
+    ON review_run (session_id, batch_id, created_at)
+    WHERE batch_id != '';
+-- +goose StatementEnd
+
 -- +goose Down
+-- +goose StatementBegin
+DROP INDEX idx_review_run_session_batch;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 DROP INDEX idx_review_run_session_pr_sha;
 -- +goose StatementEnd
@@ -62,4 +78,8 @@ WHERE target_sha != ''
 CREATE UNIQUE INDEX idx_review_run_session_sha
     ON review_run (session_id, target_sha)
     WHERE target_sha != '' AND status != 'failed';
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+ALTER TABLE review_run DROP COLUMN batch_id;
 -- +goose StatementEnd
