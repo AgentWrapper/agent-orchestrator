@@ -61,24 +61,24 @@ describe("sdkEventLogPath (path contract — keep in sync with runtime-sdk sdkHo
   });
 });
 
-describe("snapshotReplyCursor", () => {
-  it("returns -1 when the event log does not exist", () => {
-    expect(snapshotReplyCursor(SESSION, env)).toBe(-1);
+describe("snapshotReplyCursor (physical-position cursor = event count)", () => {
+  it("returns 0 when the event log does not exist", () => {
+    expect(snapshotReplyCursor(SESSION, env)).toBe(0);
   });
 
-  it("returns the highest seq in the log", () => {
+  it("returns the number of events in the log (resume-proof, unlike seq)", () => {
     writeLog([
       { seq: 0, turn: 1, type: "user", subtype: "input", text: "hi" },
       { seq: 1, turn: 1, type: "text-delta", text: "yo" },
       { seq: 2, turn: 1, type: "result" },
     ]);
-    expect(snapshotReplyCursor(SESSION, env)).toBe(2);
+    expect(snapshotReplyCursor(SESSION, env)).toBe(3);
   });
 });
 
 describe("readReplyAfter", () => {
   it("returns null when there is no event log", () => {
-    expect(readReplyAfter(SESSION, -1, env)).toBeNull();
+    expect(readReplyAfter(SESSION, 0, env)).toBeNull();
   });
 
   it("returns the assistant text of the turn the injected message triggered", () => {
@@ -93,8 +93,8 @@ describe("readReplyAfter", () => {
       { seq: 5, turn: 2, type: "text-delta", text: "green" },
       { seq: 6, turn: 2, type: "result" },
     ]);
-    // Cursor snapshotted right before the inject (head was seq 2).
-    expect(readReplyAfter(SESSION, 2, env)).toBe("all green");
+    // Cursor = event count snapshotted right before the inject (3 prior events).
+    expect(readReplyAfter(SESSION, 3, env)).toBe("all green");
   });
 
   it("does not leak text from a prior (different) turn", () => {
@@ -105,7 +105,7 @@ describe("readReplyAfter", () => {
       { seq: 3, turn: 2, type: "text-delta", text: "fresh reply" },
       { seq: 4, turn: 2, type: "result" },
     ]);
-    const reply = readReplyAfter(SESSION, 1, env);
+    const reply = readReplyAfter(SESSION, 2, env);
     expect(reply).toBe("fresh reply");
     expect(reply).not.toContain("PRIOR");
   });
@@ -116,7 +116,7 @@ describe("readReplyAfter", () => {
       { seq: 1, turn: 1, type: "text-delta", text: "thinking" },
       // no result event for turn 1 yet
     ]);
-    expect(readReplyAfter(SESSION, -1, env)).toBeNull();
+    expect(readReplyAfter(SESSION, 0, env)).toBeNull();
   });
 
   it("returns null when no user/input appears after the cursor", () => {
@@ -126,6 +126,66 @@ describe("readReplyAfter", () => {
       { seq: 2, turn: 1, type: "result" },
     ]);
     // Cursor is already at/after everything — nothing new was injected.
-    expect(readReplyAfter(SESSION, 2, env)).toBeNull();
+    expect(readReplyAfter(SESSION, 3, env)).toBeNull();
+  });
+
+  // --- The actual production bug: seq AND turn reset on every session resume, so
+  // the file is a concatenation of segments where the same seq/turn values recur.
+  // A seq/turn-based reader silently stopped forwarding after the first resume.
+  it("survives a session resume that resets seq and turn (physical-order cursor)", () => {
+    writeLog([
+      // segment 1 (pre-resume): seq/turn already climbed high
+      { seq: 40, turn: 9, type: "user", subtype: "input", text: "earlier" },
+      { seq: 41, turn: 9, type: "text-delta", text: "old answer" },
+      { seq: 42, turn: 9, type: "result" },
+      // cursor snapshotted here = 3 events
+      // resume: seq AND turn reset to low numbers
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+      { seq: 2, turn: 1, type: "user", subtype: "input", text: "status?" },
+      { seq: 3, turn: 1, type: "text-delta", text: "all " },
+      { seq: 4, turn: 1, type: "text-delta", text: "green" },
+      { seq: 5, turn: 1, type: "result" },
+    ]);
+    // The injected message's seq (2) is far below the pre-resume max (42); a
+    // seq-cursor would never see it. The index cursor (3) does.
+    expect(readReplyAfter(SESSION, 3, env)).toBe("all green");
+  });
+
+  it("does not mix replies from a different resume segment with the same turn number", () => {
+    writeLog([
+      { seq: 5, turn: 1, type: "user", subtype: "input", text: "old q" },
+      { seq: 6, turn: 1, type: "text-delta", text: "STALE" },
+      { seq: 7, turn: 1, type: "result" },
+      // resume → turn 1 reused for a different message
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+      { seq: 1, turn: 1, type: "user", subtype: "input", text: "new q" },
+      { seq: 2, turn: 1, type: "text-delta", text: "FRESH" },
+      { seq: 3, turn: 1, type: "result" },
+    ]);
+    const reply = readReplyAfter(SESSION, 3, env);
+    expect(reply).toBe("FRESH");
+    expect(reply).not.toContain("STALE");
+  });
+
+  it("stops at a session boundary and waits when a resume interrupts the reply", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
+      { seq: 1, turn: 1, type: "text-delta", text: "partial" },
+      // resume before the turn produced a result → not complete yet
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBeNull();
+  });
+
+  it("returns the full reply untruncated (the listener chunks long replies)", () => {
+    const big = "x".repeat(9000);
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
+      { seq: 1, turn: 1, type: "text-delta", text: big },
+      { seq: 2, turn: 1, type: "result" },
+    ]);
+    const reply = readReplyAfter(SESSION, 0, env);
+    expect(reply).toBe(big);
+    expect(reply?.length).toBe(9000);
   });
 });
