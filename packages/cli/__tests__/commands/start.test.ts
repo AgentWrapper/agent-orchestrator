@@ -932,15 +932,17 @@ describe("start command — non-interactive install safety", () => {
   it("does not auto-install tmux when missing in non-interactive mode", async () => {
     mockIsHumanCaller.mockReturnValue(false);
 
-    // This test exercises the tmux preflight path, so the config must
-    // explicitly select runtime: tmux (makeConfig defaults to process).
-    // Pin the platform to linux so the Windows branch (which exits before
-    // calling execSilent) doesn't short-circuit the tmux -V check we're
-    // asserting on.
+    // This test exercises the tmux preflight path, so the config must resolve
+    // to runtime: tmux. Use a non-Claude agent with runtime: tmux — the
+    // claude-code agent would resolve to "sdk" (its per-agent default) and skip
+    // the tmux preflight entirely. Pin the platform to linux so the Windows
+    // branch (which exits before calling execSilent) doesn't short-circuit the
+    // tmux -V check we're asserting on.
     const tmuxConfig = makeConfig({ "my-app": makeProject() }) as {
       defaults: Record<string, unknown>;
     };
     tmuxConfig.defaults.runtime = "tmux";
+    tmuxConfig.defaults.agent = "codex";
     mockConfigRef.current = tmuxConfig;
 
     const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
@@ -2056,8 +2058,9 @@ describe("start command — platform-aware runtime fallback", () => {
     expect(tmuxChecks).toHaveLength(0);
   });
 
-  it("calls ensureTmux when config has no runtime and platform is linux", async () => {
-    // Same config without runtime, but on a non-Windows platform.
+  it("does NOT call ensureTmux for a claude-code default on linux (resolves to sdk)", async () => {
+    // No runtime configured + default agent claude-code → runtime resolves to
+    // "sdk" (Claude via the Agent SDK), which needs no tmux.
     const configWithoutRuntime: Record<string, unknown> = {
       configPath: join(tmpDir, "agent-orchestrator.yaml"),
       port: 3000,
@@ -2073,7 +2076,44 @@ describe("start command — platform-aware runtime fallback", () => {
     };
     mockConfigRef.current = configWithoutRuntime;
 
-    // Simulate Linux — getDefaultRuntime() returns "tmux", ensureTmux() must fire.
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+
+    try {
+      await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+
+    // claude-code → sdk → ensureTmux() must NOT have probed for tmux.
+    const tmuxChecks = mockExecSilent.mock.calls.filter(
+      (call) =>
+        String(call[0]) === "tmux" && Array.isArray(call[1]) && (call[1] as string[])[0] === "-V",
+    );
+    expect(tmuxChecks).toHaveLength(0);
+  });
+
+  it("calls ensureTmux for a non-Claude agent with no runtime on linux", async () => {
+    // A non-claude-code agent keeps the platform default (tmux on Linux), so the
+    // tmux preflight still fires.
+    const configWithoutRuntime: Record<string, unknown> = {
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      defaults: {
+        agent: "codex",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: { "my-app": makeProject() },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+    mockConfigRef.current = configWithoutRuntime;
+
+    // Simulate Linux — codex keeps getDefaultRuntime() = "tmux", ensureTmux() must fire.
     const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });
 

@@ -154,6 +154,7 @@ describe("create() factory", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -166,6 +167,7 @@ describe("create() factory", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -178,6 +180,7 @@ describe("create() factory", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -190,6 +193,7 @@ describe("create() factory", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(
@@ -207,6 +211,7 @@ describe("create() factory", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig({ worktreeDir: "/new/v2/worktrees" }));
@@ -221,6 +226,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -259,11 +265,44 @@ describe("workspace.create()", () => {
     );
   });
 
+  it("bases the worktree on the local default branch when it is ahead of origin", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git remote get-url origin
+    mockGitSuccess(""); // git fetch origin --quiet
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main (exists)
+    mockGitSuccess(""); // git merge-base --is-ancestor origin/main refs/heads/main → TRUE (local ahead)
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    // Unpushed-ahead local main: the worktree must branch from the local ref,
+    // not the stale origin/main (base-staleness fix).
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["merge-base", "--is-ancestor", "origin/main", "refs/heads/main"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "refs/heads/main",
+      ],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+  });
+
   it("creates the project worktree directory", async () => {
     const ws = create();
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -281,6 +320,7 @@ describe("workspace.create()", () => {
     mockGitSuccess("worktree /repo/path\nHEAD deadbeef\nbranch refs/heads/main"); // git worktree list --porcelain
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -445,6 +485,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote(false);
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add succeeds
 
     const info = await ws.create(makeCreateConfig());
@@ -497,6 +538,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
@@ -519,6 +561,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
@@ -570,6 +613,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
@@ -594,6 +638,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
@@ -611,6 +656,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitError("fatal: invalid reference"); // worktree add fails with other error
 
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
@@ -655,6 +701,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -672,6 +719,7 @@ describe("workspace.create()", () => {
 
     mockOriginRemote();
     mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
+    mockGitError("local not ahead of origin"); // git merge-base --is-ancestor origin/main refs/heads/main → keep origin
     mockGitSuccess(""); // worktree add
 
     await ws.create(

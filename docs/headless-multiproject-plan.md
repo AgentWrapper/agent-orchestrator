@@ -1,0 +1,257 @@
+# Headless multi-project + развязка от web — план/дизайн
+
+Ветка: `feat/headless-multiproject` (от `main`). Форк `uitlaber/agent-orchestrator`.
+Цель: сделать headless-режим `ao` мульти-проектным (паритет с web-дашбордом по супервизии)
+и развязать/вырезать зависимость от `packages/web`, чтобы нативное macOS-приложение
+Maestro было единственным фронтендом.
+
+Документ отвечает на 4 контрольных вопроса ревью (см. разделы 1–4), затем — шаги
+реализации, тесты и риски.
+
+---
+
+## 0. Итог разведки веток (cherry-pick НЕ нужен)
+
+Указанные ветки (`ashish/feat/final-multi-project`, `feat/multi-project-arch`,
+`ashish/feat/multi-project`, `ashish/feat/multi-dashboard-*`) — это **предшественники
+уже влитой в `main` мульти-проектной архитектуры**. Все они сильно отстают от `main`
+(на 151–750 коммитов, последние коммиты — апрель 2026). На `main` уже есть:
+global registry, content-addressed storage keys, in-process lifecycle,
+`reconcileProjectSupervisor()`, который **итерирует по ВСЕМ проектам**.
+
+Флага `--all` у `ao start` или команды `ao daemon` нет НИ В ОДНОЙ ветке (`--all` там
+только у `ao stop`). Вывод: cherry-pick/rebase этих веток вреден (откатил бы 150+
+коммитов `main`). Делаем **тонкий новый headless-вход на текущем `main`**, переиспользуя
+существующую (уже мульти-проектную) инфраструктуру супервизора.
+
+---
+
+## 1. Точная дельта: что сейчас делает `ao start [--no-dashboard]` и чего не хватает
+
+### Текущий headless-путь (`ao start [project] --no-dashboard`)
+Файл: `packages/cli/src/commands/start.ts`.
+
+1. Резолвит **РОВНО ОДИН** проект через `resolveProject()` (≈196–285):
+   явный арг → единственный проект → совпадение по cwd → интерактивный выбор.
+   Для НЕ-человека при нескольких проектах **бросает** `"Multiple projects configured.
+   Specify which one to start"`. → headless-демона «на все проекты» поднять нельзя.
+2. `runStartup()` (≈858):
+   - `--no-dashboard` **пропускает только блок дашборда** (`if (opts.dashboard !== false)`
+     ≈892–930): поиск свободного порта, `findWebDir()`, `preflight.checkBuilt`,
+     спавн `dist-server/start-all.js`. **Это единственное место, тянущее web.**
+   - `ensureOrchestrator({ projectId })` — создаёт/восстанавливает оркестратор-сессию
+     **только для одного резолвнутого проекта**.
+   - `startProjectSupervisor({ configPath })` (≈974–1000) — **уже глобальный**:
+     `reconcileProjectSupervisor()` грузит global config и проходит по ВСЕМ проектам,
+     навешивая lifecycle-воркер каждому проекту, у которого есть НЕ-терминальная сессия,
+     и снимая воркеры с удалённых проектов.
+3. `register()` пишет `~/.agent-orchestrator/running.json` (pid, port, projects).
+4. Процесс остаётся живым, потому что у резолвнутого проекта появилась активная
+   сессия → супервизор навесил lifecycle-воркер, чей `setInterval` **ref'd** (не unref)
+   и держит event loop (`packages/core/src/lifecycle-manager.ts:3258`).
+
+### Чего НЕ хватает для «headless супервизит ВСЕ проекты»
+- **Вход**: нельзя стартовать без резолва одного проекта (шаг 1 бросает на нескольких).
+- **Семантика «все»**: супервизор уже мульти-проектный, НО навешивает воркеры только
+  проектам с активной сессией. Это и есть паритет с web (дашборд-сервер сам оркестраторов
+  не плодит — их спавнят по запросу). Значит «супервизировать все» = держать живой демон
+  с глобальным супервизором; фронтенд (Maestro) спавнит оркестраторы по требованию через
+  `ao start <id>` (путь attach уже работает против живого демона).
+- **Keep-alive при нуле сессий**: если на старте ни у одного проекта нет сессии, воркеров
+  нет, а таймер самого супервизора **unref'd** (`project-supervisor.ts:221`) — процесс
+  может тут же выйти. Нужен явный keep-alive в режиме демона.
+
+### Минимальное изменение
+1. `startProjectSupervisor()` — добавить опцию `keepProcessAlive?: boolean`; при `true`
+   **не** вызывать `timer.unref()`. Демон живёт за счёт супервизора даже без сессий.
+   (Default `false` → поведение не меняется.)
+2. `ao start` — добавить флаг `--all`. При `--all` уходим в новую функцию
+   `runHeadlessSupervisor()` ДО однопроектного резолва:
+   - грузит global config (все проекты), дашборд не трогает вообще;
+   - `runtimePreflight` + shutdown-хендлеры (projectId опционален);
+   - `startProjectSupervisor({ configPath, keepProcessAlive: true })` — реконсайл ВСЕХ;
+   - `register({ projects: listLifecycleWorkers() })`, `startBunTmpJanitor`;
+   - печатает headless-сводку (без URL дашборда; список супервизируемых проектов;
+     подсказка `ao session attach <id>`).
+   - **Опц. флаг `--orchestrate-all`** (по умолчанию ВЫКЛ): дополнительно `ensureOrchestrator`
+     для КАЖДОГО проекта на старте — буквальная трактовка «каждый проект получает
+     оркестратор-сессию». ⚠️ Ambiguity — см. §6.A, нужно подтверждение ревью.
+3. `ao daemon` — тонкий **алиас-команда** = `ao start --all --no-dashboard`, общий код
+   через `runHeadlessSupervisor()`. Это стабильный контракт для Maestro (см. §4).
+
+---
+
+## 2. Развязка и вырезание web (рекомендация)
+
+### Текущая связность с web
+- **Единственное package-ребро**: `packages/cli/package.json` → `"@aoagents/ao-web": "workspace:*"`.
+  Цепочка глобального инстолла: `@aoagents/ao` → `@aoagents/ao-cli` → `@aoagents/ao-web`.
+  (`packages/ao` зависит ТОЛЬКО от cli; `packages/core` web НЕ импортирует — лишь строковые
+  упоминания в `update-cache.ts`/`daemon-children.ts` для резолва пути и матчинга процессов.)
+- **Статических импортов** `@aoagents/ao-web` в `packages/cli/src` НЕТ (проверено grep).
+  Web резолвится только **в рантайме** в `findWebDir()` (`lib/web-dir.ts`,
+  `require.resolve`) и вызывается ИСКЛЮЧИТЕЛЬНО на dashboard-пути.
+- Скрипты: тесты уже исключают web (`pnpm -r --filter '!@aoagents/ao-web' test`);
+  `build` = `pnpm -r build` (собирает и web); `dev` = web.
+
+### Рекомендация: ИСКЛЮЧЕНИЕ (option b), не физическое удаление (option a)
+Пользователь хочет web «вырезать». Безопасный способ, реально достигающий цели «движок
+не тянет web и собирается/работает без web», но без поломок и без ада merge-конфликтов:
+
+**Почему НЕ полное удаление сейчас:** мы — форк, который **синкается с upstream**
+(`AgentWrapper`). Физическое удаление `packages/web` (+ web-server) даст постоянные
+тяжёлые конфликты на каждом `merge upstream/main` и сломает `ao dashboard` для всех
+не-Maestro сценариев. Стратегически удаление возможно (Maestro — единственный фронт),
+но как отдельный осознанный шаг, а не внутри этого PR.
+
+**Что делаем в этом PR (реальный «cut» движка от web):**
+1. Убрать ребро `@aoagents/ao-cli → @aoagents/ao-web` из `packages/cli/package.json`.
+   → глобальный инстолл движка больше НЕ тянет дашборд.
+2. headless-вход (`runHeadlessSupervisor`) гарантированно НЕ вызывает `findWebDir`/web —
+   докажем тестом (§5).
+3. Дашборд становится **опциональным**: `ao dashboard` и `ao start` (с дашбордом) работают
+   только если web присутствует и собран; `findWebDir()` уже бросает понятную ошибку при
+   отсутствии. Деградация мягкая, остальная сборка цела.
+4. Исключить web из дефолтного `build`/`dev` (фильтр `'!@aoagents/ao-web'`), чтобы движок
+   собирался без web. Сам каталог `packages/web` остаётся в дереве (для upstream-merge и
+   для тех, кому нужен дашборд), но вне дефолтного пайплайна движка.
+5. Задокументировать **точный механический follow-up для полного физического удаления**
+   (что удалить: `packages/web`, web-server, `ao dashboard` команду, `lib/web-dir.ts`,
+   `lib/dashboard-rebuild.ts`, dashboard-блок в `start.ts`) — если команда решит
+   окончательно разойтись с upstream.
+
+**Подтверждение по headless без web:** headless-вход не содержит ни одного web-импорта
+(статически — ноль; рантайм `findWebDir` — только dashboard-путь, в `--all`/`daemon` не
+достижим). После п.1 пакет cli и движок не зависят от web ни на сборке, ни в рантайме.
+
+> Если ревью настаивает на **физическом удалении прямо сейчас** — готов реализовать
+> option (a) вместо (b) (см. §6.B).
+
+---
+
+## 3. Обратная совместимость
+
+- `ao start [project]` и `ao start [project] --no-dashboard` **без `--all`** — путь
+  не меняется (тот же `resolveProject` → `runStartup`). Одно-проектное поведение 1:1.
+- Новый код активируется ТОЛЬКО при `--all` (или команде `ao daemon`).
+- `startProjectSupervisor` без новой опции ведёт себя как раньше (timer unref'd).
+- `ao stop` / `ao stop --all` / attach-путь (`ao start <id>` против живого демона) — без
+  изменений; demon, поднятый через `--all`, корректно регистрируется в `running.json`,
+  поэтому attach и `ao stop` работают как обычно.
+
+---
+
+## 4. Как Maestro запускает новый режим (стабильный контракт)
+
+**Рекомендованная команда для Maestro:**
+
+```
+ao daemon
+```
+
+эквивалент `ao start --all --no-dashboard`. Семантика (стабильна, задокументирована):
+- супервизирует ВСЕ настроенные проекты (global config), без дашборда, без браузера;
+- долгоживущий процесс (держится супервизором), регистрируется в `running.json`;
+- сессии оркестраторов спавнятся по требованию (Maestro → `ao start <projectId>` attach),
+  супервизор подхватывает их lifecycle в течение ~60с — как через web-путь.
+
+⚠️ Семантика `running.json`: поле `projects` отражает **АКТИВНЫЕ** проекты (у кого сейчас
+есть lifecycle-воркер / не-терминальная сессия), а НЕ все супервизируемые/сконфигурированные:
+при нуле сессий там `[]`, хотя демон супервизирует все проекты из config. Поэтому Maestro
+должен перечислять проекты из **config** (global registry), а `running.projects` читать лишь
+как «у кого сейчас живые сессии». Поле `port` в headless рудиментарное — HTTP-листенера нет,
+не считать его адресом дашборда.
+
+Будущая правка `maestro-mac/app/Sources/Maestro/Data/AOEngineClient.swift` (НЕ в этой
+сессии): заменить запуск `ao start --no-dashboard` на `ao daemon`. Тривиально — меняется
+строка аргументов; всё остальное (чтение `~/.agent-orchestrator/`, tmux) без изменений.
+
+(Эквивалентный флаг `ao start --all --no-dashboard` остаётся доступен для тех, кто
+предпочитает расширение существующей команды.)
+
+---
+
+## 5. Тесты + сборка (что докажем)
+
+Зелёные в worktree форка: `pnpm build` (движок без web), `pnpm lint`, `pnpm test`
+(реальный демон НЕ запускаем).
+
+1. **Мульти-проектная headless-супервизия** (`packages/cli/src/**/__tests__`):
+   юнит-тест на `runHeadlessSupervisor()` / `startProjectSupervisor`: при 2+ проектах
+   с активными сессиями реконсайл навешивает lifecycle-воркеры на ВСЕ такие проекты
+   (`listLifecycleWorkers()` содержит все), регистрирует их в `running.json`, дашборд не
+   стартует, `findWebDir` не вызывается. Существующие тесты супервизора переиспользуем.
+2. **`keepProcessAlive`**: тест, что при `true` таймер супервизора не unref'd
+   (процесс не «умирает» без сессий) — через мок таймеров.
+3. **Headless без web**: тест, что headless-путь не резолвит `@aoagents/ao-web`
+   (мок `findWebDir`, который бросает → headless-старт всё равно успешен), + проверка,
+   что `packages/cli` собирается/типчекается без web в графе зависимостей.
+4. Адаптировать существующие тесты `start`/`stop`/supervisor под новые опции (без
+   регрессий одно-проектного пути).
+
+---
+
+## 6. Неоднозначности — выносим явно (нужно «добро» ревью)
+
+**A. Авто-спавн оркестраторов для всех проектов на старте демона.**
+Бриф: «каждый проект получал оркестратор-сессию». Web-дашборд-сервер оркестраторов сам НЕ
+плодит (их открывает пользователь). Предлагаю **по умолчанию НЕ авто-спавнить** (паритет
+с web + то, что нужно Maestro: спавн по требованию), а дать **opt-in `--orchestrate-all`**
+для буквальной трактовки. → Подтвердите дефолт.
+
+**B. Глубина вырезания web.** Рекомендую **исключение** (§2, option b) в этом PR +
+документированный follow-up на полное удаление. Если нужно **физическое удаление сейчас**
+(option a) — скажите, реализую вместо (b).
+
+**C. Имя контракта для Maestro.** Рекомендую команду `ao daemon` (стабильнее флага).
+Альтернатива — только флаг `ao start --all --no-dashboard`. → Подтвердите.
+
+---
+
+## 7. Порядок реализации (после «добро»)
+1. `keepProcessAlive` в `startProjectSupervisor`.
+2. `runHeadlessSupervisor()` + флаг `--all` в `ao start`.
+3. Команда-алиас `ao daemon`.
+4. Развязка web: убрать ребро cli→web, исключить web из build/dev, мягкая деградация.
+5. Тесты (§5) + зелёные `pnpm build/lint/test` в worktree.
+6. `ao report ready-for-review`.
+
+---
+
+## Приложение A. Точный follow-up для ПОЛНОГО физического удаления `packages/web`
+
+Решение по этому PR — **исключение** (§2, option b), web НЕ удаляется физически.
+Ниже — точный механический чек-лист, если команда позже решит окончательно
+разойтись с upstream и вырезать дашборд целиком. Делать отдельным PR.
+
+**Удалить каталоги:**
+- `packages/web/` (Next.js-приложение + `packages/web/server/` — там же бывший HTTP REST API).
+- (Оценить) `packages/plugins/terminal-web/` — провайдер web-терминала для дашборда; если
+  никто, кроме дашборда, его не использует — удалить и снять из зависимостей/реестра cli.
+
+**Файлы CLI:**
+- `packages/cli/src/commands/dashboard.ts` + снять `registerDashboard` из `program.ts`.
+- `packages/cli/src/lib/dashboard-rebuild.ts` (кэш/ребилд дашборда).
+- `packages/cli/src/lib/dashboard-url.ts` — но `dashboardUrl()` используется в сводке
+  `runStartup` и в attach-пути (`attachAndSpawnOrchestrator`); сначала заменить вызовы.
+- `packages/cli/src/lib/web-dir.ts` — **НЕ удалять целиком**: `isPortAvailable`,
+  `findFreePort`, `openUrl`, `waitForPortAndOpen` используются вне дашборда. Удалить только
+  web-специфичные `findWebDir`/`buildDashboardEnv` (и `MAX_PORT_SCAN`/`findAvailablePortPair`
+  при необходимости пересмотреть).
+- В `runStartup` (`start.ts`) убрать блок старта дашборда (`if (opts.dashboard !== false)`)
+  и связанные опции `--rebuild`/`--dev`/`--no-dashboard` (или оставить `--no-dashboard`
+  как no-op для совместимости). Проверить `ao open` на ссылки на дашборд.
+
+**Core (строковые упоминания, безопасны, но для чистоты):**
+- `packages/core/src/update-cache.ts` — резолв `@aoagents/ao-web` для dev-режима.
+- `packages/core/src/daemon-children.ts` — матчинг имён процессов дашборда (можно оставить,
+  чтобы продолжать подметать легаси-дашборды).
+
+**Корневой `package.json`:**
+- Удалить `build:dashboard`, `dev:dashboard`; вернуть `build` к `pnpm -r build`
+  (после удаления web фильтр `'!@aoagents/ao-web'` не нужен); проверить `test`/`release`.
+- Удалить devDep `@next/eslint-plugin-next` (нужен только web) и web-специфичные настройки
+  в `eslint.config.js`.
+
+**Прочее:** `pnpm-workspace.yaml` менять не нужно (web уходит вместе с каталогом из
+`packages/*`); прогнать `pnpm install`, `pnpm build`, `pnpm lint`, `pnpm test`.

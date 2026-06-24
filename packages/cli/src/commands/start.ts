@@ -79,6 +79,7 @@ import {
 } from "../lib/running-state.js";
 import { attachToDaemon, killExistingDaemon } from "../lib/daemon.js";
 import { startProjectSupervisor } from "../lib/project-supervisor.js";
+import { runHeadlessSupervisor } from "../lib/headless-supervisor.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import {
@@ -1421,6 +1422,30 @@ async function attachAndSpawnOrchestrator(opts: {
 // COMMAND REGISTRATION
 // =============================================================================
 
+/**
+ * `ao daemon` — stable, named entry point for the headless multi-project
+ * supervisor. Equivalent to `ao start --all --no-dashboard`. This is the
+ * command native front-ends (e.g. Maestro) should launch.
+ */
+export function registerDaemon(program: Command): void {
+  program
+    .command("daemon")
+    .description(
+      "Run a headless supervisor for ALL configured projects (no dashboard) — stable entry point for native front-ends like Maestro; equivalent to `ao start --all --no-dashboard`",
+    )
+    .option(
+      "--orchestrate-all",
+      "Also ensure an orchestrator session for every configured project at startup",
+    )
+    .option("--reap-orphans", "Kill orphaned AO child processes before starting")
+    .action(async (opts?: { orchestrateAll?: boolean; reapOrphans?: boolean }) => {
+      await runHeadlessSupervisor({
+        orchestrateAll: opts?.orchestrateAll === true,
+        reapOrphans: opts?.reapOrphans === true,
+      });
+    });
+}
+
 export function registerStart(program: Command): void {
   program
     .command("start [project]")
@@ -1429,6 +1454,14 @@ export function registerStart(program: Command): void {
     )
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
+    .option(
+      "--all",
+      "Headless: supervise ALL configured projects (no dashboard, no single-project resolution). Same as `ao daemon`.",
+    )
+    .option(
+      "--orchestrate-all",
+      "With --all: also ensure an orchestrator session for every configured project at startup",
+    )
     .option("--rebuild", "Clean and rebuild dashboard before starting")
     .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
     .option("--interactive", "Prompt to configure config settings")
@@ -1441,6 +1474,8 @@ export function registerStart(program: Command): void {
         opts?: {
           dashboard?: boolean;
           orchestrator?: boolean;
+          all?: boolean;
+          orchestrateAll?: boolean;
           rebuild?: boolean;
           dev?: boolean;
           interactive?: boolean;
@@ -1448,6 +1483,18 @@ export function registerStart(program: Command): void {
           restore?: boolean;
         },
       ) => {
+        // Headless multi-project daemon: `ao start --all` supervises every
+        // configured project without a dashboard, delegating to the shared
+        // headless path (also backs `ao daemon`). Implies --no-dashboard and
+        // ignores single-project resolution.
+        if (opts?.all) {
+          await runHeadlessSupervisor({
+            orchestrateAll: opts.orchestrateAll === true,
+            reapOrphans: opts.reapOrphans === true,
+          });
+          return;
+        }
+
         recordActivityEvent({
           source: "cli",
           kind: "cli.start_invoked",

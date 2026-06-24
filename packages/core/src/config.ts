@@ -351,6 +351,31 @@ const LifecycleConfigSchema = z
           "mergeCleanupIdleGraceMs is in milliseconds; values between 1 and 9999 are likely a units mistake (use 0 to disable the gate, or e.g. 10000 for 10s, 300000 for 5min)",
       })
       .default(300_000),
+    /**
+     * Auto-retire idle WORKER sessions (never orchestrators) whose streaming
+     * host finished its turn cleanly and has sat idle past the grace window with
+     * a clean worktree. Reaps the node host (frees RAM) and moves the card to
+     * Done, so the board self-clears without a manual `ao session kill`.
+     * Orchestrators are never retired here — they persist/restore. Defaults to
+     * true.
+     */
+    autoRetireIdleWorkers: z.boolean().default(true),
+    /**
+     * Minimum time (ms) a worker must stay idle after finishing its turn before
+     * auto-retire reaps it. The window lets the orchestrator deliver a follow-up
+     * turn (review feedback, fixes) before teardown. Defaults to 2 minutes. Use
+     * `0` to retire as soon as idleness is observed. Values between 1 and 9999
+     * are rejected to catch the common seconds-for-milliseconds mistake.
+     */
+    workerIdleRetireGraceMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .refine((v) => v === 0 || v >= 10_000, {
+        message:
+          "workerIdleRetireGraceMs is in milliseconds; values between 1 and 9999 are likely a units mistake (use 0 to disable the gate, or e.g. 10000 for 10s, 120000 for 2min)",
+      })
+      .default(120_000),
   })
   .default({});
 
@@ -363,6 +388,10 @@ const OrchestratorConfigSchema = z.object({
   power: PowerConfigSchema,
   lifecycle: LifecycleConfigSchema,
   observability: ObservabilityConfigSchema,
+  // Default model alias for WORKER sessions (e.g. "opus" | "sonnet" | "haiku",
+  // or a full model id). Lenient string: aliases are expected, but full ids are
+  // also valid since the SDK/CLI accept both. Empty/undefined = account default.
+  defaultWorkerModel: z.string().optional(),
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   dashboard: DashboardConfigSchema.optional(),
@@ -854,6 +883,7 @@ function buildEffectiveConfigFromFlatLocalPath(
     directTerminalPort: globalConfig.directTerminalPort,
     readyThresholdMs: globalConfig.readyThresholdMs,
     observability: globalConfig.observability,
+    defaultWorkerModel: globalConfig.defaultWorkerModel,
     defaults: globalConfig.defaults,
     notifiers: globalConfig.notifiers,
     notificationRouting: globalConfig.notificationRouting,
@@ -906,6 +936,7 @@ function buildEffectiveConfigFromGlobalConfigPath(configPath: string): LoadedCon
     directTerminalPort: globalConfig.directTerminalPort,
     readyThresholdMs: globalConfig.readyThresholdMs,
     observability: globalConfig.observability,
+    defaultWorkerModel: globalConfig.defaultWorkerModel,
     defaults: globalConfig.defaults,
     notifiers: globalConfig.notifiers,
     notificationRouting: globalConfig.notificationRouting,

@@ -18,6 +18,17 @@ import {
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
 
+// Submit verify-and-retry tuning. A busy / mid-turn agent sometimes swallows
+// the Enter that should submit a sent message, leaving the text stuck in the
+// input composer so the recipient never processes it. After the first Enter we
+// re-check the composer and re-press Enter only while our text is still sitting
+// there. Bounded so the whole verify loop stays under ~2s (well within budget)
+// and never hangs the caller.
+const SUBMIT_VERIFY_DELAY_MS = 600; // wait for the TUI to redraw between submit attempts
+const SUBMIT_MAX_RETRIES = 3; // extra Enter presses if the composer stays stuck
+const COMPOSER_TAIL_LINES = 10; // bottom rows of the visible pane treated as the composer
+const SIGNATURE_MAX_LEN = 80; // cap on the message fingerprint we look for
+
 export const manifest = {
   name: "tmux",
   slot: "runtime" as const,
@@ -65,6 +76,50 @@ async function tmux(...args: string[]): Promise<string> {
     timeout: TMUX_COMMAND_TIMEOUT_MS,
   });
   return stdout.trimEnd();
+}
+
+/**
+ * Distinctive fingerprint of a sent message used to detect whether it is still
+ * sitting in the agent's input composer. Whitespace (including newlines) is
+ * collapsed so text wrapped across composer rows still matches, and the length
+ * is capped so a very long paste doesn't depend on the whole body being visible
+ * at once. Returns "" for whitespace-only messages (nothing to verify).
+ */
+function inputSignature(message: string): string {
+  return message.replace(/\s+/g, " ").trim().slice(0, SIGNATURE_MAX_LEN);
+}
+
+type ComposerProbe = "gone" | "present" | "unreadable";
+
+/**
+ * Tri-state probe of whether a sent message has left the input composer.
+ * Reads only the *visible* pane — never the scrollback — so a copy of the
+ * message that scrolled up into the conversation history does not count as
+ * "still in the composer".
+ *
+ * - "gone"       — the signature is no longer in the composer (Enter submitted it).
+ * - "present"    — the signature is still sitting in the composer (Enter swallowed).
+ * - "unreadable" — the pane could not be captured, so submission is unknown.
+ *
+ * The caller distinguishes "present" (re-press Enter) from "unreadable" (retry
+ * the capture, never blind-press) so an un-submittable message fails loudly
+ * instead of being silently treated as delivered. The previous version returned
+ * "submitted" on a capture failure, which silently dropped tasks whose delivery
+ * could not be confirmed.
+ */
+async function probeComposer(handle: RuntimeHandle, signature: string): Promise<ComposerProbe> {
+  let pane: string;
+  try {
+    pane = await tmux("capture-pane", "-t", handle.id, "-p");
+  } catch {
+    return "unreadable";
+  }
+  const composer = pane
+    .split("\n")
+    .slice(-COMPOSER_TAIL_LINES)
+    .join(" ")
+    .replace(/\s+/g, " ");
+  return composer.includes(signature) ? "present" : "gone";
 }
 
 export function create(): Runtime {
@@ -184,9 +239,53 @@ export function create(): Runtime {
       }
 
       // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
+      // Without this, Enter can arrive before the text is fully rendered. For
+      // the buffer path this also lets a large paste finish landing in the
+      // composer before we submit.
       await sleep(300);
       await tmux("send-keys", "-t", handle.id, "Enter");
+
+      // Verify the submit and retry if the text got stuck in the composer.
+      // A busy / mid-turn agent sometimes swallows the first Enter, leaving the
+      // message un-submitted so the recipient never processes it. Re-check the
+      // composer and re-press Enter only while our text is still visible there,
+      // so a message that already went through never gets a duplicate (empty)
+      // submit. Bounded by SUBMIT_MAX_RETRIES so a genuinely stuck pane can't
+      // hang the caller.
+      const signature = inputSignature(message);
+      if (!signature) return; // whitespace-only message — nothing to verify
+
+      let lastProbe: ComposerProbe = "unreadable";
+      for (let attempt = 0; attempt < SUBMIT_MAX_RETRIES; attempt++) {
+        await sleep(SUBMIT_VERIFY_DELAY_MS);
+        lastProbe = await probeComposer(handle, signature);
+        if (lastProbe === "gone") return; // confirmed submitted
+        // Only re-press Enter while the text is provably still in the composer.
+        // On "unreadable" we retry the capture instead of blind-pressing, so a
+        // message that already went through never gets a duplicate empty submit.
+        if (lastProbe === "present") {
+          await tmux("send-keys", "-t", handle.id, "Enter");
+        }
+      }
+
+      // Delivery could not be confirmed within the retry budget. Fail loud
+      // instead of silently treating an un-submitted (or unverifiable) message
+      // as delivered: a dropped task is worse than a surfaced error. Callers
+      // that can tolerate an unconfirmable send (sendToSession) catch this and
+      // fall back to their own output-based confirmation.
+      throw new Error(
+        lastProbe === "present"
+          ? `tmux: message to "${handle.id}" stayed in the composer after ${SUBMIT_MAX_RETRIES} submit attempts (not delivered)`
+          : `tmux: could not confirm message delivery to "${handle.id}" (pane unreadable)`,
+      );
+    },
+
+    async sendKeys(handle: RuntimeHandle, keys: string[]): Promise<void> {
+      if (keys.length === 0) return;
+      // No -l: tmux interprets key names ("Enter", "Down", "C-c"). Unlike
+      // sendMessage() this sends nothing else — no C-u clear, no extra Enter —
+      // so it answers a TUI selector without disturbing the selection.
+      await tmux("send-keys", "-t", handle.id, ...keys);
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {

@@ -10,8 +10,10 @@
   "packageManager": "pnpm@9.15.4",
   "type": "module",
   "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm --filter @aoagents/ao-web dev",
+    "build": "pnpm -r --filter '!@aoagents/ao-web' build",
+    "build:dashboard": "pnpm --filter @aoagents/ao-web build",
+    "dev": "pnpm --filter @aoagents/ao-cli dev",
+    "dev:dashboard": "pnpm --filter @aoagents/ao-web dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

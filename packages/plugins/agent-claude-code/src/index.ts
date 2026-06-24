@@ -659,6 +659,275 @@ process.exit(0);
 `;
 
 // =============================================================================
+// Orchestrator Discipline Hook Scripts (Maestro — fresh-install parity)
+// =============================================================================
+//
+// Three PreToolUse hooks that keep the orchestrator/worker discipline working on
+// ANY machine, not just the developer's ~/.claude. They are written into every
+// per-session .claude/ (like the activity/metadata updaters) and self-gate so
+// they only act inside an AO *orchestrator* worktree (.../worktrees/<name>-orchestrator)
+// — workers, the user's own Claude session, and the source repos are never touched.
+//
+// They are Node (.cjs), not bash: Node is a hard runtime dependency of Claude
+// Code (see ACTIVITY_UPDATER_SCRIPT) while `jq` is not, so a Node port enforces
+// the discipline on a fresh install with exact JSON parsing, zero `jq` reliance,
+// and one variant per platform. The hook command is
+// `node "$CLAUDE_PROJECT_DIR/.claude/<name>.cjs"` (same shape as the Windows
+// activity-updater), so it resolves correctly from any sub-cwd and needs no
+// engine-relative path lookup. Each always exits 0 (allow) unless it emits a deny.
+
+/**
+ * PreToolUse(Edit|Write) — block the orchestrator from editing SOURCE inline,
+ * forcing it to delegate to a worker. Portable Node port of
+ * orchestrator-no-inline-code.sh. Exported for testing.
+ */
+export const ORCHESTRATOR_NO_INLINE_CODE_SCRIPT = `#!/usr/bin/env node
+// PreToolUse (Edit|Write) — ENFORCE the orchestrator pattern: orchestrators
+// coordinate + delegate; they must NOT edit source code inline. Workers
+// implement. Portable Node port of orchestrator-no-inline-code.sh (no jq; exact
+// JSON parse; cross-platform). Fires only when the SESSION cwd is an AO
+// orchestrator worktree (.../worktrees/<name>-orchestrator) AND the edit target
+// is a source file. Everything else (.md/.yaml/.json/.sh, scratchpad, .claude,
+// .maestro, every WORKER worktree) is always allowed.
+const fs = require("node:fs");
+const path = require("node:path");
+
+let payload = {};
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf-8") || "{}");
+} catch {
+  process.exit(0);
+}
+
+const cwd =
+  (typeof payload.cwd === "string" && payload.cwd) ||
+  process.env.CLAUDE_PROJECT_DIR ||
+  process.cwd();
+
+// Scope: ONLY AO-managed agent sessions, which always run inside a per-session
+// worktree (.../worktrees/<name>). The user's own session and the source repos
+// run elsewhere — never block those.
+if (!cwd.includes("/worktrees/")) process.exit(0);
+// Within AO worktrees, enforce ONLY on the orchestrator (basename ends in
+// "-orchestrator"). Workers implement, so they are always allowed.
+if (!path.basename(cwd).endsWith("-orchestrator")) process.exit(0);
+
+const fp =
+  payload.tool_input && typeof payload.tool_input.file_path === "string"
+    ? payload.tool_input.file_path
+    : "";
+if (!fp) process.exit(0);
+
+// Always-allowed locations (ops, scratch, config, hooks themselves).
+if (
+  fp.includes("/scratchpad/") ||
+  fp.includes("/.claude/") ||
+  fp.includes("/.maestro/")
+) {
+  process.exit(0);
+}
+
+// Block real source code → force delegation.
+const SOURCE_EXTS = [".swift", ".ts", ".tsx", ".rs", ".js", ".jsx", ".mjs", ".go"];
+if (SOURCE_EXTS.some((ext) => fp.endsWith(ext))) {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason:
+          "Orchestrators must DELEGATE code work to a visible worker (ao spawn / ao send) — do not edit source inline. Scope the change, spawn a worker, then review + merge its branch. (Ops files .md/.yaml/.json/.sh and the scratchpad are still editable.)",
+      },
+    }),
+  );
+}
+process.exit(0);
+`;
+
+/**
+ * PreToolUse(Bash) — block the orchestrator from writing/reverting SOURCE via the
+ * shell (git checkout/restore, sed -i, redirect/tee into a source file). Portable
+ * Node port of orchestrator-no-source-shell.sh. Exported for testing.
+ */
+export const ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT = `#!/usr/bin/env node
+// PreToolUse (Bash) — close the loophole: orchestrators must NOT touch source
+// CODE via the shell. Complements orchestrator-no-inline-code (Edit/Write only).
+// Portable Node port of orchestrator-no-source-shell.sh (no jq). Blocks, for
+// ORCHESTRATOR worktrees only: git checkout/restore of a source file, sed -i on
+// a source file, and shell redirect ( > / >> ) or tee into a source file.
+// ALLOWED: git merge/commit/log/show/diff/status, grep/cat reads, and ALL
+// non-source files. Workers untouched.
+const fs = require("node:fs");
+const path = require("node:path");
+
+let payload = {};
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf-8") || "{}");
+} catch {
+  process.exit(0);
+}
+
+const cwd =
+  (typeof payload.cwd === "string" && payload.cwd) ||
+  process.env.CLAUDE_PROJECT_DIR ||
+  process.cwd();
+if (!cwd.includes("/worktrees/")) process.exit(0);
+if (!path.basename(cwd).endsWith("-orchestrator")) process.exit(0);
+
+const cmd =
+  payload.tool_input && typeof payload.tool_input.command === "string"
+    ? payload.tool_input.command
+    : "";
+if (!cmd) process.exit(0);
+
+// A source-file reference: a dot + known code extension at a word boundary.
+const SRC = /\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/;
+
+function deny(what) {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason:
+          "Orchestrators must DELEGATE code — no writing/reverting SOURCE via shell (" +
+          what +
+          "). git merge/commit/log/show/diff + reads are fine; code changes (incl. file-level reverts) go to a worker (ao spawn / ao send) or are done by merging a worker branch. (.md/.yaml/.json/.sh + scratchpad still ok.)",
+      },
+    }),
+  );
+  process.exit(0);
+}
+
+// git checkout/restore of a source file (file-level) — NOT a branch checkout.
+if (/\\bgit\\s+(checkout|restore)\\b/.test(cmd) && SRC.test(cmd)) {
+  deny("git checkout/restore of source");
+}
+// sed -i editing a source file.
+if (/\\bsed\\s+-i/.test(cmd) && SRC.test(cmd)) {
+  deny("sed -i on source");
+}
+// redirect ( > / >> ) writing a source file.
+if (/>>?\\s*[^\\s|;&<>]*\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/.test(cmd)) {
+  deny("redirect into source");
+}
+// tee writing a source file.
+if (/tee\\s+[^|]*\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/.test(cmd)) {
+  deny("tee into source");
+}
+process.exit(0);
+`;
+
+/**
+ * PreToolUse(Bash) on `ao spawn` — query rlm (maestro-search) over past/deleted
+ * agent transcripts and surface the top snippets as additionalContext so the
+ * orchestrator seeds the new worker with prior context. Portable Node port of
+ * pre-spawn-rlm.sh with NO hardcoded binary path. NON-BLOCKING. Exported for testing.
+ */
+export const PRE_SPAWN_RLM_SCRIPT = `#!/usr/bin/env node
+// PreToolUse (Bash) — before an 'ao spawn', query rlm (maestro-search) over past/
+// deleted-agent transcripts and surface the top prior-context snippets as
+// additionalContext, so the orchestrator seeds the new worker with what was
+// learned before. NON-BLOCKING: always allows the spawn; any error → silent
+// exit 0. Portable Node port of pre-spawn-rlm.sh with NO hardcoded binary path:
+// resolve order is MAESTRO_SEARCH_BIN env → PATH → Maestro.app bundle → ~/.local/bin.
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+let payload = {};
+try {
+  payload = JSON.parse(fs.readFileSync(0, "utf-8") || "{}");
+} catch {
+  process.exit(0);
+}
+
+const cmd =
+  payload.tool_input && typeof payload.tool_input.command === "string"
+    ? payload.tool_input.command
+    : "";
+if (cmd.indexOf("ao spawn") === -1) process.exit(0);
+
+// Resolve maestro-search WITHOUT any hardcoded path (fresh-install parity).
+function isExec(p) {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+function resolveSearch() {
+  const envBin = process.env.MAESTRO_SEARCH_BIN;
+  if (envBin && isExec(envBin)) return envBin;
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (dir && isExec(path.join(dir, "maestro-search"))) {
+      return path.join(dir, "maestro-search");
+    }
+  }
+  const home = process.env.HOME || "";
+  const candidates = [
+    "/Applications/Maestro.app/Contents/MacOS/maestro-search",
+    home ? path.join(home, "Applications/Maestro.app/Contents/MacOS/maestro-search") : "",
+    home ? path.join(home, ".local/bin/maestro-search") : "",
+  ];
+  for (const c of candidates) {
+    if (c && isExec(c)) return c;
+  }
+  return "";
+}
+const MS = resolveSearch();
+if (!MS) process.exit(0);
+
+// Keywords: --title plus the first 40 lines of --prompt-file (or --prompt text).
+function cap(re) {
+  const m = cmd.match(re);
+  return m ? m[1] : "";
+}
+let kw = cap(/--title\\s+"([^"]*)"/);
+const pf = cap(/--prompt-file\\s+"([^"]*)"/);
+if (pf && fs.existsSync(pf)) {
+  try {
+    kw = kw + " " + fs.readFileSync(pf, "utf-8").split("\\n").slice(0, 40).join(" ");
+  } catch {
+    // ignore an unreadable prompt file
+  }
+} else {
+  kw = kw + " " + cap(/--prompt\\s+"([^"]*)"/);
+}
+kw = kw
+  .replace(/[^A-Za-zА-Яа-я0-9 ]+/g, " ")
+  .replace(/\\s+/g, " ")
+  .trim()
+  .slice(0, 300);
+if (!kw) process.exit(0);
+
+let res = "";
+try {
+  res = execFileSync(MS, ["query", kw, "--limit", "8"], {
+    encoding: "utf-8",
+    timeout: 8000,
+    maxBuffer: 1048576,
+  });
+} catch {
+  process.exit(0);
+}
+res = (res || "").slice(0, 4000);
+if (!res.trim()) process.exit(0);
+
+const ctx =
+  "[rlm pre-spawn — prior context from past/deleted agents; seed the worker with what's relevant before it starts]\\n" +
+  res +
+  "\\n\\nReminder: record this delegation on .maestro/tasks.md (in progress).";
+process.stdout.write(
+  JSON.stringify({
+    hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: ctx },
+  }),
+);
+process.exit(0);
+`;
+
+// =============================================================================
 // Plugin Manifest
 // =============================================================================
 
@@ -916,13 +1185,23 @@ function upsertHookEntry(
   hooks[reg.event] = entries;
 }
 
+/** Commands for the three orchestrator-discipline hooks (Maestro). */
+interface DisciplineCommands {
+  noInline: string;
+  noSourceShell: string;
+  preSpawn: string;
+}
+
 /**
- * Build the list of hooks to register for this workspace. Two scripts are
- * installed:
+ * Build the list of hooks to register for this workspace. Scripts installed:
  *   - metadata-updater: PostToolUse(Bash) only — extracts gh/git side-effects.
  *   - activity-updater: every event that carries activity information, so
  *     dashboard / lifecycle reducer state derives from platform events
  *     instead of regex over rendered terminal output (#1941).
+ *   - orchestrator discipline (Maestro): PreToolUse(Edit|Write) blocks inline
+ *     source edits by an orchestrator; PreToolUse(Bash) blocks source writes via
+ *     the shell and seeds prior rlm context before `ao spawn`. These self-gate
+ *     to orchestrator worktrees, so they are harmless no-ops everywhere else.
  *
  * Activity events use matcher "" — match every variant. PermissionRequest's
  * tool-name and Notification's notification_type are filtered inside the
@@ -931,6 +1210,7 @@ function upsertHookEntry(
 function buildHookRegistrations(
   metadataCommand: string,
   activityCommand: string,
+  discipline: DisciplineCommands,
 ): HookRegistration[] {
   const METADATA_IDS = [
     "metadata-updater.sh",
@@ -981,6 +1261,34 @@ function buildHookRegistrations(
     });
   }
 
+  // Orchestrator-discipline hooks (Maestro fresh-install parity). Timeouts are
+  // in seconds (Claude Code's unit): the gate checks are O(ms), and pre-spawn
+  // rlm runs maestro-search with its own internal 8s cap. Each self-gates to
+  // orchestrator worktrees, so they no-op for workers / non-Maestro ao users.
+  regs.push(
+    {
+      event: "PreToolUse",
+      matcher: "Edit|Write",
+      command: discipline.noInline,
+      timeout: 10,
+      identifiers: ["orchestrator-no-inline-code.cjs", "orchestrator-no-inline-code.sh"],
+    },
+    {
+      event: "PreToolUse",
+      matcher: "Bash",
+      command: discipline.noSourceShell,
+      timeout: 10,
+      identifiers: ["orchestrator-no-source-shell.cjs", "orchestrator-no-source-shell.sh"],
+    },
+    {
+      event: "PreToolUse",
+      matcher: "Bash",
+      command: discipline.preSpawn,
+      timeout: 25,
+      identifiers: ["pre-spawn-rlm.cjs", "pre-spawn-rlm.sh"],
+    },
+  );
+
   return regs;
 }
 
@@ -1009,8 +1317,10 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT_NODE, "utf-8");
     // .cjs forces CJS regardless of workspace package.json "type"; node
     // invocation is required on Windows because shebangs aren't honoured.
-    metadataCommand = "node .claude/metadata-updater.cjs";
-    activityCommand = "node .claude/activity-updater.cjs";
+    // $CLAUDE_PROJECT_DIR (set by Claude Code to the worktree root) keeps the
+    // command identical across worktrees while resolving from any sub-cwd.
+    metadataCommand = 'node "$CLAUDE_PROJECT_DIR/.claude/metadata-updater.cjs"';
+    activityCommand = 'node "$CLAUDE_PROJECT_DIR/.claude/activity-updater.cjs"';
   } else {
     const metadataPath = join(claudeDir, "metadata-updater.sh");
     const activityPath = join(claudeDir, "activity-updater.sh");
@@ -1018,9 +1328,38 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
     await writeFile(activityPath, ACTIVITY_UPDATER_SCRIPT, "utf-8");
     await chmod(metadataPath, 0o755);
     await chmod(activityPath, 0o755);
-    metadataCommand = ".claude/metadata-updater.sh";
-    activityCommand = ".claude/activity-updater.sh";
+    // $CLAUDE_PROJECT_DIR (set by Claude Code to the worktree root) keeps the
+    // command identical across worktrees while resolving from any sub-cwd.
+    metadataCommand = '"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"';
+    activityCommand = '"$CLAUDE_PROJECT_DIR/.claude/activity-updater.sh"';
   }
+
+  // Orchestrator-discipline hooks (Maestro fresh-install parity). Always Node
+  // (.cjs) on every platform — Node is a hard dependency of Claude Code, so one
+  // variant enforces the discipline without jq. Invoked as `node "<path>.cjs"`,
+  // so no execute bit is needed (unlike the bash activity/metadata updaters).
+  // The scripts self-gate to orchestrator worktrees; writing them everywhere is
+  // safe and keeps the command string identical across symlinked .claude/ dirs.
+  await writeFile(
+    join(claudeDir, "orchestrator-no-inline-code.cjs"),
+    ORCHESTRATOR_NO_INLINE_CODE_SCRIPT,
+    "utf-8",
+  );
+  await writeFile(
+    join(claudeDir, "orchestrator-no-source-shell.cjs"),
+    ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT,
+    "utf-8",
+  );
+  await writeFile(
+    join(claudeDir, "pre-spawn-rlm.cjs"),
+    PRE_SPAWN_RLM_SCRIPT,
+    "utf-8",
+  );
+  const discipline: DisciplineCommands = {
+    noInline: 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-inline-code.cjs"',
+    noSourceShell: 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-source-shell.cjs"',
+    preSpawn: 'node "$CLAUDE_PROJECT_DIR/.claude/pre-spawn-rlm.cjs"',
+  };
 
   let existingSettings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
@@ -1033,7 +1372,7 @@ async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   }
 
   const hooks = (existingSettings["hooks"] as Record<string, unknown>) ?? {};
-  for (const reg of buildHookRegistrations(metadataCommand, activityCommand)) {
+  for (const reg of buildHookRegistrations(metadataCommand, activityCommand, discipline)) {
     upsertHookEntry(hooks, reg);
   }
   existingSettings["hooks"] = hooks;
@@ -1049,6 +1388,15 @@ function createClaudeCodeAgent(): Agent {
   return {
     name: "claude-code",
     processName: "claude",
+    // Static capability descriptor (provider-independent scaling seam). Numbers
+    // reflect the Claude Code CLI / Claude model family: 1M-token context, 32MB
+    // max request body, 500MB max file, and the directly-readable file types.
+    limits: {
+      contextTokens: 1_000_000,
+      maxRequestBytes: 33_554_432,
+      maxFileBytes: 524_288_000,
+      supportedFileTypes: ["pdf", "png", "jpg", "jpeg", "gif", "webp", "txt"],
+    },
     getLaunchCommand(config: AgentLaunchConfig): string {
       // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
       // This command must be safe for both shell and execFile contexts.
@@ -1106,6 +1454,30 @@ function createClaudeCodeAgent(): Agent {
 
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
+      }
+
+      // runtime-sdk parity. The tmux runtime gets the task/model from the launch
+      // command (getLaunchCommand: positional [prompt], --model). The SDK runtime
+      // has no launch command — sdk-host reads these from the environment instead.
+      // Without AO_SDK_INITIAL_PROMPT a spawned SDK session starts idle (host
+      // signals READY but never submits the first turn, so it does no work). The
+      // host defaults permission mode to bypassPermissions (autonomous), matching
+      // AO workers; AO_SDK_RESUME is set by the caller when resuming.
+      if (config.prompt) {
+        env["AO_SDK_INITIAL_PROMPT"] = config.prompt;
+      }
+      if (config.model) {
+        env["AO_SDK_MODEL"] = config.model;
+      }
+      // GLM (ZhipuAI) provider: inject the API key when the model is a GLM model.
+      // The key is read from the global AO_GLM_API_KEY environment variable for
+      // now (Phase-1 PoC); Phase-2 will read it from the AO config / Keychain and
+      // store it via Settings ▸ Agents ▸ GLM. The strip list in runtime-sdk/index.ts
+      // prevents this value from accidentally leaking from an orchestrator worker
+      // into its children — it must be set explicitly here.
+      if (config.model?.startsWith("glm-")) {
+        const glmKey = process.env.AO_GLM_API_KEY;
+        if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
       }
 
       return env;
@@ -1209,9 +1581,38 @@ function createClaudeCodeAgent(): Agent {
       return parts.join(" ");
     },
 
+    detectRestorePromptKeys(recentOutput: string): string[] | null {
+      // `claude --resume <uuid>` on an old/large session opens a BLOCKING
+      // resume selector before the agent is usable:
+      //
+      //   This session is 1d old and 515.1k tokens.
+      //   ❯ 1. Resume from summary (recommended)
+      //     2. Resume full session as-is
+      //     3. Don't ask me again
+      //   Enter to confirm · Esc to cancel
+      //
+      // Claude Code 2.1.x exposes no flag, settings key, or env to pre-select
+      // an option or skip the prompt (verified against 2.1.185), so with no
+      // human at the pane we confirm the pre-highlighted default ("Resume from
+      // summary") by sending Enter. The five-marker signature is strict enough
+      // that it never matches ordinary agent output; the worst a mis-detection
+      // could do is submit one empty line (a no-op in Claude's composer).
+      const isResumeSelector =
+        recentOutput.includes("Resume from summary") &&
+        recentOutput.includes("Resume full session as-is") &&
+        recentOutput.includes("Don't ask me again") &&
+        recentOutput.includes("Enter to confirm") &&
+        recentOutput.includes("Esc to cancel");
+      return isResumeSelector ? ["Enter"] : null;
+    },
+
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      // Relative path so that symlinked .claude/ dirs across worktrees
-      // all produce the same settings.json (last writer doesn't clobber).
+      // Hook commands use $CLAUDE_PROJECT_DIR (the worktree root, set by Claude
+      // Code) rather than the literal workspace path: the command string is then
+      // identical across worktrees, so symlinked .claude/ dirs all produce the
+      // same settings.json (last writer doesn't clobber), AND it resolves
+      // correctly when the agent's cwd is a sub-directory of the worktree (a
+      // bare relative path like `.claude/...` broke there with "No such file").
       await setupHookInWorkspace(workspacePath);
     },
 

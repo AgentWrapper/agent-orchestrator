@@ -13,6 +13,7 @@
 
 import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
+import { resolveRuntimeName } from "./runtime-resolution.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -40,6 +41,7 @@ import {
   type ProjectConfig,
   type Runtime,
   type Agent,
+  type AgentLimits,
   type Workspace,
   type WorkspaceCreateConfig,
   type Tracker,
@@ -69,6 +71,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { seedRlmContext } from "./rlm-seed.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -293,6 +296,88 @@ const ENSURE_ORCHESTRATOR_CONFLICT_POLL_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POST_LAUNCH_READY_TIMEOUT_MS = 15_000;
+const POST_LAUNCH_READY_POLL_MS = 400;
+const POST_LAUNCH_READY_STABLE_POLLS = 2;
+
+/**
+ * Poll a freshly-launched runtime until its output is non-empty and stable
+ * across consecutive polls, signalling the agent's interactive composer has
+ * rendered and can accept typed input. Used before post-launch initial-prompt
+ * delivery (e.g. grok) so the prompt lands in a ready composer instead of being
+ * typed into a not-yet-initialized pane and silently lost — the back-to-back
+ * spawn race. Best-effort and bounded: returns once stable, on a dead runtime,
+ * or at timeout. The subsequent sendMessage still fails loud if it cannot
+ * confirm the submit, so a genuinely un-ready agent surfaces as a spawn error
+ * rather than a dropped task.
+ */
+export async function waitForComposerReady(
+  runtime: Pick<Runtime, "getOutput" | "isAlive">,
+  handle: RuntimeHandle,
+  timeoutMs: number = POST_LAUNCH_READY_TIMEOUT_MS,
+  pollMs: number = POST_LAUNCH_READY_POLL_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastOutput: string | null = null;
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    const alive = await runtime.isAlive(handle).catch(() => true);
+    if (!alive) return;
+    const output = (await runtime.getOutput(handle).catch(() => "")).trimEnd();
+    if (output.length > 0 && output === lastOutput) {
+      stablePolls += 1;
+      if (stablePolls >= POST_LAUNCH_READY_STABLE_POLLS) return;
+    } else {
+      stablePolls = 0;
+    }
+    lastOutput = output;
+  }
+}
+
+const RESTORE_PROMPT_TIMEOUT_MS = 30_000;
+const RESTORE_PROMPT_POLL_MS = 1_000;
+
+/**
+ * After a native-restore launch, some agents (Claude Code) block on an
+ * interactive resume-confirmation prompt; with no human at the pane the agent
+ * would hang forever. Poll the pane briefly and, the first time the agent
+ * recognizes its own resume prompt in the captured output, send the
+ * confirmation key(s) via the runtime, then stop.
+ *
+ * Best-effort and bounded: a small/recent session resumes with no prompt, so
+ * the signature never matches and we send nothing before the timeout. Caller
+ * pre-checks that both optional capabilities exist; we re-check to satisfy the
+ * type system and stay safe if called directly.
+ */
+async function confirmRestorePrompt(
+  runtime: Runtime,
+  handle: RuntimeHandle,
+  agent: Agent,
+): Promise<void> {
+  if (!runtime.sendKeys || !agent.detectRestorePromptKeys) return;
+  const deadline = Date.now() + RESTORE_PROMPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await sleep(RESTORE_PROMPT_POLL_MS);
+    let output: string;
+    try {
+      output = await runtime.getOutput(handle, 60);
+    } catch {
+      continue; // transient capture failure — keep polling until the deadline
+    }
+    const keys = agent.detectRestorePromptKeys(output);
+    if (keys && keys.length > 0) {
+      try {
+        await runtime.sendKeys(handle, keys);
+      } catch {
+        // Best-effort: if the key send fails the prompt stays up, but we've
+        // done no harm. Stop either way — re-sending risks a double answer.
+      }
+      return;
+    }
+  }
 }
 
 async function isAgentProcessNotDefinitelyMissing(
@@ -954,8 +1039,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   /** Resolve which plugins to use for a project. */
   function resolvePlugins(project: ProjectConfig, agentName?: string) {
-    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-    const agent = registry.get<Agent>("agent", agentName ?? project.agent ?? config.defaults.agent);
+    // Runtime is resolved per-agent: claude-code defaults to runtime-sdk, other
+    // agents keep the platform default. An explicit project/defaults runtime wins.
+    const effectiveAgent = agentName ?? project.agent ?? config.defaults.agent;
+    const runtime = registry.get<Runtime>(
+      "runtime",
+      resolveRuntimeName(project, config, effectiveAgent),
+    );
+    const agent = registry.get<Agent>("agent", effectiveAgent);
     const workspace = registry.get<Workspace>(
       "workspace",
       project.workspace ?? config.defaults.workspace,
@@ -970,6 +1061,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return { runtime, agent, workspace, tracker, scm };
   }
 
+  /**
+   * Read the capability limits of the agent plugin active for a project.
+   * Provider-independent seam: the core can consult these without knowing which
+   * agent is configured. Returns undefined for an unknown project or an agent
+   * that declares no limits.
+   */
+  function getAgentLimits(projectId: string): AgentLimits | undefined {
+    const project = config.projects[projectId];
+    if (!project) return undefined;
+    return resolvePlugins(project).agent?.limits;
+  }
+
   function resolveSelectionForSession(
     project: ProjectConfig,
     sessionId: string,
@@ -981,6 +1084,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
       allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
+      // Keep restored/resumed workers on the configured cheaper model so an
+      // engine restart doesn't silently revert them to the account default.
+      defaultWorkerModel: config.defaultWorkerModel,
     });
   }
 
@@ -1070,13 +1176,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!handleFromMetadata) {
       session.runtimeHandle = {
         id: sessionName,
-        runtimeName: project.runtime ?? config.defaults.runtime,
+        runtimeName: resolveRuntimeName(project, config, effectiveAgentName),
         data: {},
       };
     } else if (!session.runtimeHandle && hasTmuxNameFromMetadata) {
       session.runtimeHandle = {
         id: tmuxNameFromMetadata,
-        runtimeName: project.runtime ?? config.defaults.runtime,
+        runtimeName: resolveRuntimeName(project, config, effectiveAgentName),
         data: {},
       };
     }
@@ -1273,10 +1379,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
       spawnAgentOverride: spawnConfig.agent,
+      // Worker model routing: explicit `ao spawn --model` wins; otherwise fall
+      // back to the top-level defaultWorkerModel. Orchestrators are unaffected
+      // (this is the worker spawn path; the orchestrator spawn never passes
+      // defaultWorkerModel).
+      spawnModelOverride: spawnConfig.model,
+      defaultWorkerModel: config.defaultWorkerModel,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
 
     if (!plugins.agent) {
@@ -1421,6 +1535,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(orchestratorExists && { orchestratorSessionId }),
       });
 
+      // Auto-seed rlm context (worker spawns only — this path is always a
+      // worker; the orchestrator has its own spawn function). Query
+      // maestro-search for transcripts relevant to this task and prepend the
+      // top snippets to the task prompt. FAIL-OPEN: a missing binary, error,
+      // timeout, or empty result leaves the prompt untouched (seedRlmContext
+      // returns null), so seeding never breaks the spawn.
+      let seededTaskPrompt = taskPrompt;
+      if (selection.role !== "orchestrator") {
+        try {
+          const rlmBlock = await seedRlmContext({
+            projectId: spawnConfig.projectId,
+            taskText: spawnConfig.prompt ?? resolvedIssue?.title,
+          });
+          if (rlmBlock) {
+            seededTaskPrompt = taskPrompt ? `${rlmBlock}\n\n${taskPrompt}` : rlmBlock;
+          }
+        } catch {
+          // Belt-and-suspenders: seedRlmContext is already fail-open and never
+          // throws, but the spawn must never break on seeding regressions.
+        }
+      }
+
       const baseDir = getProjectDir(spawnConfig.projectId);
       mkdirSync(baseDir, { recursive: true });
       const systemPromptFile = join(baseDir, `worker-prompt-${sessionId}.md`);
@@ -1457,7 +1593,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
         workspacePath,
         issueId: spawnConfig.issueId,
-        prompt: taskPrompt,
+        prompt: seededTaskPrompt,
         systemPromptFile,
         permissions: selection.permissions,
         model: selection.model,
@@ -1573,6 +1709,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimeHandle: handle,
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
+        title: spawnConfig.title,
         displayName,
       });
 
@@ -1581,6 +1718,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+        // Post-launch agents (e.g. grok) receive the initial task by typing it
+        // into the freshly-launched TUI. Wait for the composer to render before
+        // sending so the prompt lands instead of being typed into a not-yet-ready
+        // pane and silently lost (the back-to-back spawn race). sendMessage then
+        // fails loud if the submit can't be confirmed, so the spawn rolls back
+        // rather than starting an agent with no task.
+        await waitForComposerReady(plugins.runtime, handle);
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       }
 
@@ -1711,7 +1855,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
@@ -2543,8 +2689,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (handle) {
         const runtimePlugin = registry.get<Runtime>(
           "runtime",
-          handle.runtimeName ??
-            (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
+          handle.runtimeName ?? resolveRuntimeName(project, config, cleanupAgent),
         );
         if (runtimePlugin) {
           try {
@@ -2878,7 +3023,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const parsedHandle = raw["runtimeHandle"]
       ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
       : null;
-    const runtimeName = parsedHandle?.runtimeName ?? project.runtime ?? config.defaults.runtime;
+    const runtimeName =
+      parsedHandle?.runtimeName ?? resolveRuntimeName(project, config, selectedAgent);
     const agentName = selectedAgent;
 
     const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
@@ -3054,13 +3200,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         } satisfies RuntimeHandle);
       const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
 
-      if (forceRestore || isRestorable(normalized)) {
-        return restoreForDelivery(
-          forceRestore
-            ? "session needed to be restarted before delivery"
-            : "session is not running",
-          normalized,
-        );
+      // Streaming runtimes (sdk) own a long-lived host whose input is an unbounded
+      // FIFO: a REACHABLE host accepts a turn at any moment — it just queues it
+      // behind the current one (submitTurn → makePushableInput). Delivery to a live
+      // host is therefore always a plain push, NEVER a restore. The host IS the
+      // process, so there is no separate agent-CLI to probe; runtime.isAlive is
+      // authoritative. This is what lets `ao send` reach a busy/streaming
+      // orchestrator instead of failing into restore() (which throws on a live,
+      // non-terminal session — the "ao send worker→orchestrator falls" symptom).
+      const isStreamingRuntime = runtimeName === "sdk";
+
+      if (forceRestore) {
+        return restoreForDelivery("session needed to be restarted before delivery", normalized);
+      }
+
+      // A stale lifecycle snapshot (e.g. runtime.state="exited" written by a poll
+      // while the host was momentarily unreachable) must NOT pre-empt a host that
+      // is reachable RIGHT NOW. For the streaming runtime, probe liveness first and
+      // deliver if the host answers; restore only a genuinely dead host.
+      if (isRestorable(normalized)) {
+        if (isStreamingRuntime) {
+          const reachable = await runtimePlugin.isAlive(handle).catch(() => true);
+          if (reachable) return normalized;
+        }
+        return restoreForDelivery("session is not running", normalized);
       }
 
       let [runtimeAlive, processRunning] = await Promise.all([
@@ -3076,11 +3239,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ]);
       }
 
-      if (!runtimeAlive || !processRunning) {
-        return restoreForDelivery(
-          !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-          normalized,
-        );
+      if (!runtimeAlive) {
+        return restoreForDelivery("runtime is not alive", normalized);
+      }
+
+      // Runtime reachable. For a streaming host, reachability alone is enough to
+      // queue the turn — don't gate on the agent-process probe, a tmux/PTY concept
+      // that reads "not running" for the SDK host (whose host process is not a
+      // claude CLI) and would wrongly force a restore of a perfectly live session.
+      if (!isStreamingRuntime && !processRunning) {
+        return restoreForDelivery("agent process is not running", normalized);
       }
 
       return normalized;
@@ -3096,7 +3264,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
       const baselineUpdatedAt = await getOpenCodeSessionUpdatedAt();
 
-      await runtimePlugin.sendMessage(handle, message);
+      // The runtime now throws when it cannot confirm the submit (e.g. the tmux
+      // composer probe failed or the text stayed stuck). Don't fail yet — the
+      // message may still have landed; fall through to output-based confirmation
+      // and only propagate if that also can't confirm delivery.
+      let sendError: unknown;
+      try {
+        await runtimePlugin.sendMessage(handle, message);
+      } catch (err) {
+        sendError = err;
+      }
 
       for (let attempt = 1; attempt <= SEND_CONFIRMATION_ATTEMPTS; attempt++) {
         // Sleep before each check (including the first) so the runtime has time
@@ -3120,11 +3297,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
 
-      // Message was already sent via runtimePlugin.sendMessage above — if we
-      // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
-      // as a soft success rather than throwing.  Throwing here caused the caller
-      // to report failure, which prevented the dispatch-hash from updating and
-      // led to duplicate messages on the next poll cycle.
+      // Could not confirm delivery via output. If the runtime itself also
+      // reported the send as unconfirmable, fail loud so the task isn't silently
+      // dropped (this is the back-to-back / not-ready race). Otherwise — the
+      // runtime resolved cleanly but the agent is just slow to echo — keep the
+      // existing soft-success behavior, which prevents the dispatch-hash from
+      // going stale and re-dispatching a duplicate message on the next cycle.
+      if (sendError) {
+        throw sendError instanceof Error
+          ? sendError
+          : new Error(`runtime sendMessage failed: ${String(sendError)}`);
+      }
       return;
     };
 
@@ -3356,7 +3539,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return discovered;
   }
 
-  async function restore(sessionId: SessionId): Promise<Session> {
+  async function restore(sessionId: SessionId, force?: boolean): Promise<Session> {
     // 1. Find session metadata across all projects
     const activeRecord = findSessionRecord(sessionId);
     if (!activeRecord) {
@@ -3399,7 +3582,27 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     await enrichSessionWithRuntimeState(session, plugins, true, sessionsDir);
 
     // 3. Validate restorability
-    if (!isRestorable(session)) {
+    // When force=true the caller (setModel) has already destroyed the host — we
+    // trust it and skip the check, because the runtime process may not have had
+    // time to flush its exit state into the lifecycle events yet.
+    //
+    // Without force: if the session still appears non-restorable after the first
+    // enrichment and it has a runtimeHandle, the host may be mid-shutdown (isAlive
+    // can briefly return true right after the process is killed). Poll up to 5× with
+    // 400 ms gaps so the runtime has time to fully exit and the lifecycle state can
+    // flip to terminal. Sessions without a runtimeHandle can't benefit from polling
+    // (no isAlive check is possible), so we skip the loop for them.
+    if (!force && !isRestorable(session) && session.runtimeHandle) {
+      const POLL_ATTEMPTS = 5;
+      const POLL_INTERVAL_MS = 400;
+      for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+        await enrichSessionWithRuntimeState(session, plugins, true, sessionsDir);
+        if (isRestorable(session)) break;
+      }
+    }
+
+    if (!force && !isRestorable(session)) {
       const reason = NON_RESTORABLE_STATUSES.has(session.status)
         ? `status "${session.status}" is not restorable`
         : `session is not in a terminal state (status: "${session.status}", activity: "${session.activity}")`;
@@ -3422,7 +3625,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 4. Validate required plugins (plugins already resolved above for enrichment)
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      throw new Error(
+        `Runtime plugin '${resolveRuntimeName(project, config, selection.agentName)}' not found`,
+      );
     }
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
@@ -3540,6 +3745,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    // True once we launch via the agent's native restore command (vs. a fresh
+    // launch). Gates the post-launch resume-prompt auto-confirm below.
+    let usedRestore = false;
     const projectConfigForLaunch: ProjectConfig = {
       ...project,
       agentConfig: {
@@ -3581,6 +3789,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const restoreCmd = await plugins.agent.getRestoreCommand(session, projectConfigForLaunch);
       if (restoreCmd) {
         launchCommand = restoreCmd;
+        usedRestore = true;
         updateMetadata(sessionsDir, sessionId, { restoreFallbackReason: "" });
       } else {
         // Agents with native restore can still launch fresh when no resumable
@@ -3631,12 +3840,31 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        // runtime-sdk resume: a restored session that already has a provider
+        // session id (claudeSessionUuid) must resume it — otherwise the SDK
+        // runtime opens a FRESH conversation and the agent loses all prior
+        // context on engine restart. (The tmux runtime resumes via
+        // getRestoreCommand's `claude --resume`; the SDK runtime reads this env.)
+        ...(typeof raw["claudeSessionUuid"] === "string" && raw["claudeSessionUuid"]
+          ? { AO_SDK_RESUME: raw["claudeSessionUuid"] }
+          : {}),
         AO_CALLER_TYPE: "agent",
         ...(projectId && { AO_PROJECT_ID: projectId }),
         AO_CONFIG_PATH: config.configPath,
         ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
+
+    // 8b. Auto-confirm an interactive resume prompt (e.g. Claude Code's
+    // "Resume from summary" selector), which blocks the restored agent until
+    // answered. Only on the native-restore path, only when both the agent can
+    // recognize its own prompt and the runtime can send raw keys. Fire-and-
+    // forget: the poll runs in the background so restore returns promptly; the
+    // strict per-agent signature means it sends nothing unless the prompt is
+    // actually on screen.
+    if (usedRestore && plugins.agent.detectRestorePromptKeys && plugins.runtime.sendKeys) {
+      void confirmRestorePrompt(plugins.runtime, handle, plugins.agent);
+    }
 
     // 9. Update metadata — reset lifecycle to working state
     const now = new Date().toISOString();
@@ -3705,6 +3933,63 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
+  /**
+   * Change the model for a session and immediately restart it on the new model,
+   * preserving the conversation. Works for both workers and the orchestrator.
+   *
+   * The new model is persisted to session metadata (`sessionModel`) so every
+   * subsequent engine restart (or `ao session restore`) also uses it.  If the
+   * session is currently live its SDK host is destroyed first so that
+   * `restore()` can boot a fresh host with `AO_SDK_MODEL = <model>` and the
+   * same `AO_SDK_RESUME` (conversation preserved via Claude's session UUID).
+   */
+  async function setModel(sessionId: SessionId, model: string): Promise<Session> {
+    const trimmedModel = model.trim();
+    if (!trimmedModel) {
+      throw new Error("model must not be empty");
+    }
+
+    // 1. Locate the session
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    const { sessionsDir, project, raw } = located;
+
+    // 2. Persist the new model intent — restore() (called below) and every
+    //    future restart will pick this up via resolveAgentSelectionForSession.
+    updateMetadata(sessionsDir, sessionId, { sessionModel: trimmedModel });
+    invalidateCache();
+
+    // 3. Destroy the live runtime so the host is dead before restore() probes it.
+    //    We deliberately skip kill() to avoid destroying the worktree.
+    //    After destroy() we pass force=true to restore() so the restorability check
+    //    is skipped — the runtime process may not have flushed its exit state to
+    //    the lifecycle events yet, but the host is confirmed dead at this point.
+    const runtimeHandleRaw = raw["runtimeHandle"];
+    if (runtimeHandleRaw) {
+      const handle = safeJsonParse<RuntimeHandle>(runtimeHandleRaw);
+      if (handle) {
+        const selection = resolveSelectionForSession(project, sessionId, raw);
+        const plugins = resolvePlugins(project, selection.agentName);
+        if (plugins.runtime) {
+          try {
+            await plugins.runtime.destroy(handle);
+          } catch {
+            // Best-effort — host may already be gone
+          }
+          // Give the process a moment to fully exit so the next runtime boot
+          // does not collide with the old one (e.g. same tmux window name).
+          await new Promise<void>((r) => setTimeout(r, 500));
+        }
+      }
+    }
+
+    // 4. Re-start on the new model (conversation preserved via AO_SDK_RESUME).
+    //    force=true: skip isRestorable — we just destroyed the host above.
+    return restore(sessionId, true);
+  }
+
   return {
     spawn,
     spawnOrchestrator,
@@ -3720,5 +4005,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     send,
     claimPR,
     remap,
+    getAgentLimits,
+    setModel,
   };
 }

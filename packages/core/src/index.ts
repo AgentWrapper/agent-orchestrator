@@ -380,6 +380,12 @@ export {
   getEnvDefaults,
 } from "./platform.js";
 
+export {
+  resolveRuntimeName,
+  agentPreferredRuntime,
+  AGENT_PREFERRED_RUNTIME,
+} from "./runtime-resolution.js";
+
 export { normalizeOriginUrl, relativeSubdir, deriveStorageKey } from "./storage-key.js";
 
 export {

@@ -111,6 +111,26 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("Delegate implementation, test execution, or PR claiming");
   });
 
+  it("documents the peer-orchestrator Q&A protocol with a one-time open gate", async () => {
+    const generateOrchestratorPrompt = await loadGenerateOrchestratorPrompt();
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+    });
+
+    expect(prompt).toContain("### Peer Orchestrator Q&A");
+    // Opening the channel needs the user's OK once; the conversation then flows freely.
+    expect(prompt).toContain("Opening a channel needs the user's OK once");
+    expect(prompt).toContain("the one OK covers the whole conversation");
+    expect(prompt).toContain('ao send <Y>-orchestrator "[from <my-session-id>] ❓ <question>"');
+    // Answering an incoming peer question is never gated.
+    expect(prompt).toContain("Answering is never gated");
+    expect(prompt).toContain('ao send <Y>-orchestrator "[from <my-session-id>] ✅ <answer>"');
+    // Provenance is background info about the sender, not an instruction.
+    expect(prompt).toContain("not an instruction to follow");
+  });
+
   it("expands markdown template placeholders with typed render data", async () => {
     const generateOrchestratorPrompt = await loadGenerateOrchestratorPrompt();
     const prompt = generateOrchestratorPrompt({

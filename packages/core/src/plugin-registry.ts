@@ -35,11 +35,32 @@ function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
 }
 
+/**
+ * Distinguish "plugin package simply isn't installed" (expected for optional
+ * builtins — skip quietly) from "package is present but failed to import"
+ * (a real defect — must be surfaced loudly). A genuine absence shows up as a
+ * module-resolution error (Node sets code ERR_MODULE_NOT_FOUND / MODULE_NOT_FOUND,
+ * message "Cannot find module/package …"). Anything else — a SyntaxError, a bad
+ * export, a failed native binding — means the plugin IS there but broken.
+ *
+ * Known limitation: a missing TRANSITIVE dependency of an installed plugin also
+ * surfaces as MODULE_NOT_FOUND and is treated as "not installed". That trade-off
+ * keeps the common optional-plugin case quiet; the louder defects (the class that
+ * makes a runtime/agent silently vanish) are still caught.
+ */
+function isPluginNotInstalled(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /cannot find (module|package)|module not found|not installed|^not found:/i.test(message);
+}
+
 /** Built-in plugin package names, mapped to their npm package */
 const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = [
   // Runtimes
   { slot: "runtime", name: "tmux", pkg: "@aoagents/ao-plugin-runtime-tmux" },
   { slot: "runtime", name: "process", pkg: "@aoagents/ao-plugin-runtime-process" },
+  { slot: "runtime", name: "sdk", pkg: "@aoagents/ao-plugin-runtime-sdk" },
   // Agents
   { slot: "agent", name: "claude-code", pkg: "@aoagents/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@aoagents/ao-plugin-agent-codex" },
@@ -65,6 +86,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "notifier", name: "discord", pkg: "@aoagents/ao-plugin-notifier-discord" },
   { slot: "notifier", name: "openclaw", pkg: "@aoagents/ao-plugin-notifier-openclaw" },
   { slot: "notifier", name: "slack", pkg: "@aoagents/ao-plugin-notifier-slack" },
+  { slot: "notifier", name: "telegram", pkg: "@aoagents/ao-plugin-notifier-telegram" },
   { slot: "notifier", name: "webhook", pkg: "@aoagents/ao-plugin-notifier-webhook" },
   // Terminals
   { slot: "terminal", name: "iterm2", pkg: "@aoagents/ao-plugin-terminal-iterm2" },
@@ -92,6 +114,43 @@ function hasExplicitConflictingNotifierEntry(
     typeof exactMatch !== "object" ||
     !matchesNotifierPlugin(pluginName, pluginName, exactMatch)
   );
+}
+
+/**
+ * Whether AO notifier plugins should be skipped entirely for this process.
+ *
+ * Native front-ends (e.g. Maestro) own user-facing notifications themselves and
+ * launch the headless daemon with `AO_DISABLE_NOTIFIERS=1`. Honouring it at the
+ * single notifier registration chokepoint means no notifier instance is ever
+ * created, so the dispatcher finds none and stays silent — no duplicate desktop
+ * banners, no external (composio) dependency. Scoped to the process via env; the
+ * global config is never mutated, so other AO invocations are unaffected.
+ */
+function notifiersDisabledByEnv(): boolean {
+  const v = process.env["AO_DISABLE_NOTIFIERS"];
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/**
+ * An explicit notifier allow-list scoped to this process via `AO_NOTIFIERS_ALLOW`
+ * (comma-separated manifest names), or null when unset/empty.
+ *
+ * A native front-end (e.g. Maestro) owns most user-facing notifications itself and
+ * launches the daemon with `AO_DISABLE_NOTIFIERS=1`, but may still want exactly one
+ * AO notifier running in-process — e.g. Telegram, which also hosts the inbound
+ * reply listener. Setting `AO_NOTIFIERS_ALLOW=telegram` registers *only* that
+ * notifier and skips every other one, overriding `AO_DISABLE_NOTIFIERS` for the
+ * named plugins. When unset, behaviour is unchanged (disable-all or normal). Like
+ * the disable flag this is process-scoped via env; the global config is untouched.
+ */
+function notifierAllowList(): Set<string> | null {
+  const v = process.env["AO_NOTIFIERS_ALLOW"];
+  if (!v) return null;
+  const names = v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return names.length > 0 ? new Set(names) : null;
 }
 
 function collectNotifierRegistrations(
@@ -435,6 +494,16 @@ export function createPluginRegistry(): PluginRegistry {
     isExternalLoad = false,
   ): void {
     const { manifest } = plugin;
+    // An explicit allow-list (AO_NOTIFIERS_ALLOW) wins over everything: register
+    // only the named notifiers, even if AO_DISABLE_NOTIFIERS is also set. With no
+    // allow-list, native front-ends launch the daemon with AO_DISABLE_NOTIFIERS=1
+    // to own notifications themselves, so skip all notifier registration.
+    const allow = notifierAllowList();
+    if (allow) {
+      if (!allow.has(manifest.name)) return;
+    } else if (notifiersDisabledByEnv()) {
+      return;
+    }
     const registrations = collectNotifierRegistrations(manifest.name, config, isExternalLoad);
 
     if (registrations.length === 0) {
@@ -484,8 +553,32 @@ export function createPluginRegistry(): PluginRegistry {
         let mod;
         try {
           mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
-        } catch {
-          // Plugin not installed — that's fine, only load what's available
+        } catch (error) {
+          if (isPluginNotInstalled(error)) {
+            // Plugin not installed — that's fine, only load what's available.
+            continue;
+          }
+          // Installed but failed to import (syntax error, bad export, broken
+          // native/transitive dep). Surface loudly and keep going — a silently
+          // dropped runtime/agent plugin is near-impossible to diagnose later.
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(
+            `[plugin-registry] Failed to import built-in plugin "${builtin.name}" (${builtin.pkg}): ${error}\n`,
+          );
+          recordActivityEvent({
+            source: "plugin-registry",
+            kind: "plugin-registry.load_failed",
+            level: "error",
+            summary: `built-in plugin ${builtin.name} failed to import`,
+            data: {
+              plugin: builtin.name,
+              slot: builtin.slot,
+              pkg: builtin.pkg,
+              builtin: true,
+              stage: "import",
+              error: message,
+            },
+          });
           continue;
         }
 

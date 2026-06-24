@@ -80,6 +80,57 @@ describe("global-config storage identity", () => {
     expect(config?.projects[projectId]).not.toHaveProperty("runtime");
   });
 
+  it("backfills orchestratorRules/agentRules from global defaults when the project declares none", () => {
+    const origin = "git@github.com:OpenAI/rules-inherit.git";
+    const repoPath = createRepo("rules-inherit", origin);
+    registerProjectInGlobalConfig(
+      "rules-inherit",
+      "Rules Inherit",
+      repoPath,
+      { agent: "codex", runtime: "tmux" },
+      configPath,
+    );
+    const config = loadGlobalConfig(configPath);
+    expect(config).not.toBeNull();
+    config!.defaults.orchestratorRules = "GLOBAL: maintain .maestro/tasks.md";
+    config!.defaults.agentRules = "GLOBAL: write tests first";
+    const projectId = generateExternalId(repoPath, origin);
+
+    const resolved = resolveProjectIdentity(projectId, config!);
+    expect(resolved).not.toBeNull();
+
+    expect(resolved!.orchestratorRules).toBe("GLOBAL: maintain .maestro/tasks.md");
+    expect(resolved!.agentRules).toBe("GLOBAL: write tests first");
+  });
+
+  it("keeps a project's own orchestratorRules over the global default (agentRules still inherits)", () => {
+    const origin = "git@github.com:OpenAI/rules-own.git";
+    const repoPath = createRepo("rules-own", origin);
+    // Local project config declares its own orchestrator rule but no agent rule.
+    writeFileSync(
+      join(repoPath, "agent-orchestrator.yaml"),
+      'orchestratorRules: "PROJECT: own orchestrator rule"\n',
+    );
+    registerProjectInGlobalConfig(
+      "rules-own",
+      "Rules Own",
+      repoPath,
+      { agent: "codex", runtime: "tmux" },
+      configPath,
+    );
+    const config = loadGlobalConfig(configPath);
+    expect(config).not.toBeNull();
+    config!.defaults.orchestratorRules = "GLOBAL: should be overridden";
+    config!.defaults.agentRules = "GLOBAL: agent rule";
+    const projectId = generateExternalId(repoPath, origin);
+
+    const resolved = resolveProjectIdentity(projectId, config!);
+    expect(resolved).not.toBeNull();
+
+    expect(resolved!.orchestratorRules).toBe("PROJECT: own orchestrator rule");
+    expect(resolved!.agentRules).toBe("GLOBAL: agent rule");
+  });
+
   it("rejects registration when another project already owns the generated session prefix", () => {
     const repoPath = join(tempRoot, "apps", "web");
     mkdirSync(join(repoPath, ".git"), { recursive: true });

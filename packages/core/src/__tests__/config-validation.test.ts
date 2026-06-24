@@ -49,6 +49,31 @@ describe("Config Validation - Project Uniqueness", () => {
   });
 });
 
+describe("Config Validation - defaultWorkerModel", () => {
+  const baseConfig = {
+    projects: {
+      app: {
+        path: "/repos/app",
+      },
+    },
+  };
+
+  it("accepts a model alias and preserves it", () => {
+    const cfg = validateConfig({ ...baseConfig, defaultWorkerModel: "sonnet" });
+    expect(cfg.defaultWorkerModel).toBe("sonnet");
+  });
+
+  it("accepts an arbitrary full model id (extensible, not whitelisted)", () => {
+    const cfg = validateConfig({ ...baseConfig, defaultWorkerModel: "claude-sonnet-4-5" });
+    expect(cfg.defaultWorkerModel).toBe("claude-sonnet-4-5");
+  });
+
+  it("leaves defaultWorkerModel undefined when omitted (account default)", () => {
+    const cfg = validateConfig(baseConfig);
+    expect(cfg.defaultWorkerModel).toBeUndefined();
+  });
+});
+
 describe("Config Validation - Numeric Fields", () => {
   const baseConfig = {
     projects: {

@@ -22,6 +22,7 @@ import {
   type RecoveryConfig,
 } from "./types.js";
 import { resolveAgentSelectionForSession } from "../agent-selection.js";
+import { resolveRuntimeName } from "../runtime-resolution.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
 import { createActivitySignal } from "../activity-signal.js";
 
@@ -43,7 +44,6 @@ export async function validateSession(
 ): Promise<RecoveryAssessment> {
   const { sessionId, projectId, project, rawMetadata } = scanned;
 
-  const runtimeName = project.runtime ?? config.defaults.runtime;
   const agentName = resolveAgentSelectionForSession({
     sessionId,
     metadata: rawMetadata,
@@ -51,6 +51,9 @@ export async function validateSession(
     defaults: config.defaults,
     allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
   }).agentName;
+  // Runtime is resolved per-agent (claude-code -> sdk); a project.runtime equal to
+  // the platform default is a back-fill, not a user pin — see runtime-resolution.ts.
+  const runtimeName = resolveRuntimeName(project, config, agentName);
   const normalizedMetadata = rawMetadata["agent"]
     ? rawMetadata
     : { ...rawMetadata, agent: agentName };

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -144,6 +144,43 @@ describe("loadBuiltins", () => {
     };
 
     await expect(registry.loadBuiltins(undefined, importUnavailable)).resolves.toBeUndefined();
+  });
+
+  it("surfaces a loud diagnostic (and keeps loading) when an installed builtin fails to import", async () => {
+    const registry = createPluginRegistry();
+    const fakeCodex = makePlugin("agent", "codex");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      if (pkg === "@aoagents/ao-plugin-agent-codex") return fakeCodex;
+      // claude-code is installed but broken (e.g. syntax error) — a real defect,
+      // NOT a missing package, so it must be reported rather than swallowed.
+      if (pkg === "@aoagents/ao-plugin-agent-claude-code")
+        throw new SyntaxError("Unexpected token");
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to import built-in plugin "claude-code"'),
+    );
+    stderrSpy.mockRestore();
+
+    // The broken import did not abort the loop — healthy plugins still loaded.
+    expect(registry.get("agent", "codex")).not.toBeNull();
+  });
+
+  it("stays silent for genuinely not-installed packages (ERR_MODULE_NOT_FOUND)", async () => {
+    const registry = createPluginRegistry();
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      const err = new Error(`Cannot find package '${pkg}'`) as Error & { code?: string };
+      err.code = "ERR_MODULE_NOT_FOUND";
+      throw err;
+    });
+
+    expect(stderrSpy).not.toHaveBeenCalled();
+    stderrSpy.mockRestore();
   });
 
   it("registers multiple agent plugins from importFn", async () => {
@@ -1195,5 +1232,74 @@ describe("External plugin manifest validation", () => {
     );
 
     stderrSpy.mockRestore();
+  });
+});
+
+describe("notifier env gating (AO_DISABLE_NOTIFIERS / AO_NOTIFIERS_ALLOW)", () => {
+  const ENV_KEYS = ["AO_DISABLE_NOTIFIERS", "AO_NOTIFIERS_ALLOW"] as const;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  /** Load telegram + slack notifiers, both present in config.notifiers. */
+  async function loadTwoNotifiers() {
+    const registry = createPluginRegistry();
+    const telegram = makePlugin("notifier", "telegram");
+    const slack = makePlugin("notifier", "slack");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        telegram: { plugin: "telegram", botToken: "t", chatId: "1" },
+        slack: { plugin: "slack", webhookUrl: "https://hooks.slack.com/services/x" },
+      },
+    });
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@aoagents/ao-plugin-notifier-telegram") return telegram;
+      if (pkg === "@aoagents/ao-plugin-notifier-slack") return slack;
+      throw new Error(`Not found: ${pkg}`);
+    });
+    return { registry, telegram, slack };
+  }
+
+  it("registers all configured notifiers when no env gating is set", async () => {
+    const { registry } = await loadTwoNotifiers();
+    expect(registry.get("notifier", "telegram")).not.toBeNull();
+    expect(registry.get("notifier", "slack")).not.toBeNull();
+  });
+
+  it("registers none when AO_DISABLE_NOTIFIERS=1 and no allow-list", async () => {
+    process.env.AO_DISABLE_NOTIFIERS = "1";
+    const { registry } = await loadTwoNotifiers();
+    expect(registry.get("notifier", "telegram")).toBeNull();
+    expect(registry.get("notifier", "slack")).toBeNull();
+  });
+
+  it("AO_NOTIFIERS_ALLOW registers only the named notifier, overriding the disable flag", async () => {
+    process.env.AO_DISABLE_NOTIFIERS = "1";
+    process.env.AO_NOTIFIERS_ALLOW = "telegram";
+    const { registry, telegram, slack } = await loadTwoNotifiers();
+    expect(registry.get("notifier", "telegram")).not.toBeNull();
+    expect(registry.get("notifier", "slack")).toBeNull();
+    expect(telegram.create).toHaveBeenCalledWith({ botToken: "t", chatId: "1" });
+    expect(slack.create).not.toHaveBeenCalled();
+  });
+
+  it("AO_NOTIFIERS_ALLOW excludes notifiers not on the list even without the disable flag", async () => {
+    process.env.AO_NOTIFIERS_ALLOW = "telegram";
+    const { registry } = await loadTwoNotifiers();
+    expect(registry.get("notifier", "telegram")).not.toBeNull();
+    expect(registry.get("notifier", "slack")).toBeNull();
   });
 });

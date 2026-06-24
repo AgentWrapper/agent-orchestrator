@@ -10,10 +10,14 @@
  * Reference: scripts/claude-session-status, scripts/claude-review-check
  */
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { recordActivityEvent } from "./activity-events.js";
+import { resolveRuntimeName } from "./runtime-resolution.js";
+import { getOrchestratorSessionId } from "./orchestrator-session-strategy.js";
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -90,6 +94,8 @@ import {
   buildSessionTransitionNotificationData,
   type NotificationEventContext,
 } from "./notification-data.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -227,6 +233,21 @@ function inferPriority(type: EventType): EventPriority {
   return "info";
 }
 
+/**
+ * Notifier names forced into every dispatch via `AO_NOTIFIERS_ALLOW`
+ * (comma-separated). Mirrors the same env the plugin registry uses to register
+ * an allow-listed notifier in an otherwise-disabled daemon, so a native
+ * front-end gets that notifier's events without rewriting notificationRouting.
+ */
+function forcedNotifierNames(): string[] {
+  const v = process.env["AO_NOTIFIERS_ALLOW"];
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Create an OrchestratorEvent with defaults filled in. */
 function createEvent(
   type: EventType,
@@ -280,6 +301,40 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
     default:
       return null;
   }
+}
+
+/**
+ * Worker statuses that must reliably reach the orchestrator session: the worker
+ * has finished (done/merged) or cannot proceed without attention (needs_input/
+ * stuck/errored). The engine guarantees this signal so the orchestrator learns
+ * about it even when the agent forgets to `ao send` a report itself.
+ */
+const ORCHESTRATOR_SIGNAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  SESSION_STATUS.NEEDS_INPUT,
+  SESSION_STATUS.STUCK,
+  SESSION_STATUS.ERRORED,
+  SESSION_STATUS.DONE,
+  SESSION_STATUS.MERGED,
+]);
+
+/** Human-readable line the engine sends to the orchestrator on a worker signal. */
+function buildOrchestratorSignalMessage(session: Session, status: SessionStatus): string {
+  const label = session.metadata["displayName"] || session.metadata["userPrompt"] || session.id;
+  const detail =
+    status === SESSION_STATUS.NEEDS_INPUT
+      ? "needs input and is waiting"
+      : status === SESSION_STATUS.STUCK
+        ? "appears stuck"
+        : status === SESSION_STATUS.ERRORED
+          ? "hit an error"
+          : status === SESSION_STATUS.MERGED
+            ? "had its PR merged"
+            : "finished its work";
+  return (
+    `[ao] Worker "${session.id}" (${label}) ${detail} (lifecycle: ${status}). ` +
+    `It will not proceed on its own — review it and decide next steps. ` +
+    `(automatic lifecycle signal)`
+  );
 }
 
 function prStateToEventType(
@@ -502,6 +557,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  let startupReconcilePending = true; // emit a one-time orphan reconcile on the first poll
   const branchAdoptionReservations = new Map<string, SessionId>();
 
   /**
@@ -1065,8 +1121,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     };
 
     let runtimeProbe: ProbeResult = { state: "unknown", failed: false };
+    // The sdk streaming runtime owns the host process directly — runtime.isAlive
+    // (socket || PID || fresh event log) is the authoritative liveness signal, and
+    // there is no separate agent-CLI process to probe. Used below to stop an
+    // unreliable process probe from declaring a live host exited/dead.
+    const isStreamingRuntime = session.runtimeHandle?.runtimeName === "sdk";
     if (session.runtimeHandle && canProbeRuntimeIdentity) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+      const runtime = registry.get<Runtime>("runtime", resolveRuntimeName(project, config, agentName));
       if (runtime) {
         try {
           const alive = await runtime.isAlive(session.runtimeHandle);
@@ -1116,7 +1177,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           try {
             const runtime = registry.get<Runtime>(
               "runtime",
-              project.runtime ?? config.defaults.runtime,
+              resolveRuntimeName(project, config, agentName),
             );
             const terminalOutput = runtime
               ? await runtime.getOutput(session.runtimeHandle, 10)
@@ -1183,7 +1244,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           activityEvidence = formatActivitySignalEvidence(activitySignal);
           const runtime = registry.get<Runtime>(
             "runtime",
-            project.runtime ?? config.defaults.runtime,
+            resolveRuntimeName(project, config, agentName),
           );
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
@@ -1321,6 +1382,24 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         detectingEvidenceHash: currentDetectingEvidenceHash,
         skipMetadataWrite: true,
       };
+    }
+
+    // Ground-truth clamp for the streaming host: when the runtime probe positively
+    // reports alive, the host IS alive — never let the unreliable agent-process
+    // probe (which reads "not running" for the SDK host because it isn't a claude
+    // CLI) disagree it into `detecting`/`agent_process_exited`, and never let an
+    // activity-derived `exited` stick. A live host wrongly marked `exited` looks
+    // terminal → isRestorable → ensureOrchestrator auto-restores it WITHOUT a
+    // prompt → empty resume → dies → restore again: the end→resume loop. Reverting
+    // here breaks that loop and the false stuck/probe_failure at the root.
+    if (isStreamingRuntime && runtimeProbe.state === "alive") {
+      if (processProbe.state !== "alive") {
+        processProbe = { state: "alive", failed: false };
+      }
+      if (lifecycle.runtime.state === "exited" || lifecycle.runtime.state === "missing") {
+        lifecycle.runtime.state = "alive";
+        lifecycle.runtime.reason = "process_running";
+      }
     }
 
     const probeDecision = resolveProbeDecision({
@@ -1524,7 +1603,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (
       detectedIdleTimestamp &&
       hasPositiveIdleEvidence(activitySignal) &&
-      isIdleBeyondThreshold(session, detectedIdleTimestamp)
+      isIdleBeyondThreshold(session, detectedIdleTimestamp) &&
+      // A positively-alive streaming host that is merely idle is healthy, not
+      // stuck — an orchestrator legitimately waits (idle) for its workers to
+      // report, and a host that finished a turn cleanly sits idle until the next
+      // `send`. Don't escalate a live host to stuck/probe_failure on idleness.
+      !(isStreamingRuntime && runtimeProbe.state === "alive")
     ) {
       return commit({
         status: SESSION_STATUS.STUCK,
@@ -1856,6 +1940,78 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
     session.metadata = cleaned;
     session.status = deriveLegacyStatus(session.lifecycle);
+  }
+
+  /**
+   * Guarantee the orchestrator session learns when one of its workers finishes
+   * or gets blocked, instead of relying on the agent to `ao send` a report
+   * itself (which it may forget — the completion-signal gap). Runs every poll
+   * for the session and is idempotent: a metadata latch
+   * (`orchestratorSignaledStatus`) fires the signal once per status episode and
+   * doubles as a retry latch — on a failed delivery the latch stays unset so the
+   * next poll retries until the orchestrator is reliably notified. The latch
+   * resets when the worker leaves a signal-worthy status, so a later re-entry
+   * (e.g. needs_input → working → needs_input) signals again.
+   */
+  async function signalOrchestratorIfNeeded(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    if (!ORCHESTRATOR_SIGNAL_STATUSES.has(newStatus)) {
+      if (session.metadata["orchestratorSignaledStatus"]) {
+        updateSessionMetadata(session, { orchestratorSignaledStatus: "" });
+      }
+      return;
+    }
+
+    // The orchestrator's own lifecycle isn't signaled to itself.
+    if (session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+      return;
+    }
+
+    // Already signaled this status episode — nothing to do.
+    if (session.metadata["orchestratorSignaledStatus"] === newStatus) return;
+
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    const orchestratorSessionId = getOrchestratorSessionId(project);
+    const orchestrator = await sessionManager.get(orchestratorSessionId).catch(() => null);
+    // No orchestrator running for this project, or it's already dead — nobody to
+    // signal. Leave the latch unset so a relaunched orchestrator gets notified.
+    if (!orchestrator || TERMINAL_STATUSES.has(orchestrator.status)) return;
+
+    try {
+      await sessionManager.send(
+        orchestratorSessionId,
+        buildOrchestratorSignalMessage(session, newStatus),
+      );
+      updateSessionMetadata(session, { orchestratorSignaledStatus: newStatus });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle-manager",
+        kind: "orchestrator.signaled",
+        summary: `signaled orchestrator: ${session.id} → ${newStatus}`,
+        data: { status: newStatus, orchestrator: orchestratorSessionId },
+      });
+    } catch (err) {
+      // Fail loud (visible) but don't drop: the latch stays unset, so the next
+      // poll retries until delivery is confirmed.
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle-manager",
+        kind: "orchestrator.signal_failed",
+        level: "warn",
+        summary: `failed to signal orchestrator: ${session.id} → ${newStatus}`,
+        data: {
+          status: newStatus,
+          orchestrator: orchestratorSessionId,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
   }
 
   function makeFingerprint(ids: string[]): string {
@@ -2501,7 +2657,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
-    const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    // Routing decides which notifiers fire per priority. A process-scoped
+    // `AO_NOTIFIERS_ALLOW` (used by native front-ends like Maestro that run a
+    // single AO notifier in an otherwise-disabled daemon) is unioned in so that
+    // allow-listed notifier always receives events without the front-end having
+    // to also rewrite notificationRouting in the config file.
+    const routed = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    const notifierNames = [...new Set([...routed, ...forcedNotifierNames()])];
 
     for (const name of notifierNames) {
       const target = resolveNotifierTarget(config, name);
@@ -2670,6 +2832,169 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         kind: "session.auto_cleanup_failed",
         level: "error",
         summary: `auto-cleanup failed for ${session.id}`,
+        data: { errorMessage: errorMsg },
+      });
+    }
+  }
+
+  /**
+   * True when the worktree has uncommitted changes OTHER than the injected
+   * `.claude/` and `.maestro/` infra (activity logs, metadata, discipline hooks)
+   * that ao writes into every worktree. Those always show up as untracked noise;
+   * counting them would mark every worker dirty and make auto-retire dead code.
+   * Any failure (not a git repo, git missing, timeout) is treated as "has work"
+   * so we never tear down a worktree we could not verify is clean.
+   */
+  async function hasUncommittedNonInfraWork(worktreePath: string): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsync("git", ["-C", worktreePath, "status", "--porcelain"], {
+        timeout: 10_000,
+      });
+      return (
+        stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          // porcelain v1: "XY <path>" (or "XY <orig> -> <new>" for renames). The
+          // path portion starts at column 3; mirror the orchestrator's agreed
+          // `grep -vE '\.claude/|\.maestro/'` filter on it.
+          .some((line) => {
+            const pathPart = line.slice(2).trim();
+            return !(pathPart.includes(".claude/") || pathPart.includes(".maestro/"));
+          })
+      );
+    } catch {
+      return true; // fail safe — an unverifiable tree is treated as dirty
+    }
+  }
+
+  /**
+   * Auto-retire an idle WORKER whose streaming host finished its turn cleanly.
+   *
+   * A worker that completes its turn on a live SDK host is clamped to a stable
+   * `idle` by the streaming-host ground truth (runtime-alive clamp + the
+   * "live idle is healthy, not stuck" guard). Correct for liveness, but it
+   * leaves a finished worker lingering: its node host keeps running (RAM) and
+   * the board shows it under Working because the runtime is still alive — the
+   * operator then had to `ao session kill` it by hand. Orchestrators legitimately
+   * sit idle waiting on their workers, so they are NEVER retired here. Only a
+   * worker, only once it has stayed idle past a grace window (so the orchestrator
+   * can still deliver a follow-up turn) with a clean worktree (no uncommitted
+   * non-infra work to lose). Reaps the host and moves the card to Done via
+   * sessionManager.kill — the automated equivalent of the manual kill.
+   *
+   * Complements the dead-runtime terminal path (#8): that handles a host that
+   * vanished; this handles a host that is alive but done.
+   */
+  async function maybeAutoRetireIdleWorker(session: Session): Promise<void> {
+    const { autoRetireIdleWorkers = true, workerIdleRetireGraceMs: graceMs = 120_000 } =
+      config.lifecycle ?? {};
+    if (!autoRetireIdleWorkers) return;
+
+    const lc = session.lifecycle;
+    const isStreamingRuntime = session.runtimeHandle?.runtimeName === "sdk";
+
+    // Eligibility — ALL must hold:
+    //  - SDK streaming host (the only runtime that clamps a finished turn to a
+    //    live `idle`; a dead host of any runtime is handled by #8's terminal path);
+    //  - worker, never an orchestrator (orchestrators persist/restore);
+    //  - lifecycle `idle` = a clean turn-end (NOT working/needs_input/stuck/…);
+    //  - runtime positively alive (don't race #8 on a host that just died);
+    //  - activity not busy (no live work, no pending question/approval);
+    //  - not already terminal.
+    const eligible =
+      isStreamingRuntime &&
+      lc.session.kind !== "orchestrator" &&
+      lc.session.state === "idle" &&
+      lc.runtime.state === "alive" &&
+      session.activity !== ACTIVITY_STATE.ACTIVE &&
+      session.activity !== ACTIVITY_STATE.WAITING_INPUT &&
+      session.activity !== ACTIVITY_STATE.BLOCKED;
+
+    const clearPendingMarker = (): void => {
+      if (session.metadata["workerRetirePendingSince"]) {
+        updateSessionMetadata(session, { workerRetirePendingSince: "" });
+      }
+    };
+
+    if (!eligible) {
+      // Became busy / got a follow-up turn / changed state → reset the grace
+      // clock so a later idle period opens a fresh window.
+      clearPendingMarker();
+      return;
+    }
+
+    // Never retire a worker with uncommitted NON-INFRA changes: that work would
+    // be lost on teardown, and `git worktree remove` would fail on a dirty tree.
+    if (session.workspacePath && (await hasUncommittedNonInfraWork(session.workspacePath))) {
+      clearPendingMarker();
+      return;
+    }
+
+    // Grace window: the first eligible poll stamps the clock; retire only once
+    // the worker has stayed idle past graceMs. graceMs=0 retires immediately.
+    const nowIso = new Date().toISOString();
+    const pendingSince = session.metadata["workerRetirePendingSince"] || nowIso;
+    if (!session.metadata["workerRetirePendingSince"]) {
+      updateSessionMetadata(session, { workerRetirePendingSince: nowIso });
+    }
+    const pendingSinceMs = Date.parse(pendingSince);
+    const graceElapsed = Number.isFinite(pendingSinceMs)
+      ? Date.now() - pendingSinceMs >= graceMs
+      : true;
+    if (!graceElapsed) return;
+
+    const correlationId = createCorrelationId("lifecycle-worker-retire");
+    try {
+      const result = await sessionManager.kill(session.id, { reason: "auto_cleanup" });
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_retire.completed",
+        outcome: "success",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: "worker_idle_done",
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceMs,
+        },
+        level: "info",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.worker_auto_retired",
+        summary: `idle worker auto-retired: ${session.id}`,
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceMs,
+        },
+      });
+      states.delete(session.id);
+    } catch (err) {
+      // Leave the marker in place so the next poll retries (idempotent kill).
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_retire.failed",
+        outcome: "failure",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: errorMsg,
+        level: "warn",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.worker_auto_retire_failed",
+        level: "error",
+        summary: `idle worker auto-retire failed: ${session.id}`,
         data: { errorMessage: errorMsg },
       });
     }
@@ -2974,6 +3299,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
+    // Guarantee the orchestrator learns when this worker finished or got blocked,
+    // even if the agent never `ao send`s a report itself. Idempotent + retrying.
+    await signalOrchestratorIfNeeded(session, newStatus);
+
     // Pin first quality summary for title stability
     if (
       session.agentInfo?.summary &&
@@ -3003,6 +3332,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // once the agent is idle (or grace window elapses). Runs last so reactions
     // and notifications observe the live session before it is destroyed.
     await maybeAutoCleanupOnMerge(session);
+
+    // Idle-worker auto-retire: reap a finished worker's live host once it has
+    // sat idle past the grace window (frees RAM + self-clears the board). Runs
+    // after merge-cleanup so a merged worker takes the merge path first.
+    await maybeAutoRetireIdleWorker(session);
   }
 
   /**
@@ -3121,6 +3455,38 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
+
+      // Startup reconcile (one-time, on the first poll after start). The in-memory
+      // `states` map is empty after a daemon restart, so orphans whose runtime died
+      // while the daemon was down — persisted as `detecting`/runtime_lost by
+      // sm.list() enrichment (#1735) — are reconciled here. They are already part of
+      // `sessionsToCheck` (detecting is non-terminal), so the checkSession pass below
+      // drives them through the probe pipeline: with a prior detecting attempt they
+      // terminate (runtime_lost) on this very poll; a fresh one gets one grace cycle
+      // first. This is observability + intent only — no extra session list call, and
+      // every terminal decision is still made by resolveProbeDecision (preserves
+      // #1735). (#8)
+      if (startupReconcilePending) {
+        startupReconcilePending = false;
+        const orphans = sessionsToCheck.filter((s) => {
+          const runtimeState = s.lifecycle?.runtime.state;
+          const runtimeDead = runtimeState === "missing" || runtimeState === "exited";
+          const detectingRuntimeLost =
+            s.lifecycle?.session.state === "detecting" &&
+            s.lifecycle?.session.reason === "runtime_lost";
+          return runtimeDead || detectingRuntimeLost;
+        });
+        if (orphans.length > 0) {
+          recordActivityEvent({
+            projectId: scopedProjectId,
+            source: "lifecycle",
+            kind: "lifecycle.startup_reconcile",
+            level: "info",
+            summary: `reconciling ${orphans.length} orphaned dead-runtime session(s) on startup`,
+            data: { count: orphans.length, sessionIds: orphans.map((s) => s.id) },
+          });
+        }
+      }
 
       await Promise.allSettled(
         sessionsToCheck.map((session) => refreshTrackedBranch(session, sessions)),
@@ -3256,7 +3622,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     start(intervalMs = 30_000): void {
       if (pollTimer) return; // Already running
       pollTimer = setInterval(() => void pollAll(), intervalMs);
-      // Run immediately on start
+      // Run immediately on start. This first poll also performs the orphan
+      // reconcile (see startupReconcilePending in pollAll): sessions whose runtime
+      // died while the daemon was down — persisted as `detecting`/runtime_lost by
+      // sm.list() (#1735) — are driven through the probe pipeline so they reach a
+      // terminal state instead of lingering in `detecting`. (#8)
       void pollAll();
     },
 

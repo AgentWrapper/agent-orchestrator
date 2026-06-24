@@ -733,4 +733,109 @@ describe("recovery validator", () => {
     expect(assessment.recoveryRule).toBe("auto");
     expect(assessment.action).toBe("cleanup");
   });
+
+  // Regression: a claude-code session whose project.runtime was back-filled to the
+  // platform default (tmux) must probe the per-agent runtime (sdk), not tmux. The
+  // validator used to read `project.runtime ?? config.defaults.runtime` directly,
+  // which returned the back-filled tmux and probed the wrong runtime.
+  it("probes the per-agent runtime (claude-code -> sdk) despite a back-filled project.runtime", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    try {
+      rootDir = join(tmpdir(), `ao-recovery-validator-${randomUUID()}`);
+      mkdirSync(rootDir, { recursive: true });
+      const projectPath = join(rootDir, "project");
+      mkdirSync(projectPath, { recursive: true });
+      writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+      const mockSdkRuntime: Runtime = {
+        name: "sdk",
+        create: vi.fn(),
+        destroy: vi.fn(),
+        sendMessage: vi.fn(),
+        getOutput: vi.fn(),
+        isAlive: vi.fn().mockResolvedValue(true),
+      };
+      const mockWorkspace: Workspace = {
+        name: "worktree",
+        create: vi.fn(),
+        destroy: vi.fn(),
+        list: vi.fn(),
+        exists: vi.fn().mockResolvedValue(true),
+      };
+      const mockAgent: Agent = {
+        name: "claude-code",
+        processName: "claude",
+        getLaunchCommand: vi.fn(),
+        getEnvironment: vi.fn(),
+        detectActivity: vi.fn(),
+        getActivityState: vi.fn(),
+        isProcessRunning: vi.fn().mockResolvedValue(true),
+        getSessionInfo: vi.fn(),
+      };
+      const registry: PluginRegistry = {
+        register: vi.fn(),
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime" && name === "sdk") return mockSdkRuntime;
+          if (slot === "workspace") return mockWorkspace;
+          if (slot === "agent" && name === "claude-code") return mockAgent;
+          return null;
+        }),
+        list: vi.fn().mockReturnValue([]),
+        loadBuiltins: vi.fn().mockResolvedValue(undefined),
+        loadFromConfig: vi.fn().mockResolvedValue(undefined),
+      };
+      const config: OrchestratorConfig = {
+        configPath: join(rootDir, "agent-orchestrator.yaml"),
+        port: 3000,
+        readyThresholdMs: 300_000,
+        power: { preventIdleSleep: false },
+        defaults: {
+          runtime: "tmux", // platform default on linux -> a back-fill, not a user pin
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: ["desktop"],
+        },
+        projects: {
+          app: {
+            name: "app",
+            repo: "org/repo",
+            path: projectPath,
+            defaultBranch: "main",
+            sessionPrefix: "app",
+            agent: "claude-code",
+            runtime: "tmux", // back-filled by applyBehaviorDefaults
+          },
+        },
+        notifiers: {},
+        notificationRouting: {
+          urgent: ["desktop"],
+          action: ["desktop"],
+          warning: [],
+          info: [],
+        },
+        reactions: {},
+      };
+      const scanned: ScannedSession = {
+        sessionId: "app-1",
+        projectId: "app",
+        project: config.projects.app,
+        sessionsDir: getProjectSessionsDir("app"),
+        rawMetadata: {
+          worktree: projectPath,
+          status: "working",
+          agent: "claude-code",
+          runtimeHandle: JSON.stringify({ id: "rt-1", runtimeName: "tmux", data: {} }),
+        },
+      };
+
+      await validateSession(scanned, config, registry);
+
+      expect(registry.get).toHaveBeenCalledWith("runtime", "sdk");
+      expect(registry.get).not.toHaveBeenCalledWith("runtime", "tmux");
+      expect(mockSdkRuntime.isAlive).toHaveBeenCalled();
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    }
+  });
 });

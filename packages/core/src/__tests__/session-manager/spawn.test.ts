@@ -2704,3 +2704,79 @@ describe("spawn", () => {
     });
   });
 });
+
+describe("worker model routing (defaultWorkerModel)", () => {
+  it("applies top-level defaultWorkerModel to worker spawns", async () => {
+    const sm = createSessionManager({
+      config: { ...config, defaultWorkerModel: "sonnet" },
+      registry: mockRegistry,
+    });
+
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet" }),
+    );
+  });
+
+  it("lets an explicit spawn model override defaultWorkerModel", async () => {
+    const sm = createSessionManager({
+      config: { ...config, defaultWorkerModel: "sonnet" },
+      registry: mockRegistry,
+    });
+
+    await sm.spawn({ projectId: "my-app", model: "haiku" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "haiku" }),
+    );
+  });
+
+  it("lets a per-project worker model win over defaultWorkerModel", async () => {
+    const projectConfig = config.projects["my-app"];
+    if (!projectConfig) throw new Error("test setup: my-app missing");
+    const sm = createSessionManager({
+      config: {
+        ...config,
+        defaultWorkerModel: "sonnet",
+        projects: {
+          ...config.projects,
+          "my-app": {
+            ...projectConfig,
+            worker: { agentConfig: { model: "worker-model" } },
+          },
+        },
+      },
+      registry: mockRegistry,
+    });
+
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "worker-model" }),
+    );
+  });
+
+  it("never applies defaultWorkerModel to orchestrator spawns", async () => {
+    const sm = createSessionManager({
+      config: { ...config, defaultWorkerModel: "sonnet" },
+      registry: mockRegistry,
+    });
+
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).not.toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet" }),
+    );
+  });
+
+  it("sets no model when neither a spawn model nor defaultWorkerModel is configured", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).not.toHaveBeenCalledWith(
+      expect.objectContaining({ model: expect.anything() }),
+    );
+  });
+});

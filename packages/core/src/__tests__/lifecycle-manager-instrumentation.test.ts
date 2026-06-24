@@ -560,7 +560,12 @@ function makeMergedScm() {
 function configWithAutoCleanup(): OrchestratorConfig {
   return {
     ...config,
-    lifecycle: { autoCleanupOnMerge: true, mergeCleanupIdleGraceMs: 300_000 },
+    lifecycle: {
+      autoCleanupOnMerge: true,
+      mergeCleanupIdleGraceMs: 300_000,
+      autoRetireIdleWorkers: true,
+      workerIdleRetireGraceMs: 120_000,
+    },
   };
 }
 

@@ -396,14 +396,16 @@ describe("runtime.sendMessage()", () => {
     const runtime = create();
     const handle = makeHandle("msg-short");
 
-    // 1: send-keys C-u (clear), 2: send-keys -l text, 3: send-keys Enter
+    // 1: send-keys C-u (clear), 2: send-keys -l text, 3: send-keys Enter,
+    // 4: capture-pane verify (composer cleared → submitted, no retry)
     mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
+    mockTmuxSuccess("> \n? for shortcuts"); // empty composer — text was submitted
 
     await runtime.sendMessage(handle, "hello world");
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(3);
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(4);
 
     // Call 0: Clear partial input
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
@@ -428,6 +430,14 @@ describe("runtime.sendMessage()", () => {
       ["send-keys", "-t", "msg-short", "Enter"],
       expectedTmuxOptions,
     );
+
+    // Call 3: capture-pane to verify the submit (visible pane only, no -S)
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      4,
+      "tmux",
+      ["capture-pane", "-t", "msg-short", "-p"],
+      expectedTmuxOptions,
+    );
   });
 
   it("uses load-buffer + paste-buffer for long text (> 200 chars)", async () => {
@@ -435,16 +445,18 @@ describe("runtime.sendMessage()", () => {
     const handle = makeHandle("msg-long");
     const longText = "x".repeat(250);
 
-    // 1: C-u, 2: load-buffer, 3: paste-buffer, 4: unlinkSync (sync), 5: delete-buffer, 6: Enter
+    // 1: C-u, 2: load-buffer, 3: paste-buffer, unlinkSync (sync), 4: delete-buffer,
+    // 5: Enter, 6: capture-pane verify (composer cleared → submitted, no retry)
     mockTmuxSuccess(); // C-u
     mockTmuxSuccess(); // load-buffer
     mockTmuxSuccess(); // paste-buffer
     mockTmuxSuccess(); // delete-buffer (finally block)
     mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("> \n? for shortcuts"); // empty composer — text was submitted
 
     await runtime.sendMessage(handle, longText);
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(6);
 
     // Call 0: clear
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
@@ -497,6 +509,7 @@ describe("runtime.sendMessage()", () => {
     mockTmuxSuccess(); // paste-buffer
     mockTmuxSuccess(); // delete-buffer (finally)
     mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("> \n? for shortcuts"); // capture-pane verify — submitted
 
     await runtime.sendMessage(handle, "line1\nline2\nline3");
 
@@ -518,6 +531,51 @@ describe("runtime.sendMessage()", () => {
       "line1\nline2\nline3",
       { encoding: "utf-8", mode: 0o600 },
     );
+  });
+
+  it("delivers a large multi-line task spec whole via the buffer path (no truncation/collapse)", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-big");
+    // ~50KB multi-line spec — the kind of large task prompt the orchestrator
+    // now hands an agent. It must reach the pane byte-for-byte: written whole to
+    // the temp file and pasted via load-buffer (never typed char-by-char).
+    const bigSpec = Array.from(
+      { length: 800 },
+      (_, i) => `## Section ${i}\n- requirement ${i}: ${"z".repeat(40)}`,
+    ).join("\n\n");
+
+    mockTmuxSuccess(); // C-u
+    mockTmuxSuccess(); // load-buffer
+    mockTmuxSuccess(); // paste-buffer
+    mockTmuxSuccess(); // delete-buffer (finally)
+    mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("> \n? for shortcuts"); // capture-pane verify — submitted
+
+    await runtime.sendMessage(handle, bigSpec);
+
+    // Buffer path, not literal send-keys typing.
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      [
+        "load-buffer",
+        "-b",
+        "ao-test-uuid-1234",
+        expect.stringContaining("ao-send-test-uuid-1234.txt"),
+      ],
+      expectedTmuxOptions,
+    );
+    // The exact, full payload is written to the temp file (no slice/collapse).
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("ao-send-test-uuid-1234.txt"),
+      bigSpec,
+      { encoding: "utf-8", mode: 0o600 },
+    );
+    // No literal `send-keys -l` of the body — it never gets typed in.
+    const literalSend = mockExecFileCustom.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("-l"),
+    );
+    expect(literalSend).toBeUndefined();
   });
 
   it("cleans up buffer and temp file on paste failure", async () => {
@@ -546,6 +604,165 @@ describe("runtime.sendMessage()", () => {
       ["delete-buffer", "-b", "ao-test-uuid-1234"],
       expectedTmuxOptions,
     );
+  });
+
+  it("re-presses Enter when the text stays stuck in the composer, then stops once submitted", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-stuck");
+
+    // 1: C-u, 2: -l text, 3: Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // 4: capture-pane → message STILL in composer (Enter was swallowed)
+    mockTmuxSuccess("╭──────────╮\n│ > resubmit me │\n╰──────────╯\n? for shortcuts");
+    // 5: Enter (retry submit)
+    mockTmuxSuccess();
+    // 6: capture-pane → composer cleared (submitted)
+    mockTmuxSuccess("> \n? for shortcuts");
+
+    await runtime.sendMessage(handle, "resubmit me");
+
+    // C-u, -l, Enter, capture(stuck), Enter(retry), capture(submitted) = 6 calls.
+    // No 7th call — once submitted we stop retrying.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(6);
+
+    // First submit Enter
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      3,
+      "tmux",
+      ["send-keys", "-t", "msg-stuck", "Enter"],
+      expectedTmuxOptions,
+    );
+    // Verify capture reads the visible pane only (no -S scrollback flag)
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      4,
+      "tmux",
+      ["capture-pane", "-t", "msg-stuck", "-p"],
+      expectedTmuxOptions,
+    );
+    // Retry Enter because the text was still in the composer
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      5,
+      "tmux",
+      ["send-keys", "-t", "msg-stuck", "Enter"],
+      expectedTmuxOptions,
+    );
+    // Re-verify, sees an empty composer, returns
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      6,
+      "tmux",
+      ["capture-pane", "-t", "msg-stuck", "-p"],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("does not send a second Enter when the first submit already cleared the composer", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-clean");
+
+    // 1: C-u, 2: -l text, 3: Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // 4: capture-pane → composer empty, message already submitted
+    mockTmuxSuccess("> \n? for shortcuts");
+
+    await runtime.sendMessage(handle, "no double submit");
+
+    // Exactly 4 calls — verify saw the submit, so no extra Enter fired.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(4);
+
+    // The last call is the verify capture, NOT another Enter.
+    expect(mockExecFileCustom).toHaveBeenLastCalledWith(
+      "tmux",
+      ["capture-pane", "-t", "msg-clean", "-p"],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("throws after the retry budget when the composer never clears (fail-loud, no hang)", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-jammed");
+    const stuckPane = "│ > jammed message │\n? for shortcuts";
+
+    // C-u, -l, Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // 3 verify+retry cycles, every capture shows the text still stuck.
+    mockTmuxSuccess(stuckPane); // capture 1 → stuck
+    mockTmuxSuccess(); // retry Enter 1
+    mockTmuxSuccess(stuckPane); // capture 2 → stuck
+    mockTmuxSuccess(); // retry Enter 2
+    mockTmuxSuccess(stuckPane); // capture 3 → stuck
+    mockTmuxSuccess(); // retry Enter 3
+
+    // An un-submittable message must fail loud, not be silently dropped.
+    await expect(runtime.sendMessage(handle, "jammed message")).rejects.toThrow(
+      /stayed in the composer/,
+    );
+
+    // C-u, -l, first Enter, then 3×(capture + Enter) = 9 calls, then it throws.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(9);
+
+    // Total Enter presses are bounded: 1 initial + 3 retries = 4.
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && (c[1] as string[]).join(" ") === "send-keys -t msg-jammed Enter",
+    );
+    expect(enterCalls).toHaveLength(4);
+  });
+
+  it("fails loud when the pane is unreadable and never blind-presses Enter", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-blind");
+
+    // C-u, -l, Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // Every verify capture fails — submission can't be confirmed. We must NOT
+    // blind-press Enter (no duplicate submit) and must fail loud rather than
+    // silently treat the message as delivered (the old line-106 silent-drop).
+    mockTmuxError("capture-pane: no server running");
+    mockTmuxError("capture-pane: no server running");
+    mockTmuxError("capture-pane: no server running");
+
+    await expect(runtime.sendMessage(handle, "blind send")).rejects.toThrow(/pane unreadable/);
+
+    // C-u, -l, Enter, then 3 capture attempts (all failed) = 6 calls.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(6);
+
+    // Only the initial Enter — no retry Enter fired on an unreadable probe.
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && (c[1] as string[]).join(" ") === "send-keys -t msg-blind Enter",
+    );
+    expect(enterCalls).toHaveLength(1);
+  });
+
+  it("recovers when an unreadable probe clears on retry (no throw, no blind Enter)", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-recover");
+
+    // C-u, -l, Enter (first submit)
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    // capture 1 → unreadable (must retry capture, not blind-press); capture 2 →
+    // composer cleared, so the submit is confirmed and the send resolves.
+    mockTmuxError("capture-pane: transient");
+    mockTmuxSuccess("> \n? for shortcuts");
+
+    await runtime.sendMessage(handle, "recover send");
+
+    // C-u, -l, Enter, capture(fail), capture(gone) = 5 calls.
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
+
+    // Only the initial Enter — the unreadable probe did not trigger a retry Enter.
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && (c[1] as string[]).join(" ") === "send-keys -t msg-recover Enter",
+    );
+    expect(enterCalls).toHaveLength(1);
   });
 });
 

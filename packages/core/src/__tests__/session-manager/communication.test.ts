@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import {
   writeMetadata,
+  updateMetadata,
   readMetadataRaw,
 } from "../../metadata.js";
 import type {
@@ -51,6 +52,74 @@ describe("send", () => {
     await sm.send("app-1", "Fix the CI failures");
 
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the CI failures");
+  });
+
+  // Regression: when the persisted handle has no runtimeName (older/partial
+  // metadata), send() must resolve the runtime per-agent (claude-code -> sdk),
+  // not fall back to the back-filled project/defaults runtime (tmux). The old
+  // `parsedHandle?.runtimeName ?? project.runtime ?? config.defaults.runtime`
+  // routed such a session to tmux and the message was lost.
+  it("routes to the per-agent runtime (claude-code -> sdk) when the handle has no runtimeName", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    try {
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+        agent: "claude-code",
+      });
+      // Persist a handle that predates per-runtime tagging — no runtimeName.
+      updateMetadata(sessionsDir, "app-1", {
+        runtimeHandle: JSON.stringify({ id: "rt-1", data: {} }),
+      });
+
+      const sdkRuntime: Runtime = {
+        name: "sdk",
+        create: vi.fn().mockResolvedValue({ id: "rt-1", runtimeName: "sdk", data: {} }),
+        destroy: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        getOutput: vi.fn().mockResolvedValueOnce("before").mockResolvedValue("after"),
+        isAlive: vi.fn().mockResolvedValue(true),
+      };
+      const ccAgent: Agent = {
+        name: "claude-code",
+        processName: "claude",
+        getLaunchCommand: vi.fn(),
+        getEnvironment: vi.fn(),
+        detectActivity: vi.fn(),
+        getActivityState: vi.fn(),
+        isProcessRunning: vi.fn().mockResolvedValue(true),
+        getSessionInfo: vi.fn(),
+      };
+      const registry: PluginRegistry = {
+        register: vi.fn(),
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime" && name === "sdk") return sdkRuntime;
+          if (slot === "agent" && name === "claude-code") return ccAgent;
+          return null;
+        }),
+        list: vi.fn().mockReturnValue([]),
+        loadBuiltins: vi.fn().mockResolvedValue(undefined),
+        loadFromConfig: vi.fn().mockResolvedValue(undefined),
+      };
+      // defaults.runtime === platform default (tmux on linux) -> a back-fill, so
+      // the claude-code -> sdk preference must still apply.
+      const ccConfig: OrchestratorConfig = {
+        ...config,
+        defaults: { ...config.defaults, runtime: "tmux", agent: "claude-code" },
+      };
+
+      const sm = createSessionManager({ config: ccConfig, registry });
+      await sm.send("app-1", "do the task");
+
+      expect(registry.get).toHaveBeenCalledWith("runtime", "sdk");
+      expect(registry.get).not.toHaveBeenCalledWith("runtime", "tmux");
+      expect(sdkRuntime.sendMessage).toHaveBeenCalled();
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    }
   });
 
   it("restores a dead session before sending the message", async () => {

@@ -374,10 +374,22 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /**
+   * Short, explicit human-readable title for the session ("what it's working
+   * on"), set at spawn time. Distinct from the auto-derived `displayName`:
+   * persisted verbatim and surfaced on dashboard/Maestro kanban cards.
+   */
+  title?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
+  /**
+   * Explicit model for this spawn (e.g. "opus" | "sonnet" | "haiku"). Highest
+   * priority — overrides the top-level `defaultWorkerModel` and any per-project
+   * worker model. Undefined = fall back to configured defaults.
+   */
+  model?: string;
 }
 
 /** Config for creating an orchestrator session */
@@ -410,6 +422,16 @@ export interface Runtime {
 
   /** Capture recent output from the session */
   getOutput(handle: RuntimeHandle, lines?: number): Promise<string>;
+
+  /**
+   * Optional: send raw key token(s) to the session, without sendMessage()'s
+   * framing (no clear-line, no implicit trailing Enter). Each element is a
+   * tmux-style key name ("Enter", "Down", "C-c") or a literal string. Used to
+   * answer interactive TUI prompts — e.g. confirming Claude Code's
+   * resume-from-summary selector — where sendMessage()'s C-u + Enter would
+   * corrupt the selection.
+   */
+  sendKeys?(handle: RuntimeHandle, keys: string[]): Promise<void>;
 
   /** Check if the session environment is still alive */
   isAlive(handle: RuntimeHandle): Promise<boolean>;
@@ -479,6 +501,26 @@ export function isProcessProbeIndeterminate(
   return result === PROCESS_PROBE_INDETERMINATE;
 }
 
+/**
+ * Static capability descriptor for an agent plugin.
+ *
+ * Provider-independent scaling seam: each agent plugin declares the limits of
+ * the model/CLI it drives so the core can reason about how much it may hand an
+ * agent (large task specs, attachments, etc.) without hard-coding any one
+ * provider's numbers. The core only reads these — enforcement is intentionally
+ * not wired up yet.
+ */
+export interface AgentLimits {
+  /** Maximum context window, in tokens, the agent's model supports. */
+  contextTokens: number;
+  /** Optional: max bytes accepted in a single request to the agent's API. */
+  maxRequestBytes?: number;
+  /** Optional: max bytes of a single file/attachment the agent can ingest. */
+  maxFileBytes?: number;
+  /** Optional: file extensions the agent can read directly (lowercase, no dot). */
+  supportedFileTypes?: string[];
+}
+
 export interface Agent {
   readonly name: string;
 
@@ -491,6 +533,13 @@ export interface Agent {
    * Use post-launch for interactive CLIs that must start first and receive input over stdin.
    */
   readonly promptDelivery?: "inline" | "post-launch";
+
+  /**
+   * Optional: static capability limits for this agent (context window, request
+   * size, attachment size, supported file types). Undefined when the plugin has
+   * not declared them. Read-only descriptor — see {@link AgentLimits}.
+   */
+  readonly limits?: AgentLimits;
 
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
@@ -528,6 +577,19 @@ export interface Agent {
    * Returns null if no previous session is found (caller falls back to getLaunchCommand).
    */
   getRestoreCommand?(session: Session, project: ProjectConfig): Promise<string | null>;
+
+  /**
+   * Optional: given recent terminal output captured shortly after a RESTORE
+   * launch, decide whether the agent is blocked on an interactive
+   * resume/continue prompt that should be auto-confirmed (no human is at the
+   * pane), and return the key token(s) to send — e.g. ["Enter"] to accept the
+   * pre-highlighted default. Return null when no such prompt is present.
+   *
+   * The signature MUST be specific enough never to fire on ordinary agent
+   * output; the caller sends the returned keys blindly via Runtime.sendKeys.
+   * Only consulted on the restore path (getRestoreCommand was used).
+   */
+  detectRestorePromptKeys?(recentOutput: string): string[] | null;
 
   /**
    * Optional: run setup BEFORE the agent process is launched.
@@ -1349,6 +1411,19 @@ export interface LifecycleConfig {
    * cleanup happens then. Defaults to 5 minutes.
    */
   mergeCleanupIdleGraceMs: number;
+  /**
+   * Auto-retire idle WORKER sessions (never orchestrators) whose streaming host
+   * finished its turn cleanly and has sat idle past the grace window with a
+   * clean worktree. Reaps the node host and moves the card to Done so the board
+   * self-clears without a manual `ao session kill`. Defaults to true.
+   */
+  autoRetireIdleWorkers: boolean;
+  /**
+   * Minimum time (ms) a worker must stay idle after finishing its turn before
+   * auto-retire reaps it. The window lets the orchestrator deliver a follow-up
+   * turn before teardown. Defaults to 2 minutes.
+   */
+  workerIdleRetireGraceMs: number;
 }
 
 export interface ObservabilityConfig {
@@ -1398,6 +1473,16 @@ export interface OrchestratorConfig {
    * from YAML, but optional for hand-constructed tests.
    */
   observability?: ObservabilityConfig;
+
+  /**
+   * Default model alias applied to WORKER sessions ("opus" | "sonnet" |
+   * "haiku", or a full model id). Lowest-priority model source: an explicit
+   * `ao spawn --model` flag and any per-project worker model both win over it.
+   * Never applied to orchestrators. Empty/undefined = the account default
+   * (workers spawn on whatever model the account defaults to — current
+   * behavior). Lets the fleet route workers to a cheaper model to cut tokens.
+   */
+  defaultWorkerModel?: string;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;
@@ -1820,8 +1905,19 @@ export interface SessionMetadata {
   codexThreadId?: string;
   codexModel?: string;
   restoreFallbackReason?: string;
+  /**
+   * Persisted per-session model override set by `ao session set-model`.
+   * Takes effect on every restore/restart and beats project-level config.
+   */
+  sessionModel?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  /**
+   * Explicit short title for the session, set at spawn time (`ao spawn --title`).
+   * Unlike `displayName` (auto-derived from issue/prompt), this is a verbatim,
+   * user-supplied "what it's working on" label surfaced on kanban cards.
+   */
+  title?: string;
   /**
    * Human-readable display name for the session.
    *
@@ -1882,7 +1978,7 @@ export interface SessionManager {
    * `orchestratorSessionStrategy` — replacement is the whole point.
    */
   relaunchOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
-  restore(sessionId: SessionId): Promise<Session>;
+  restore(sessionId: SessionId, force?: boolean): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: KillOptions): Promise<KillResult>;
@@ -1892,6 +1988,12 @@ export interface SessionManager {
   ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
+  /**
+   * Change the model for a session and restart it with the new model.
+   * Persists the intent in metadata so future restarts also use the new model.
+   * If the session is currently live, its runtime is destroyed before restart.
+   */
+  setModel(sessionId: SessionId, model: string): Promise<Session>;
 }
 
 /** OpenCode-specific session manager with remap capability */
@@ -1900,6 +2002,13 @@ export interface OpenCodeSessionManager extends SessionManager {
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
   listCached(projectId?: string): Promise<Session[]>;
   invalidateCache(): void;
+  /**
+   * Read the capability limits of the agent plugin active for a project
+   * (the project's configured agent, or the default). Returns undefined when
+   * the project is unknown or the resolved agent declares no limits. This is
+   * the core-facing seam for limit-aware behavior — nothing enforces it yet.
+   */
+  getAgentLimits(projectId: string): AgentLimits | undefined;
 }
 
 export interface ClaimPROptions {

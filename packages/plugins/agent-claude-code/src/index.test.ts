@@ -80,6 +80,9 @@ import {
   METADATA_UPDATER_SCRIPT_NODE,
   ACTIVITY_UPDATER_SCRIPT,
   ACTIVITY_UPDATER_SCRIPT_NODE,
+  ORCHESTRATOR_NO_INLINE_CODE_SCRIPT,
+  ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT,
+  PRE_SPAWN_RLM_SCRIPT,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -223,6 +226,16 @@ describe("plugin manifest & exports", () => {
     expect(agent.processName).toBe("claude");
   });
 
+  it("declares capability limits (provider-independent scaling seam)", () => {
+    const agent = create();
+    expect(agent.limits).toEqual({
+      contextTokens: 1_000_000,
+      maxRequestBytes: 33_554_432,
+      maxFileBytes: 524_288_000,
+      supportedFileTypes: ["pdf", "png", "jpg", "jpeg", "gif", "webp", "txt"],
+    });
+  });
+
   it("default export is a valid PluginModule", () => {
     expect(defaultExport.manifest).toBe(manifest);
     expect(typeof defaultExport.create).toBe("function");
@@ -281,6 +294,14 @@ describe("getLaunchCommand", () => {
   it("handles prompts starting with dashes safely via -- separator", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "--investigate this" }));
     expect(cmd).toContain("-- '--investigate this'");
+  });
+
+  it("embeds a multi-line prompt whole, preserving newlines (no collapse/truncation)", () => {
+    const multiline = "Step 1: do X\nStep 2: do Y\n\nNotes:\n- keep newlines";
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: multiline }));
+    // shellEscape single-quotes the whole prompt; newlines stay literal inside.
+    expect(cmd).toContain(`-- '${multiline}'`);
+    expect(cmd).toContain("\n");
   });
 
   it("omits --dangerously-skip-permissions when permissions=default", () => {
@@ -682,6 +703,31 @@ describe("getSessionInfo", () => {
     });
   });
 
+  describe("detectRestorePromptKeys", () => {
+    const agent = create();
+    const selector = [
+      "This session is 1d old and 515.1k tokens.",
+      "❯ 1. Resume from summary (recommended)",
+      "  2. Resume full session as-is",
+      "  3. Don't ask me again",
+      "",
+      "Enter to confirm · Esc to cancel",
+    ].join("\n");
+
+    it("returns ['Enter'] on the full resume selector (accept the default)", () => {
+      expect(agent.detectRestorePromptKeys!(selector)).toEqual(["Enter"]);
+    });
+
+    it("returns null for ordinary agent output", () => {
+      expect(agent.detectRestorePromptKeys!("✻ Thinking…\n⏺ Running tests")).toBeNull();
+    });
+
+    it("returns null when only some markers are present (partial render)", () => {
+      const partial = "Resume from summary\nResume full session as-is";
+      expect(agent.detectRestorePromptKeys!(partial)).toBeNull();
+    });
+  });
+
   describe("cost estimation", () => {
     it("aggregates usage.input_tokens and usage.output_tokens", async () => {
       const jsonl = [
@@ -889,7 +935,7 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
 // =========================================================================
 // setupWorkspaceHooks / postLaunchSetup — hook path (symlink safety)
 // =========================================================================
-describe("hook setup — relative path (symlink-safe)", () => {
+describe("hook setup — $CLAUDE_PROJECT_DIR path (symlink-safe, sub-cwd-safe)", () => {
   const agent = create();
 
   /** Extract the hook command from the settings.json that was written */
@@ -902,15 +948,18 @@ describe("hook setup — relative path (symlink-safe)", () => {
     return parsed.hooks.PostToolUse[0].hooks[0].command;
   }
 
-  it("setupWorkspaceHooks writes a relative hook command (not absolute)", async () => {
+  it("setupWorkspaceHooks writes a $CLAUDE_PROJECT_DIR-rooted hook command (not a bare relative or hard absolute path)", async () => {
     await agent.setupWorkspaceHooks!(
       "/Users/equinox/.worktrees/integrator/integrator-5",
       {} as WorkspaceHooksConfig,
     );
 
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
-    expect(hookCommand).not.toMatch(/^\//);
+    expect(hookCommand).toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+    // Resolves from any sub-cwd (env-rooted), and never embeds the literal worktree path.
+    expect(hookCommand).toContain("$CLAUDE_PROJECT_DIR");
+    expect(hookCommand).not.toContain("/Users/equinox");
+    expect(hookCommand.startsWith(".claude/")).toBe(false);
   });
 
   it("postLaunchSetup is a no-op (hooks installed pre-launch via setupWorkspaceHooks)", async () => {
@@ -950,7 +999,7 @@ describe("hook setup — relative path (symlink-safe)", () => {
     expect(content1).toBe(content2);
   });
 
-  it("updates an existing absolute hook path to relative", async () => {
+  it("migrates an existing hard-absolute hook path to the $CLAUDE_PROJECT_DIR form", async () => {
     mockExistsSync.mockReturnValue(true);
     mockReadFile.mockResolvedValue(
       JSON.stringify({
@@ -977,8 +1026,32 @@ describe("hook setup — relative path (symlink-safe)", () => {
       {} as WorkspaceHooksConfig,
     );
 
+    // upsert matches by the `metadata-updater.sh` identifier and replaces the stale
+    // absolute command with the env-rooted one.
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
+    expect(hookCommand).toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+  });
+
+  it("no generated hook command is cwd-relative (regression: broke when agent cwd was a worktree subdir)", async () => {
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-5",
+      {} as WorkspaceHooksConfig,
+    );
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    const settings = JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
+    const commands = Object.values(settings.hooks as Record<string, unknown>)
+      .flat()
+      .flatMap((g) => (g as { hooks: Array<{ command: string }> }).hooks)
+      .map((h) => h.command);
+    expect(commands.length).toBeGreaterThan(0);
+    for (const cmd of commands) {
+      expect(cmd).toContain("$CLAUDE_PROJECT_DIR/.claude/");
+      // never a bare relative path (the bug), never the literal worktree path.
+      expect(/(^|\s)\.claude\//.test(cmd)).toBe(false);
+      expect(cmd).not.toContain("/Users/equinox");
+    }
   });
 
   it("still writes the script file to the correct absolute filesystem path", async () => {
@@ -1020,9 +1093,9 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     return JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
   }
 
-  /** Activity-updater command paths (unix vs win32) */
-  const ACTIVITY_CMD_UNIX = ".claude/activity-updater.sh";
-  const ACTIVITY_CMD_WIN = "node .claude/activity-updater.cjs";
+  /** Activity-updater command paths (unix vs win32), rooted at $CLAUDE_PROJECT_DIR. */
+  const ACTIVITY_CMD_UNIX = '"$CLAUDE_PROJECT_DIR/.claude/activity-updater.sh"';
+  const ACTIVITY_CMD_WIN = 'node "$CLAUDE_PROJECT_DIR/.claude/activity-updater.cjs"';
 
   /**
    * Every Claude Code hook event the script knows how to translate into an
@@ -1270,6 +1343,109 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
 });
 
 // =========================================================================
+// setupWorkspaceHooks — orchestrator-discipline hooks (Maestro fresh-install parity)
+// =========================================================================
+describe("setupWorkspaceHooks — orchestrator discipline (Maestro)", () => {
+  const agent = create();
+
+  const NO_INLINE_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-inline-code.cjs"';
+  const NO_SHELL_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-source-shell.cjs"';
+  const PRE_SPAWN_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/pre-spawn-rlm.cjs"';
+
+  function getParsedSettings(): Record<string, unknown> {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    return JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
+  }
+  function preToolUse(): Array<{ matcher: string; hooks: Array<{ command: string; timeout?: number }> }> {
+    const settings = getParsedSettings();
+    return (settings.hooks as Record<string, unknown>)["PreToolUse"] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string; timeout?: number }>;
+    }>;
+  }
+  const entryFor = (cmd: string) => preToolUse().find((g) => g.hooks.some((h) => h.command === cmd));
+
+  beforeEach(() => {
+    mockWriteFile.mockClear();
+    mockChmod.mockClear();
+    mockExistsSync.mockReturnValue(false);
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("writes the three discipline .cjs scripts with their exact content", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const byName = (name: string) =>
+      mockWriteFile.mock.calls.find(
+        ([path]: unknown[]) => typeof path === "string" && path.endsWith(name),
+      );
+    expect(byName("orchestrator-no-inline-code.cjs")?.[1]).toBe(ORCHESTRATOR_NO_INLINE_CODE_SCRIPT);
+    expect(byName("orchestrator-no-source-shell.cjs")?.[1]).toBe(ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT);
+    expect(byName("pre-spawn-rlm.cjs")?.[1]).toBe(PRE_SPAWN_RLM_SCRIPT);
+  });
+
+  it("registers no-inline-code on PreToolUse(Edit|Write) with a 10s timeout", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const entry = entryFor(NO_INLINE_CMD);
+    expect(entry).toBeDefined();
+    expect(entry!.matcher).toBe("Edit|Write");
+    expect(entry!.hooks.find((h) => h.command === NO_INLINE_CMD)!.timeout).toBe(10);
+  });
+
+  it("registers no-source-shell + pre-spawn-rlm on PreToolUse(Bash)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const shell = entryFor(NO_SHELL_CMD);
+    const spawn = entryFor(PRE_SPAWN_CMD);
+    expect(shell).toBeDefined();
+    expect(shell!.matcher).toBe("Bash");
+    expect(shell!.hooks.find((h) => h.command === NO_SHELL_CMD)!.timeout).toBe(10);
+    expect(spawn).toBeDefined();
+    expect(spawn!.matcher).toBe("Bash");
+    expect(spawn!.hooks.find((h) => h.command === PRE_SPAWN_CMD)!.timeout).toBe(25);
+  });
+
+  it("does NOT chmod the .cjs scripts (invoked via node, no execute bit needed)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const cjsChmods = mockChmod.mock.calls.filter(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith(".cjs"),
+    );
+    expect(cjsChmods).toHaveLength(0);
+  });
+
+  it("writes the same .cjs scripts on Windows (Node hooks are cross-platform)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
+    const byName = (name: string) =>
+      mockWriteFile.mock.calls.find(
+        ([path]: unknown[]) => typeof path === "string" && path.endsWith(name),
+      );
+    expect(byName("orchestrator-no-inline-code.cjs")?.[1]).toBe(ORCHESTRATOR_NO_INLINE_CODE_SCRIPT);
+    expect(byName("pre-spawn-rlm.cjs")?.[1]).toBe(PRE_SPAWN_RLM_SCRIPT);
+    expect(entryFor(NO_INLINE_CMD)).toBeDefined();
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("is idempotent — calling twice keeps exactly one entry per discipline hook", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const first = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    mockExistsSync.mockReturnValue(true);
+    mockReadFile.mockResolvedValueOnce(first![1] as string);
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const all = preToolUse().flatMap((g) => g.hooks).map((h) => h.command);
+    expect(all.filter((c) => c === NO_INLINE_CMD)).toHaveLength(1);
+    expect(all.filter((c) => c === NO_SHELL_CMD)).toHaveLength(1);
+    expect(all.filter((c) => c === PRE_SPAWN_CMD)).toHaveLength(1);
+  });
+});
+
+// =========================================================================
 // setupWorkspaceHooks on win32 — Node.js hook script
 // =========================================================================
 describe("setupWorkspaceHooks on win32", () => {
@@ -1326,7 +1502,7 @@ describe("setupWorkspaceHooks on win32", () => {
     await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
 
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe("node .claude/metadata-updater.cjs");
+    expect(hookCommand).toBe('node "$CLAUDE_PROJECT_DIR/.claude/metadata-updater.cjs"');
     expect(hookCommand).not.toContain(".sh");
   });
 

@@ -686,6 +686,87 @@ describe("check (single session)", () => {
     expect(meta?.["detectingEscalatedAt"]).toBeDefined();
   });
 
+  it("terminates a dead-runtime session as runtime_lost once the grace cycle is exhausted (#8)", async () => {
+    // No agent → process probe stays "unknown" while the runtime is dead. A prior
+    // detecting attempt is persisted, so this poll exhausts the one-cycle grace and
+    // must reach a terminal state (runtime_lost) instead of looping in detecting or
+    // escalating to stuck — the bug this fixes.
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, _name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+      metaOverrides: { detectingAttempts: "1" },
+      registry: registryWithoutAgent,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("runtime_dead process_unknown");
+    const lifecycle = JSON.parse(meta?.["lifecycle"] ?? "{}");
+    expect(lifecycle.session.state).toBe("terminated");
+    expect(lifecycle.session.reason).toBe("runtime_lost");
+  });
+
+  it("reconciles an orphaned detecting session to terminated on startup (#8)", async () => {
+    // Simulate a daemon restart: an orphan persisted as detecting/runtime_lost with a
+    // dead runtime (sm.list() enrichment, #1735) and a prior detecting attempt. The
+    // first poll on start() must reconcile it to a terminal state.
+    const registryWithoutAgent = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+    });
+    vi.mocked(registryWithoutAgent.get).mockImplementation((slot: string, _name?: string) => {
+      if (slot === "runtime") return plugins.runtime;
+      if (slot === "agent") return null;
+      return null;
+    });
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(false);
+
+    const baseLifecycle = makeSession().lifecycle;
+    const orphanLifecycle = {
+      ...baseLifecycle,
+      session: { ...baseLifecycle.session, state: "detecting" as const, reason: "runtime_lost" as const },
+      runtime: { ...baseLifecycle.runtime, state: "missing" as const, reason: "tmux_missing" as const },
+    };
+    const orphan = makeSession({ status: "detecting", lifecycle: orphanLifecycle });
+
+    const lm = setupPollCheck("app-1", {
+      session: orphan,
+      metaOverrides: { status: "detecting", detectingAttempts: "1" },
+      registry: registryWithoutAgent,
+    });
+
+    try {
+      lm.start(60_000);
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        if (lm.getStates().get("app-1") === "killed") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(lm.getStates().get("app-1")).toBe("killed");
+      const lifecycle = JSON.parse(readMetadataRaw(env.sessionsDir, "app-1")?.["lifecycle"] ?? "{}");
+      expect(lifecycle.session.state).toBe("terminated");
+      expect(lifecycle.session.reason).toBe("runtime_lost");
+      expect(recordActivityEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "lifecycle.startup_reconcile" }),
+      );
+    } finally {
+      lm.stop();
+    }
+  });
+
   it("stays working when agent is idle but process is still running (fallback path)", async () => {
     vi.mocked(plugins.agent.getActivityState).mockResolvedValue(null);
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("idle");
@@ -4234,13 +4315,22 @@ describe("auto-cleanup on merge (#1309)", () => {
   }
 
   function configWithLifecycle(
-    overrides: Partial<{ autoCleanupOnMerge: boolean; mergeCleanupIdleGraceMs: number }>,
+    overrides: Partial<{
+      autoCleanupOnMerge: boolean;
+      mergeCleanupIdleGraceMs: number;
+      autoRetireIdleWorkers: boolean;
+      workerIdleRetireGraceMs: number;
+    }>,
   ): OrchestratorConfig {
     return {
       ...config,
       lifecycle: {
         autoCleanupOnMerge: overrides.autoCleanupOnMerge ?? true,
         mergeCleanupIdleGraceMs: overrides.mergeCleanupIdleGraceMs ?? 300_000,
+        // Default OFF in these merge-cleanup tests so the worker-retire reaction
+        // never interferes with assertions about the merge path.
+        autoRetireIdleWorkers: overrides.autoRetireIdleWorkers ?? false,
+        workerIdleRetireGraceMs: overrides.workerIdleRetireGraceMs ?? 120_000,
       },
     };
   }
@@ -4365,6 +4455,114 @@ describe("auto-cleanup on merge (#1309)", () => {
     const meta = readMetadataRaw(env.sessionsDir, "app-1");
     expect(meta?.["status"]).toBe("merged");
     expect(meta?.["mergedPendingCleanupSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("auto-retire idle worker", () => {
+  function configWithRetire(
+    overrides: Partial<{ autoRetireIdleWorkers: boolean; workerIdleRetireGraceMs: number }> = {},
+  ): OrchestratorConfig {
+    return {
+      ...config,
+      lifecycle: {
+        autoCleanupOnMerge: true,
+        mergeCleanupIdleGraceMs: 300_000,
+        autoRetireIdleWorkers: overrides.autoRetireIdleWorkers ?? true,
+        workerIdleRetireGraceMs: overrides.workerIdleRetireGraceMs ?? 0,
+      },
+    };
+  }
+
+  /** A live SDK worker that finished its turn (idle) — eligible for retire.
+   *  workspacePath=null short-circuits the git clean-tree guard. */
+  function idleSdkWorker(
+    overrides: Parameters<typeof makeSession>[0] = {},
+  ): ReturnType<typeof makeSession> {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle" as ActivityState,
+    });
+    const session = makeSession({
+      activity: "idle",
+      runtimeHandle: { id: "app-1", runtimeName: "sdk", data: {} },
+      workspacePath: null,
+      ...overrides,
+    });
+    session.lifecycle.session.state = "idle";
+    session.lifecycle.session.reason = "task_in_progress";
+    session.lifecycle.runtime.state = "alive";
+    session.lifecycle.runtime.handle = { id: "app-1", runtimeName: "sdk", data: {} };
+    return session;
+  }
+
+  it("retires an idle SDK worker via kill(reason=auto_cleanup)", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1", { reason: "auto_cleanup" });
+  });
+
+  it("defers within the grace window and records the pending marker", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 300_000 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["workerRetirePendingSince"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("retires after the grace window elapses", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const pendingSince = new Date(Date.now() - 10 * 60_000).toISOString();
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker({ metadata: { workerRetirePendingSince: pendingSince } }),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 120_000 }),
+      metaOverrides: { workerRetirePendingSince: pendingSince },
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1", { reason: "auto_cleanup" });
+  });
+
+  it("never retires an orchestrator, even when idle", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const session = idleSdkWorker();
+    session.lifecycle.session.kind = "orchestrator";
+    const lm = setupCheck("app-1", {
+      session,
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+  });
+
+  it("does not retire when autoRetireIdleWorkers is disabled", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ autoRetireIdleWorkers: false, workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
   });
 });
 
@@ -4741,5 +4939,65 @@ describe("multi-PR state machine aggregation", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("orchestrator completion-signal", () => {
+  it("signals the orchestrator when a worker reaches needs_input", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      expect.stringContaining("-orchestrator"),
+      expect.stringContaining("app-1"),
+    );
+  });
+
+  it("latches the signal so a worker stuck in the same status isn't re-notified every poll", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta!["orchestratorSignaledStatus"]).toBe("needs_input");
+  });
+
+  it("does not signal the orchestrator about the orchestrator's own state", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+
+    const lm = setupCheck("app-orchestrator", {
+      session: makeSession({
+        id: "app-orchestrator",
+        status: "working",
+        metadata: { role: "orchestrator" },
+      }),
+    });
+
+    await lm.check("app-orchestrator");
+
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
+  it("does not signal for a non-actionable status like working", async () => {
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    const orchestratorSends = vi
+      .mocked(mockSessionManager.send)
+      .mock.calls.filter(([id]) => typeof id === "string" && id.endsWith("-orchestrator"));
+    expect(orchestratorSends).toHaveLength(0);
   });
 });

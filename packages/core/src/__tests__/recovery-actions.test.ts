@@ -425,6 +425,72 @@ describe("cleanupSession", () => {
     expect(meta!["status"]).toBe("terminated");
     expect(meta!["terminationReason"]).toBe("cleanup");
   });
+
+  // Regression: cleanup must destroy the runtime the session was actually spawned
+  // on (the persisted handle's runtimeName), not the back-filled project.runtime.
+  // A claude-code session lives on sdk while project.runtime back-fills to tmux;
+  // the old `project.runtime ?? config.defaults.runtime` would call tmux.destroy()
+  // on an sdk handle and leak the real runtime.
+  it("destroys the runtime named by the persisted handle (sdk), not the back-filled tmux", async () => {
+    const config = makeConfig(rootDir);
+    const workspacePath = join(rootDir, "worktree");
+    const mockSdkRuntime: Runtime = {
+      name: "sdk",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const mockTmuxRuntime: Runtime = {
+      name: "tmux",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const mockWorkspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn(),
+      exists: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime" && name === "sdk") return mockSdkRuntime;
+        if (slot === "runtime" && name === "tmux") return mockTmuxRuntime;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "partial",
+      runtimeAlive: true,
+      workspaceExists: true,
+      workspacePath,
+      runtimeHandle: { id: "rt-1", runtimeName: "sdk", data: {} },
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        agent: "claude-code",
+        worktree: workspacePath,
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    expect(registry.get).toHaveBeenCalledWith("runtime", "sdk");
+    expect(mockSdkRuntime.destroy).toHaveBeenCalled();
+    expect(mockTmuxRuntime.destroy).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+  });
 });
 
 // Regression for the boundary-bug-hunter Phase 2 finding on PR #1466:

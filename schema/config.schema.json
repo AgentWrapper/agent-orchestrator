@@ -44,6 +44,10 @@
     "observability": {
       "$ref": "#/$defs/observabilityConfig"
     },
+    "defaultWorkerModel": {
+      "type": "string",
+      "description": "Default model for worker sessions (e.g. \"opus\", \"sonnet\", \"haiku\", or a full model id). An explicit `ao spawn --model` flag and any per-project worker model take priority. Never applied to orchestrators. Empty/unset = the account default."
+    },
     "defaults": {
       "$ref": "#/$defs/defaultPlugins"
     },

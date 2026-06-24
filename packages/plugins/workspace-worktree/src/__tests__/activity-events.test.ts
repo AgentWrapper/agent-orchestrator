@@ -135,6 +135,8 @@ describe("workspace.branch_collision (SHOULD emit)", () => {
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
     // resolveBaseRef -> rev-parse origin/main
     mockExecFileAsync.mockResolvedValueOnce({ stdout: "abc\n", stderr: "" });
+    // resolveBaseRef -> merge-base --is-ancestor origin/main refs/heads/main → false, keep origin
+    mockExecFileAsync.mockRejectedValueOnce(new Error("local not ahead of origin"));
     // git worktree add -b ... → already exists
     mockExecFileAsync.mockRejectedValueOnce(
       new Error("fatal: a branch named 'feat/TEST-1' already exists"),
