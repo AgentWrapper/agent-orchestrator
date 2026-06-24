@@ -552,4 +552,30 @@ export function registerSession(program: Command): void {
         process.exit(1);
       }
     });
+
+  session
+    .command("set-model")
+    .description("Change the model for a session and restart it (conversation preserved via resume)")
+    .argument("<session>", "Session name")
+    .argument("<model>", "Model to use (e.g. claude-sonnet-4-5, claude-haiku-4-5)")
+    .action(async (sessionName: string, model: string) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      try {
+        const updated = await sm.setModel(sessionName, model);
+        console.log(chalk.green(`\nSession ${sessionName} restarted on model ${chalk.bold(model)}.`));
+        if (updated.workspacePath) {
+          console.log(chalk.dim(`  Worktree: ${updated.workspacePath}`));
+        }
+        if (updated.branch) {
+          console.log(chalk.dim(`  Branch:   ${updated.branch}`));
+        }
+        const port = config.port ?? DEFAULT_PORT;
+        console.log(chalk.dim(`  View:     ${projectSessionUrl(port, updated.projectId, sessionName)}`));
+      } catch (err) {
+        console.error(chalk.red(`Failed to set model for session ${sessionName}: ${err}`));
+        process.exit(1);
+      }
+    });
 }

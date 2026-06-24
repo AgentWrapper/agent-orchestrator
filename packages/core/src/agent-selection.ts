@@ -47,6 +47,11 @@ export function resolveAgentSelectionForSession(params: {
    */
   defaultWorkerModel?: string;
 }): ResolvedAgentSelection {
+  // A persisted per-session model override (`sessionModel` written by
+  // `ao session set-model`) takes effect on every restore/restart of this
+  // session, beating project-level config but losing to an explicit spawn-time
+  // override (which is only present during initial spawn, not restore).
+  const sessionModelOverride = params.metadata?.["sessionModel"] || undefined;
   return resolveAgentSelection({
     role: resolveSessionRole(
       params.sessionId,
@@ -57,6 +62,7 @@ export function resolveAgentSelectionForSession(params: {
     project: params.project,
     defaults: params.defaults,
     persistedAgent: params.metadata?.["agent"],
+    spawnModelOverride: sessionModelOverride,
     defaultWorkerModel: params.defaultWorkerModel,
   });
 }

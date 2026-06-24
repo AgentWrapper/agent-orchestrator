@@ -3913,6 +3913,59 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
+  /**
+   * Change the model for a session and immediately restart it on the new model,
+   * preserving the conversation. Works for both workers and the orchestrator.
+   *
+   * The new model is persisted to session metadata (`sessionModel`) so every
+   * subsequent engine restart (or `ao session restore`) also uses it.  If the
+   * session is currently live its SDK host is destroyed first so that
+   * `restore()` can boot a fresh host with `AO_SDK_MODEL = <model>` and the
+   * same `AO_SDK_RESUME` (conversation preserved via Claude's session UUID).
+   */
+  async function setModel(sessionId: SessionId, model: string): Promise<Session> {
+    const trimmedModel = model.trim();
+    if (!trimmedModel) {
+      throw new Error("model must not be empty");
+    }
+
+    // 1. Locate the session
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    const { sessionsDir, project, raw } = located;
+
+    // 2. Persist the new model intent — restore() (called below) and every
+    //    future restart will pick this up via resolveAgentSelectionForSession.
+    updateMetadata(sessionsDir, sessionId, { sessionModel: trimmedModel });
+    invalidateCache();
+
+    // 3. Destroy the live runtime so the host is dead before restore() probes it.
+    //    restore() calls enrichSessionWithRuntimeState → isAlive → false →
+    //    lifecycle.runtime.state = "missing" → isRestorable passes → new host
+    //    boots with AO_SDK_MODEL + AO_SDK_RESUME (conversation preserved).
+    //    We deliberately skip kill() to avoid destroying the worktree.
+    const runtimeHandleRaw = raw["runtimeHandle"];
+    if (runtimeHandleRaw) {
+      const handle = safeJsonParse<RuntimeHandle>(runtimeHandleRaw);
+      if (handle) {
+        const selection = resolveSelectionForSession(project, sessionId, raw);
+        const plugins = resolvePlugins(project, selection.agentName);
+        if (plugins.runtime) {
+          try {
+            await plugins.runtime.destroy(handle);
+          } catch {
+            // Best-effort — host may already be gone
+          }
+        }
+      }
+    }
+
+    // 4. Re-start on the new model (conversation preserved via AO_SDK_RESUME)
+    return restore(sessionId);
+  }
+
   return {
     spawn,
     spawnOrchestrator,
@@ -3929,5 +3982,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     claimPR,
     remap,
     getAgentLimits,
+    setModel,
   };
 }

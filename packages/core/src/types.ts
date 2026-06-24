@@ -1905,6 +1905,11 @@ export interface SessionMetadata {
   codexThreadId?: string;
   codexModel?: string;
   restoreFallbackReason?: string;
+  /**
+   * Persisted per-session model override set by `ao session set-model`.
+   * Takes effect on every restore/restart and beats project-level config.
+   */
+  sessionModel?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**
@@ -1983,6 +1988,12 @@ export interface SessionManager {
   ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
+  /**
+   * Change the model for a session and restart it with the new model.
+   * Persists the intent in metadata so future restarts also use the new model.
+   * If the session is currently live, its runtime is destroyed before restart.
+   */
+  setModel(sessionId: SessionId, model: string): Promise<Session>;
 }
 
 /** OpenCode-specific session manager with remap capability */
