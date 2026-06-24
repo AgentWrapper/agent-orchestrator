@@ -516,6 +516,19 @@ async function runStandalone(): Promise<void> {
     prompt: host.input,
     options: {
       cwd,
+      // Pin the filesystem settings sources explicitly. In claude-agent-sdk
+      // 0.3.186 the omitted default is ALREADY ["user","project","local"]
+      // (runtime constant `Wre`, mirrored by resolveSettings) — so this is a
+      // behavior-preserving no-op today. We keep it as a defensive pin: it
+      // documents that the spawned session DEPENDS on file settings being
+      // loaded, and guards against a future SDK bump flipping the default to
+      // isolation mode (`[]`). What we rely on: 'user' → ~/.claude discipline
+      // hooks (orchestrator-no-inline-code, pre-spawn-rlm, rtk); 'project'/'local'
+      // → ao's per-worktree .claude activity/metadata inject. settingSources
+      // governs ONLY settings/hook loading — permission approval still flows
+      // through permissionMode/allowDangerouslySkipPermissions below, so
+      // bypassPermissions keeps priority and no MCP/permission surprises leak in.
+      settingSources: ["user", "project", "local"],
       permissionMode,
       allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
       includePartialMessages: true,
