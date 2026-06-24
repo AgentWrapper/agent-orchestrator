@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   killProcessTree,
+  loadGlobalConfig,
   type PluginModule,
   type Runtime,
   type RuntimeCreateConfig,
@@ -99,6 +100,26 @@ export function create(): Runtime {
           delete hostEnv[key];
         }
       }
+
+      // Inject the GLM API key from the global config (zhipu.apiKey) when the
+      // per-session model is a `glm-*` model and the key was not already set
+      // explicitly in config.environment. This bridges the gap between the
+      // user's Settings → ZhipuAI config and the sdk-host process, which reads
+      // AO_GLM_API_KEY at runtime (sdk-host.ts) to take the GLM path.
+      //
+      // The session model arrives via AO_SDK_MODEL (RuntimeCreateConfig has no
+      // `model` field); sdk-host derives `model` from process.env.AO_SDK_MODEL.
+      const sessionModel = config.environment?.["AO_SDK_MODEL"];
+      if (
+        sessionModel?.startsWith("glm-") &&
+        (!config.environment || !config.environment["AO_GLM_API_KEY"])
+      ) {
+        const glmKey = loadGlobalConfig()?.zhipu?.apiKey;
+        if (glmKey) {
+          hostEnv["AO_GLM_API_KEY"] = glmKey;
+        }
+      }
+
       const paths = sessionPaths(config.sessionId, hostEnv);
 
       // AO_SDK_HOST_SCRIPT lets tests / dev runs point at a prebuilt host

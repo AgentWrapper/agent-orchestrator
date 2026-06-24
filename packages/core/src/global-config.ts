@@ -243,6 +243,17 @@ export const GlobalConfigSchema = z
     }),
     /** Reaction rules (default reactions merged at load time). */
     reactions: z.record(z.object({}).passthrough()).default({}),
+    /**
+     * ZhipuAI (GLM) provider credentials. Surfaced by Settings → ZhipuAI.
+     * Read by the runtime-sdk plugin to inject AO_GLM_API_KEY into the
+     * sdk-host process when the session model is a `glm-*` model.
+     */
+    zhipu: z
+      .object({
+        apiKey: z.string().optional(),
+        enabled: z.boolean().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
