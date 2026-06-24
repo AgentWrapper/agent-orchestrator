@@ -264,6 +264,32 @@ export function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }
 
+/**
+ * Split text into chunks each at most `limit` characters, preferring to break on a
+ * newline (then a space) near the limit so lines/words are not sliced mid-token. A
+ * single token longer than the limit is hard-cut. Used to forward an orchestrator
+ * reply that exceeds Telegram's 4096-char per-message cap across several messages.
+ *
+ * Never returns an empty array for non-empty input. `limit <= 0` yields the whole
+ * string as one chunk (degenerate caller bug — better than an infinite loop).
+ */
+export function splitForTelegram(text: string, limit = TELEGRAM_MESSAGE_MAX): string[] {
+  if (limit <= 0 || text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  const minChunk = Math.floor(limit / 2); // avoid breaking so early we make tiny chunks
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf("\n", limit);
+    if (cut < minChunk) cut = rest.lastIndexOf(" ", limit);
+    if (cut < minChunk) cut = limit; // no usable boundary → hard cut at the limit
+    chunks.push(rest.slice(0, cut));
+    // Drop the whitespace we broke on so it doesn't lead the next chunk.
+    rest = rest.slice(cut).replace(/^[\n ]+/, "");
+  }
+  if (rest.length) chunks.push(rest);
+  return chunks.length ? chunks : [text];
+}
+
 function byteLength(s: string): number {
   return new TextEncoder().encode(s).length;
 }

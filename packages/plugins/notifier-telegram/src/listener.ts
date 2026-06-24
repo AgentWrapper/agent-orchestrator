@@ -12,7 +12,9 @@ import {
   encodePendingCallback,
   parsePendingCallback,
   truncate,
+  splitForTelegram,
   TELEGRAM_BUTTON_LABEL_MAX,
+  TELEGRAM_MESSAGE_MAX,
   type CallbackTarget,
 } from "./shared.js";
 import { snapshotReplyCursor, readReplyAfter } from "./reply-reader.js";
@@ -473,6 +475,43 @@ async function sendMessage(botToken: string, chatId: string, text: string): Prom
   }
 }
 
+/** Cap on how many messages a single forwarded reply may fan out into. */
+const MAX_REPLY_CHUNKS = 8;
+
+/**
+ * Forward an orchestrator reply back to the chat, split across messages when it
+ * exceeds Telegram's per-message limit (a long answer would otherwise make
+ * sendMessage fail outright). The session tag rides the LAST chunk so a human
+ * reply threads back to the session; a multi-part reply is numbered. A reply that
+ * would exceed MAX_REPLY_CHUNKS messages is capped with an in-app pointer rather
+ * than flooding the chat. Best-effort (each chunk via sendMessage).
+ */
+async function forwardReply(
+  botToken: string,
+  chatId: string,
+  sessionId: string,
+  reply: string,
+): Promise<void> {
+  const tag = `\n\n${encodeSessionTag(sessionId)}`;
+  // Reserve room in every chunk for the part header + the tag + the overflow note,
+  // so the final assembled message never crosses the hard limit.
+  const budget = Math.max(1, TELEGRAM_MESSAGE_MAX - tag.length - 64);
+  let chunks = splitForTelegram(reply, budget);
+  let overflow = false;
+  if (chunks.length > MAX_REPLY_CHUNKS) {
+    chunks = chunks.slice(0, MAX_REPLY_CHUNKS);
+    overflow = true;
+  }
+  const total = chunks.length;
+  for (let i = 0; i < total; i++) {
+    const isLast = i === total - 1;
+    const header = total > 1 ? `(${i + 1}/${total})\n` : "";
+    const note = isLast && overflow ? "\n\n… (полностью в приложении)" : "";
+    const footer = isLast ? tag : "";
+    await sendMessage(botToken, chatId, `${header}${chunks[i]}${note}${footer}`);
+  }
+}
+
 /**
  * Reply with one inline button per fuzzy `/orc` candidate. Each button's
  * callback_data carries only a short pending id (so the original `value` —
@@ -686,9 +725,10 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
   const pending = new PendingChoices();
   const resolvePending = (id: string): CallbackTarget | null => pending.take(id);
   // Outbound `/orc` replies: after injecting a message into a session, remember
-  // the chat + transcript head so we can forward the orchestrator's answer back.
+  // the chat + the transcript length at inject time (a resume-proof position cursor)
+  // so we can forward the orchestrator's answer back.
   // Keyed by sessionId — a newer inject supersedes an older pending wait.
-  const pendingReplies = new Map<string, { chatId: string; sinceSeq: number; deadlineMs: number }>();
+  const pendingReplies = new Map<string, { chatId: string; sinceIndex: number; deadlineMs: number }>();
   let running = true;
   const stop = () => {
     running = false;
@@ -733,8 +773,9 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
           continue;
         }
 
-        // Snapshot the transcript head BEFORE delivery so the reply we later
-        // forward is the one THIS message triggers, not an earlier turn.
+        // Snapshot the transcript length BEFORE delivery so the reply we later
+        // forward is the one THIS message triggers, not an earlier turn. A length
+        // (event count) is used rather than a seq because seq resets on resume.
         const replyCursor = snapshotReplyCursor(route.sessionId);
         const ok = await sendToSession(route.sessionId, route.value, ao);
         console.error(
@@ -743,7 +784,7 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
         if (ok) {
           pendingReplies.set(route.sessionId, {
             chatId,
-            sinceSeq: replyCursor,
+            sinceIndex: replyCursor,
             deadlineMs: Date.now() + REPLY_WAIT_MS,
           });
         }
@@ -757,9 +798,9 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
       // a reply is pending — see pollTimeout above). The session tag lets the
       // human reply in-thread, exactly like a lifecycle notification.
       for (const [sid, p] of pendingReplies) {
-        const reply = readReplyAfter(sid, p.sinceSeq);
+        const reply = readReplyAfter(sid, p.sinceIndex);
         if (reply) {
-          await sendMessage(botToken, p.chatId, `${reply}\n\n${encodeSessionTag(sid)}`);
+          await forwardReply(botToken, p.chatId, sid, reply);
           pendingReplies.delete(sid);
           console.error(`[telegram-listener] forwarded reply ← ${sid}`);
         } else if (Date.now() > p.deadlineMs) {
