@@ -7,6 +7,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -36,6 +37,9 @@ type Service struct {
 	store     Store
 	lifecycle Reducer
 	clock     func() time.Time
+
+	drainMu    sync.Mutex
+	drainLocks map[string]*sync.Mutex
 }
 
 var _ Manager = (*Service)(nil)
@@ -45,12 +49,15 @@ type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+	ListReviewRunsByBatch(ctx context.Context, id domain.SessionID, batchID string) ([]domain.ReviewRun, error)
+	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
 // been persisted.
 type Reducer interface {
 	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
+	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
 // Option customizes the review service.
@@ -68,7 +75,12 @@ func WithClock(clock func() time.Time) Option {
 
 // New wraps a core review engine as the API-facing service.
 func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
-	s := &Service{engine: engine, store: store, clock: func() time.Time { return time.Now().UTC() }}
+	s := &Service{
+		engine:     engine,
+		store:      store,
+		clock:      func() time.Time { return time.Now().UTC() },
+		drainLocks: make(map[string]*sync.Mutex),
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -140,8 +152,12 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 	if s.lifecycle == nil {
 		return run, nil
 	}
+	if run.BatchID != "" {
+		return s.drainBatch(ctx, workerID, run)
+	}
 	outcome, err := s.lifecycle.ApplyReviewResult(ctx, workerID, lifecycle.ReviewResult{
 		RunID:          run.ID,
+		BatchID:        run.BatchID,
 		WorkerID:       workerID,
 		PRURL:          run.PRURL,
 		TargetSHA:      run.TargetSHA,
@@ -165,6 +181,96 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 		}
 	}
 	return run, nil
+}
+
+func (s *Service) drainBatch(ctx context.Context, workerID domain.SessionID, submitted domain.ReviewRun) (domain.ReviewRun, error) {
+	unlock := s.lockBatchDrain(workerID, submitted.BatchID)
+	defer unlock()
+
+	runs, err := s.store.ListReviewRunsByBatch(ctx, workerID, submitted.BatchID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	for _, run := range runs {
+		if run.Status == domain.ReviewRunRunning {
+			return submitted, nil
+		}
+	}
+	currentHeads, err := s.currentHeadsByPR(ctx, workerID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	deliverable := make([]domain.ReviewRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+			continue
+		}
+		if currentHeads[run.PRURL] != run.TargetSHA {
+			continue
+		}
+		deliverable = append(deliverable, run)
+	}
+	if len(deliverable) == 0 {
+		return submitted, nil
+	}
+	results := make([]lifecycle.ReviewResult, 0, len(deliverable))
+	for _, run := range deliverable {
+		results = append(results, lifecycle.ReviewResult{
+			RunID:          run.ID,
+			BatchID:        run.BatchID,
+			WorkerID:       workerID,
+			PRURL:          run.PRURL,
+			TargetSHA:      run.TargetSHA,
+			Verdict:        run.Verdict,
+			Body:           run.Body,
+			GithubReviewID: run.GithubReviewID,
+			DeliveredAt:    run.DeliveredAt,
+		})
+	}
+	outcome, err := s.lifecycle.ApplyReviewBatch(ctx, workerID, submitted.BatchID, results)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if outcome != lifecycle.ReviewDeliverySent {
+		return submitted, nil
+	}
+	deliveredAt := s.clock()
+	for _, run := range deliverable {
+		updated, err := s.store.MarkReviewRunDelivered(ctx, run.ID, deliveredAt)
+		if err != nil {
+			return domain.ReviewRun{}, err
+		}
+		if updated && run.ID == submitted.ID {
+			submitted.Status = domain.ReviewRunDelivered
+			submitted.DeliveredAt = &deliveredAt
+		}
+	}
+	return submitted, nil
+}
+
+func (s *Service) currentHeadsByPR(ctx context.Context, workerID domain.SessionID) (map[string]string, error) {
+	prs, err := s.store.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	current := make(map[string]string, len(prs))
+	for _, pr := range prs {
+		current[pr.URL] = pr.HeadSHA
+	}
+	return current, nil
+}
+
+func (s *Service) lockBatchDrain(workerID domain.SessionID, batchID string) func() {
+	key := string(workerID) + "\x00" + batchID
+	s.drainMu.Lock()
+	mu, ok := s.drainLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.drainLocks[key] = mu
+	}
+	s.drainMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // List returns a worker's review state.

@@ -11,11 +11,14 @@ import (
 )
 
 type fakeStore struct {
-	run domain.ReviewRun
-	ok  bool
+	run       domain.ReviewRun
+	ok        bool
+	batchRuns []domain.ReviewRun
+	prs       []domain.PullRequest
 
 	updateCalls int
 	markCalls   int
+	markedIDs   []string
 }
 
 func (f *fakeStore) GetReviewRun(context.Context, string) (domain.ReviewRun, bool, error) {
@@ -31,29 +34,67 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, _ string, status do
 	f.run.Verdict = verdict
 	f.run.Body = body
 	f.run.GithubReviewID = githubReviewID
+	for i := range f.batchRuns {
+		if f.batchRuns[i].ID == f.run.ID {
+			f.batchRuns[i].Status = status
+			f.batchRuns[i].Verdict = verdict
+			f.batchRuns[i].Body = body
+			f.batchRuns[i].GithubReviewID = githubReviewID
+		}
+	}
 	return true, nil
 }
 
-func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, _ string, deliveredAt time.Time) (bool, error) {
+func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliveredAt time.Time) (bool, error) {
 	f.markCalls++
-	if f.run.Status != domain.ReviewRunComplete || f.run.DeliveredAt != nil {
+	f.markedIDs = append(f.markedIDs, id)
+	if f.run.ID == id && f.run.Status == domain.ReviewRunComplete && f.run.DeliveredAt == nil {
+		f.run.Status = domain.ReviewRunDelivered
+		f.run.DeliveredAt = &deliveredAt
+	}
+	for i := range f.batchRuns {
+		if f.batchRuns[i].ID == id && f.batchRuns[i].Status == domain.ReviewRunComplete && f.batchRuns[i].DeliveredAt == nil {
+			f.batchRuns[i].Status = domain.ReviewRunDelivered
+			f.batchRuns[i].DeliveredAt = &deliveredAt
+			return true, nil
+		}
+	}
+	if f.run.ID != id || f.run.Status != domain.ReviewRunDelivered {
 		return false, nil
 	}
-	f.run.Status = domain.ReviewRunDelivered
-	f.run.DeliveredAt = &deliveredAt
 	return true, nil
+}
+
+func (f *fakeStore) ListReviewRunsByBatch(context.Context, domain.SessionID, string) ([]domain.ReviewRun, error) {
+	out := append([]domain.ReviewRun(nil), f.batchRuns...)
+	return out, nil
+}
+
+func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
+	out := append([]domain.PullRequest(nil), f.prs...)
+	return out, nil
 }
 
 type fakeReducer struct {
-	outcome lifecycle.ReviewDeliveryOutcome
-	err     error
-	calls   int
-	got     lifecycle.ReviewResult
+	outcome    lifecycle.ReviewDeliveryOutcome
+	err        error
+	calls      int
+	batchCalls int
+	got        lifecycle.ReviewResult
+	gotBatchID string
+	gotBatch   []lifecycle.ReviewResult
 }
 
 func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
 	f.calls++
 	f.got = result
+	return f.outcome, f.err
+}
+
+func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
+	f.batchCalls++
+	f.gotBatchID = batchID
+	f.gotBatch = append([]lifecycle.ReviewResult(nil), results...)
 	return f.outcome, f.err
 }
 
@@ -75,6 +116,93 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
+	}
+}
+
+func TestSubmitBatchWaitsUntilAllRunsTerminal(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		batchRuns: []domain.ReviewRun{
+			{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+			{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+		},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}, {URL: "pr2", HeadSHA: "sha2"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix pr1", "101")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.Status != domain.ReviewRunComplete {
+		t.Fatalf("first submit status = %q, want complete", run.Status)
+	}
+	if reducer.batchCalls != 0 || st.markCalls != 0 {
+		t.Fatalf("incomplete batch should not deliver: batchCalls=%d markCalls=%d", reducer.batchCalls, st.markCalls)
+	}
+}
+
+func TestSubmitBatchFinalRunSendsCombinedChangesRequested(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+		batchRuns: []domain.ReviewRun{
+			{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, Body: "fix pr1", GithubReviewID: "101"},
+			{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+			{ID: "run-3", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr3", TargetSHA: "sha3", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},
+			{ID: "run-4", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr4", TargetSHA: "old", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, Body: "stale"},
+			{ID: "run-5", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr5", TargetSHA: "sha5", Status: domain.ReviewRunFailed},
+		},
+		prs: []domain.PullRequest{
+			{URL: "pr1", HeadSHA: "sha1"},
+			{URL: "pr2", HeadSHA: "sha2"},
+			{URL: "pr3", HeadSHA: "sha3"},
+			{URL: "pr4", HeadSHA: "new"},
+			{URL: "pr5", HeadSHA: "sha5"},
+		},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-2", domain.VerdictChangesRequested, "fix pr2", "102")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if reducer.batchCalls != 1 || reducer.gotBatchID != "batch-1" {
+		t.Fatalf("batch delivery calls/id = %d/%q", reducer.batchCalls, reducer.gotBatchID)
+	}
+	if len(reducer.gotBatch) != 2 || reducer.gotBatch[0].RunID != "run-1" || reducer.gotBatch[1].RunID != "run-2" {
+		t.Fatalf("delivered batch = %+v, want run-1 and run-2 only", reducer.gotBatch)
+	}
+	if st.markCalls != 2 {
+		t.Fatalf("markCalls = %d, want 2", st.markCalls)
+	}
+	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
+		t.Fatalf("submitted run not stamped delivered: %+v", run)
+	}
+}
+
+func TestSubmitBatchApprovedOnlySendsNothing(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+		batchRuns: []domain.ReviewRun{
+			{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},
+			{ID: "run-2", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr2", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+		},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}, {URL: "pr2", HeadSHA: "sha2"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-2", domain.VerdictApproved, "", "102"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if reducer.batchCalls != 0 || st.markCalls != 0 {
+		t.Fatalf("approved-only batch should not deliver: batchCalls=%d markCalls=%d", reducer.batchCalls, st.markCalls)
 	}
 }
 

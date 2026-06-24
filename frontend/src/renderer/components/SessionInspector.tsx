@@ -27,6 +27,7 @@ import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type ReviewRun = components["schemas"]["ReviewRun"];
+type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
@@ -427,7 +428,8 @@ function ReviewsView({
 				return;
 			}
 			if (data?.reviewerHandleId) {
-				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness: data.review.harness || "reviewer" });
+				const harness = latestReview(data.reviews)?.harness || "reviewer";
+				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 	});
@@ -472,7 +474,7 @@ function ReviewPanel({
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
-	reviews: ReviewRun[];
+	reviews: PRReviewState[];
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
@@ -507,8 +509,11 @@ function ReviewPanel({
 	);
 }
 
-function latestReview(reviews: ReviewRun[]): ReviewRun | undefined {
-	return [...reviews].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+function latestReview(reviews: PRReviewState[]): ReviewRun | undefined {
+	return reviews
+		.map((review) => review.latestRun)
+		.filter((review): review is ReviewRun => Boolean(review))
+		.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 
 function ReviewerCard({

@@ -206,6 +206,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 
 	var created []domain.ReviewRun
+	batchID := ""
 	for _, reviewState := range reviews {
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
@@ -227,10 +228,14 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
 			return TriggerResult{}, err
 		}
+		if batchID == "" {
+			batchID = e.newID()
+		}
 		run := domain.ReviewRun{
 			ID:        e.newID(),
 			ReviewID:  reviewRow.ID,
 			SessionID: workerID,
+			BatchID:   batchID,
 			Harness:   harness,
 			PRURL:     reviewState.PRURL,
 			TargetSHA: reviewState.TargetSHA,

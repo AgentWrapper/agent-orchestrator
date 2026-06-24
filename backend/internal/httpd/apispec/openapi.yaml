@@ -1957,6 +1957,8 @@ components:
       type: object
     ReviewRun:
       properties:
+        batchId:
+          type: string
         body:
           type: string
         createdAt:
@@ -1989,6 +1991,7 @@ components:
       - id
       - reviewId
       - sessionId
+      - batchId
       - harness
       - prUrl
       - targetSha

@@ -462,6 +462,9 @@ func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	if !res.Created || len(res.CreatedRuns) != 2 || len(store.runs) != 2 {
 		t.Fatalf("created batch = %+v runs=%+v", res, store.runs)
 	}
+	if res.CreatedRuns[0].BatchID == "" || res.CreatedRuns[0].BatchID != res.CreatedRuns[1].BatchID {
+		t.Fatalf("created runs should share one batch id: %+v", res.CreatedRuns)
+	}
 	if launcher.spawnCount != 1 || len(launcher.handles) != 1 || launcher.handles[0] != "review-mer-1" {
 		t.Fatalf("expected one spawn and one notify to same reviewer, launcher=%+v", launcher)
 	}

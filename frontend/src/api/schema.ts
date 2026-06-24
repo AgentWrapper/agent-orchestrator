@@ -688,6 +688,7 @@ export interface components {
             sessionId: string;
         };
         ReviewRun: {
+            batchId: string;
             body: string;
             /** Format: date-time */
             createdAt: string;

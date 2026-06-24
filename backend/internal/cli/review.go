@@ -15,15 +15,18 @@ import (
 
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
 type reviewRun struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"sessionId"`
-	Harness   string    `json:"harness"`
-	PRURL     string    `json:"prUrl"`
-	TargetSHA string    `json:"targetSha"`
-	Status    string    `json:"status"`
-	Verdict   string    `json:"verdict"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string     `json:"id"`
+	SessionID      string     `json:"sessionId"`
+	BatchID        string     `json:"batchId"`
+	Harness        string     `json:"harness"`
+	PRURL          string     `json:"prUrl"`
+	TargetSHA      string     `json:"targetSha"`
+	Status         string     `json:"status"`
+	Verdict        string     `json:"verdict"`
+	Body           string     `json:"body"`
+	GithubReviewID string     `json:"githubReviewId"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
 
 // reviewRunResponse mirrors controllers.ReviewRunResponse.

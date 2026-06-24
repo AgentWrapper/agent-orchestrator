@@ -109,7 +109,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 
 	// A run inserts running and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
-		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.ReviewerHarness("greptile"),
+		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, BatchID: "batch-1", Harness: domain.ReviewerHarness("greptile"),
 		PRURL: got.PRURL, TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
 		CreatedAt: now,
 	}); err != nil {
@@ -125,7 +125,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get run: ok=%v err=%v", ok, err)
 	}
-	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID || gotRun.TargetSHA != "sha1" {
+	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID || gotRun.BatchID != "batch-1" || gotRun.TargetSHA != "sha1" {
 		t.Fatalf("get run = %+v", gotRun)
 	}
 
@@ -146,6 +146,13 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].ID != "run-1" {
 		t.Fatalf("list runs = %+v", runs)
+	}
+	batchRuns, err := s.ListReviewRunsByBatch(ctx, rec.ID, "batch-1")
+	if err != nil {
+		t.Fatalf("list batch runs: %v", err)
+	}
+	if len(batchRuns) != 1 || batchRuns[0].ID != "run-1" || batchRuns[0].BatchID != "batch-1" {
+		t.Fatalf("batch runs = %+v", batchRuns)
 	}
 
 	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictApproved, "again", ""); err != nil {

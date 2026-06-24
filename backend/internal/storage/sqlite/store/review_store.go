@@ -50,6 +50,7 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		ID:             r.ID,
 		ReviewID:       r.ReviewID,
 		SessionID:      r.SessionID,
+		BatchID:        r.BatchID,
 		Harness:        r.Harness,
 		PRURL:          r.PRURL,
 		TargetSha:      r.TargetSHA,
@@ -166,6 +167,19 @@ func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID
 	return out, nil
 }
 
+// ListReviewRunsByBatch returns all passes in one trigger-created batch, oldest first.
+func (s *Store) ListReviewRunsByBatch(ctx context.Context, id domain.SessionID, batchID string) ([]domain.ReviewRun, error) {
+	rows, err := s.qr.ListReviewRunsByBatch(ctx, gen.ListReviewRunsByBatchParams{SessionID: id, BatchID: batchID})
+	if err != nil {
+		return nil, fmt.Errorf("list review runs for session %s batch %s: %w", id, batchID, err)
+	}
+	out := make([]domain.ReviewRun, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewRunFromRow(row))
+	}
+	return out, nil
+}
+
 func reviewFromRow(r gen.Review) domain.Review {
 	return domain.Review{
 		ID:               r.ID,
@@ -189,6 +203,7 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		ID:             r.ID,
 		ReviewID:       r.ReviewID,
 		SessionID:      r.SessionID,
+		BatchID:        r.BatchID,
 		Harness:        r.Harness,
 		PRURL:          r.PRURL,
 		TargetSHA:      r.TargetSha,
