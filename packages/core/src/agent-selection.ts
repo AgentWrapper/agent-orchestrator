@@ -40,6 +40,12 @@ export function resolveAgentSelectionForSession(params: {
   project: ProjectConfig;
   defaults: DefaultPlugins;
   allSessionPrefixes?: string[];
+  /**
+   * Top-level worker-model default. Threaded through so a restored/resumed
+   * worker keeps the cheaper model instead of silently reverting to the account
+   * default on engine restart.
+   */
+  defaultWorkerModel?: string;
 }): ResolvedAgentSelection {
   return resolveAgentSelection({
     role: resolveSessionRole(
@@ -51,6 +57,7 @@ export function resolveAgentSelectionForSession(params: {
     project: params.project,
     defaults: params.defaults,
     persistedAgent: params.metadata?.["agent"],
+    defaultWorkerModel: params.defaultWorkerModel,
   });
 }
 
@@ -60,8 +67,22 @@ export function resolveAgentSelection(params: {
   defaults: DefaultPlugins;
   persistedAgent?: string;
   spawnAgentOverride?: string;
+  /**
+   * Explicit per-spawn model override (e.g. `ao spawn --model sonnet`). Highest
+   * priority — wins over any configured model for either role.
+   */
+  spawnModelOverride?: string;
+  /**
+   * Top-level config fallback applied to WORKER sessions only. Used as the
+   * lowest-priority source so every worker defaults to a cheaper model unless a
+   * more specific selection (spawn override or per-project model) exists. Never
+   * applied to orchestrators. Empty/undefined = the account default (current
+   * behavior).
+   */
+  defaultWorkerModel?: string;
 }): ResolvedAgentSelection {
   const { role, project, defaults, persistedAgent, spawnAgentOverride } = params;
+  const { spawnModelOverride, defaultWorkerModel } = params;
   const roleProjectConfig = role === "orchestrator" ? project.orchestrator : project.worker;
   const roleDefaults = role === "orchestrator" ? defaults.orchestrator : defaults.worker;
   const sharedConfig = project.agentConfig ?? {};
@@ -86,13 +107,23 @@ export function resolveAgentSelection(params: {
     }
   }
 
-  const model =
+  const configuredModel =
     role === "orchestrator"
       ? (roleAgentConfig.orchestratorModel ??
         roleAgentConfig.model ??
         sharedConfig.orchestratorModel ??
         sharedConfig.model)
       : (roleAgentConfig.model ?? sharedConfig.model);
+
+  // Priority: explicit spawn override > per-project configured model >
+  // top-level defaultWorkerModel (workers only). Orchestrators never inherit
+  // defaultWorkerModel — only an explicit override or their own configured
+  // (orchestrator)model applies. Undefined means "no model set" = account
+  // default = current behavior.
+  const model =
+    spawnModelOverride ??
+    configuredModel ??
+    (role === "worker" ? defaultWorkerModel : undefined);
 
   if (model !== undefined) {
     agentConfig.model = model;

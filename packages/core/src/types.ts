@@ -384,6 +384,12 @@ export interface SessionSpawnConfig {
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
+  /**
+   * Explicit model for this spawn (e.g. "opus" | "sonnet" | "haiku"). Highest
+   * priority — overrides the top-level `defaultWorkerModel` and any per-project
+   * worker model. Undefined = fall back to configured defaults.
+   */
+  model?: string;
 }
 
 /** Config for creating an orchestrator session */
@@ -1467,6 +1473,16 @@ export interface OrchestratorConfig {
    * from YAML, but optional for hand-constructed tests.
    */
   observability?: ObservabilityConfig;
+
+  /**
+   * Default model alias applied to WORKER sessions ("opus" | "sonnet" |
+   * "haiku", or a full model id). Lowest-priority model source: an explicit
+   * `ao spawn --model` flag and any per-project worker model both win over it.
+   * Never applied to orchestrators. Empty/undefined = the account default
+   * (workers spawn on whatever model the account defaults to — current
+   * behavior). Lets the fleet route workers to a cheaper model to cut tokens.
+   */
+  defaultWorkerModel?: string;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;

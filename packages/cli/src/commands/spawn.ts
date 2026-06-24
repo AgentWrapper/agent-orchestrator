@@ -292,6 +292,15 @@ async function runSpawnPreflight(
   }
 }
 
+/**
+ * Common worker model presets, surfaced in `--model` help/UX. This is NOT a
+ * whitelist: `--model` accepts ANY non-empty string (aliases like these, full
+ * model ids such as "claude-sonnet-4-5", and future models). The string is
+ * passed through to the agent/SDK verbatim, so an unknown model simply fails
+ * downstream rather than being rejected here — keeping routing extensible.
+ */
+const KNOWN_WORKER_MODEL_PRESETS = ["opus", "sonnet", "haiku"] as const;
+
 async function spawnSession(
   config: OrchestratorConfig,
   projectId: string,
@@ -301,6 +310,7 @@ async function spawnSession(
   claimOptions?: SpawnClaimOptions,
   prompt?: string,
   title?: string,
+  model?: string,
 ): Promise<void> {
   const spinner = ora("Creating session").start();
 
@@ -339,6 +349,7 @@ async function spawnSession(
       agent,
       prompt: sanitizedPrompt,
       title: sanitizedTitle,
+      model,
     });
 
     let claimedPrUrl: string | null = null;
@@ -405,6 +416,10 @@ export function registerSpawn(program: Command): void {
     .allowExcessArguments()
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option(
+      "--model <model>",
+      `Model for this worker session (e.g. ${KNOWN_WORKER_MODEL_PRESETS.join(" | ")}, or a full model id). Any non-empty model string is accepted. Overrides the defaultWorkerModel config. Omit to use the configured / account default.`,
+    )
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option(
@@ -425,6 +440,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          model?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           prompt?: string;
@@ -456,6 +472,15 @@ export function registerSpawn(program: Command): void {
 
         if (!opts.claimPr && opts.assignOnGithub) {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
+          process.exit(1);
+        }
+
+        // Accept any non-empty model string (presets, full ids, future models);
+        // only reject an empty/whitespace value. The agent/SDK validates the
+        // actual model downstream.
+        const requestedModel = opts.model?.trim();
+        if (opts.model !== undefined && !requestedModel) {
+          console.error(chalk.red("✗ --model must not be empty."));
           process.exit(1);
         }
 
@@ -506,6 +531,7 @@ export function registerSpawn(program: Command): void {
             claimOptions,
             resolvedPrompt,
             opts.title,
+            requestedModel,
           );
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));

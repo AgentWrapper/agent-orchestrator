@@ -388,6 +388,10 @@ const OrchestratorConfigSchema = z.object({
   power: PowerConfigSchema,
   lifecycle: LifecycleConfigSchema,
   observability: ObservabilityConfigSchema,
+  // Default model alias for WORKER sessions (e.g. "opus" | "sonnet" | "haiku",
+  // or a full model id). Lenient string: aliases are expected, but full ids are
+  // also valid since the SDK/CLI accept both. Empty/undefined = account default.
+  defaultWorkerModel: z.string().optional(),
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
   dashboard: DashboardConfigSchema.optional(),
@@ -879,6 +883,7 @@ function buildEffectiveConfigFromFlatLocalPath(
     directTerminalPort: globalConfig.directTerminalPort,
     readyThresholdMs: globalConfig.readyThresholdMs,
     observability: globalConfig.observability,
+    defaultWorkerModel: globalConfig.defaultWorkerModel,
     defaults: globalConfig.defaults,
     notifiers: globalConfig.notifiers,
     notificationRouting: globalConfig.notificationRouting,
@@ -931,6 +936,7 @@ function buildEffectiveConfigFromGlobalConfigPath(configPath: string): LoadedCon
     directTerminalPort: globalConfig.directTerminalPort,
     readyThresholdMs: globalConfig.readyThresholdMs,
     observability: globalConfig.observability,
+    defaultWorkerModel: globalConfig.defaultWorkerModel,
     defaults: globalConfig.defaults,
     notifiers: globalConfig.notifiers,
     notificationRouting: globalConfig.notificationRouting,
