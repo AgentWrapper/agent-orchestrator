@@ -1405,6 +1405,19 @@ export interface LifecycleConfig {
    * cleanup happens then. Defaults to 5 minutes.
    */
   mergeCleanupIdleGraceMs: number;
+  /**
+   * Auto-retire idle WORKER sessions (never orchestrators) whose streaming host
+   * finished its turn cleanly and has sat idle past the grace window with a
+   * clean worktree. Reaps the node host and moves the card to Done so the board
+   * self-clears without a manual `ao session kill`. Defaults to true.
+   */
+  autoRetireIdleWorkers: boolean;
+  /**
+   * Minimum time (ms) a worker must stay idle after finishing its turn before
+   * auto-retire reaps it. The window lets the orchestrator deliver a follow-up
+   * turn before teardown. Defaults to 2 minutes.
+   */
+  workerIdleRetireGraceMs: number;
 }
 
 export interface ObservabilityConfig {

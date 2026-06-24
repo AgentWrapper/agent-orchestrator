@@ -10,9 +10,11 @@
  * Reference: scripts/claude-session-status, scripts/claude-review-check
  */
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { recordActivityEvent } from "./activity-events.js";
 import { resolveRuntimeName } from "./runtime-resolution.js";
 import { getOrchestratorSessionId } from "./orchestrator-session-strategy.js";
@@ -92,6 +94,8 @@ import {
   buildSessionTransitionNotificationData,
   type NotificationEventContext,
 } from "./notification-data.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -2833,6 +2837,169 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * True when the worktree has uncommitted changes OTHER than the injected
+   * `.claude/` and `.maestro/` infra (activity logs, metadata, discipline hooks)
+   * that ao writes into every worktree. Those always show up as untracked noise;
+   * counting them would mark every worker dirty and make auto-retire dead code.
+   * Any failure (not a git repo, git missing, timeout) is treated as "has work"
+   * so we never tear down a worktree we could not verify is clean.
+   */
+  async function hasUncommittedNonInfraWork(worktreePath: string): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsync("git", ["-C", worktreePath, "status", "--porcelain"], {
+        timeout: 10_000,
+      });
+      return (
+        stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          // porcelain v1: "XY <path>" (or "XY <orig> -> <new>" for renames). The
+          // path portion starts at column 3; mirror the orchestrator's agreed
+          // `grep -vE '\.claude/|\.maestro/'` filter on it.
+          .some((line) => {
+            const pathPart = line.slice(2).trim();
+            return !(pathPart.includes(".claude/") || pathPart.includes(".maestro/"));
+          })
+      );
+    } catch {
+      return true; // fail safe — an unverifiable tree is treated as dirty
+    }
+  }
+
+  /**
+   * Auto-retire an idle WORKER whose streaming host finished its turn cleanly.
+   *
+   * A worker that completes its turn on a live SDK host is clamped to a stable
+   * `idle` by the streaming-host ground truth (runtime-alive clamp + the
+   * "live idle is healthy, not stuck" guard). Correct for liveness, but it
+   * leaves a finished worker lingering: its node host keeps running (RAM) and
+   * the board shows it under Working because the runtime is still alive — the
+   * operator then had to `ao session kill` it by hand. Orchestrators legitimately
+   * sit idle waiting on their workers, so they are NEVER retired here. Only a
+   * worker, only once it has stayed idle past a grace window (so the orchestrator
+   * can still deliver a follow-up turn) with a clean worktree (no uncommitted
+   * non-infra work to lose). Reaps the host and moves the card to Done via
+   * sessionManager.kill — the automated equivalent of the manual kill.
+   *
+   * Complements the dead-runtime terminal path (#8): that handles a host that
+   * vanished; this handles a host that is alive but done.
+   */
+  async function maybeAutoRetireIdleWorker(session: Session): Promise<void> {
+    const { autoRetireIdleWorkers = true, workerIdleRetireGraceMs: graceMs = 120_000 } =
+      config.lifecycle ?? {};
+    if (!autoRetireIdleWorkers) return;
+
+    const lc = session.lifecycle;
+    const isStreamingRuntime = session.runtimeHandle?.runtimeName === "sdk";
+
+    // Eligibility — ALL must hold:
+    //  - SDK streaming host (the only runtime that clamps a finished turn to a
+    //    live `idle`; a dead host of any runtime is handled by #8's terminal path);
+    //  - worker, never an orchestrator (orchestrators persist/restore);
+    //  - lifecycle `idle` = a clean turn-end (NOT working/needs_input/stuck/…);
+    //  - runtime positively alive (don't race #8 on a host that just died);
+    //  - activity not busy (no live work, no pending question/approval);
+    //  - not already terminal.
+    const eligible =
+      isStreamingRuntime &&
+      lc.session.kind !== "orchestrator" &&
+      lc.session.state === "idle" &&
+      lc.runtime.state === "alive" &&
+      session.activity !== ACTIVITY_STATE.ACTIVE &&
+      session.activity !== ACTIVITY_STATE.WAITING_INPUT &&
+      session.activity !== ACTIVITY_STATE.BLOCKED;
+
+    const clearPendingMarker = (): void => {
+      if (session.metadata["workerRetirePendingSince"]) {
+        updateSessionMetadata(session, { workerRetirePendingSince: "" });
+      }
+    };
+
+    if (!eligible) {
+      // Became busy / got a follow-up turn / changed state → reset the grace
+      // clock so a later idle period opens a fresh window.
+      clearPendingMarker();
+      return;
+    }
+
+    // Never retire a worker with uncommitted NON-INFRA changes: that work would
+    // be lost on teardown, and `git worktree remove` would fail on a dirty tree.
+    if (session.workspacePath && (await hasUncommittedNonInfraWork(session.workspacePath))) {
+      clearPendingMarker();
+      return;
+    }
+
+    // Grace window: the first eligible poll stamps the clock; retire only once
+    // the worker has stayed idle past graceMs. graceMs=0 retires immediately.
+    const nowIso = new Date().toISOString();
+    const pendingSince = session.metadata["workerRetirePendingSince"] || nowIso;
+    if (!session.metadata["workerRetirePendingSince"]) {
+      updateSessionMetadata(session, { workerRetirePendingSince: nowIso });
+    }
+    const pendingSinceMs = Date.parse(pendingSince);
+    const graceElapsed = Number.isFinite(pendingSinceMs)
+      ? Date.now() - pendingSinceMs >= graceMs
+      : true;
+    if (!graceElapsed) return;
+
+    const correlationId = createCorrelationId("lifecycle-worker-retire");
+    try {
+      const result = await sessionManager.kill(session.id, { reason: "auto_cleanup" });
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_retire.completed",
+        outcome: "success",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: "worker_idle_done",
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceMs,
+        },
+        level: "info",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.worker_auto_retired",
+        summary: `idle worker auto-retired: ${session.id}`,
+        data: {
+          cleaned: result.cleaned,
+          alreadyTerminated: result.alreadyTerminated,
+          graceMs,
+        },
+      });
+      states.delete(session.id);
+    } catch (err) {
+      // Leave the marker in place so the next poll retries (idempotent kill).
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_retire.failed",
+        outcome: "failure",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: errorMsg,
+        level: "warn",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.worker_auto_retire_failed",
+        level: "error",
+        summary: `idle worker auto-retire failed: ${session.id}`,
+        data: { errorMessage: errorMsg },
+      });
+    }
+  }
+
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
     // Use tracked state if available; otherwise use the persisted metadata status
@@ -3165,6 +3332,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // once the agent is idle (or grace window elapses). Runs last so reactions
     // and notifications observe the live session before it is destroyed.
     await maybeAutoCleanupOnMerge(session);
+
+    // Idle-worker auto-retire: reap a finished worker's live host once it has
+    // sat idle past the grace window (frees RAM + self-clears the board). Runs
+    // after merge-cleanup so a merged worker takes the merge path first.
+    await maybeAutoRetireIdleWorker(session);
   }
 
   /**
