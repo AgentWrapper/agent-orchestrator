@@ -80,6 +80,9 @@ import {
   METADATA_UPDATER_SCRIPT_NODE,
   ACTIVITY_UPDATER_SCRIPT,
   ACTIVITY_UPDATER_SCRIPT_NODE,
+  ORCHESTRATOR_NO_INLINE_CODE_SCRIPT,
+  ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT,
+  PRE_SPAWN_RLM_SCRIPT,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -1336,6 +1339,109 @@ describe("setupWorkspaceHooks — activity-updater (#1941)", () => {
     expect(chmodCalls).toHaveLength(0);
 
     mockIsWindows.mockReturnValue(false);
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks — orchestrator-discipline hooks (Maestro fresh-install parity)
+// =========================================================================
+describe("setupWorkspaceHooks — orchestrator discipline (Maestro)", () => {
+  const agent = create();
+
+  const NO_INLINE_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-inline-code.cjs"';
+  const NO_SHELL_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/orchestrator-no-source-shell.cjs"';
+  const PRE_SPAWN_CMD = 'node "$CLAUDE_PROJECT_DIR/.claude/pre-spawn-rlm.cjs"';
+
+  function getParsedSettings(): Record<string, unknown> {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    return JSON.parse(settingsWrite![1] as string) as Record<string, unknown>;
+  }
+  function preToolUse(): Array<{ matcher: string; hooks: Array<{ command: string; timeout?: number }> }> {
+    const settings = getParsedSettings();
+    return (settings.hooks as Record<string, unknown>)["PreToolUse"] as Array<{
+      matcher: string;
+      hooks: Array<{ command: string; timeout?: number }>;
+    }>;
+  }
+  const entryFor = (cmd: string) => preToolUse().find((g) => g.hooks.some((h) => h.command === cmd));
+
+  beforeEach(() => {
+    mockWriteFile.mockClear();
+    mockChmod.mockClear();
+    mockExistsSync.mockReturnValue(false);
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("writes the three discipline .cjs scripts with their exact content", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const byName = (name: string) =>
+      mockWriteFile.mock.calls.find(
+        ([path]: unknown[]) => typeof path === "string" && path.endsWith(name),
+      );
+    expect(byName("orchestrator-no-inline-code.cjs")?.[1]).toBe(ORCHESTRATOR_NO_INLINE_CODE_SCRIPT);
+    expect(byName("orchestrator-no-source-shell.cjs")?.[1]).toBe(ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT);
+    expect(byName("pre-spawn-rlm.cjs")?.[1]).toBe(PRE_SPAWN_RLM_SCRIPT);
+  });
+
+  it("registers no-inline-code on PreToolUse(Edit|Write) with a 10s timeout", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const entry = entryFor(NO_INLINE_CMD);
+    expect(entry).toBeDefined();
+    expect(entry!.matcher).toBe("Edit|Write");
+    expect(entry!.hooks.find((h) => h.command === NO_INLINE_CMD)!.timeout).toBe(10);
+  });
+
+  it("registers no-source-shell + pre-spawn-rlm on PreToolUse(Bash)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const shell = entryFor(NO_SHELL_CMD);
+    const spawn = entryFor(PRE_SPAWN_CMD);
+    expect(shell).toBeDefined();
+    expect(shell!.matcher).toBe("Bash");
+    expect(shell!.hooks.find((h) => h.command === NO_SHELL_CMD)!.timeout).toBe(10);
+    expect(spawn).toBeDefined();
+    expect(spawn!.matcher).toBe("Bash");
+    expect(spawn!.hooks.find((h) => h.command === PRE_SPAWN_CMD)!.timeout).toBe(25);
+  });
+
+  it("does NOT chmod the .cjs scripts (invoked via node, no execute bit needed)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const cjsChmods = mockChmod.mock.calls.filter(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith(".cjs"),
+    );
+    expect(cjsChmods).toHaveLength(0);
+  });
+
+  it("writes the same .cjs scripts on Windows (Node hooks are cross-platform)", async () => {
+    mockIsWindows.mockReturnValue(true);
+    await agent.setupWorkspaceHooks!("C:\\\\Users\\\\dev\\\\workspace", {} as WorkspaceHooksConfig);
+    const byName = (name: string) =>
+      mockWriteFile.mock.calls.find(
+        ([path]: unknown[]) => typeof path === "string" && path.endsWith(name),
+      );
+    expect(byName("orchestrator-no-inline-code.cjs")?.[1]).toBe(ORCHESTRATOR_NO_INLINE_CODE_SCRIPT);
+    expect(byName("pre-spawn-rlm.cjs")?.[1]).toBe(PRE_SPAWN_RLM_SCRIPT);
+    expect(entryFor(NO_INLINE_CMD)).toBeDefined();
+    mockIsWindows.mockReturnValue(false);
+  });
+
+  it("is idempotent — calling twice keeps exactly one entry per discipline hook", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+    const first = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    mockExistsSync.mockReturnValue(true);
+    mockReadFile.mockResolvedValueOnce(first![1] as string);
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!("/workspace/test", {} as WorkspaceHooksConfig);
+
+    const all = preToolUse().flatMap((g) => g.hooks).map((h) => h.command);
+    expect(all.filter((c) => c === NO_INLINE_CMD)).toHaveLength(1);
+    expect(all.filter((c) => c === NO_SHELL_CMD)).toHaveLength(1);
+    expect(all.filter((c) => c === PRE_SPAWN_CMD)).toHaveLength(1);
   });
 });
 
