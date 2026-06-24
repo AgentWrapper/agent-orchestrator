@@ -1469,6 +1469,16 @@ function createClaudeCodeAgent(): Agent {
       if (config.model) {
         env["AO_SDK_MODEL"] = config.model;
       }
+      // GLM (ZhipuAI) provider: inject the API key when the model is a GLM model.
+      // The key is read from the global AO_GLM_API_KEY environment variable for
+      // now (Phase-1 PoC); Phase-2 will read it from the AO config / Keychain and
+      // store it via Settings ▸ Agents ▸ GLM. The strip list in runtime-sdk/index.ts
+      // prevents this value from accidentally leaking from an orchestrator worker
+      // into its children — it must be set explicitly here.
+      if (config.model?.startsWith("glm-")) {
+        const glmKey = process.env.AO_GLM_API_KEY;
+        if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
+      }
 
       return env;
     },

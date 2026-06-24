@@ -42,6 +42,182 @@ import {
   type SessionInfo,
 } from "./protocol.js";
 
+// ===========================================================================
+// GLM (ZhipuAI) provider — OpenAI-compatible alternative to Claude SDK
+// ===========================================================================
+
+const GLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+
+/**
+ * Drive the host using ZhipuAI GLM via OpenAI-compatible chat completions.
+ * Used instead of Claude SDK query() when AO_GLM_API_KEY is set and the
+ * model name starts with "glm-".
+ *
+ * Emits the same normalized events as the Claude path so downstream
+ * consumers (Maestro) need no changes.
+ */
+async function runGlmMode(
+  host: SessionHost,
+  model: string,
+  apiKey: string,
+  cwd: string,
+  initialPrompt: string | null,
+): Promise<void> {
+  // Announce session init — gives the Swift side a session_id and model name.
+  const glmSessionId = `glm-${Date.now()}`;
+  host.emit(
+    {
+      type: "session",
+      subtype: "init",
+      session_id: glmSessionId,
+      model,
+      cwd,
+      permission_mode: "bypassPermissions",
+      tools: [],
+    },
+    0,
+  );
+
+  if (initialPrompt) host.submitTurn(initialPrompt);
+
+  let turn = 0;
+  const history: { role: "user" | "assistant"; content: string }[] = [];
+
+  for await (const userMsg of host.input) {
+    turn++;
+    const userText =
+      typeof userMsg.message.content === "string"
+        ? userMsg.message.content
+        : JSON.stringify(userMsg.message.content);
+
+    history.push({ role: "user", content: userText });
+    const startMs = Date.now();
+    let fullText = "";
+
+    try {
+      const resp = await fetch(`${GLM_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model, messages: history, stream: true }),
+      });
+
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        host.emit(
+          { type: "error", message: `GLM API error ${resp.status}: ${errBody}`, fatal: false },
+          turn,
+        );
+        // Emit an error result so the turn closes cleanly in the UI.
+        host.emit(
+          {
+            type: "result",
+            subtype: "error",
+            is_error: true,
+            text: "",
+            num_turns: turn,
+            duration_ms: Date.now() - startMs,
+          },
+          turn,
+        );
+        continue;
+      }
+
+      // --- SSE streaming response ---
+      const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = "";
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const payload = trimmed.slice(6);
+          if (payload === "[DONE]") break outer;
+          try {
+            const chunk = JSON.parse(payload) as {
+              choices?: Array<{ delta?: { content?: string } }>;
+            };
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta.length > 0) {
+              fullText += delta;
+              host.emit({ type: "text-delta", block: 0, text: delta }, turn);
+            }
+          } catch {
+            /* skip malformed SSE line */
+          }
+        }
+      }
+
+      history.push({ role: "assistant", content: fullText });
+
+      host.emit(
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          text: fullText,
+          num_turns: turn,
+          duration_ms: Date.now() - startMs,
+        },
+        turn,
+      );
+      // Emit a usage stub — we don't get token counts back from GLM streaming.
+      host.emit(
+        {
+          type: "usage",
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          total_cost_usd: 0,
+          model,
+          models: [
+            {
+              model,
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+              cost_usd: 0,
+            },
+          ],
+        },
+        turn,
+      );
+    } catch (err) {
+      host.emit(
+        {
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+          fatal: false,
+        },
+        turn,
+      );
+      host.emit(
+        {
+          type: "result",
+          subtype: "error",
+          is_error: true,
+          text: "",
+          num_turns: turn,
+          duration_ms: Date.now() - startMs,
+        },
+        turn,
+      );
+    }
+  }
+
+  host.end();
+}
+
 /** A live subscriber: a function that writes one already-encoded NDJSON line. */
 type Send = (line: string) => void;
 
@@ -510,38 +686,47 @@ async function runStandalone(): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGHUP", () => shutdown("SIGHUP"));
 
-  // --- start the streaming query ---
-  const useCanUseTool = permissionMode !== "bypassPermissions";
-  const q = query({
-    prompt: host.input,
-    options: {
-      cwd,
-      // Pin the filesystem settings sources explicitly. In claude-agent-sdk
-      // 0.3.186 the omitted default is ALREADY ["user","project","local"]
-      // (runtime constant `Wre`, mirrored by resolveSettings) — so this is a
-      // behavior-preserving no-op today. We keep it as a defensive pin: it
-      // documents that the spawned session DEPENDS on file settings being
-      // loaded, and guards against a future SDK bump flipping the default to
-      // isolation mode (`[]`). What we rely on: 'user' → ~/.claude discipline
-      // hooks (orchestrator-no-inline-code, pre-spawn-rlm, rtk); 'project'/'local'
-      // → ao's per-worktree .claude activity/metadata inject. settingSources
-      // governs ONLY settings/hook loading — permission approval still flows
-      // through permissionMode/allowDangerouslySkipPermissions below, so
-      // bypassPermissions keeps priority and no MCP/permission surprises leak in.
-      settingSources: ["user", "project", "local"],
-      permissionMode,
-      allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
-      includePartialMessages: true,
-      ...(resumeFrom ? { resume: resumeFrom } : {}),
-      ...(model ? { model } : {}),
-      ...(useCanUseTool ? { canUseTool: host.canUseTool } : {}),
-      stderr: () => {},
-    },
-  });
+  // --- start the streaming session (Claude SDK or GLM) ---
+  const glmApiKey = process.env.AO_GLM_API_KEY ?? null;
+  const isGlmModel = model?.startsWith("glm-") ?? false;
 
-  if (initialPrompt) host.submitTurn(initialPrompt);
+  if (glmApiKey && isGlmModel) {
+    // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
+    await runGlmMode(host, model!, glmApiKey, cwd, initialPrompt);
+  } else {
+    // Default: Claude via @anthropic-ai/claude-agent-sdk.
+    const useCanUseTool = permissionMode !== "bypassPermissions";
+    const q = query({
+      prompt: host.input,
+      options: {
+        cwd,
+        // Pin the filesystem settings sources explicitly. In claude-agent-sdk
+        // 0.3.186 the omitted default is ALREADY ["user","project","local"]
+        // (runtime constant `Wre`, mirrored by resolveSettings) — so this is a
+        // behavior-preserving no-op today. We keep it as a defensive pin: it
+        // documents that the spawned session DEPENDS on file settings being
+        // loaded, and guards against a future SDK bump flipping the default to
+        // isolation mode (`[]`). What we rely on: 'user' → ~/.claude discipline
+        // hooks (orchestrator-no-inline-code, pre-spawn-rlm, rtk); 'project'/'local'
+        // → ao's per-worktree .claude activity/metadata inject. settingSources
+        // governs ONLY settings/hook loading — permission approval still flows
+        // through permissionMode/allowDangerouslySkipPermissions below, so
+        // bypassPermissions keeps priority and no MCP/permission surprises leak in.
+        settingSources: ["user", "project", "local"],
+        permissionMode,
+        allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
+        includePartialMessages: true,
+        ...(resumeFrom ? { resume: resumeFrom } : {}),
+        ...(model ? { model } : {}),
+        ...(useCanUseTool ? { canUseTool: host.canUseTool } : {}),
+        stderr: () => {},
+      },
+    });
 
-  await host.consume(q);
+    if (initialPrompt) host.submitTurn(initialPrompt);
+
+    await host.consume(q);
+  }
   shutdown("session-ended");
 }
 

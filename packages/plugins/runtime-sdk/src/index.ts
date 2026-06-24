@@ -91,7 +91,10 @@ export function create(): Runtime {
       // INITIAL_PROMPT) from process.env and RESUMES the orchestrator's conversation instead of
       // running its own task — every spawned worker became a copy of the orchestrator once the
       // SDK runtime went live. Strip any inherited value not set explicitly for THIS session.
-      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE"]) {
+      // AO_GLM_API_KEY is also stripped: it's provider-level auth that must be
+      // set explicitly per-session from the global config, not inherited from the
+      // orchestrator's environment (same "inherited secret bleeds into workers" risk).
+      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY"]) {
         if (!config.environment || !(key in config.environment)) {
           delete hostEnv[key];
         }
