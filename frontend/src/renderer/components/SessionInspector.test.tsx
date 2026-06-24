@@ -85,6 +85,7 @@ const approvedReview = {
 	id: "run-1",
 	reviewId: "review-1",
 	sessionId: "sess-1",
+	batchId: "batch-1",
 	harness: "codex",
 	status: "complete",
 	verdict: "approved",
@@ -93,6 +94,14 @@ const approvedReview = {
 	targetSha: "abc123",
 	createdAt: "2026-06-16T10:06:00Z",
 };
+
+const reviewState = (latestRun = approvedReview) => ({
+	prUrl: latestRun.prUrl,
+	prNumber: 3,
+	targetSha: latestRun.targetSha,
+	status: latestRun.status === "running" ? "running" : "up_to_date",
+	latestRun,
+});
 
 beforeEach(() => {
 	getMock.mockReset();
@@ -160,7 +169,7 @@ describe("SessionInspector reviews tab", () => {
 			response: { status: 201 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				review: { ...approvedReview, status: "running", verdict: "", body: "" },
+				reviews: [reviewState({ ...approvedReview, status: "running", verdict: "", body: "" })],
 			},
 		});
 		const onOpenReviewerTerminal = vi.fn();
@@ -181,10 +190,10 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it("shows an up-to-date notice instead of opening the terminal when the backend reuses a run", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane");
+		mockCommonGets([reviewState()], "reviewer-pane");
 		postMock.mockResolvedValue({
 			response: { status: 200 },
-			data: { reviewerHandleId: "reviewer-pane", review: approvedReview },
+			data: { reviewerHandleId: "reviewer-pane", reviews: [reviewState()] },
 		});
 		const onOpenReviewerTerminal = vi.fn();
 
@@ -200,7 +209,7 @@ describe("SessionInspector reviews tab", () => {
 	});
 
 	it("shows an approved review and opens its terminal", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane");
+		mockCommonGets([reviewState()], "reviewer-pane");
 		const onOpenReviewerTerminal = vi.fn();
 
 		renderWithQuery(
