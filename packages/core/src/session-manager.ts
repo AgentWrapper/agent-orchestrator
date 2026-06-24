@@ -3191,13 +3191,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         } satisfies RuntimeHandle);
       const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
 
-      if (forceRestore || isRestorable(normalized)) {
-        return restoreForDelivery(
-          forceRestore
-            ? "session needed to be restarted before delivery"
-            : "session is not running",
-          normalized,
-        );
+      // Streaming runtimes (sdk) own a long-lived host whose input is an unbounded
+      // FIFO: a REACHABLE host accepts a turn at any moment — it just queues it
+      // behind the current one (submitTurn → makePushableInput). Delivery to a live
+      // host is therefore always a plain push, NEVER a restore. The host IS the
+      // process, so there is no separate agent-CLI to probe; runtime.isAlive is
+      // authoritative. This is what lets `ao send` reach a busy/streaming
+      // orchestrator instead of failing into restore() (which throws on a live,
+      // non-terminal session — the "ao send worker→orchestrator falls" symptom).
+      const isStreamingRuntime = runtimeName === "sdk";
+
+      if (forceRestore) {
+        return restoreForDelivery("session needed to be restarted before delivery", normalized);
+      }
+
+      // A stale lifecycle snapshot (e.g. runtime.state="exited" written by a poll
+      // while the host was momentarily unreachable) must NOT pre-empt a host that
+      // is reachable RIGHT NOW. For the streaming runtime, probe liveness first and
+      // deliver if the host answers; restore only a genuinely dead host.
+      if (isRestorable(normalized)) {
+        if (isStreamingRuntime) {
+          const reachable = await runtimePlugin.isAlive(handle).catch(() => true);
+          if (reachable) return normalized;
+        }
+        return restoreForDelivery("session is not running", normalized);
       }
 
       let [runtimeAlive, processRunning] = await Promise.all([
@@ -3213,11 +3230,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ]);
       }
 
-      if (!runtimeAlive || !processRunning) {
-        return restoreForDelivery(
-          !runtimeAlive ? "runtime is not alive" : "agent process is not running",
-          normalized,
-        );
+      if (!runtimeAlive) {
+        return restoreForDelivery("runtime is not alive", normalized);
+      }
+
+      // Runtime reachable. For a streaming host, reachability alone is enough to
+      // queue the turn — don't gate on the agent-process probe, a tmux/PTY concept
+      // that reads "not running" for the SDK host (whose host process is not a
+      // claude CLI) and would wrongly force a restore of a perfectly live session.
+      if (!isStreamingRuntime && !processRunning) {
+        return restoreForDelivery("agent process is not running", normalized);
       }
 
       return normalized;

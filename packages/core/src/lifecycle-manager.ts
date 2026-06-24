@@ -1117,6 +1117,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     };
 
     let runtimeProbe: ProbeResult = { state: "unknown", failed: false };
+    // The sdk streaming runtime owns the host process directly — runtime.isAlive
+    // (socket || PID || fresh event log) is the authoritative liveness signal, and
+    // there is no separate agent-CLI process to probe. Used below to stop an
+    // unreliable process probe from declaring a live host exited/dead.
+    const isStreamingRuntime = session.runtimeHandle?.runtimeName === "sdk";
     if (session.runtimeHandle && canProbeRuntimeIdentity) {
       const runtime = registry.get<Runtime>("runtime", resolveRuntimeName(project, config, agentName));
       if (runtime) {
@@ -1375,6 +1380,24 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       };
     }
 
+    // Ground-truth clamp for the streaming host: when the runtime probe positively
+    // reports alive, the host IS alive — never let the unreliable agent-process
+    // probe (which reads "not running" for the SDK host because it isn't a claude
+    // CLI) disagree it into `detecting`/`agent_process_exited`, and never let an
+    // activity-derived `exited` stick. A live host wrongly marked `exited` looks
+    // terminal → isRestorable → ensureOrchestrator auto-restores it WITHOUT a
+    // prompt → empty resume → dies → restore again: the end→resume loop. Reverting
+    // here breaks that loop and the false stuck/probe_failure at the root.
+    if (isStreamingRuntime && runtimeProbe.state === "alive") {
+      if (processProbe.state !== "alive") {
+        processProbe = { state: "alive", failed: false };
+      }
+      if (lifecycle.runtime.state === "exited" || lifecycle.runtime.state === "missing") {
+        lifecycle.runtime.state = "alive";
+        lifecycle.runtime.reason = "process_running";
+      }
+    }
+
     const probeDecision = resolveProbeDecision({
       currentAttempts: currentDetectingAttempts,
       runtimeProbe,
@@ -1576,7 +1599,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (
       detectedIdleTimestamp &&
       hasPositiveIdleEvidence(activitySignal) &&
-      isIdleBeyondThreshold(session, detectedIdleTimestamp)
+      isIdleBeyondThreshold(session, detectedIdleTimestamp) &&
+      // A positively-alive streaming host that is merely idle is healthy, not
+      // stuck — an orchestrator legitimately waits (idle) for its workers to
+      // report, and a host that finished a turn cleanly sits idle until the next
+      // `send`. Don't escalate a live host to stuck/probe_failure on idleness.
+      !(isStreamingRuntime && runtimeProbe.state === "alive")
     ) {
       return commit({
         status: SESSION_STATUS.STUCK,

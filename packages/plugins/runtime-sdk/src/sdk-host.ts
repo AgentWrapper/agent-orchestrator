@@ -165,8 +165,26 @@ export class SessionHost {
     } as NormalizedEvent;
     this.events.push(event);
     const line = encodeLine(event);
-    this.opts.persist(line);
-    for (const send of this.subscribers) send(line);
+    // Every event MUST reach BOTH the durable log AND every live subscriber, and
+    // neither sink may abort the other or the turn. A raw throw here propagates
+    // into consume()'s `for await` loop, trips its catch→end(), and TERMINATES the
+    // whole streaming session — which is exactly how the live broadcast "stops"
+    // mid-turn while events.ndjson keeps growing: one subscriber whose socket died
+    // between our `destroyed` check and the write (EPIPE / write-after-FIN) throws,
+    // killing fan-out to the others AND ending the session. Isolate both sinks.
+    try {
+      this.opts.persist(line);
+    } catch {
+      /* a persist hiccup must not kill the turn or the live stream */
+    }
+    for (const send of this.subscribers) {
+      try {
+        send(line);
+      } catch {
+        // Drop the broken subscriber; its own close/error handler unsubscribes too.
+        this.subscribers.delete(send);
+      }
+    }
     return event;
   }
 

@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -47,6 +48,26 @@ function handleData(handle: RuntimeHandle): HandleData {
 }
 
 const HOST_STARTUP_TIMEOUT_MS = 15_000;
+
+/**
+ * A host that appended to its event log within this window is provably writing
+ * RIGHT NOW — treat it as alive even when the socket `status` probe is momentarily
+ * blocked (a dense partial-message stream stalls the host's single event loop past
+ * the 2s socket timeout) and even when this handle carries no/stale PID. Without
+ * this, a busy streaming host gets a false `dead`/`probe_failed` verdict that
+ * cascades into stuck and the promptless end→resume loop.
+ */
+const EVENT_LOG_FRESH_MS = 10_000;
+
+/** True when the event log was appended to within `maxAgeMs` (host writing now). */
+function eventLogIsFresh(eventLogPath: string | undefined, maxAgeMs: number): boolean {
+  if (!eventLogPath) return false;
+  try {
+    return Date.now() - statSync(eventLogPath).mtimeMs < maxAgeMs;
+  } catch {
+    return false;
+  }
+}
 
 export function create(): Runtime {
   return {
@@ -154,6 +175,10 @@ export function create(): Runtime {
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
       const data = handleData(handle);
+      // Reachability = socket OK || PID alive || event log fresh. ANY positive
+      // signal means the host is up; only the absence of ALL of them is "dead".
+      // The host's input is an unbounded FIFO, so a reachable host can always
+      // accept a turn — this is the liveness the poller and `ao send` rely on.
       if (await hostIsAlive(data.socketPath)) return true;
       // Socket unreachable — fall back to a PID liveness probe.
       if (typeof data.hostPid === "number" && data.hostPid > 0) {
@@ -162,10 +187,14 @@ export function create(): Runtime {
           return true;
         } catch (err: unknown) {
           if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
-          return false;
+          // PID gone — fall through to the event-log check rather than declaring
+          // death: a just-resumed host may not have its new PID reflected in this
+          // (possibly thin) handle yet, but it is still appending events.
         }
       }
-      return false;
+      // Final signal: a host actively appending events is alive+busy even when the
+      // socket probe timed out under load and we have no usable PID.
+      return eventLogIsFresh(data.eventLogPath, EVENT_LOG_FRESH_MS);
     },
 
     async destroy(handle: RuntimeHandle): Promise<void> {
