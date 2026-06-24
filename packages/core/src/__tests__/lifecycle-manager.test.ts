@@ -4566,6 +4566,180 @@ describe("auto-retire idle worker", () => {
   });
 });
 
+describe("worker completion ping (mae-178)", () => {
+  function configWithRetire(
+    overrides: Partial<{ autoRetireIdleWorkers: boolean; workerIdleRetireGraceMs: number }> = {},
+  ): OrchestratorConfig {
+    return {
+      ...config,
+      lifecycle: {
+        autoCleanupOnMerge: true,
+        mergeCleanupIdleGraceMs: 300_000,
+        autoRetireIdleWorkers: overrides.autoRetireIdleWorkers ?? true,
+        workerIdleRetireGraceMs: overrides.workerIdleRetireGraceMs ?? 0,
+      },
+    };
+  }
+
+  /** A live SDK worker that finished its turn (idle) with a clean tree.
+   *  workspacePath=null short-circuits the git clean-tree guard → treated as
+   *  committed/done, which is the ground truth the completion ping relies on. */
+  function idleSdkWorker(
+    overrides: Parameters<typeof makeSession>[0] = {},
+  ): ReturnType<typeof makeSession> {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle" as ActivityState,
+    });
+    const session = makeSession({
+      activity: "idle",
+      runtimeHandle: { id: "app-1", runtimeName: "sdk", data: {} },
+      workspacePath: null,
+      ...overrides,
+    });
+    session.lifecycle.session.state = "idle";
+    session.lifecycle.session.reason = "task_in_progress";
+    session.lifecycle.runtime.state = "alive";
+    session.lifecycle.runtime.handle = { id: "app-1", runtimeName: "sdk", data: {} };
+    return session;
+  }
+
+  /** A live orchestrator session for the same project, returned by list(). */
+  function orchestratorSession(
+    overrides: Parameters<typeof makeSession>[0] = {},
+  ): ReturnType<typeof makeSession> {
+    const session = makeSession({
+      id: "my-app-orchestrator",
+      branch: null,
+      metadata: { role: "orchestrator" },
+      ...overrides,
+    });
+    session.lifecycle.session.kind = "orchestrator";
+    return session;
+  }
+
+  it("(a) pings the orchestrator once and latches completionReportedAt", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([orchestratorSession()]);
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "my-app-orchestrator",
+      expect.stringContaining("app-1 finished its turn"),
+    );
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["completionReportedAt"]).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("(b) does not re-ping when completionReportedAt is already set", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([orchestratorSession()]);
+    const already = new Date(Date.now() - 60_000).toISOString();
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker({ metadata: { completionReportedAt: already } }),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+      metaOverrides: { completionReportedAt: already },
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
+  it("(c) pings even when autoRetireIdleWorkers is disabled, without reaping", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([orchestratorSession()]);
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ autoRetireIdleWorkers: false, workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+  });
+
+  it("(d) does not ping when the worktree has uncommitted work", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([orchestratorSession()]);
+    // A non-repo path makes hasUncommittedNonInfraWork fail-safe to "dirty".
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker({ workspacePath: "/nonexistent/not-a-repo" }),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+    expect(mockSessionManager.kill).not.toHaveBeenCalled();
+  });
+
+  it("(e) does not throw or ping when no orchestrator is found", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await expect(lm.check("app-1")).resolves.not.toThrow();
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
+  it("(f) leaves the latch unset when send fails so the next poll retries", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([orchestratorSession()]);
+    vi.mocked(mockSessionManager.send).mockRejectedValueOnce(new Error("host busy"));
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ autoRetireIdleWorkers: false, workerIdleRetireGraceMs: 0 }),
+    });
+
+    await expect(lm.check("app-1")).resolves.not.toThrow();
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["completionReportedAt"]).toBeUndefined();
+  });
+
+  it("(g) picks the most-recently-active orchestrator when several exist", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const older = orchestratorSession({
+      id: "my-app-orchestrator-1",
+      lastActivityAt: new Date(Date.now() - 600_000),
+    });
+    const newer = orchestratorSession({
+      id: "my-app-orchestrator-2",
+      lastActivityAt: new Date(Date.now() - 1_000),
+    });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([older, newer]);
+    const lm = setupCheck("app-1", {
+      session: idleSdkWorker(),
+      registry,
+      configOverride: configWithRetire({ workerIdleRetireGraceMs: 0 }),
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "my-app-orchestrator-2",
+      expect.any(String),
+    );
+  });
+});
+
 describe("event enrichment", () => {
   it("includes PR context in event data when session has PR", async () => {
     const notifier = createMockNotifier();

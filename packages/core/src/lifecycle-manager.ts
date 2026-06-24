@@ -337,6 +337,57 @@ function buildOrchestratorSignalMessage(session: Session, status: SessionStatus)
   );
 }
 
+/**
+ * Best-effort read of a worktree's current branch + last commit, for the
+ * worker-completion ping. Mirrors the lightweight `git -C <path> …` plumbing
+ * `hasUncommittedNonInfraWork` already uses. Resolved with allSettled so a
+ * missing/empty commit history still yields the branch. Any total failure (not
+ * a repo, git missing, timeout) returns null so the caller still pings — just
+ * without the commit detail.
+ */
+async function readWorktreeHead(
+  worktreePath: string,
+): Promise<{ branch: string; shortSha: string; subject: string } | null> {
+  try {
+    const [branchRes, logRes] = await Promise.allSettled([
+      execFileAsync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], {
+        timeout: 10_000,
+      }),
+      // \x1f (unit separator) won't appear in a sha or a sane subject line.
+      execFileAsync("git", ["-C", worktreePath, "log", "-1", "--format=%h%x1f%s"], {
+        timeout: 10_000,
+      }),
+    ]);
+    const branch = branchRes.status === "fulfilled" ? branchRes.value.stdout.trim() : "";
+    if (logRes.status !== "fulfilled") {
+      return branch ? { branch, shortSha: "", subject: "" } : null;
+    }
+    const [shortSha = "", subject = ""] = logRes.value.stdout.trim().split("\x1f");
+    return { branch, shortSha, subject };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-line completion ping the engine sends to the orchestrator when a worker
+ * finishes its turn with committed work but did not self-report. Machine- and
+ * human-friendly: leads with the worker id + branch so the orchestrator can go
+ * straight to reviewing it.
+ */
+function buildWorkerCompletionMessage(
+  session: Session,
+  git: { branch: string; shortSha: string; subject: string } | null,
+): string {
+  const title = session.metadata["displayName"] || session.metadata["userPrompt"] || session.id;
+  const branch = git?.branch || session.branch || "(unknown)";
+  const commit = git && git.shortSha ? `, last commit ${git.shortSha} "${git.subject}"` : "";
+  return (
+    `[auto] ${session.id} finished its turn — branch ${branch}${commit}. ` +
+    `Title: ${title}. Review the branch; it did not self-report.`
+  );
+}
+
 function prStateToEventType(
   from: Session["lifecycle"]["pr"]["state"],
   to: Session["lifecycle"]["pr"]["state"],
@@ -2889,7 +2940,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   async function maybeAutoRetireIdleWorker(session: Session): Promise<void> {
     const { autoRetireIdleWorkers = true, workerIdleRetireGraceMs: graceMs = 120_000 } =
       config.lifecycle ?? {};
-    if (!autoRetireIdleWorkers) return;
+    // NOTE: do NOT early-return on `!autoRetireIdleWorkers`. The completion-ping
+    // below must fire regardless of the retire setting; only the reap is gated.
 
     const lc = session.lifecycle;
     const isStreamingRuntime = session.runtimeHandle?.runtimeName === "sdk";
@@ -2926,10 +2978,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Never retire a worker with uncommitted NON-INFRA changes: that work would
     // be lost on teardown, and `git worktree remove` would fail on a dirty tree.
+    // This same "clean tree" check is also the ground truth for "the worker is
+    // DONE": the turn ended (idle) AND its work is committed (nothing uncommitted
+    // left to lose) — exactly the signal the completion-ping below relies on.
     if (session.workspacePath && (await hasUncommittedNonInfraWork(session.workspacePath))) {
       clearPendingMarker();
       return;
     }
+
+    // ── Ground-truth completion ping (decoupled from retire) ──────────────────
+    // The worker has genuinely finished: its streaming turn ended cleanly AND its
+    // work is committed. Notify the orchestrator ONCE so it reliably learns the
+    // worker is done WITHOUT the agent needing to run `ao send` itself — final
+    // text in a turn ("mae-NNN: DONE") is NOT a command actually executed, and
+    // that completion-signal gap is what this closes. Fires regardless of
+    // `autoRetireIdleWorkers`; only the reap below is gated on that setting. Any
+    // send failure is swallowed and the latch left unset (retry next poll) so it
+    // never breaks the poll loop or blocks the reap.
+    await maybeSendWorkerCompletionPing(session);
+
+    // Reaping the host stays gated on the retire setting:
+    // detect-done → ping [always] → (if autoRetire) grace + reap.
+    if (!autoRetireIdleWorkers) return;
 
     // Grace window: the first eligible poll stamps the clock; retire only once
     // the worker has stayed idle past graceMs. graceMs=0 retires immediately.
@@ -2996,6 +3066,90 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         level: "error",
         summary: `idle worker auto-retire failed: ${session.id}`,
         data: { errorMessage: errorMsg },
+      });
+    }
+  }
+
+  /**
+   * Fire the one-shot worker→orchestrator completion ping. Guarded by the
+   * `completionReportedAt` metadata latch so it sends at most ONCE per worker —
+   * even if the worker later gets a follow-up turn and goes idle-done again (the
+   * orchestrator polls the branch anyway; simplicity over re-fire). On a send
+   * failure the latch is left UNSET so the next poll retries, and the error is
+   * swallowed so it never breaks the poll loop or blocks the reap.
+   */
+  async function maybeSendWorkerCompletionPing(session: Session): Promise<void> {
+    // Already pinged this worker — nothing to do.
+    if (session.metadata["completionReportedAt"]) return;
+
+    // Resolve THIS project's orchestrator: a non-terminal session whose lifecycle
+    // kind is "orchestrator". At most one is expected per project; if several,
+    // take the most-recently-active. None found → nobody to notify, skip silently.
+    let orchestrator: Session | null = null;
+    try {
+      const siblings = await sessionManager.list(session.projectId);
+      orchestrator =
+        siblings
+          .filter(
+            (s) =>
+              s.id !== session.id &&
+              s.lifecycle?.session.kind === "orchestrator" &&
+              !TERMINAL_STATUSES.has(s.status),
+          )
+          .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())[0] ?? null;
+    } catch {
+      orchestrator = null;
+    }
+    if (!orchestrator) return;
+
+    const gitHead = session.workspacePath ? await readWorktreeHead(session.workspacePath) : null;
+    const message = buildWorkerCompletionMessage(session, gitHead);
+    const correlationId = createCorrelationId("lifecycle-worker-completion-ping");
+
+    try {
+      await sessionManager.send(orchestrator.id, message);
+      // Latch only AFTER a confirmed send, so a failed delivery retries next poll.
+      updateSessionMetadata(session, { completionReportedAt: new Date().toISOString() });
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_completion_ping.sent",
+        outcome: "success",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: "worker_idle_done",
+        data: {
+          branch: gitHead?.branch || session.branch || "",
+          commit: gitHead?.shortSha ?? "",
+          orchestratorSessionId: orchestrator.id,
+        },
+        level: "info",
+      });
+      recordActivityEvent({
+        projectId: session.projectId,
+        sessionId: session.id,
+        source: "lifecycle",
+        kind: "session.worker_completion_ping",
+        summary: `worker completion ping → orchestrator: ${session.id}`,
+        data: {
+          branch: gitHead?.branch || session.branch || "",
+          commit: gitHead?.shortSha ?? "",
+          orchestratorSessionId: orchestrator.id,
+        },
+      });
+    } catch (err) {
+      // Swallow — a send failure must never break the poll loop or block reap.
+      // Latch stays unset so the next poll retries delivery.
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      observer.recordOperation({
+        metric: "lifecycle_poll",
+        operation: "lifecycle.worker_completion_ping.failed",
+        outcome: "failure",
+        correlationId,
+        projectId: session.projectId,
+        sessionId: session.id,
+        reason: errorMsg,
+        level: "warn",
       });
     }
   }
