@@ -1910,6 +1910,19 @@ export interface SessionMetadata {
    * Takes effect on every restore/restart and beats project-level config.
    */
   sessionModel?: string;
+  /**
+   * Transient one-shot seed written by `ao session compact`. When present, the
+   * next restore() injects it as `AO_SDK_INITIAL_PROMPT` (fresh, no-resume boot)
+   * and clears this key in the same metadata commit — so it is consumed exactly
+   * once and a subsequent restart resumes the new conversation instead.
+   */
+  compactSeed?: string;
+  /**
+   * The `claudeSessionUuid` that was active before the most recent compaction,
+   * kept for debugging. The live resume pointer (`claudeSessionUuid`) is cleared
+   * by compact so restore() starts a fresh conversation.
+   */
+  previousClaudeSessionUuid?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**
@@ -1994,6 +2007,17 @@ export interface SessionManager {
    * If the session is currently live, its runtime is destroyed before restart.
    */
   setModel(sessionId: SessionId, model: string): Promise<Session>;
+  /**
+   * Compact a session's conversation: restart it on a BRAND-NEW SDK
+   * conversation (no resume) seeded with a brief context, keeping the same
+   * session id, worktree, model and project. Drops the bloated conversation
+   * history to save tokens — durable state already lives on disk
+   * (`.maestro/tasks.md` + memory files).
+   *
+   * When `seed` is omitted a default seed is generated listing the project's
+   * in-flight (non-terminal) sessions; when provided it is used verbatim.
+   */
+  compact(sessionId: SessionId, seed?: string): Promise<Session>;
 }
 
 /** OpenCode-specific session manager with remap capability */

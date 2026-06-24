@@ -590,4 +590,36 @@ export function registerSession(program: Command): void {
         process.exit(1);
       }
     });
+
+  session
+    .command("compact")
+    .description(
+      "Compact a session: restart on a fresh, seeded conversation; prior chat history is dropped to save tokens",
+    )
+    .argument("<session>", "Session name")
+    .argument("[seed]", "Optional verbatim seed for the fresh conversation (defaults to a generated one)")
+    .action(async (sessionName: string, seed: string | undefined) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      try {
+        const updated = await sm.compact(sessionName, seed);
+        console.log(
+          chalk.green(
+            `\nCompacted ${sessionName} — fresh conversation seeded; prior history dropped.`,
+          ),
+        );
+        if (updated.workspacePath) {
+          console.log(chalk.dim(`  Worktree: ${updated.workspacePath}`));
+        }
+        if (updated.branch) {
+          console.log(chalk.dim(`  Branch:   ${updated.branch}`));
+        }
+        const port = config.port ?? DEFAULT_PORT;
+        console.log(chalk.dim(`  View:     ${projectSessionUrl(port, updated.projectId, sessionName)}`));
+      } catch (err) {
+        console.error(chalk.red(`Failed to compact session ${sessionName}: ${err}`));
+        process.exit(1);
+      }
+    });
 }

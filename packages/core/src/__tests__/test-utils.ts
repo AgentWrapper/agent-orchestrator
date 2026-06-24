@@ -524,5 +524,7 @@ export function createMockSessionManager(): OpenCodeSessionManager {
       takenOverFrom: [],
     }),
     getAgentLimits: vi.fn().mockReturnValue(undefined),
+    setModel: vi.fn().mockResolvedValue(makeSession()),
+    compact: vi.fn().mockResolvedValue(makeSession()),
   } as OpenCodeSessionManager;
 }

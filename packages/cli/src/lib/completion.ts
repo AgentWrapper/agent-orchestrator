@@ -117,6 +117,7 @@ function getArgumentAction(node: CompletionCommandNode, argumentIndex: number): 
   if (key === "session attach" && argumentIndex === 0) return "_ao_complete_sessions";
   if (key === "session kill" && argumentIndex === 0) return "_ao_complete_sessions";
   if (key === "session restore" && argumentIndex === 0) return "_ao_complete_all_sessions";
+  if (key === "session compact" && argumentIndex === 0) return "_ao_complete_all_sessions";
   if (key === "session remap" && argumentIndex === 0) return "_ao_complete_all_sessions";
   if (key === "session claim-pr" && argumentIndex === 1) return "_ao_complete_sessions";
 

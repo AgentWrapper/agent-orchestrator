@@ -3848,6 +3848,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(typeof raw["claudeSessionUuid"] === "string" && raw["claudeSessionUuid"]
           ? { AO_SDK_RESUME: raw["claudeSessionUuid"] }
           : {}),
+        // runtime-sdk compaction seed (one-shot): a freshly-COMPACTED session
+        // carries a transient `compactSeed` in its metadata INSTEAD of a resume
+        // pointer (compact() cleared claudeSessionUuid above). Inject it as the
+        // SDK's initial prompt so the new, empty conversation boots already
+        // seeded with durable-state instructions. The marker is consumed exactly
+        // once — cleared in the step-9 metadata commit below, so the next restart
+        // RESUMES the new conversation instead of re-seeding.
+        ...(typeof raw["compactSeed"] === "string" && raw["compactSeed"]
+          ? { AO_SDK_INITIAL_PROMPT: raw["compactSeed"] }
+          : {}),
         AO_CALLER_TYPE: "agent",
         ...(projectId && { AO_PROJECT_ID: projectId }),
         AO_CONFIG_PATH: config.configPath,
@@ -3895,6 +3905,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       agent: selection.agentName,
       restoredAt: now,
       mergedPendingCleanupSince: "",
+      // One-shot consume the compaction seed: now that the fresh host has been
+      // created above with AO_SDK_INITIAL_PROMPT, drop the transient marker so a
+      // subsequent restart RESUMES the new (small) conversation — keyed off the
+      // claudeSessionUuid the fresh boot will write — instead of re-seeding.
+      ...(raw["compactSeed"] ? { compactSeed: "" } : {}),
     });
     invalidateCache();
 
@@ -3990,6 +4005,126 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restore(sessionId, true);
   }
 
+  /**
+   * Compact a session's conversation: restart it on a BRAND-NEW SDK
+   * conversation (no resume), seeded with a brief context, while keeping the
+   * same ao session id, worktree, model and project.
+   *
+   * This is the mirror of `setModel`: setModel does destroy → restore WITH
+   * resume (conversation preserved); compact does destroy → restore WITHOUT
+   * resume → inject `AO_SDK_INITIAL_PROMPT` (conversation reset + seeded).
+   *
+   * Motivation: a long-lived orchestrator resumes its FULL conversation on
+   * every restart, which balloons over time and explodes token cost. Its real
+   * durable state already lives in `.maestro/tasks.md` + memory files, so a
+   * reseeded fresh orchestrator loses almost nothing.
+   *
+   * One-shot guarantee: the seed is persisted as the transient `compactSeed`
+   * metadata key and the resume pointer (`claudeSessionUuid`) is cleared. The
+   * next restore() injects `AO_SDK_INITIAL_PROMPT` from `compactSeed` and clears
+   * `compactSeed` in the same metadata commit (consume-on-read). After the fresh
+   * host boots it writes a NEW claudeSessionUuid, so every later restart RESUMES
+   * the new (small) conversation rather than re-seeding.
+   *
+   * @param seed Optional verbatim seed override. When omitted a default seed is
+   *   generated (system-generated, NOT an AI call) listing the project's
+   *   in-flight sessions.
+   */
+  async function compact(sessionId: SessionId, seed?: string): Promise<Session> {
+    // 1. Locate the session
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    const { sessionsDir, project, projectId, raw } = located;
+
+    // 2. Build the seed (system-generated). A caller-supplied override is used
+    //    verbatim so the app can later pass a richer seed.
+    let seedText: string;
+    if (typeof seed === "string" && seed.trim().length > 0) {
+      seedText = seed;
+    } else {
+      // List the project's NON-TERMINAL sessions, excluding this orchestrator
+      // itself, so the fresh conversation knows what is in-flight right now.
+      const TERMINAL_CANONICAL_STATES = new Set<string>(["done", "terminated"]);
+      let inFlightBlock = "- (none)";
+      try {
+        const sessions = await list(projectId);
+        const lines = sessions
+          .filter(
+            (s) =>
+              s.id !== sessionId &&
+              !TERMINAL_CANONICAL_STATES.has(s.lifecycle.session.state),
+          )
+          .map((s) => {
+            const label =
+              s.metadata["title"]?.trim() ||
+              s.metadata["displayName"]?.trim() ||
+              s.branch ||
+              "(no title)";
+            return `- ${s.id} — ${label} — ${s.lifecycle.session.state}`;
+          });
+        if (lines.length > 0) {
+          inFlightBlock = lines.join("\n");
+        }
+      } catch {
+        // Best-effort — a fresh seed without the in-flight list is still valid.
+      }
+      seedText =
+        "You are resuming as the Maestro orchestrator. Your conversation context was COMPACTED to save tokens — prior chat history is intentionally gone, but your durable state is intact on disk.\n" +
+        "FIRST, read these for full state: `.maestro/tasks.md` (source of truth for done/in-progress/queued) and your memory files (MEMORY.md / project memory).\n" +
+        "In-flight right now in this project:\n" +
+        `${inFlightBlock}\n` +
+        "Continue coordinating from there. Do not redo completed work; trust tasks.md.";
+    }
+
+    // 3. Persist the compact intent so the next restore() starts FRESH + seeded:
+    //    - clear the resume pointer (claudeSessionUuid) → restore() does NOT set
+    //      AO_SDK_RESUME (preserve the old uuid under previousClaudeSessionUuid
+    //      for debugging). This step is PROVIDER-AGNOSTIC and conditional: only
+    //      Claude SDK sessions carry a claudeSessionUuid. Non-Claude SDK
+    //      providers (e.g. GLM via runGlmMode, codex, opencode) have none — they
+    //      are already stateless between SDK restarts, so there is nothing to
+    //      clear and we simply skip it (no-op, never throws).
+    //    - set the transient compactSeed → restore() injects AO_SDK_INITIAL_PROMPT
+    //      (read by BOTH the Claude and GLM host paths) and consumes the marker
+    //      (one-shot). The seed is what makes compaction work for every provider.
+    const previousUuid = raw["claudeSessionUuid"];
+    updateMetadata(sessionsDir, sessionId, {
+      ...(typeof previousUuid === "string" && previousUuid
+        ? { claudeSessionUuid: "", previousClaudeSessionUuid: previousUuid }
+        : {}),
+      compactSeed: seedText,
+    });
+    invalidateCache();
+
+    // 4. Destroy the live runtime so the host is dead before restore() probes it.
+    //    (Mirror setModel: skip kill() to preserve the worktree; pass force=true
+    //    to restore() so the restorability check is skipped — the host is dead.)
+    const runtimeHandleRaw = raw["runtimeHandle"];
+    if (runtimeHandleRaw) {
+      const handle = safeJsonParse<RuntimeHandle>(runtimeHandleRaw);
+      if (handle) {
+        const selection = resolveSelectionForSession(project, sessionId, raw);
+        const plugins = resolvePlugins(project, selection.agentName);
+        if (plugins.runtime) {
+          try {
+            await plugins.runtime.destroy(handle);
+          } catch {
+            // Best-effort — host may already be gone
+          }
+          // Let the process fully exit before the next runtime boot.
+          await new Promise<void>((r) => setTimeout(r, 500));
+        }
+      }
+    }
+
+    // 5. Re-start on a FRESH conversation, seeded via AO_SDK_INITIAL_PROMPT
+    //    (no resume — claudeSessionUuid was cleared above).
+    //    force=true: skip isRestorable — we just destroyed the host above.
+    return restore(sessionId, true);
+  }
+
   return {
     spawn,
     spawnOrchestrator,
@@ -4007,5 +4142,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     remap,
     getAgentLimits,
     setModel,
+    compact,
   };
 }

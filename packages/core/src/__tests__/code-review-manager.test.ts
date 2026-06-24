@@ -128,6 +128,12 @@ function makeSessionManager(
     claimPR: async () => {
       throw new Error("not implemented");
     },
+    setModel: async () => {
+      throw new Error("not implemented");
+    },
+    compact: async () => {
+      throw new Error("not implemented");
+    },
   };
 
   return Object.assign(manager, overrides);
