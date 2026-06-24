@@ -1084,6 +1084,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
       allSessionPrefixes: Object.values(config.projects).map((p) => p.sessionPrefix),
+      // Keep restored/resumed workers on the configured cheaper model so an
+      // engine restart doesn't silently revert them to the account default.
+      defaultWorkerModel: config.defaultWorkerModel,
     });
   }
 
@@ -1376,6 +1379,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
       spawnAgentOverride: spawnConfig.agent,
+      // Worker model routing: explicit `ao spawn --model` wins; otherwise fall
+      // back to the top-level defaultWorkerModel. Orchestrators are unaffected
+      // (this is the worker spawn path; the orchestrator spawn never passes
+      // defaultWorkerModel).
+      spawnModelOverride: spawnConfig.model,
+      defaultWorkerModel: config.defaultWorkerModel,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
