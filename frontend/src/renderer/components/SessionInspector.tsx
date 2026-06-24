@@ -544,7 +544,13 @@ function ReviewPanel({
 function ReviewStateCard({ reviewState }: { reviewState: PRReviewState }) {
 	const status = reviewStateStatus(reviewState);
 	return (
-		<div className={cn("reviewer-card", status.tone && `reviewer-card--${status.tone}`, reviewState.status === "ineligible" && "opacity-70")}>
+		<div
+			className={cn(
+				"reviewer-card",
+				status.tone && `reviewer-card--${status.tone}`,
+				reviewState.status === "ineligible" && "opacity-70",
+			)}
+		>
 			<div className="reviewer-card__top">
 				<div className="reviewer-card__name">
 					<GitPullRequest aria-hidden="true" />

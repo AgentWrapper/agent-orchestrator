@@ -99,7 +99,8 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 	prNumber: n,
 	targetSha,
 	status,
-	latestRun: status === "up_to_date" ? { ...approvedReview, prUrl: `https://example.com/pr/${n}`, targetSha } : undefined,
+	latestRun:
+		status === "up_to_date" ? { ...approvedReview, prUrl: `https://example.com/pr/${n}`, targetSha } : undefined,
 });
 
 beforeEach(() => {
