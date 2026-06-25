@@ -1,11 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import {
-	ArrowUpRight,
-	GitPullRequest,
-	Shield,
-	Terminal,
-} from "lucide-react";
+import { ArrowUpRight, GitPullRequest, Shield, Terminal } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -568,9 +563,7 @@ function ReviewStateRow({
 					<span className="reviewer-row__number">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>
-				{verdict.label}
-			</span>
+			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>{verdict.label}</span>
 			<button className="reviewer-row__action" disabled={disabled} onClick={onTrigger} type="button">
 				{buttonLabel}
 			</button>
