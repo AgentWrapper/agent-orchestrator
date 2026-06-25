@@ -1446,6 +1446,313 @@ describe("setupWorkspaceHooks — orchestrator discipline (Maestro)", () => {
 });
 
 // =========================================================================
+// ORCHESTRATOR_NO_INLINE_CODE_SCRIPT — hook body behaviour
+// =========================================================================
+describe("ORCHESTRATOR_NO_INLINE_CODE_SCRIPT hook body", () => {
+  /**
+   * Run the hook body script with a synthetic payload.
+   * Returns { denied: boolean, reason?: string }.
+   */
+  function runInlineHook(payload: {
+    cwd?: string;
+    tool_input?: { file_path?: string };
+  }): { denied: boolean; reason?: string } {
+    // Strip the shebang line — vm won't like it.
+    const scriptBody = ORCHESTRATOR_NO_INLINE_CODE_SCRIPT.replace(/^#!.*\n/, "");
+
+    let denied = false;
+    let reason: string | undefined;
+
+    // Sandbox: intercept process.exit + process.stdout.write + require.
+    const fakeProcess = {
+      exit: (_code?: number) => { throw new Error("EXIT"); },
+      stdout: {
+        write: (data: string) => {
+          const parsed = JSON.parse(data);
+          const out = parsed?.hookSpecificOutput;
+          if (out?.permissionDecision === "deny") {
+            denied = true;
+            reason = out.permissionDecisionReason;
+          }
+        },
+      },
+      env: { CLAUDE_PROJECT_DIR: payload.cwd ?? "" },
+      cwd: () => payload.cwd ?? "",
+    };
+
+    const fakeFs = {
+      readFileSync: (fd: unknown) => {
+        if (fd === 0) return JSON.stringify(payload);
+        return "";
+      },
+    };
+
+    const fakePath = {
+      basename: (p: string) => p.split("/").pop() ?? "",
+    };
+
+    const fakeRequire = (mod: string) => {
+      if (mod === "node:fs") return fakeFs;
+      if (mod === "node:path") return fakePath;
+      throw new Error(`Unexpected require("${mod}")`);
+    };
+
+    try {
+      // Use Function constructor to run the script body in a closure with mocked globals.
+      const fn = new Function("process", "require", scriptBody);
+      fn(fakeProcess, fakeRequire);
+    } catch (e: unknown) {
+      // process.exit() throws — that's expected; anything else is a real error.
+      if (!(e instanceof Error) || e.message !== "EXIT") throw e;
+    }
+
+    return { denied, reason };
+  }
+
+  const ORCH_CWD = "/workspace/.agent-orchestrator/projects/foo/worktrees/foo-orchestrator";
+  const WORKER_CWD = "/workspace/.agent-orchestrator/projects/foo/worktrees/foo-3";
+
+  // Source extensions → DENY in orchestrator
+  it.each([".php", ".vue", ".py", ".css", ".html", ".sql"])(
+    "DENY %s in orchestrator cwd",
+    (ext) => {
+      const result = runInlineHook({
+        cwd: ORCH_CWD,
+        tool_input: { file_path: `/repo/src/file${ext}` },
+      });
+      expect(result.denied).toBe(true);
+    },
+  );
+
+  // Also the original narrow denylist extensions → still DENY
+  it.each([".ts", ".tsx", ".rs", ".swift", ".js", ".jsx", ".mjs", ".go"])(
+    "DENY original source ext %s in orchestrator cwd",
+    (ext) => {
+      const result = runInlineHook({
+        cwd: ORCH_CWD,
+        tool_input: { file_path: `/repo/src/file${ext}` },
+      });
+      expect(result.denied).toBe(true);
+    },
+  );
+
+  // Allowlisted extensions → ALLOW
+  it.each([".md", ".yaml", ".json", ".sh", ".toml", ".txt"])(
+    "ALLOW ops ext %s in orchestrator cwd",
+    (ext) => {
+      const result = runInlineHook({
+        cwd: ORCH_CWD,
+        tool_input: { file_path: `/repo/docs/file${ext}` },
+      });
+      expect(result.denied).toBe(false);
+    },
+  );
+
+  // Allowlisted basenames → ALLOW
+  it.each(["README", "Dockerfile", "Makefile", ".gitignore", ".env", ".env.local"])(
+    "ALLOW special basename %s in orchestrator cwd",
+    (name) => {
+      const result = runInlineHook({
+        cwd: ORCH_CWD,
+        tool_input: { file_path: `/repo/${name}` },
+      });
+      expect(result.denied).toBe(false);
+    },
+  );
+
+  // Worker cwd → ALLOW (discipline only applies to -orchestrator suffix)
+  it("ALLOW source file in worker cwd (no -orchestrator suffix)", () => {
+    const result = runInlineHook({
+      cwd: WORKER_CWD,
+      tool_input: { file_path: "/repo/src/file.php" },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // Scratchpad path → ALLOW even for source-looking file
+  it("ALLOW source-named file inside /scratchpad/", () => {
+    const result = runInlineHook({
+      cwd: ORCH_CWD,
+      tool_input: { file_path: `${ORCH_CWD}/scratchpad/plan.ts` },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // /.claude/ path → ALLOW
+  it("ALLOW file inside /.claude/", () => {
+    const result = runInlineHook({
+      cwd: ORCH_CWD,
+      tool_input: { file_path: `${ORCH_CWD}/.claude/settings.json` },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // /tmp/ path → ALLOW
+  it("ALLOW file in /tmp/", () => {
+    const result = runInlineHook({
+      cwd: ORCH_CWD,
+      tool_input: { file_path: "/tmp/scratch.ts" },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // Non-worktree cwd → ALLOW (not an AO session)
+  it("ALLOW any file when cwd is not inside /worktrees/", () => {
+    const result = runInlineHook({
+      cwd: "/Users/dev/myproject",
+      tool_input: { file_path: "/Users/dev/myproject/src/index.ts" },
+    });
+    expect(result.denied).toBe(false);
+  });
+});
+
+// =========================================================================
+// ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT — hook body behaviour
+// =========================================================================
+describe("ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT hook body", () => {
+  /**
+   * Run the shell-gate hook body script with a synthetic Bash command.
+   * Returns { denied: boolean, reason?: string }.
+   */
+  function runShellHook(payload: {
+    cwd?: string;
+    tool_input?: { command?: string };
+  }): { denied: boolean; reason?: string } {
+    const scriptBody = ORCHESTRATOR_NO_SOURCE_SHELL_SCRIPT.replace(/^#!.*\n/, "");
+
+    let denied = false;
+    let reason: string | undefined;
+
+    const fakeProcess = {
+      exit: (_code?: number) => { throw new Error("EXIT"); },
+      stdout: {
+        write: (data: string) => {
+          const parsed = JSON.parse(data);
+          const out = parsed?.hookSpecificOutput;
+          if (out?.permissionDecision === "deny") {
+            denied = true;
+            reason = out.permissionDecisionReason;
+          }
+        },
+      },
+      env: { CLAUDE_PROJECT_DIR: payload.cwd ?? "" },
+      cwd: () => payload.cwd ?? "",
+    };
+
+    const fakeFs = {
+      readFileSync: (fd: unknown) => {
+        if (fd === 0) return JSON.stringify(payload);
+        return "";
+      },
+    };
+
+    const fakePath = {
+      basename: (p: string) => p.split("/").pop() ?? "",
+    };
+
+    const fakeRequire = (mod: string) => {
+      if (mod === "node:fs") return fakeFs;
+      if (mod === "node:path") return fakePath;
+      throw new Error(`Unexpected require("${mod}")`);
+    };
+
+    try {
+      const fn = new Function("process", "require", scriptBody);
+      fn(fakeProcess, fakeRequire);
+    } catch (e: unknown) {
+      if (!(e instanceof Error) || e.message !== "EXIT") throw e;
+    }
+
+    return { denied, reason };
+  }
+
+  const ORCH_CWD = "/workspace/.agent-orchestrator/projects/bar/worktrees/bar-orchestrator";
+
+  // git checkout of new source extensions → DENY
+  it("DENY git checkout of a .php file", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "git checkout HEAD src/controller.php" },
+    });
+    expect(result.denied).toBe(true);
+  });
+
+  it("DENY git checkout of a .vue file", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "git checkout origin/main -- components/App.vue" },
+    });
+    expect(result.denied).toBe(true);
+  });
+
+  // sed -i on new source extensions → DENY
+  it("DENY sed -i on a .vue file", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "sed -i '' 's/foo/bar/' components/Widget.vue" },
+    });
+    expect(result.denied).toBe(true);
+  });
+
+  // redirect into new source extension → DENY
+  it("DENY redirect > into a .py file", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "echo 'import x' > script.py" },
+    });
+    expect(result.denied).toBe(true);
+  });
+
+  // git checkout of a branch name (no source ext) → ALLOW
+  it("ALLOW git checkout main (branch name, no source ext)", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "git checkout main" },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // redirect into ops file → ALLOW
+  it("ALLOW redirect > into notes.md (ops file)", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "echo '# notes' > notes.md" },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // Non-orchestrator cwd → ALLOW
+  it("ALLOW any command when cwd is not an orchestrator worktree", () => {
+    const result = runShellHook({
+      cwd: "/Users/dev/myproject",
+      tool_input: { command: "git checkout HEAD src/main.php" },
+    });
+    expect(result.denied).toBe(false);
+  });
+
+  // Original ext still blocked: .ts
+  it("DENY git checkout of a .ts file (original ext still blocked)", () => {
+    const result = runShellHook({
+      cwd: ORCH_CWD,
+      tool_input: { command: "git checkout HEAD src/index.ts" },
+    });
+    expect(result.denied).toBe(true);
+  });
+
+  // CSS/HTML/SQL → DENY via git checkout
+  it.each([".css", ".html", ".sql"])(
+    "DENY git checkout of %s file",
+    (ext) => {
+      const result = runShellHook({
+        cwd: ORCH_CWD,
+        tool_input: { command: `git checkout HEAD src/file${ext}` },
+      });
+      expect(result.denied).toBe(true);
+    },
+  );
+});
+
+// =========================================================================
 // setupWorkspaceHooks on win32 — Node.js hook script
 // =========================================================================
 describe("setupWorkspaceHooks on win32", () => {

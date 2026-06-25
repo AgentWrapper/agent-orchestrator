@@ -718,25 +718,44 @@ const fp =
     : "";
 if (!fp) process.exit(0);
 
-// Always-allowed locations (ops, scratch, config, hooks themselves).
+// Always-allowed locations (ops, scratch, config, hooks themselves, tmp).
 if (
   fp.includes("/scratchpad/") ||
   fp.includes("/.claude/") ||
-  fp.includes("/.maestro/")
+  fp.includes("/.maestro/") ||
+  fp.startsWith("/tmp/") ||
+  fp.startsWith("/private/tmp/") ||
+  fp.startsWith("/var/folders/")
 ) {
   process.exit(0);
 }
 
-// Block real source code → force delegation.
-const SOURCE_EXTS = [".swift", ".ts", ".tsx", ".rs", ".js", ".jsx", ".mjs", ".go"];
-if (SOURCE_EXTS.some((ext) => fp.endsWith(ext))) {
+// Allowlist: ops files only — everything else is source → DENY
+const ALLOWED_EXTS = new Set([
+  ".md", ".markdown", ".mdx", ".txt", ".rst", ".adoc",
+  ".yaml", ".yml", ".json", ".jsonc", ".json5", ".toml",
+  ".ini", ".cfg", ".conf", ".properties", ".env",
+  ".sh", ".bash", ".zsh", ".fish",
+  ".csv", ".tsv",
+]);
+const ALLOWED_BASENAMES = new Set([
+  "Dockerfile", "Makefile", ".gitignore", ".gitattributes",
+  ".dockerignore", ".editorconfig", ".npmrc", ".nvmrc",
+  ".env", "LICENSE", "README",
+]);
+const basename = fp.split("/").pop() || "";
+const dotIdx = basename.lastIndexOf(".");
+const ext = dotIdx >= 0 ? basename.slice(dotIdx) : "";
+// Allow .env.* files (e.g. .env.local, .env.production)
+const isAllowedBasename = ALLOWED_BASENAMES.has(basename) || basename.startsWith(".env");
+if (!isAllowedBasename && !ALLOWED_EXTS.has(ext)) {
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
         permissionDecisionReason:
-          "Orchestrators must DELEGATE code work to a visible worker (ao spawn / ao send) — do not edit source inline. Scope the change, spawn a worker, then review + merge its branch. (Ops files .md/.yaml/.json/.sh and the scratchpad are still editable.)",
+          "Orchestrators must DELEGATE code work to a visible worker (ao spawn / ao send) — do not edit source inline. Only ops files (docs .md, config .yaml/.json/.toml, scripts .sh) and the scratchpad/.claude/.maestro dirs are editable here. Scope the change, spawn a worker, then review + merge its branch.",
       },
     }),
   );
@@ -781,7 +800,7 @@ const cmd =
 if (!cmd) process.exit(0);
 
 // A source-file reference: a dot + known code extension at a word boundary.
-const SRC = /\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/;
+const SRC = /\\.(swift|ts|tsx|rs|js|jsx|mjs|cjs|go|kt|kts|java|scala|py|pyi|pyx|rb|php|phtml|vue|svelte|astro|c|cc|cpp|cxx|h|hpp|hxx|m|mm|cs|dart|lua|r|pl|ex|exs|erl|clj|graphql|gql|proto|css|scss|sass|less|html|htm|sql)\\b/;
 
 function deny(what) {
   process.stdout.write(
@@ -808,11 +827,11 @@ if (/\\bsed\\s+-i/.test(cmd) && SRC.test(cmd)) {
   deny("sed -i on source");
 }
 // redirect ( > / >> ) writing a source file.
-if (/>>?\\s*[^\\s|;&<>]*\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/.test(cmd)) {
+if (/>>?\\s*[^\\s|;&<>]*\\.(swift|ts|tsx|rs|js|jsx|mjs|cjs|go|kt|kts|java|scala|py|pyi|pyx|rb|php|phtml|vue|svelte|astro|c|cc|cpp|cxx|h|hpp|hxx|m|mm|cs|dart|lua|r|pl|ex|exs|erl|clj|graphql|gql|proto|css|scss|sass|less|html|htm|sql)\\b/.test(cmd)) {
   deny("redirect into source");
 }
 // tee writing a source file.
-if (/tee\\s+[^|]*\\.(swift|ts|tsx|rs|js|jsx|mjs|go|kt|java|py|c|cc|cpp|h|hpp|m)\\b/.test(cmd)) {
+if (/tee\\s+[^|]*\\.(swift|ts|tsx|rs|js|jsx|mjs|cjs|go|kt|kts|java|scala|py|pyi|pyx|rb|php|phtml|vue|svelte|astro|c|cc|cpp|cxx|h|hpp|hxx|m|mm|cs|dart|lua|r|pl|ex|exs|erl|clj|graphql|gql|proto|css|scss|sass|less|html|htm|sql)\\b/.test(cmd)) {
   deny("tee into source");
 }
 process.exit(0);
