@@ -33,6 +33,7 @@ import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shel
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -68,6 +69,8 @@ let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
+// Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
+let supervisorLink: SupervisorLinkHandle | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -593,6 +596,25 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		portConfirmed = true;
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
+
+		// Establish (or re-establish) the OS-native liveness link to the daemon's
+		// supervisor socket. Holding this connection keeps the daemon alive. When
+		// Electron exits for any reason (Cmd+Q, crash, SIGKILL), the OS closes the
+		// fd; the daemon detects EOF and self-stops after its ~5s grace period,
+		// leaving tmux/ConPTY sessions alive for the next launch to adopt.
+		const rfp = runFilePath();
+		const addr =
+			process.platform === "win32"
+				? "\\\\.\\pipe\\ao-supervise"
+				: rfp
+					? path.join(path.dirname(rfp), "supervise.sock")
+					: null;
+		if (addr) {
+			supervisorLink?.dispose();
+			supervisorLink = connectSupervisor(addr, {
+				log: (msg) => console.log(`AO: ${msg}`),
+			});
+		}
 	};
 
 	// One scanner per stream: each keeps its own partial-line buffer.
@@ -751,79 +773,13 @@ app.whenReady().then(() => {
 	});
 });
 
-// Re-entrancy guard: the first before-quit fires, prevents default, does async
-// work, then calls app.exit(). If app.quit() is called concurrently (e.g. from
-// window-all-closed on non-darwin), the second before-quit fires while the first
-// is still in flight. Without a guard it would preventDefault again and loop.
-// With the guard set to true, the second invocation falls through and lets the
-// quit proceed. app.exit() itself does NOT re-fire before-quit, so the guard
-// mainly protects against a concurrent app.quit() race.
-let quitting = false;
-
-app.on("before-quit", (event) => {
+// Daemon teardown is now handled via the OS-native supervisor socket: the daemon
+// self-stops ~5s after the last client (this process) drops its connection.
+// The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
+// the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
+app.on("before-quit", () => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
-
-	// Re-entrancy: if we already started the async quit sequence, let this
-	// invocation fall through so the app actually exits.
-	if (quitting) return;
-	quitting = true;
-
-	// Capture the current daemon handle and port before any async gap so that
-	// a race with stopDaemon() cannot null them out underneath us.
-	const child = daemonProcess;
-	const port = daemonStatus.state === "ready" ? daemonStatus.port : undefined;
-
-	if (!child) {
-		// No daemon we own: nothing to shut down.
-		return;
-	}
-
-	// Prevent the synchronous quit so we can ask the daemon to save gracefully
-	// before killing it.
-	event.preventDefault();
-
-	const doQuit = async () => {
-		// Best-effort graceful shutdown: POST /shutdown so the daemon flushes
-		// its session state before exiting. An ~8s timeout prevents a hung or
-		// absent daemon from blocking quit indefinitely.
-		// Note: the daemon's internal save bound is 30s (shutdownSaveTimeout), so
-		// if this fetch times out and we proceed to killDaemon (SIGTERM), the first
-		// SIGTERM only cancels the daemon's listen context; the daemon's in-flight
-		// save (on a fresh context) still runs to completion or its own 30s bound.
-		if (port !== undefined) {
-			try {
-				await fetch(`http://127.0.0.1:${port}/shutdown`, {
-					method: "POST",
-					signal: AbortSignal.timeout(8_000),
-				});
-			} catch {
-				// Timeout, network error, or daemon already gone: proceed to kill.
-				console.log(`AO: /shutdown fetch failed (port ${port}); proceeding with SIGTERM.`);
-			}
-		}
-
-		// Kill the daemon process group (reaches the daemon behind any shell
-		// wrapper and its PTY children).
-		killDaemon(child);
-
-		// Exit without re-firing before-quit (app.exit bypasses the event).
-		app.exit(0);
-	};
-
-	void doQuit();
-});
-
-// Last-resort teardown. before-quit covers the normal quit path, but app.exit()
-// and some shutdown routes skip it, which would orphan the detached daemon and
-// leave it holding the port for the next launch. The Node 'exit' event fires
-// synchronously on those paths too, so the daemon's process group is always
-// signalled when the supervisor goes away. (A hard SIGKILL/crash still can't run
-// JS; the daemon's port-conflict fallback covers the orphan that leaves behind.)
-process.on("exit", () => {
-	if (daemonProcess) {
-		killDaemon(daemonProcess);
-	}
 });
 
 app.on("window-all-closed", () => {
