@@ -49,17 +49,17 @@ An Agentic IDE that supervises parallel AI coding agents in isolated workspaces,
 
 ## Features
 
-| Feature | Description |
-| :--- | :--- |
-| **Agent-Agnostic Platform** | 23+ agent adapters including [Claude Code](https://code.claude.com/docs/en/overview), [OpenAI Codex](https://openai.com/), [Cursor](https://cursor.com/), [OpenCode](https://opencode.ai/), [Aider](https://aider.chat/), [Amp](https://ampcode.com/manual), [Goose](https://goose-docs.ai/), [GitHub Copilot](https://github.com/features/copilot), [Grok](https://x.ai/grok), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://www.kimi.com/code), [Cline](https://cline.bot/), [Continue](https://www.continue.dev/), [Kiro](https://kiro.dev/), and more |
-| **Isolated Workspaces** | Each session spawns into its own git worktree with dedicated runtime |
-| **Platform-Native Runtimes** | tmux on Darwin/Linux, conpty on Windows for optimal performance |
-| **Live PR Observation** | Provider-neutral SCM observer with automatic feedback routing |
-| **Automatic Feedback Routing** | CI failures, review comments, and merge conflicts routed to the owning agent |
-| **Durable Facts Storage** | SQLite persists immutable facts with display status derived at read time |
-| **CDC Broadcasting** | DB triggers append changes to change_log, broadcasted via SSE |
-| **Desktop Experience** | Native Electron app with React UI and live terminal streaming |
-| **Loopback-Only Daemon** | HTTP control over 127.0.0.1 with no auth, CORS, or TLS by design |
+| Feature                        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :----------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent-Agnostic Platform**    | 23+ agent adapters including [Claude Code](https://code.claude.com/docs/en/overview), [OpenAI Codex](https://openai.com/), [Cursor](https://cursor.com/), [OpenCode](https://opencode.ai/), [Aider](https://aider.chat/), [Amp](https://ampcode.com/manual), [Goose](https://goose-docs.ai/), [GitHub Copilot](https://github.com/features/copilot), [Grok](https://x.ai/grok), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://www.kimi.com/code), [Cline](https://cline.bot/), [Continue](https://www.continue.dev/), [Kiro](https://kiro.dev/), and more |
+| **Isolated Workspaces**        | Each session spawns into its own git worktree with dedicated runtime                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Platform-Native Runtimes**   | tmux on Darwin/Linux, conpty on Windows for optimal performance                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Live PR Observation**        | Provider-neutral SCM observer with automatic feedback routing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Automatic Feedback Routing** | CI failures, review comments, and merge conflicts routed to the owning agent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Durable Facts Storage**      | SQLite persists immutable facts with display status derived at read time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **CDC Broadcasting**           | DB triggers append changes to change_log, broadcasted via SSE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Desktop Experience**         | Native Electron app with React UI and live terminal streaming                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Loopback-Only Daemon**       | HTTP control over 127.0.0.1 with no auth, CORS, or TLS by design                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Supported Agents
 
@@ -74,13 +74,14 @@ Works with 23+ CLI-based coding agents including Claude Code, OpenAI Codex, Curs
 ### Prerequisites
 
 | Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| Go | 1.25+ | Latest |
-| Node.js | 20+ | Latest LTS |
-| Git | Any | Latest |
-| pnpm | Any | Latest |
+| ----------- | ------- | ----------- |
+| Go          | 1.25+   | Latest      |
+| Node.js     | 20+     | Latest LTS  |
+| Git         | Any     | Latest      |
+| pnpm        | Any     | Latest      |
 
 **Optional:**
+
 - `tmux` (Darwin/Linux) - For Unix runtime
 - `gh` (GitHub CLI) - For authenticated GitHub API calls
 
@@ -88,11 +89,11 @@ Works with 23+ CLI-based coding agents including Claude Code, OpenAI Codex, Curs
 
 Download the latest release for your platform:
 
-| Platform | Download |
-|----------|----------|
-| **Windows** | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
-| **macOS** | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
-| **Linux** | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
+| Platform    | Download                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| **Windows** | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)                   |
+| **macOS**   | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)      |
+| **Linux**   | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
 
 **Direct Download:** [Latest Release](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)
 
@@ -105,6 +106,7 @@ Agent Orchestrator is a long-running Go daemon built around **inbound/outbound p
 **Core mental model:** OBSERVE external facts → UPDATE durable facts → DERIVE display status / ACT
 
 **Key components:**
+
 - **Frontend** - Electron + React UI with TanStack Router/Query and shadcn/ui
 - **Backend Daemon** - Go-based HTTP server with controllers, services, and adapters
 - **Runtime** - Platform-specific: `tmux` on Darwin/Linux, `conpty` on Windows
@@ -117,12 +119,12 @@ For detailed architecture diagrams, data flows, and load-bearing rules, see [arc
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/architecture.md) | System architecture, data flows, and load-bearing rules |
-| [Backend Code Structure](docs/backend-code-structure.md) | Package-by-package ownership and dependency rules |
-| [AGENTS.md](AGENTS.md) | Contributor and worker-agent contract |
-| [Agent Adapter Contract](docs/agent/README.md) | Agent adapter interface and hook behavior |
+| Document                                                 | Description                                             |
+| -------------------------------------------------------- | ------------------------------------------------------- |
+| [Architecture](docs/architecture.md)                     | System architecture, data flows, and load-bearing rules |
+| [Backend Code Structure](docs/backend-code-structure.md) | Package-by-package ownership and dependency rules       |
+| [AGENTS.md](AGENTS.md)                                   | Contributor and worker-agent contract                   |
+| [Agent Adapter Contract](docs/agent/README.md)           | Agent adapter interface and hook behavior               |
 
 ---
 
@@ -147,15 +149,15 @@ npx @redwoodjs/agent-ci run --all
 
 All configuration is environment-driven. The daemon takes no config file.
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `AO_PORT` | `3001` | HTTP bind port |
-| `AO_REQUEST_TIMEOUT` | `60s` | Per-request timeout |
-| `AO_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown cap |
-| `AO_RUN_FILE` | `~/.ao/running.json` | PID/port handshake |
-| `AO_DATA_DIR` | `~/.ao/data` | SQLite data directory |
-| `AO_AGENT` | `claude-code` | Compatibility agent adapter |
-| `GITHUB_TOKEN` | - | GitHub auth token |
+| Variable              | Default              | Purpose                     |
+| --------------------- | -------------------- | --------------------------- |
+| `AO_PORT`             | `3001`               | HTTP bind port              |
+| `AO_REQUEST_TIMEOUT`  | `60s`                | Per-request timeout         |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap       |
+| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake          |
+| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory       |
+| `AO_AGENT`            | `claude-code`        | Compatibility agent adapter |
+| `GITHUB_TOKEN`        | -                    | GitHub auth token           |
 
 ### Health Checks
 

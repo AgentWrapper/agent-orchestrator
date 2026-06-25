@@ -1,22 +1,22 @@
 {
-  "name": "agent-orchestrator",
-  "version": "0.0.0",
-  "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
-  "scripts": {
-    "api": "run-s api:spec api:ts",
-    "api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
-    "api:ts": "npx openapi-typescript@7.4.4 backend/internal/httpd/apispec/openapi.yaml -o packages/shared/src/api/schema.ts",
-    "lint": "npm run lint:backend && npm run lint:frontend",
-    "lint:backend": "cd backend && go test ./... && golangci-lint run",
-    "lint:frontend": "cd packages/desktop && npm run typecheck",
-    "build:shared": "cd packages/shared && npm run build",
-    "build:desktop": "cd packages/desktop && npm run build",
-    "build:mobile": "cd packages/mobile && npm run build"
-  },
-  "devDependencies": {
-    "npm-run-all": "^4.1.5"
-  }
+	"name": "agent-orchestrator",
+	"version": "0.0.0",
+	"private": true,
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"api": "run-s api:spec api:ts",
+		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
+		"api:ts": "npx openapi-typescript@7.4.4 backend/internal/httpd/apispec/openapi.yaml -o packages/shared/src/api/schema.ts",
+		"lint": "npm run lint:backend && npm run lint:frontend",
+		"lint:backend": "cd backend && go test ./... && golangci-lint run",
+		"lint:frontend": "cd packages/desktop && npm run typecheck",
+		"build:shared": "cd packages/shared && npm run build",
+		"build:desktop": "cd packages/desktop && npm run build",
+		"build:mobile": "cd packages/mobile && npm run build"
+	},
+	"devDependencies": {
+		"npm-run-all": "^4.1.5"
+	}
 }
