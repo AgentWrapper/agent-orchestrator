@@ -46,7 +46,7 @@ import {
 // GLM (ZhipuAI) provider — OpenAI-compatible alternative to Claude SDK
 // ===========================================================================
 
-const GLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+const GLM_BASE_URL = process.env.AO_GLM_BASE_URL ?? "https://open.bigmodel.cn/api/paas/v4";
 
 /**
  * Drive the host using ZhipuAI GLM via OpenAI-compatible chat completions.
