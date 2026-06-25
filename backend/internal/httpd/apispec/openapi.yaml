@@ -2007,8 +2007,13 @@ components:
           $ref: '#/components/schemas/ReviewRun'
         reviewerHandleId:
           type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - review
+      - reviews
       - reviewerHandleId
       type: object
     RoleOverride:
@@ -2418,6 +2423,26 @@ components:
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
+        reviews:
+          description: Batched review results recorded by one reviewer CLI command.
+          items:
+            $ref: '#/components/schemas/SubmitReviewItem'
+          type: array
+        runId:
+          description: Review run id being completed.
+          type: string
+        verdict:
+          description: 'Review verdict: approved or changes_requested.'
+          type: string
+      type: object
+    SubmitReviewItem:
+      properties:
+        body:
+          description: Review body recorded by AO. Required for changes_requested.
+          type: string
+        githubReviewId:
+          description: Id of the GitHub PR review the reviewer posted, if any.
+          type: string
         runId:
           description: Review run id being completed.
           type: string
@@ -2427,8 +2452,6 @@ components:
       required:
       - runId
       - verdict
-      - body
-      - githubReviewId
       type: object
     TriggerReviewResponse:
       properties:

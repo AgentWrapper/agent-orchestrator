@@ -465,19 +465,18 @@ func TestTriggerCreatesRunsForMultipleEligiblePRsWithOneReviewer(t *testing.T) {
 	if res.CreatedRuns[0].BatchID == "" || res.CreatedRuns[0].BatchID != res.CreatedRuns[1].BatchID {
 		t.Fatalf("created runs should share one batch id: %+v", res.CreatedRuns)
 	}
-	if launcher.spawnCount != 1 || len(launcher.handles) != 1 || launcher.handles[0] != "review-mer-1" {
-		t.Fatalf("expected one spawn and one notify to same reviewer, launcher=%+v", launcher)
+	if launcher.spawnCount != 1 || len(launcher.handles) != 0 {
+		t.Fatalf("expected one spawn and no extra notify, launcher=%+v", launcher)
 	}
-	if len(launcher.specs) != 2 {
-		t.Fatalf("launch specs = %d, want 2: %+v", len(launcher.specs), launcher.specs)
+	if len(launcher.specs) != 1 {
+		t.Fatalf("launch specs = %d, want 1: %+v", len(launcher.specs), launcher.specs)
 	}
-	for i, spec := range launcher.specs {
-		if spec.ReviewIndex != i || len(spec.ReviewQueue) != 2 {
-			t.Fatalf("spec %d queue context = index %d queue %+v", i, spec.ReviewIndex, spec.ReviewQueue)
-		}
-		if spec.ReviewQueue[0].PRURL != "https://github.com/o/r/pull/1" || spec.ReviewQueue[1].PRURL != "https://github.com/o/r/pull/2" {
-			t.Fatalf("spec %d queue URLs = %+v", i, spec.ReviewQueue)
-		}
+	spec := launcher.specs[0]
+	if spec.ReviewIndex != 0 || len(spec.ReviewQueue) != 2 {
+		t.Fatalf("spec queue context = index %d queue %+v", spec.ReviewIndex, spec.ReviewQueue)
+	}
+	if spec.ReviewQueue[0].PRURL != "https://github.com/o/r/pull/1" || spec.ReviewQueue[1].PRURL != "https://github.com/o/r/pull/2" {
+		t.Fatalf("spec queue URLs = %+v", spec.ReviewQueue)
 	}
 	if store.review == nil || store.review.ReviewerHandleID != "review-mer-1" || store.review.PRURL != "" {
 		t.Fatalf("review row = %+v, want shared handle and no behavioral pr_url", store.review)

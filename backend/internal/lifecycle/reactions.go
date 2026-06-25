@@ -44,8 +44,9 @@ type ReviewResult struct {
 	DeliveredAt    *time.Time
 }
 
-// ApplyReviewBatch reacts to a completed trigger batch after the review service
-// has decided which current-head changes-requested results are deliverable.
+// ApplyReviewBatch reacts to one reviewer CLI submission after the review
+// service has decided which current-head changes-requested results are
+// deliverable.
 func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []ReviewResult) (ReviewDeliveryOutcome, error) {
 	if batchID == "" || len(results) == 0 {
 		return ReviewDeliveryNoop, nil

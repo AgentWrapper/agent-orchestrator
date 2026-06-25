@@ -184,6 +184,7 @@ var schemaNames = map[string]string{
 	"ControllersListReviewsResponse":   "ListReviewsResponse",
 	"ControllersReviewRunResponse":     "ReviewRunResponse",
 	"ControllersTriggerReviewResponse": "TriggerReviewResponse",
+	"ControllersSubmitReviewItem":      "SubmitReviewItem",
 	"ControllersSubmitReviewInput":     "SubmitReviewInput",
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",

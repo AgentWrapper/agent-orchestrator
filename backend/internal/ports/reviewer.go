@@ -37,9 +37,8 @@ type ReviewInvocation struct {
 	PRURL string
 	// TargetSHA is the PR head commit under review.
 	TargetSHA string
-	// ReviewQueue lists all review tasks created by the same trigger. Reviewers
-	// still complete one RunID at a time, but this gives a shared reviewer pane
-	// enough context to process a multi-PR queue in order.
+	// ReviewQueue lists all review tasks created by the same trigger so a shared
+	// reviewer pane can review multiple PRs and submit the results together.
 	ReviewQueue []ReviewTask
 	// ReviewIndex is this invocation's zero-based position in ReviewQueue.
 	ReviewIndex int

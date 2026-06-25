@@ -707,6 +707,7 @@ export interface components {
         ReviewRunResponse: {
             review: components["schemas"]["ReviewRun"];
             reviewerHandleId: string;
+            reviews: components["schemas"]["ReviewRun"][];
         };
         RoleOverride: {
             agent?: string;
@@ -855,9 +856,21 @@ export interface components {
         };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
-            body: string;
+            body?: string;
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
-            githubReviewId: string;
+            githubReviewId?: string;
+            /** @description Batched review results recorded by one reviewer CLI command. */
+            reviews?: components["schemas"]["SubmitReviewItem"][];
+            /** @description Review run id being completed. */
+            runId?: string;
+            /** @description Review verdict: approved or changes_requested. */
+            verdict?: string;
+        };
+        SubmitReviewItem: {
+            /** @description Review body recorded by AO. Required for changes_requested. */
+            body?: string;
+            /** @description Id of the GitHub PR review the reviewer posted, if any. */
+            githubReviewId?: string;
             /** @description Review run id being completed. */
             runId: string;
             /** @description Review verdict: approved or changes_requested. */

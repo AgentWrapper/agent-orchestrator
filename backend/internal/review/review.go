@@ -292,11 +292,6 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
-	for i, run := range created[1:] {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, run, queue, i+1)); err != nil {
-			return TriggerResult{}, failRuns(i+1, fmt.Errorf("notify reviewer: %w", err))
-		}
-	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, now)
 	if err != nil {
 		return TriggerResult{}, err
@@ -346,6 +341,9 @@ func replaceReviewLatestRun(reviews []PRReviewState, prURL, targetSHA string, ru
 }
 
 func firstReusableRun(reviews []PRReviewState) domain.ReviewRun {
+	// Legacy compatibility only: in the multi-PR model the authoritative state
+	// is Reviews. When no run is created, this field is just a best-effort
+	// non-empty run for older clients.
 	for _, review := range reviews {
 		if review.LatestRun != nil {
 			return *review.LatestRun

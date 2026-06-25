@@ -1,7 +1,7 @@
 -- Review runs are PR-scoped. Two PRs in one worker session can legitimately
 -- share a head SHA, so the idempotency index must include pr_url. Runs created
--- by one trigger also share batch_id so worker feedback can be delivered once
--- after the whole trigger batch finishes.
+-- by one trigger also share batch_id so one reviewer CLI submission can notify
+-- the worker about multiple PRs at once.
 
 -- +goose Up
 -- +goose StatementBegin
