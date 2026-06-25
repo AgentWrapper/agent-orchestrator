@@ -160,7 +160,11 @@ func Run() error {
 	} else {
 		log.Info("supervisor: listening", "addr", addr)
 		sup := supervisor.New(supervisorGrace, srv.RequestShutdown, log)
-		go sup.Serve(ctx, ln)
+		go func() {
+			if err := sup.Serve(ctx, ln); err != nil {
+				log.Warn("supervisor: serve stopped with error", "err", err)
+			}
+		}()
 	}
 
 	runErr := srv.Run(ctx)
