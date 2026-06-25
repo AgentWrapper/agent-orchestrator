@@ -11,7 +11,7 @@ package supervisor
 
 import (
 	"context"
-	"io"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -60,6 +60,12 @@ func New(grace time.Duration, onLastClientGone func(), log *slog.Logger) *Superv
 // It returns nil on a clean shutdown (context cancelled or listener closed
 // normally); it only returns a non-nil error for unexpected Accept failures.
 func (s *Supervisor) Serve(ctx context.Context, ln net.Listener) error {
+	// Derive a cancellable context so the watcher goroutine always unblocks
+	// when Serve returns, even if ctx itself is not cancelled (e.g. listener
+	// closed directly).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Close the listener when ctx is cancelled so Accept() unblocks.
 	go func() {
 		<-ctx.Done()
@@ -75,8 +81,8 @@ func (s *Supervisor) Serve(ctx context.Context, ln net.Listener) error {
 				return nil
 			default:
 			}
-			// io.EOF is what fakeListener returns on Close(); treat it as clean too.
-			if err == io.EOF {
+			// net.ErrClosed is what real listeners return when closed normally.
+			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			s.log.Error("supervisor: accept error", "err", err)
@@ -91,9 +97,10 @@ func (s *Supervisor) Serve(ctx context.Context, ln net.Listener) error {
 			s.pendingTimer.Stop()
 			s.pendingTimer = nil
 		}
+		live := s.liveCount
 		s.mu.Unlock()
 
-		s.log.Debug("supervisor: client connected", "liveCount", s.liveCount)
+		s.log.Debug("supervisor: client connected", "liveCount", live)
 		go s.watchConn(conn)
 	}
 }
@@ -128,10 +135,6 @@ func (s *Supervisor) watchConn(conn net.Conn) {
 // elapses, Serve() will Stop() the timer via pendingTimer.
 func (s *Supervisor) armGrace() {
 	s.mu.Lock()
-	// Stop any previous timer (defensive; shouldn't be one here).
-	if s.pendingTimer != nil {
-		s.pendingTimer.Stop()
-	}
 	s.pendingTimer = time.AfterFunc(s.grace, func() {
 		s.mu.Lock()
 		live := s.liveCount

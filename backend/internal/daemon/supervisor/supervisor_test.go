@@ -43,7 +43,7 @@ func (fl *fakeListener) Accept() (net.Conn, error) {
 		fl.mu.Lock()
 		if fl.closed {
 			fl.mu.Unlock()
-			return nil, io.EOF // signals Serve to stop
+			return nil, net.ErrClosed // signals Serve to stop
 		}
 		if len(fl.conns) > 0 {
 			c := fl.conns[0]
@@ -144,10 +144,7 @@ func TestFiresOnceAfterGrace(t *testing.T) {
 	go func() { done <- s.Serve(ctx, ln) }()
 
 	// create a pipe, enqueue the server-side end
-	serverConn, clientConn, err := makePipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	serverConn, clientConn := makePipe()
 	ln.enqueue(serverConn)
 
 	// close the client side to signal disconnect
@@ -203,10 +200,7 @@ func TestReconnectWithinGraceCancels(t *testing.T) {
 	go func() { done <- s.Serve(ctx, ln) }()
 
 	// --- first connection ---
-	serverConn1, clientConn1, err := makePipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	serverConn1, clientConn1 := makePipe()
 	ln.enqueue(serverConn1)
 	// small sleep so the server-side accept loop picks up the first conn
 	time.Sleep(5 * time.Millisecond)
@@ -215,10 +209,7 @@ func TestReconnectWithinGraceCancels(t *testing.T) {
 	_ = clientConn1.Close()
 
 	// reconnect immediately (well within grace period) before grace elapses
-	serverConn2, clientConn2, err := makePipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	serverConn2, clientConn2 := makePipe()
 	ln.enqueue(serverConn2)
 
 	// wait well past grace: grace should have been cancelled by the reconnect
@@ -253,7 +244,7 @@ func TestReconnectWithinGraceCancels(t *testing.T) {
 }
 
 // makePipe returns a server-side and client-side net.Conn pair via net.Pipe.
-func makePipe() (net.Conn, net.Conn, error) {
-	server, client := net.Pipe()
-	return server, client, nil
+func makePipe() (net.Conn, net.Conn) {
+	s, c := net.Pipe()
+	return s, c
 }
