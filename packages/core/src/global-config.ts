@@ -252,6 +252,7 @@ export const GlobalConfigSchema = z
       .object({
         apiKey: z.string().optional(),
         enabled: z.boolean().optional(),
+        baseUrl: z.string().optional(),
       })
       .optional(),
   })

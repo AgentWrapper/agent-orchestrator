@@ -95,7 +95,7 @@ export function create(): Runtime {
       // AO_GLM_API_KEY is also stripped: it's provider-level auth that must be
       // set explicitly per-session from the global config, not inherited from the
       // orchestrator's environment (same "inherited secret bleeds into workers" risk).
-      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY"]) {
+      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY", "AO_GLM_BASE_URL"]) {
         if (!config.environment || !(key in config.environment)) {
           delete hostEnv[key];
         }
@@ -114,9 +114,14 @@ export function create(): Runtime {
         sessionModel?.startsWith("glm-") &&
         (!config.environment || !config.environment["AO_GLM_API_KEY"])
       ) {
-        const glmKey = loadGlobalConfig()?.zhipu?.apiKey;
+        const zhipuCfg = loadGlobalConfig()?.zhipu;
+        const glmKey = zhipuCfg?.apiKey;
         if (glmKey) {
           hostEnv["AO_GLM_API_KEY"] = glmKey;
+        }
+        const glmBaseUrl = zhipuCfg?.baseUrl;
+        if (glmBaseUrl && (!config.environment || !config.environment["AO_GLM_BASE_URL"])) {
+          hostEnv["AO_GLM_BASE_URL"] = glmBaseUrl;
         }
       }
 
