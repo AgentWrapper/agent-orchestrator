@@ -430,4 +430,3 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 		t.Fatal("RestoreAll was not called through the interface")
 	}
 }
-

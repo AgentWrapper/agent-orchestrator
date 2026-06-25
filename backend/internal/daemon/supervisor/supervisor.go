@@ -40,7 +40,7 @@ type Supervisor struct {
 
 	mu           sync.Mutex
 	liveCount    int
-	armed        bool       // true once any connection has been accepted
+	armed        bool        // true once any connection has been accepted
 	pendingTimer *time.Timer // non-nil while grace countdown is running
 
 	fireOnce sync.Once
