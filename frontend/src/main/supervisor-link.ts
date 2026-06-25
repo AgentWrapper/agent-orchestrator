@@ -10,6 +10,7 @@ const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
 
 export interface SupervisorLinkHandle {
+	readonly connected: boolean;
 	dispose(): void;
 }
 
@@ -31,6 +32,7 @@ export function connectSupervisor(
 	const log = opts?.log ?? (() => undefined);
 
 	let disposed = false;
+	let connected = false;
 	let socket: net.Socket | null = null;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 	let backoff = BACKOFF_INIT_MS;
@@ -75,6 +77,7 @@ export function connectSupervisor(
 				s.destroy();
 				return;
 			}
+			connected = true;
 			log("supervisor-link: connected");
 			// Reset backoff on successful connection.
 			backoff = BACKOFF_INIT_MS;
@@ -90,6 +93,7 @@ export function connectSupervisor(
 		});
 
 		s.on("close", () => {
+			connected = false;
 			if (disposed) return;
 			log("supervisor-link: connection closed, will retry");
 			scheduleReconnect();
@@ -99,8 +103,12 @@ export function connectSupervisor(
 	connect();
 
 	return {
+		get connected() {
+			return connected;
+		},
 		dispose() {
 			disposed = true;
+			connected = false;
 			clearRetry();
 			destroySocket();
 		},

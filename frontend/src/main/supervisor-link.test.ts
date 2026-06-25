@@ -111,6 +111,57 @@ describe("supervisor-link", () => {
 		reconn.destroy();
 	});
 
+	it("connected flag: true after connect, false after server closes connection", async () => {
+		const addr = tmpSocketPath();
+
+		const server = net.createServer();
+		servers.push(server);
+		const connectionPromise = nextConnection(server);
+		await new Promise<void>((resolve, reject) => {
+			server.listen(addr, () => resolve());
+			server.once("error", reject);
+		});
+
+		const link = connectSupervisor(addr, { log: () => undefined });
+		handles.push(link);
+
+		// Wait for the server to receive the connection.
+		const conn = await withTimeout(connectionPromise, 3_000, "connected-flag: server did not receive connection");
+
+		// Poll until connected is true (the "connect" event fires asynchronously).
+		await withTimeout(
+			new Promise<void>((resolve) => {
+				const check = () => {
+					if (link.connected) { resolve(); return; }
+					setTimeout(check, 20);
+				};
+				check();
+			}),
+			1_000,
+			"connected-flag: handle.connected never became true",
+		);
+		expect(link.connected).toBe(true);
+
+		// Server-side close of the accepted socket triggers the client "close" event.
+		conn.destroy();
+
+		// Poll until connected drops back to false.
+		await withTimeout(
+			new Promise<void>((resolve) => {
+				const check = () => {
+					if (!link.connected) { resolve(); return; }
+					setTimeout(check, 20);
+				};
+				check();
+			}),
+			3_000,
+			"connected-flag: handle.connected never became false after server closed",
+		);
+		expect(link.connected).toBe(false);
+
+		link.dispose();
+	});
+
 	it("dispose stops reconnect: no connection arrives after dispose", async () => {
 		const addr = tmpSocketPath();
 

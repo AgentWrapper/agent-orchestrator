@@ -614,6 +614,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			supervisorLink = connectSupervisor(addr, {
 				log: (msg) => console.log(`AO: ${msg}`),
 			});
+		} else {
+			console.warn("AO: supervisor link skipped; run-file path unavailable");
 		}
 	};
 
@@ -780,6 +782,19 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
+});
+
+// Last resort: if the OS-native supervisor link is not actually connected
+// (daemon socket never bound, e.g. UDS path-length limit, or addr was null),
+// the dropped fd will NOT stop the daemon on quit, so kill it here to avoid an
+// orphan. Safe because Phase A made the daemon's SIGTERM non-destructive: it
+// exits without tearing down sessions, which survive for the next boot to adopt.
+// When the link IS connected we do nothing here and rely on the OS closing the
+// fd on exit, which covers crash and SIGKILL uniformly.
+process.on("exit", () => {
+	if (daemonProcess && !supervisorLink?.connected) {
+		killDaemon(daemonProcess);
+	}
 });
 
 app.on("window-all-closed", () => {

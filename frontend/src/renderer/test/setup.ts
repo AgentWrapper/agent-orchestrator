@@ -1,12 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 
-// Guard: src/main/** tests run in the Node.js environment (no DOM). The
-// environmentMatchGlobs config still routes setupFiles here, so skip the
-// DOM stubs rather than crashing on window/Element references.
+// Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
+// routes setupFiles here, so only install the DOM stubs when a DOM exists.
 // ponytail: single guard; node env has no DOM to stub.
-if (typeof window === "undefined") {
-	// Nothing to set up for node-environment tests.
-} else {
+if (typeof window !== "undefined") {
 
 class ResizeObserverStub {
 	observe() {}
