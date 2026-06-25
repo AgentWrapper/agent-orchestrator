@@ -1,12 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import {
-	AlertCircle,
 	ArrowUpRight,
-	CheckCircle2,
-	CircleMinus,
 	GitPullRequest,
-	Play,
 	Shield,
 	Terminal,
 } from "lucide-react";
@@ -494,6 +490,7 @@ function ReviewPanel({
 	const latest = reviewStates.find((review) => review.latestRun)?.latestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const aggregateVerdict = sessionReviewVerdict(reviewStates);
 
 	return (
 		<div className="reviewer-list">
@@ -501,94 +498,124 @@ function ReviewPanel({
 			{notice ? <p className="reviewer-notice">{notice}</p> : null}
 			<div className="reviewer-card">
 				<div className="reviewer-card__top">
-					<div className="reviewer-card__name">
-						<Shield aria-hidden="true" />
-						<span>{harness}</span>
+					<div className="reviewer-card__identity">
+						<div className="reviewer-card__name">
+							<Shield aria-hidden="true" />
+							<span>{harness}</span>
+						</div>
+						<div className="reviewer-card__session">{session.id}</div>
 					</div>
-					<span className="reviewer-status reviewer-status--neutral">{reviewStates.length} PRs</span>
-				</div>
-				<div className="reviewer-card__actions">
-					<button
-						className="reviewer-card__action reviewer-card__action--primary"
-						disabled={isTriggering}
-						onClick={onTrigger}
-						type="button"
-					>
-						<Play aria-hidden="true" />
-						{isTriggering ? "Starting..." : "Run needed reviews"}
-					</button>
-					<button
-						className="reviewer-card__action"
-						disabled={!terminalEnabled}
-						onClick={() => {
-							if (!terminalEnabled) return;
-							onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-						}}
-						type="button"
-					>
-						<Terminal aria-hidden="true" />
-						Open terminal
-					</button>
+					<span className={cn("reviewer-status", `reviewer-status--${aggregateVerdict.tone}`)}>
+						{aggregateVerdict.label}
+					</span>
 				</div>
 			</div>
-			<div className="flex flex-col gap-2">
+			<div className="reviewer-summary-list">
 				{reviewStates.length === 0 ? <p className="inspector-empty">No review state loaded yet.</p> : null}
 				{reviewStates.map((reviewState) => (
-					<ReviewStateCard key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
+					<ReviewStateRow
+						key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+						isTriggering={isTriggering}
+						onTrigger={onTrigger}
+						reviewState={reviewState}
+					/>
 				))}
 			</div>
+			<button
+				className="reviewer-card__action reviewer-card__action--wide"
+				disabled={!terminalEnabled}
+				onClick={() => {
+					if (!terminalEnabled) return;
+					onOpenTerminal?.({ handleId: reviewerHandleId, harness });
+				}}
+				type="button"
+			>
+				<Terminal aria-hidden="true" />
+				Open terminal
+			</button>
 		</div>
 	);
 }
 
-function ReviewStateCard({ reviewState }: { reviewState: PRReviewState }) {
-	const status = reviewStateStatus(reviewState);
+function ReviewStateRow({
+	reviewState,
+	isTriggering,
+	onTrigger,
+}: {
+	reviewState: PRReviewState;
+	isTriggering: boolean;
+	onTrigger: () => void;
+}) {
+	const verdict = reviewVerdict(reviewState);
+	const buttonLabel = reviewRunButtonLabel(reviewState, isTriggering);
+	const disabled = isTriggering || reviewState.status === "running" || reviewState.status === "ineligible";
+	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
 			className={cn(
-				"reviewer-card",
-				status.tone && `reviewer-card--${status.tone}`,
+				"reviewer-row",
+				`reviewer-row--${verdict.tone}`,
 				reviewState.status === "ineligible" && "opacity-70",
 			)}
 		>
-			<div className="reviewer-card__top">
-				<div className="reviewer-card__name">
+			<div className="reviewer-row__main">
+				<span className={cn("reviewer-row__dot", `reviewer-row__dot--${verdict.tone}`)} />
+				<div className="reviewer-row__copy">
 					<GitPullRequest aria-hidden="true" />
-					<span>PR #{reviewState.prNumber}</span>
+					<a href={reviewState.prUrl} target="_blank" rel="noopener noreferrer">
+						{title}
+					</a>
+					<span className="reviewer-row__number">#{reviewState.prNumber}</span>
 				</div>
-				<span className={cn("reviewer-status", `reviewer-status--${status.tone}`)}>
-					{status.icon}
-					{status.label}
-				</span>
 			</div>
-			<div className="mt-2 min-w-0 truncate font-mono text-[10.5px] text-passive">
-				<a href={reviewState.prUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
-					{reviewState.prUrl}
-				</a>
-				{reviewState.targetSha ? <span className="ml-2">{reviewState.targetSha.slice(0, 7)}</span> : null}
-			</div>
+			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>
+				{verdict.label}
+			</span>
+			<button className="reviewer-row__action" disabled={disabled} onClick={onTrigger} type="button">
+				{buttonLabel}
+			</button>
 		</div>
 	);
 }
 
-function reviewStateStatus(reviewState: PRReviewState): {
+function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
-	icon: ReactNode;
+} {
+	if (reviewStates.some((reviewState) => reviewState.status === "running")) {
+		return { label: "Reviewing...", tone: "running" };
+	}
+	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
+		return { label: "Changes requested", tone: "danger" };
+	}
+	const eligibleReviews = reviewStates.filter((reviewState) => reviewState.status !== "ineligible");
+	if (eligibleReviews.length > 0 && eligibleReviews.every((reviewState) => reviewState.status === "up_to_date")) {
+		return { label: "Approved", tone: "success" };
+	}
+	return { label: "Not run", tone: "neutral" };
+}
+
+function reviewVerdict(reviewState: PRReviewState): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
 } {
 	switch (reviewState.status) {
-		case "needs_review":
-			return { label: "Needs review", tone: "neutral", icon: null };
 		case "running":
-			return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
+			return { label: "Reviewing...", tone: "running" };
 		case "up_to_date":
-			return { label: "Up to date", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
+			return { label: "Approved", tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger", icon: <CircleMinus aria-hidden="true" /> };
+			return { label: "Changes requested", tone: "danger" };
+		case "needs_review":
 		case "ineligible":
-			return { label: "Ineligible", tone: "neutral", icon: <AlertCircle aria-hidden="true" /> };
+			return { label: "Not run", tone: "neutral" };
 	}
-	return { label: reviewState.status, tone: "neutral", icon: null };
+	return { label: "Not run", tone: "neutral" };
+}
+
+function reviewRunButtonLabel(reviewState: PRReviewState, isTriggering: boolean): string {
+	if (reviewState.status === "running" || isTriggering) return "Reviewing...";
+	return reviewState.latestRun ? "Re-run" : "Run";
 }
 
 function BrowserView({
