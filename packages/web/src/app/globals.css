@@ -6010,6 +6010,50 @@ body:not(.is-resizing-x) .sidebar-wrapper {
   gap: 5px;
 }
 
+.kanban-column-body > .kanban-column__pending-sections {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 100%;
+}
+
+.kanban-column__pending-section {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kanban-column__pending-section + .kanban-column__pending-section {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 6px;
+}
+
+.kanban-column__subheader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  padding: 0 4px;
+}
+
+.kanban-column__subheader-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.kanban-column__subheader-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
 .kanban-column-body::-webkit-scrollbar {
   width: 4px;
 }

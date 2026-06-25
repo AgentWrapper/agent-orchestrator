@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { Dashboard } from "@/components/Dashboard";
 import { makePR, makeSession } from "@/__tests__/helpers";
 
@@ -42,7 +42,38 @@ describe("Dashboard kanban layout", () => {
     const titles = Array.from(document.querySelectorAll(".kanban-column__title")).map(
       (el) => el.textContent,
     );
-    expect(titles).toEqual(["Working", "Needs you", "In review", "Ready to merge"]);
+    expect(titles).toEqual(["Pending", "Needs you", "In review", "Ready to merge"]);
+  });
+
+  it("splits the pending column into working and idle sessions", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({
+            id: "working-1",
+            activity: "active",
+            issueLabel: "ACTIVE-1",
+          }),
+          makeSession({
+            id: "idle-1",
+            activity: "idle",
+            issueLabel: "IDLE-1",
+          }),
+        ]}
+      />,
+    );
+
+    const pendingColumn = document.querySelector('.kanban-column[data-level="working"]');
+    expect(pendingColumn).toBeTruthy();
+    const pendingScope = within(pendingColumn as HTMLElement);
+
+    expect(pendingScope.getByText("Pending")).toBeInTheDocument();
+    const workingSection = pendingColumn?.querySelector('[aria-label="Working sessions"]');
+    const idleSection = pendingColumn?.querySelector('[aria-label="Idle sessions"]');
+    expect(workingSection).toBeTruthy();
+    expect(idleSection).toBeTruthy();
+    expect(within(workingSection as HTMLElement).getByText("working-1")).toBeInTheDocument();
+    expect(within(idleSection as HTMLElement).getByText("idle-1")).toBeInTheDocument();
   });
 
   it("uses five board columns in detailed attention mode", () => {

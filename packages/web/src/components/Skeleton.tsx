@@ -8,7 +8,7 @@ interface EmptyStateProps {
   spawnDisabled?: boolean;
 }
 
-const KANBAN_GHOST_COLUMNS = ["Working", "Needs you", "In review", "Ready to merge"] as const;
+const KANBAN_GHOST_COLUMNS = ["Pending", "Needs you", "In review", "Ready to merge"] as const;
 
 export function EmptyState({
   message,
@@ -90,7 +90,8 @@ export function EmptyState({
             <>
               <p className="empty-state__headline">Ready to orchestrate</p>
               <p className="empty-state__hint">
-                Open the main orchestrator to start a session and fan out parallel agents across your codebase.
+                Open the main orchestrator to start a session and fan out parallel agents across
+                your codebase.
               </p>
               {orchestratorHref ? (
                 <a href={orchestratorHref} className="empty-state__cta">

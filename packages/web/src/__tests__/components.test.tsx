@@ -549,7 +549,7 @@ describe("AttentionZone", () => {
     const cases: Array<[string, string]> = [
       ["review", "Review"],
       ["pending", "In review"],
-      ["working", "Working"],
+      ["working", "Pending"],
       ["done", "Done"],
     ];
     for (const [level, expectedLabel] of cases) {
@@ -557,7 +557,7 @@ describe("AttentionZone", () => {
         <AttentionZone level={level as "review" | "pending" | "working" | "done"} sessions={[]} />,
       );
       expect(screen.getByText(expectedLabel)).toBeInTheDocument();
-      expect(screen.getByText("0")).toBeInTheDocument();
+      expect(screen.getAllByText("0").length).toBeGreaterThan(0);
       unmount();
     }
   });
@@ -573,7 +573,7 @@ describe("AttentionZone", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="working" sessions={sessions} />);
     // working is defaultCollapsed: false (Kanban always shows), so sessions visible.
-    // "Working" appears as both the column header and the card's StatusBadge.
+    expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getAllByText("Working").length).toBeGreaterThan(0);
   });
 

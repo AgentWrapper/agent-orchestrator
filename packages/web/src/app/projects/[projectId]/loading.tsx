@@ -32,7 +32,7 @@ export default function ProjectRouteLoading() {
         <main className="dashboard-main flex flex-col flex-1 min-h-0 overflow-hidden">
           <div className="board-wrapper" aria-hidden="true">
             <div className="kanban-ghost">
-              {["Working", "Pending", "Review", "Respond", "Merge"].map((label) => (
+              {["Pending", "Needs you", "In review", "Ready to merge"].map((label) => (
                 <div key={label} className="kanban-ghost__col">
                   <div className="kanban-ghost__head">{label}</div>
                 </div>

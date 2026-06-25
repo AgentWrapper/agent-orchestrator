@@ -52,7 +52,7 @@ const zoneConfig: Record<
     emptyMessage: "Nothing blocked.",
   },
   working: {
-    label: "Working",
+    label: "Pending",
     emptyMessage: "No agents running.",
   },
   done: {
@@ -172,7 +172,14 @@ function AttentionZoneView({
       </div>
 
       <div className="kanban-column-body">
-        {sessions.length > 0 ? (
+        {level === "working" ? (
+          <PendingColumnSections
+            sessions={sessions}
+            onKill={onKill}
+            onMerge={onMerge}
+            onRestore={onRestore}
+          />
+        ) : sessions.length > 0 ? (
           <div className="kanban-column__stack">
             {sessions.map((session) => (
               <SessionCard
@@ -187,6 +194,76 @@ function AttentionZoneView({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function PendingColumnSections({
+  sessions,
+  onKill,
+  onMerge,
+  onRestore,
+}: {
+  sessions: DashboardSession[];
+  onKill?: (sessionId: string) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
+  onRestore?: (sessionId: string) => void;
+}) {
+  const workingSessions = sessions.filter((session) => session.activity !== "idle");
+  const idleSessions = sessions.filter((session) => session.activity === "idle");
+
+  return (
+    <div className="kanban-column__pending-sections">
+      <PendingColumnSection
+        title="Working"
+        sessions={workingSessions}
+        onKill={onKill}
+        onMerge={onMerge}
+        onRestore={onRestore}
+      />
+      <PendingColumnSection
+        title="Idle"
+        sessions={idleSessions}
+        onKill={onKill}
+        onMerge={onMerge}
+        onRestore={onRestore}
+      />
+    </div>
+  );
+}
+
+function PendingColumnSection({
+  title,
+  sessions,
+  onKill,
+  onMerge,
+  onRestore,
+}: {
+  title: "Working" | "Idle";
+  sessions: DashboardSession[];
+  onKill?: (sessionId: string) => void;
+  onMerge?: (prNumber: number, owner?: string, repo?: string) => void;
+  onRestore?: (sessionId: string) => void;
+}) {
+  return (
+    <section className="kanban-column__pending-section" aria-label={`${title} sessions`}>
+      <div className="kanban-column__subheader">
+        <span className="kanban-column__subheader-title">{title}</span>
+        <span className="kanban-column__subheader-count">{sessions.length}</span>
+      </div>
+      {sessions.length > 0 ? (
+        <div className="kanban-column__stack">
+          {sessions.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              onKill={onKill}
+              onMerge={onMerge}
+              onRestore={onRestore}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -290,7 +367,7 @@ export function getActionChipLabel(session: DashboardSession): string {
   if (session.status === "ci_failed") return "ci failed";
   if (session.status === "changes_requested") return "changes";
   // Review-class: PR signals — aggregate across all PRs
-  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  const prs = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
   if (prs.some((p) => p.ciStatus === "failing")) return "ci failed";
   if (prs.some((p) => p.reviewDecision === "changes_requested")) return "changes";
   if (prs.some((p) => !p.mergeability.noConflicts)) return "conflicts";
@@ -306,7 +383,7 @@ function SessionStateChip({
 }) {
   let label = zoneConfig[level].label.toLowerCase();
 
-  const prs = session.prs.length > 0 ? session.prs : (session.pr ? [session.pr] : []);
+  const prs = session.prs.length > 0 ? session.prs : session.pr ? [session.pr] : [];
   if (level === "merge" && prs.length > 0 && prs.every((p) => isPRMergeReady(p))) {
     label = "ready";
   } else if (level === "action") {
