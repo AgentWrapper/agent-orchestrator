@@ -10,6 +10,7 @@ import {
   repairWrappedLocalProjectConfig,
   registerProjectInGlobalConfig,
   resolveProjectIdentity,
+  GlobalConfigSchema,
 } from "../global-config.js";
 
 describe("global-config storage identity", () => {
@@ -602,5 +603,63 @@ describe("global-config storage identity", () => {
     const config = loadGlobalConfig(configPath);
     const expected = process.platform === "win32" ? "process" : "tmux";
     expect(config?.defaults?.runtime).toBe(expected);
+  });
+});
+
+// =============================================================================
+// MiMo (Xiaomi) provider — GlobalConfigSchema tests
+// =============================================================================
+
+describe("GlobalConfigSchema — mimo provider block", () => {
+  it("accepts a full mimo block with apiKey, enabled, baseUrl", () => {
+    const result = GlobalConfigSchema.safeParse({
+      projects: {},
+      mimo: {
+        apiKey: "mimo-test-key",
+        enabled: true,
+        baseUrl: "https://api.xiaomimimo.com/v1",
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.mimo?.apiKey).toBe("mimo-test-key");
+    expect(result.data?.mimo?.enabled).toBe(true);
+    expect(result.data?.mimo?.baseUrl).toBe("https://api.xiaomimimo.com/v1");
+  });
+
+  it("accepts mimo block with only apiKey (other fields optional)", () => {
+    const result = GlobalConfigSchema.safeParse({
+      projects: {},
+      mimo: { apiKey: "sk-mimo-abc" },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.mimo?.apiKey).toBe("sk-mimo-abc");
+    expect(result.data?.mimo?.enabled).toBeUndefined();
+    expect(result.data?.mimo?.baseUrl).toBeUndefined();
+  });
+
+  it("accepts config without mimo block (optional)", () => {
+    const result = GlobalConfigSchema.safeParse({ projects: {} });
+    expect(result.success).toBe(true);
+    expect(result.data?.mimo).toBeUndefined();
+  });
+
+  it("mimo and zhipu blocks can coexist independently", () => {
+    const result = GlobalConfigSchema.safeParse({
+      projects: {},
+      zhipu: { apiKey: "glm-key", enabled: true },
+      mimo: { apiKey: "mimo-key", enabled: false },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.zhipu?.apiKey).toBe("glm-key");
+    expect(result.data?.mimo?.apiKey).toBe("mimo-key");
+    expect(result.data?.mimo?.enabled).toBe(false);
+  });
+
+  it("rejects mimo.enabled as a non-boolean", () => {
+    const result = GlobalConfigSchema.safeParse({
+      projects: {},
+      mimo: { apiKey: "k", enabled: "yes" },
+    });
+    expect(result.success).toBe(false);
   });
 });

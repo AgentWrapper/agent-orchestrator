@@ -3995,7 +3995,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           }
           // Give the process a moment to fully exit so the next runtime boot
           // does not collide with the old one (e.g. same tmux window name).
-          await new Promise<void>((r) => setTimeout(r, 500));
+          await new Promise<void>((r) => setTimeout(r, 100));
         }
       }
     }

@@ -255,6 +255,18 @@ export const GlobalConfigSchema = z
         baseUrl: z.string().optional(),
       })
       .optional(),
+    /**
+     * MiMo (Xiaomi) provider credentials. OpenAI-compatible API.
+     * Read by the runtime-sdk plugin to inject AO_MIMO_API_KEY into the
+     * sdk-host process when the session model is a `mimo-*` model.
+     */
+    mimo: z
+      .object({
+        apiKey: z.string().optional(),
+        enabled: z.boolean().optional(),
+        baseUrl: z.string().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
