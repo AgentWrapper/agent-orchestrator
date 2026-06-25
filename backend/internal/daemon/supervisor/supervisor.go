@@ -4,9 +4,7 @@
 // connects so a daemon started with no frontend (e.g. CLI "ao start") never
 // self-stops.
 //
-// Task 3 (later) wires a real net.Listener (Unix socket / Windows named pipe)
-// and the daemon entry-point; Task 4 wires the Electron side. This package is
-// a leaf: it imports only stdlib.
+// This package is a leaf: it imports only stdlib.
 package supervisor
 
 import (
@@ -17,6 +15,10 @@ import (
 	"sync"
 	"time"
 )
+
+// acceptRetryBackoff bounds the retry after a transient Accept error so a
+// persistent failure cannot hot-spin the accept loop.
+const acceptRetryBackoff = 200 * time.Millisecond
 
 // Supervisor watches connections on a net.Listener and calls onLastClientGone
 // exactly once (per process lifetime) when the live-count drops to zero and
@@ -85,8 +87,18 @@ func (s *Supervisor) Serve(ctx context.Context, ln net.Listener) error {
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			s.log.Error("supervisor: accept error", "err", err)
-			return nil // ponytail: first error exits; persistent restart is caller's job
+			// A transient Accept error (e.g. EMFILE) must NOT silently kill the
+			// watchdog: that would leave the daemon unable to self-stop on
+			// frontend death. Back off briefly and keep accepting. A genuinely
+			// closed listener returns net.ErrClosed (handled above) or trips
+			// ctx.Done during the backoff.
+			s.log.Warn("supervisor: accept error, retrying", "err", err)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(acceptRetryBackoff):
+			}
+			continue
 		}
 
 		s.mu.Lock()
