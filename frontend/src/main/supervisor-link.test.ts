@@ -69,7 +69,11 @@ describe("supervisor-link", () => {
 		});
 
 		// The link should reconnect and the server should receive a connection.
-		const conn = await withTimeout(connectionPromise, 5_000, "retry-until-connected: server did not receive connection");
+		const conn = await withTimeout(
+			connectionPromise,
+			5_000,
+			"retry-until-connected: server did not receive connection",
+		);
 		expect(conn).toBeTruthy();
 		conn.destroy();
 	});
@@ -132,7 +136,10 @@ describe("supervisor-link", () => {
 		await withTimeout(
 			new Promise<void>((resolve) => {
 				const check = () => {
-					if (link.connected) { resolve(); return; }
+					if (link.connected) {
+						resolve();
+						return;
+					}
 					setTimeout(check, 20);
 				};
 				check();
@@ -149,7 +156,10 @@ describe("supervisor-link", () => {
 		await withTimeout(
 			new Promise<void>((resolve) => {
 				const check = () => {
-					if (!link.connected) { resolve(); return; }
+					if (!link.connected) {
+						resolve();
+						return;
+					}
 					setTimeout(check, 20);
 				};
 				check();

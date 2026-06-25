@@ -25,10 +25,7 @@ export interface SupervisorLinkHandle {
  * we reconnect with bounded exponential backoff so the link re-establishes
  * automatically. dispose() cancels any pending retry and destroys the socket.
  */
-export function connectSupervisor(
-	addr: string,
-	opts?: { log?: (msg: string) => void },
-): SupervisorLinkHandle {
+export function connectSupervisor(addr: string, opts?: { log?: (msg: string) => void }): SupervisorLinkHandle {
 	const log = opts?.log ?? (() => undefined);
 
 	let disposed = false;
