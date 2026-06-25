@@ -258,11 +258,12 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
 // true it first tears down any active orchestrator(s) for that project so the new
-// one is the only live coordinator — a business rule that belongs here, not in the
-// HTTP controller.
+// one is the only live coordinator. When clean is false it is idempotent: if an
+// active orchestrator already exists it is returned as-is. A business rule that
+// belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	active := true
 	if clean {
-		active := true
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
 		if err != nil {
 			return domain.Session{}, err
@@ -271,6 +272,15 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			if _, err := s.Kill(ctx, orch.ID); err != nil {
 				return domain.Session{}, err
 			}
+		}
+	} else {
+		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
+		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if len(existing) > 0 {
+			return existing[0], nil
 		}
 	}
 	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
