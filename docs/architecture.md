@@ -26,12 +26,12 @@ graph TB
         EMain["Electron Main Process"]
         React["React 19 UI (renderer)"]
         TanStack["TanStack Router/Query + shadcn/ui"]
-        
+
         EMain --> HTTP["HTTP (REST + SSE + WebSocket)"]
         React --> HTTP
         TanStack --> HTTP
     end
-    
+
     subgraph Backend["Backend Go Daemon"]
         HTTP2["HTTP Layer (Controllers)"]
         CLI["CLI Layer (Cobra cmd)"]
@@ -44,24 +44,24 @@ graph TB
         SCM["SCM Observer<br/>(GitHub)"]
         Reaper["Reaper<br/>(Runtime liveness)"]
         Storage["Storage + CDC<br/>(SQLite with triggers)"]
-        
+
         CLI --> Service
         HTTP2 --> Service
         Service --> SessionMgr
         SessionMgr --> RuntimeSelect
-        
+
         RuntimeSelect -->|Darwin/Linux| Tmux
         RuntimeSelect -->|Windows| Conpty
-        
+
         SessionMgr --> Lifecycle
         Tmux --> Lifecycle
         Conpty --> Lifecycle
-        
+
         Lifecycle --> Storage
         SCM --> Lifecycle
         Reaper --> Lifecycle
     end
-    
+
     HTTP -->|"Loopback Only<br/>(127.0.0.1)"| HTTP2
 ```
 
@@ -76,13 +76,13 @@ graph LR
     AO["Agent Orchestrator"] --> RuntimeCheck{"Platform Check"}
     RuntimeCheck -->|Darwin/Linux| TmuxRuntime["tmux Runtime"]
     RuntimeCheck -->|Windows| ConptyRuntime["conpty Runtime"]
-    
+
     TmuxRuntime --> TmuxFeatures["• tmux sessions<br/>• Direct CLI interaction<br/>• Unix PTY integration"]
     ConptyRuntime --> ConptyFeatures["• Pty-host server<br/>• B1 binary protocol<br/>• Loopback TCP communication"]
-    
+
     TmuxFeatures --> Common["Common Interface:<br/>ports.Runtime + ports.Attacher"]
     ConptyFeatures --> Common
-    
+
     Common --> Session["Session Management<br/>& Terminal Streaming"]
 ```
 
@@ -118,6 +118,7 @@ sequenceDiagram
 ```
 
 **Key Features:**
+
 - Creates detached tmux sessions with hidden status bar
 - Direct tmux CLI interaction for session management
 - `tmux send-keys` for input delivery
@@ -141,7 +142,7 @@ sequenceDiagram
     Host->>Agent: Execute agent in ConPTY
     Agent->>Host: Terminal output
     Host->>Host: Store in ring buffer
-    
+
     Note over AO,Host: Attach Phase
     AO->>Host: Dial loopback TCP
     Host-->>AO: Scrollback replay (MsgTerminalData)
@@ -149,6 +150,7 @@ sequenceDiagram
 ```
 
 **Key Features:**
+
 - Detached pty-host process with ConPTY
 - Custom B1 binary protocol over loopback TCP
 - Ring buffer for scrollback storage
@@ -179,43 +181,43 @@ backend/internal/config           daemon env/default config
 
 Swappable implementations for each port:
 
-| Port | Darwin/Linux | Windows | Purpose |
-|------|--------------|---------|---------|
-| **Runtime** | tmux | conpty | Terminal multiplexing and session isolation |
-| **Workspace** | git worktree | git worktree | Isolated working directories |
-| **Agent** | claude-code, codex, etc. | claude-code, codex, etc. | AI coding agent execution |
-| **SCM** | GitHub | GitHub | Pull request observation |
-| **Tracker** | GitHub | GitHub | Issue tracking |
-| **Reviewer** | claude-code | claude-code | Code review execution |
-| **Notifier** | desktop, slack, discord, webhook | desktop, slack, discord, webhook | Notification delivery |
+| Port          | Darwin/Linux                     | Windows                          | Purpose                                     |
+| ------------- | -------------------------------- | -------------------------------- | ------------------------------------------- |
+| **Runtime**   | tmux                             | conpty                           | Terminal multiplexing and session isolation |
+| **Workspace** | git worktree                     | git worktree                     | Isolated working directories                |
+| **Agent**     | claude-code, codex, etc.         | claude-code, codex, etc.         | AI coding agent execution                   |
+| **SCM**       | GitHub                           | GitHub                           | Pull request observation                    |
+| **Tracker**   | GitHub                           | GitHub                           | Issue tracking                              |
+| **Reviewer**  | claude-code                      | claude-code                      | Code review execution                       |
+| **Notifier**  | desktop, slack, discord, webhook | desktop, slack, discord, webhook | Notification delivery                       |
 
 ## Session Lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> Creating: POST /api/v1/sessions
-    
+
     Creating --> WorkspaceCreated: Create git worktree
     WorkspaceCreated --> RuntimeCreated: Create tmux/conpty session
     RuntimeCreated --> Launching: Execute agent command
     Launching --> Spawned: Agent running
-    
+
     Spawned --> Active: Agent reports activity
     Spawned --> Idle: Agent waiting
     Spawned --> WaitingInput: Agent needs input
     Spawned --> Terminated: Agent exits
-    
+
     Active --> Idle: Agent finishes task
     Active --> WaitingInput: Agent needs input
     Active --> Terminated: Agent exits
-    
+
     Idle --> Active: Agent starts new task
     Idle --> WaitingInput: Agent needs input
     Idle --> Terminated: Agent exits
-    
+
     WaitingInput --> Active: User provides input
     WaitingInput --> Terminated: Session killed
-    
+
     Terminated --> [*]: Session cleaned up
 ```
 
@@ -240,24 +242,24 @@ sequenceDiagram
     CLI->>HTTP: POST /api/v1/sessions
     HTTP->>Service: service.Session.Spawn()
     Service->>SessionMgr: session_manager.Spawn()
-    
+
     SessionMgr->>SQLite: Create session row (seed state)
     SessionMgr->>Workspace: Workspace.Create()
     Workspace-->>SessionMgr: git worktree created
     SessionMgr->>Runtime: Runtime.Create()
-    
+
     alt Darwin/Linux
         Runtime->>Runtime: tmux new-session -d -s <id>
     else Windows
         Runtime->>Runtime: Spawn pty-host + ConPTY
     end
-    
+
     Runtime-->>SessionMgr: Session handle
     SessionMgr->>Agent: Get launch command
     Agent-->>SessionMgr: Command
     Runtime->>Agent: Execute in tmux/ConPTY
     Agent->>Lifecycle: Report spawn complete
-    
+
     Lifecycle->>SQLite: Update session (spawned state)
     SQLite->>CDC: Trigger change_log
     CDC->>Frontend: SSE session_created event
@@ -276,7 +278,7 @@ sequenceDiagram
     Frontend->>HTTP: WebSocket upgrade /api/v1/sessions/{id}/terminal
     HTTP->>TerminalMgr: Create terminal session
     TerminalMgr->>Runtime: Runtime.Attach(handle, rows, cols)
-    
+
     alt tmux (Darwin/Linux)
         Runtime->>Runtime: tmux attach-session -t <id>
         Runtime-->>TerminalMgr: PTY stream
@@ -286,9 +288,9 @@ sequenceDiagram
         Runtime->>Runtime: MsgTerminalData (scrollback)
         Runtime-->>TerminalMgr: TCP stream
     end
-    
+
     TerminalMgr-->>Frontend: WebSocket terminal stream
-    
+
     Note over Frontend,Runtime: Bidirectional terminal I/O
 ```
 
@@ -301,22 +303,22 @@ graph TD
     Start["Session Status Check"] --> Check1{"is_terminated?"}
     Check1 -->|Yes| Merged{"Merged PR?"}
     Check1 -->|No| Check2{"activity_state = waiting_input?"}
-    
+
     Merged -->|Yes| Status1["Status: merged"]
     Merged -->|No| Status2["Status: terminated"]
-    
+
     Check2 -->|Yes| Status3["Status: needs_input"]
     Check2 -->|No| Check3{"Open PR Facts?"}
-    
+
     Check3 -->|Yes| PRStatus["PR Pipeline Status:<br/>ci_failed, draft, changes_requested,<br/>mergeable, approved, review_pending, pr_open"]
     Check3 -->|No| Check4{"activity_state = active?"}
-    
+
     Check4 -->|Yes| Status4["Status: working"]
     Check4 -->|No| Check5{"Signal capable + <90s grace?"}
-    
+
     Check5 -->|Yes| Status5["Status: no_signal"]
     Check5 -->|No| Status6["Status: idle"]
-    
+
     PRStatus --> Final["Display Status"]
     Status1 --> Final
     Status2 --> Final
@@ -340,12 +342,12 @@ graph TD
 
 `session_manager.Manager` performs internal session mutations:
 
-| Operation | Description |
-|-----------|-------------|
-| **Spawn** | Create row → create workspace → create runtime → execute agent → report spawned |
-| **Kill** | Mark terminated → destroy runtime → destroy workspace |
+| Operation   | Description                                                                            |
+| ----------- | -------------------------------------------------------------------------------------- |
+| **Spawn**   | Create row → create workspace → create runtime → execute agent → report spawned        |
+| **Kill**    | Mark terminated → destroy runtime → destroy workspace                                  |
 | **Restore** | Check terminated → restore workspace → create runtime → execute agent → report spawned |
-| **Cleanup** | Reclaim terminated session workspaces |
+| **Cleanup** | Reclaim terminated session workspaces                                                  |
 
 ### PR Manager
 
@@ -385,6 +387,7 @@ graph LR
 ```
 
 **Tables:**
+
 - `projects` — Registered repos with soft-delete
 - `sessions` — Session facts (activity_state, is_terminated, runtime metadata)
 - `pr` — PR facts (state, ci_state, review_decision, mergeability)
@@ -403,15 +406,15 @@ claude-code, codex, aider, cursor, opencode, cline, copilot, grok, droid, amp, a
 
 All configuration via environment variables:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `AO_PORT` | `3001` | HTTP bind port |
-| `AO_REQUEST_TIMEOUT` | `60s` | Per-request timeout |
-| `AO_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown cap |
-| `AO_RUN_FILE` | `~/.ao/running.json` | PID/port handshake |
-| `AO_DATA_DIR` | `~/.ao/data` | SQLite data directory |
-| `AO_AGENT` | `claude-code` | Compatibility agent |
-| `GITHUB_TOKEN` | — | GitHub auth token |
+| Variable              | Default              | Purpose               |
+| --------------------- | -------------------- | --------------------- |
+| `AO_PORT`             | `3001`               | HTTP bind port        |
+| `AO_REQUEST_TIMEOUT`  | `60s`                | Per-request timeout   |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap |
+| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake    |
+| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory |
+| `AO_AGENT`            | `claude-code`        | Compatibility agent   |
+| `GITHUB_TOKEN`        | —                    | GitHub auth token     |
 
 **Runtime selection is automatic** based on platform — no configuration needed.
 

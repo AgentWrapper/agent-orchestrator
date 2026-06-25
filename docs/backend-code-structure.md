@@ -29,7 +29,7 @@ graph TB
         CLI["cmd/ao<br/>CLI entrypoint"]
         Main["main.go<br/>Daemon entrypoint"]
     end
-    
+
     subgraph CoreLayer["Core Layer"]
         Domain["domain<br/>Shared vocabulary"]
         Ports["ports<br/>Capability interfaces"]
@@ -37,7 +37,7 @@ graph TB
         SessionMgr["session_manager<br/>Internal commands"]
         Lifecycle["lifecycle<br/>Fact reducer"]
     end
-    
+
     subgraph AdapterLayer["Adapter Layer"]
         AgentAdapters["adapters/agent/*<br/>23+ agents"]
         RuntimeAdapters["adapters/runtime/*<br/>tmux + conpty"]
@@ -45,7 +45,7 @@ graph TB
         SCMAdapters["adapters/scm/*<br/>GitHub"]
         TrackerAdapters["adapters/tracker/*<br/>GitHub"]
     end
-    
+
     subgraph Infrastructure["Infrastructure"]
         Storage["storage/sqlite<br/>Persistence"]
         CDC["cdc<br/>Change delivery"]
@@ -55,31 +55,31 @@ graph TB
         Daemon["daemon<br/>Composition root"]
         Config["config<br/>Configuration"]
     end
-    
+
     CLI --> CLI2
     Main --> Daemon
-    
+
     Daemon --> Services
     Daemon --> AdapterLayer
     Daemon --> Infrastructure
-    
+
     Services --> Domain
     Services --> Ports
     Services --> SessionMgr
-    
+
     SessionMgr --> Ports
     SessionMgr --> Lifecycle
-    
+
     AdapterLayer --> Ports
     AdapterLayer --> Domain
-    
+
     HTTPD --> Services
     CLI2 --> HTTPD
-    
+
     Services --> Storage
     Lifecycle --> Storage
     Storage --> CDC
-    
+
     Terminal --> RuntimeAdapters
     HTTPD --> Terminal
 ```
@@ -90,18 +90,18 @@ graph TB
 graph LR
     Controllers["httpd/controllers"] -->|calls| Services["service/*"]
     Controllers2["cli commands"] -->|calls| HTTP["httpd"]
-    
+
     Services -->|orchestrates| SessionMgr["session_manager"]
     Services -->|queries| Storage["storage/sqlite"]
-    
+
     SessionMgr -->|uses| Runtime["ports.Runtime"]
     SessionMgr -->|uses| Workspace["ports.Workspace"]
     SessionMgr -->|uses| Agent["ports.Agent"]
     SessionMgr -->|reports to| Lifecycle["lifecycle"]
-    
+
     Runtime -->|implemented by| Tmux["adapters/runtime/tmux"]
     Runtime -->|implemented by| Conpty["adapters/runtime/conpty"]
-    
+
     Lifecycle -->|persists to| Storage
     Storage -->|triggers| CDC["cdc"]
     CDC -->|broadcasts to| Frontend["Frontend subscribers"]
@@ -114,12 +114,14 @@ graph LR
 `domain` is AO's shared product language. Keep it stable and free of infrastructure imports.
 
 **Belongs here:**
+
 - Shared IDs: `ProjectID`, `SessionID`, `IssueID`
 - Shared enums and status vocabulary
 - Durable fact records that multiple packages must agree on
 - PR, tracker, project, and session vocabulary (not transport-specific)
 
 **Does not belong here:**
+
 - HTTP request/response DTOs
 - CLI output shapes
 - OpenAPI wrapper/envelope types
@@ -134,6 +136,7 @@ graph LR
 `service` packages are the controller-facing application boundary.
 
 **Belongs here:**
+
 - Resource use cases called by HTTP controllers and CLI-backed API flows
 - Resource read models and command/result types
 - Display-model assembly (session status derived from session and PR facts)
@@ -141,6 +144,7 @@ graph LR
 - Small store interfaces consumed by the service
 
 **Does not belong here:**
+
 - Low-level runtime/workspace/agent process control
 - Raw sqlc generated rows as public service results
 - HTTP routing, path parsing, status-code decisions, or OpenAPI generation
@@ -151,12 +155,14 @@ graph LR
 `session_manager` owns internal session commands: spawn, restore, kill, cleanup, and send-related orchestration over runtime, workspace, agent, storage, messenger, and lifecycle dependencies.
 
 **Belongs here:**
+
 - Multi-step session mutations
 - Rollback/cleanup sequencing when spawn partially succeeds
 - Resource teardown safety
 - Internal errors (not found, terminated, not restorable)
 
 **Does not belong here:**
+
 - HTTP request decoding
 - CLI formatting
 - Controller-facing list/get read-model assembly
@@ -169,11 +175,13 @@ The split is intentional: `service/session` is the product/API boundary; `sessio
 `lifecycle` is the canonical write path for durable session lifecycle facts. It reduces runtime observations, activity signals, spawn completion, termination, and PR observations into small persisted facts.
 
 **Belongs here:**
+
 - Updates to lifecycle-owned session facts
 - Guardrails around runtime/activity observations
 - Lifecycle-triggered agent nudges for actionable PR facts
 
 **Does not belong here:**
+
 - Display status persistence
 - HTTP/CLI DTOs
 - Direct adapter implementation details
@@ -184,6 +192,7 @@ The split is intentional: `service/session` is the product/API boundary; `sessio
 `ports` contains narrow capability interfaces and shared adapter-facing structs. It connects core code to replaceable systems.
 
 **Capability interfaces:**
+
 - `Runtime` — Create/Destroy/IsAlive for tmux/conpty sessions
 - `Workspace` — Git worktree creation/destruction
 - `Agent` — Agent launch, restore, hooks, session info
@@ -193,11 +202,13 @@ The split is intentional: `service/session` is the product/API boundary; `sessio
 - `AgentMessenger` — Message delivery to agents
 
 **Belongs here:**
+
 - Interfaces consumed by core packages and implemented by adapters
 - Capability structs: `RuntimeConfig`, `WorkspaceConfig`, `SpawnConfig`
 - Vocabulary needed at the boundary between core orchestration and adapters
 
 **Does not belong here:**
+
 - Resource read models (project/session API responses)
 - HTTP request/response DTOs
 - sqlc rows
@@ -214,15 +225,16 @@ Adapters are concrete implementations of external systems. They should be leaves
 graph LR
     RunSelect["runtimeselect"] -->|Darwin/Linux| Tmux["tmux<br/>Unix PTY integration"]
     RunSelect -->|Windows| Conpty["conpty<br/>ConPTY + B1 protocol"]
-    
+
     Tmux -->|implements| RuntimePort["ports.Runtime"]
     Conpty -->|implements| RuntimePort
-    
+
     Tmux -->|uses| PtyExec["ptyexec<br/>Unix PTY spawning"]
     Conpty -->|uses| PtyHost["Pty-host server<br/>Ring buffer + Registry"]
 ```
 
 **Current adapters:**
+
 ```txt
 internal/adapters/agent/claudecode
 internal/adapters/agent/codex
@@ -238,6 +250,7 @@ internal/adapters/reviewer/claudecode
 ```
 
 **Good dependencies:**
+
 ```
 session_manager → ports.Runtime
 adapters/runtime/tmux → ports + domain
@@ -246,6 +259,7 @@ daemon → adapters + services + storage
 ```
 
 **Avoid:**
+
 ```
 domain → adapters
 service/session → adapters/runtime/tmux
@@ -258,6 +272,7 @@ adapters/* → httpd
 `storage/sqlite` owns SQLite setup, migrations, sqlc generated code, and store implementations.
 
 **Belongs here:**
+
 - Connection setup and PRAGMAs
 - Goose migrations
 - sqlc queries and generated code
@@ -265,6 +280,7 @@ adapters/* → httpd
 - Transactions and CDC-triggered persistence behavior
 
 **Does not belong here:**
+
 - HTTP response types
 - CLI output formatting
 - Product display status rules
@@ -277,11 +293,13 @@ Generated sqlc types should stay behind store methods. Services and lifecycle co
 `cdc` owns `change_log` polling and event broadcasting. SQLite triggers append durable events to `change_log`; the poller tails that table and fans events out to subscribers.
 
 **Belongs here:**
+
 - Event type definitions for the CDC stream
 - Poller and broadcaster logic
 - Subscriber fan-out behavior
 
 **Does not belong here:**
+
 - Terminal byte streams
 - Product workflow decisions
 - Database schema ownership
@@ -300,7 +318,7 @@ sequenceDiagram
     WS->>Mux: WebSocket upgrade
     Mux->>Term: Create attach session
     Term->>Runtime: Runtime.Attach(handle, rows, cols)
-    
+
     alt tmux (Darwin/Linux)
         Runtime->>Runtime: tmux attach-session -t <id>
         Runtime->>Runtime: PTY stream via ptyexec
@@ -309,13 +327,14 @@ sequenceDiagram
         Runtime->>Runtime: B1 protocol handshake
         Runtime->>Runtime: MsgTerminalData (scrollback)
     end
-    
+
     Runtime-->>Term: Stream
     Term-->>Mux: Framed protocol
     Mux-->>WS: WebSocket messages
 ```
 
 **Belongs here:**
+
 - Per-client attachment lifecycle (liveness gating, re-attach backoff)
 - Input/output framing independent of HTTP
 - PTY-backed attach handling and terminal protocol tests
@@ -325,6 +344,7 @@ sequenceDiagram
 `httpd` is the HTTP protocol adapter.
 
 **Belongs here:**
+
 - Routing and middleware
 - HTTP request decoding and response encoding
 - Path/query parameter handling
@@ -362,19 +382,21 @@ graph TD
     Daemon --> Terminal["terminal"]
     Daemon --> Services["service/*"]
     Daemon --> HTTPD["httpd"]
-    
+
     Config -->|"env vars"| Daemon
     Storage -->|"triggers"| CDC
     CDC -->|"events"| HTTPD
 ```
 
 **Belongs here:**
+
 - Production dependency construction
 - Adapter registration
 - Startup/shutdown sequencing
 - Cross-component wiring
 
 **Does not belong here:**
+
 - Business logic that should be testable in service, lifecycle, or manager packages
 - Adapter implementation details
 
@@ -383,27 +405,27 @@ graph TD
 ```mermaid
 graph TB
     Root["backend/"]
-    
+
     Root --> Cmd["cmd/ao/<br/># CLI entrypoint"]
     Root --> Main["main.go<br/># Daemon entrypoint"]
     Root --> Sqlc["sqlc.yaml"]
-    
+
     Root --> Domain["internal/domain/<br/># Shared vocabulary"]
     Root --> Ports["internal/ports/<br/># Capability interfaces"]
-    
+
     Root --> Service["internal/service/"]
     Service --> Proj["project/<br/># Project API"]
     Service --> Sess["session/<br/># Session API"]
     Service --> PR["pr/<br/># PR service"]
     Service --> Review["review/<br/># Code review"]
-    
+
     Root --> SessMgr["internal/session_manager/<br/># Internal commands"]
     Root --> Life["internal/lifecycle/<br/># Fact reducer"]
-    
+
     Root --> Observe["internal/observe/"]
     Observe --> SCM["scm/<br/># GitHub observer"]
     Observe --> Reap["reaper/<br/># Liveness observer"]
-    
+
     Root --> Store["internal/storage/sqlite/<br/># DB + stores"]
     Root --> CDC2["internal/cdc/<br/># Change delivery"]
     Root --> Term["internal/terminal/<br/># PTY protocol"]
@@ -411,7 +433,7 @@ graph TB
     Root --> CLI2["internal/cli/<br/># CLI commands"]
     Root --> Daemon2["internal/daemon/<br/># Composition"]
     Root --> Cfg["internal/config/<br/># Config"]
-    
+
     Root --> Adapters["internal/adapters/"]
     Adapters --> Agent["agent/<br/># 23+ agents"]
     Adapters --> Runtime2["runtime/"]
@@ -441,7 +463,7 @@ Use these defaults:
 ```mermaid
 graph LR
     NewCode["New Code"] --> Choice{"What type?"}
-    
+
     Choice -->|HTTP route| HTTPRoute["Add to httpd/<br/>Call service/*<br/>Update OpenAPI"]
     Choice -->|Product resource| Product["domain + service/<br/>storage + ports"]
     Choice -->|Adapter| AdapterPath["adapters/<capability>/<impl><br/>Implement ports<br/>Wire in daemon"]
@@ -459,6 +481,7 @@ Project-owned concepts live in `internal/service/project`:
 - The `Manager` contract consumed by HTTP controllers
 
 `internal/httpd/controllers` remains responsible for:
+
 - Route registration
 - JSON decoding/encoding
 - HTTP status codes and error envelopes
@@ -476,7 +499,7 @@ graph LR
         Adapters["adapters/*"] -->|✓| Ports
         Adapters -->|✓| Domain["domain"]
     end
-    
+
     subgraph Avoid["Avoid Dependencies"]
         Services2["service/*"] -.->|✗| Adapters2["adapters/*"]
         Domain2["domain"] -.->|✗| Adapters2
@@ -486,6 +509,7 @@ graph LR
 ```
 
 **Key rules:**
+
 - Controllers call services, not storage directly
 - Services call session manager, not adapters directly
 - Adapters implement ports, don't depend on HTTP/storage

@@ -1,27 +1,27 @@
 {
-  "name": "@agent-orchestrator/shared",
-  "version": "0.0.0",
-  "private": true,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "jest"
-  },
-  "dependencies": {
-    "@tanstack/react-query": "^5.0.0",
-    "@types/event-source": "^3.0.0",
-    "event-source": "^2.0.0",
-    "zustand": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/jest": "^29.0.0",
-    "@types/react": "^18.0.0",
-    "jest": "^29.0.0",
-    "typescript": "^5.0.0"
-  },
-  "peerDependencies": {
-    "react": "^18.0.0"
-  }
+	"name": "@agent-orchestrator/shared",
+	"version": "0.0.0",
+	"private": true,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"build": "tsc",
+		"typecheck": "tsc --noEmit",
+		"test": "jest"
+	},
+	"dependencies": {
+		"@tanstack/react-query": "^5.0.0",
+		"@types/event-source": "^3.0.0",
+		"event-source": "^2.0.0",
+		"zustand": "^4.0.0"
+	},
+	"devDependencies": {
+		"@types/jest": "^29.0.0",
+		"@types/react": "^18.0.0",
+		"jest": "^29.0.0",
+		"typescript": "^5.0.0"
+	},
+	"peerDependencies": {
+		"react": "^18.0.0"
+	}
 }
