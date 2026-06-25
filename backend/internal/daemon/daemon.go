@@ -151,7 +151,11 @@ func Run() error {
 
 	runErr := srv.Run(ctx)
 
-	runShutdownSessionLifecycle(context.Background(), sessMgr)
+	// Both graceful shutdown paths (SIGTERM and POST /shutdown) funnel through
+	// srv.Run returning. We deliberately do NOT tear down sessions here: they
+	// survive the daemon exit and the next boot's Reconcile adopts them,
+	// preserving session IDs. The narrowed sessionLifecycle interface makes
+	// teardown-on-shutdown a compile error.
 
 	// Shut the background goroutines down in order: cancel the context FIRST so
 	// their loops exit, then wait for them to drain. Doing this explicitly (not
@@ -164,22 +168,6 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
-}
-
-// runShutdownSessionLifecycle is called after srv.Run returns on both graceful
-// shutdown paths (SIGTERM and POST /shutdown). It does NOT call
-// SaveAndTeardownAll: live tmux/ConPTY sessions survive the daemon exit and
-// are adopted by Reconcile on the next boot, preserving session IDs.
-// Destroying them here caused the id-increment bug where the orchestrator
-// session counter incremented on every restart.
-//
-// ponytail: no-op on purpose; exists as a testable seam so the test can assert
-// SaveAndTeardownAll is never called on the shutdown path.
-func runShutdownSessionLifecycle(_ context.Context, sl sessionLifecycle) {
-	// Intentionally empty. sl.SaveAndTeardownAll is deliberately NOT called here:
-	// sessions stay alive across daemon exit; next boot's Reconcile adopts them.
-	// ponytail: no-op on purpose; the test asserts sl.SaveAndTeardownAll is never
-	// called on this path (TestShutdown_DoesNotCallSaveAndTeardownAll).
 }
 
 // newLogger returns the daemon's slog logger. It writes to stderr so supervisors

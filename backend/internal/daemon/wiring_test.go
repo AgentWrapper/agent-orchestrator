@@ -381,22 +381,14 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 	}
 }
 
-// fakeSessionLifecycle records calls to Reconcile, RestoreAll, and
-// SaveAndTeardownAll so tests can assert the daemon wiring invokes the correct
-// methods without needing a real runtime or worktree.
-//
-// SaveAndTeardownAll is on the interface (and therefore on the fake) so that
-// TestShutdown_DoesNotCallSaveAndTeardownAll is genuinely falsifiable: if
-// runShutdownSessionLifecycle ever calls sl.SaveAndTeardownAll, the flag flips
-// and the test fails. Without the method here the flag could never be set and
-// the assertion would be tautological.
+// fakeSessionLifecycle records calls to Reconcile and RestoreAll so tests can
+// assert the daemon wiring invokes the correct methods without needing a real
+// runtime or worktree.
 type fakeSessionLifecycle struct {
-	reconcileCalled       bool
-	restoreAllCalled      bool
-	saveAndTeardownCalled bool
-	reconcileErr          error
-	restoreErr            error
-	saveErr               error
+	reconcileCalled  bool
+	restoreAllCalled bool
+	reconcileErr     error
+	restoreErr       error
 }
 
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
@@ -407,11 +399,6 @@ func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
 func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	f.restoreAllCalled = true
 	return f.restoreErr
-}
-
-func (f *fakeSessionLifecycle) SaveAndTeardownAll(_ context.Context) error {
-	f.saveAndTeardownCalled = true
-	return f.saveErr
 }
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
@@ -444,19 +431,3 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	}
 }
 
-// TestShutdown_DoesNotCallSaveAndTeardownAll asserts that the daemon's graceful
-// shutdown path does NOT invoke SaveAndTeardownAll on the session lifecycle.
-// Live sessions must survive shutdown so the next boot's Reconcile can adopt
-// them: tearing them down here causes id-increment on restart.
-//
-// RED: before the fix, runShutdownSessionLifecycle called SaveAndTeardownAll
-// (saveAndTeardownCalled would be true). GREEN: after the fix it is never set.
-func TestShutdown_DoesNotCallSaveAndTeardownAll(t *testing.T) {
-	fake := &fakeSessionLifecycle{}
-	// Simulate the daemon shutdown path. runShutdownSessionLifecycle must not
-	// set saveAndTeardownCalled (it is only set if someone calls SaveAndTeardownAll).
-	runShutdownSessionLifecycle(context.Background(), fake)
-	if fake.saveAndTeardownCalled {
-		t.Fatal("graceful shutdown must NOT call SaveAndTeardownAll: live sessions must survive for Reconcile to adopt on next boot")
-	}
-}
