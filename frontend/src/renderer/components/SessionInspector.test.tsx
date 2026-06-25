@@ -181,7 +181,7 @@ describe("SessionInspector reviews tab", () => {
 		);
 		await openReviewsTab();
 
-		await userEvent.click(await screen.findByRole("button", { name: /^run$/i }));
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -206,8 +206,9 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getByText("#4")).toBeInTheDocument();
 		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
-		expect(screen.getByRole("button", { name: "Run" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
 
 	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {
@@ -226,7 +227,7 @@ describe("SessionInspector reviews tab", () => {
 		);
 		await openReviewsTab();
 
-		await userEvent.click(await screen.findByRole("button", { name: /re-run/i }));
+		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
 		expect(await screen.findByText("No needed reviews were started.")).toBeInTheDocument();
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
@@ -245,6 +246,7 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		await waitFor(() => expect(screen.getAllByText("Open terminal")).toHaveLength(1));
+		expect(screen.getAllByRole("button", { name: /review/i })).toHaveLength(1);
 		await userEvent.click(screen.getByRole("button", { name: /open terminal/i }));
 
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
@@ -257,7 +259,9 @@ describe("SessionInspector reviews tab", () => {
 		await openReviewsTab();
 
 		expect(await screen.findByText("codex")).toBeInTheDocument();
+		expect(screen.getByText("reviewer")).toBeInTheDocument();
 		expect(screen.getByText("sess-1")).toBeInTheDocument();
+		expect(screen.getByText("review session")).toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, GitPullRequest, Shield, Terminal } from "lucide-react";
+import { ArrowUpRight, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -486,64 +486,71 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const aggregateVerdict = sessionReviewVerdict(reviewStates);
+	const runAction = reviewSessionRunAction(reviewStates, isTriggering);
+	const runDisabled =
+		isTriggering ||
+		reviewStates.length === 0 ||
+		reviewStates.some((reviewState) => reviewState.status === "running") ||
+		reviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
 		<div className="reviewer-list">
 			{error ? <p className="reviewer-error">{apiErrorMessage(error, "Review request failed")}</p> : null}
 			{notice ? <p className="reviewer-notice">{notice}</p> : null}
+			<div className="reviewer-kicker">
+				<Shield aria-hidden="true" />
+				<span>{harness}</span>
+				<span>reviewer</span>
+			</div>
 			<div className="reviewer-card">
 				<div className="reviewer-card__top">
 					<div className="reviewer-card__identity">
 						<div className="reviewer-card__name">
-							<Shield aria-hidden="true" />
-							<span>{harness}</span>
+							<GitPullRequest aria-hidden="true" />
+							<span>{session.id}</span>
 						</div>
-						<div className="reviewer-card__session">{session.id}</div>
+						<div className="reviewer-card__session">review session</div>
 					</div>
 					<span className={cn("reviewer-status", `reviewer-status--${aggregateVerdict.tone}`)}>
 						{aggregateVerdict.label}
 					</span>
 				</div>
+				<div className="reviewer-summary-list">
+					{reviewStates.length === 0 ? <p className="inspector-empty">No review state loaded yet.</p> : null}
+					{reviewStates.map((reviewState) => (
+						<ReviewStateRow key={`${reviewState.prUrl}:${reviewState.targetSha}`} reviewState={reviewState} />
+					))}
+				</div>
+				<div className="reviewer-card__actions">
+					<button
+						className="reviewer-card__action reviewer-card__action--primary"
+						disabled={runDisabled}
+						onClick={onTrigger}
+						type="button"
+					>
+						<Play aria-hidden="true" />
+						{runAction}
+					</button>
+					<button
+						className="reviewer-card__action"
+						disabled={!terminalEnabled}
+						onClick={() => {
+							if (!terminalEnabled) return;
+							onOpenTerminal?.({ handleId: reviewerHandleId, harness });
+						}}
+						type="button"
+					>
+						<Terminal aria-hidden="true" />
+						Open terminal
+					</button>
+				</div>
 			</div>
-			<div className="reviewer-summary-list">
-				{reviewStates.length === 0 ? <p className="inspector-empty">No review state loaded yet.</p> : null}
-				{reviewStates.map((reviewState) => (
-					<ReviewStateRow
-						key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-						isTriggering={isTriggering}
-						onTrigger={onTrigger}
-						reviewState={reviewState}
-					/>
-				))}
-			</div>
-			<button
-				className="reviewer-card__action reviewer-card__action--wide"
-				disabled={!terminalEnabled}
-				onClick={() => {
-					if (!terminalEnabled) return;
-					onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-				}}
-				type="button"
-			>
-				<Terminal aria-hidden="true" />
-				Open terminal
-			</button>
 		</div>
 	);
 }
 
-function ReviewStateRow({
-	reviewState,
-	isTriggering,
-	onTrigger,
-}: {
-	reviewState: PRReviewState;
-	isTriggering: boolean;
-	onTrigger: () => void;
-}) {
+function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 	const verdict = reviewVerdict(reviewState);
-	const buttonLabel = reviewRunButtonLabel(reviewState, isTriggering);
-	const disabled = isTriggering || reviewState.status === "running" || reviewState.status === "ineligible";
 	const title = reviewState.title?.trim() || `PR #${reviewState.prNumber}`;
 	return (
 		<div
@@ -563,10 +570,9 @@ function ReviewStateRow({
 					<span className="reviewer-row__number">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>{verdict.label}</span>
-			<button className="reviewer-row__action" disabled={disabled} onClick={onTrigger} type="button">
-				{buttonLabel}
-			</button>
+			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>
+				{verdict.label}
+			</span>
 		</div>
 	);
 }
@@ -606,9 +612,14 @@ function reviewVerdict(reviewState: PRReviewState): {
 	return { label: "Not run", tone: "neutral" };
 }
 
-function reviewRunButtonLabel(reviewState: PRReviewState, isTriggering: boolean): string {
-	if (reviewState.status === "running" || isTriggering) return "Reviewing...";
-	return reviewState.latestRun ? "Re-run" : "Run";
+function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
+	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
+		return "Reviewing...";
+	}
+	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
+		return "Re-run review";
+	}
+	return "Run review";
 }
 
 function BrowserView({
