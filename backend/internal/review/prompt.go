@@ -25,6 +25,8 @@ Post your review as a comment on the pull request, stating clearly whether it ne
 	prompt = fmt.Sprintf(`Review the requested pull request(s) for worker session %s.
 %s
 
+Complete every review task in the queue autonomously. Do not ask the user whether to continue to the next PR, and do not stop after the first PR unless the provider or checkout is genuinely unusable for every queued task.
+
 Do these steps in order:
 1. For each PR below, post a separate review on that pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address. Send the review as a JSON body so the inline comments form a proper array of objects:
 
@@ -56,7 +58,7 @@ func reviewQueueText(spec LaunchSpec) string {
 		return fmt.Sprintf("\nReview task queue:\n* 1. %s (head commit %s, run %s)\n", spec.PRURL, spec.TargetSHA, spec.RunID)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nAO created %d review tasks for this worker session. Review each PR, then submit all results together.\n\nReview task queue:\n", len(spec.ReviewQueue))
+	fmt.Fprintf(&b, "\nAO created %d review tasks for this worker session. Review every queued PR, then submit all results together.\n\nReview task queue:\n", len(spec.ReviewQueue))
 	for i, task := range spec.ReviewQueue {
 		fmt.Fprintf(&b, "* %d. %s (head commit %s, run %s)\n", i+1, task.PRURL, task.TargetSHA, task.RunID)
 	}

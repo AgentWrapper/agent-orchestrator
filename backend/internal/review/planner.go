@@ -26,6 +26,7 @@ const (
 type PRReviewState struct {
 	PRURL     string            `json:"prUrl"`
 	PRNumber  int               `json:"prNumber"`
+	Title     string            `json:"title"`
 	TargetSHA string            `json:"targetSha"`
 	Status    StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
 	LatestRun *domain.ReviewRun `json:"latestRun,omitempty"`
@@ -41,6 +42,7 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 		review := PRReviewState{
 			PRURL:     pr.URL,
 			PRNumber:  pr.Number,
+			Title:     pr.Title,
 			TargetSHA: pr.HeadSHA,
 			Status:    ReviewStateNeedsReview,
 		}

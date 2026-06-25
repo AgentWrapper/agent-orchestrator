@@ -624,6 +624,7 @@ export interface components {
             /** @enum {string} */
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
+            title: string;
         };
         Project: {
             agent?: string;

@@ -1790,9 +1790,12 @@ components:
           type: string
         targetSha:
           type: string
+        title:
+          type: string
       required:
       - prUrl
       - prNumber
+      - title
       - targetSha
       - status
       type: object
