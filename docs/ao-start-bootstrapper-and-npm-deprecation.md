@@ -33,14 +33,14 @@ app present? if not, fetch it; then open it."
 
 ### 1.1 App identity and release target
 
-| Fact | Value | Source |
-|---|---|---|
-| Product / bundle name | **`Agent Orchestrator.app`** (spaced) | `frontend/forge.config.ts:9,50` |
-| Bundle id | `dev.agent-orchestrator.desktop` | `frontend/forge.config.ts:8` |
-| Executable name | `agent-orchestrator` | `frontend/forge.config.ts` |
-| **Release repo (canonical)** | **`AgentWrapper/agent-orchestrator`** | per release owner |
-| Forge publisher repo (TODAY) | `aoagents/agent-orchestrator` — **stale, must change to AgentWrapper** | `frontend/forge.config.ts:86` |
-| GitHub release mode | **`draft: true`**, `prerelease: false` | `frontend/forge.config.ts` |
+| Fact                         | Value                                                                  | Source                          |
+| ---------------------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| Product / bundle name        | **`Agent Orchestrator.app`** (spaced)                                  | `frontend/forge.config.ts:9,50` |
+| Bundle id                    | `dev.agent-orchestrator.desktop`                                       | `frontend/forge.config.ts:8`    |
+| Executable name              | `agent-orchestrator`                                                   | `frontend/forge.config.ts`      |
+| **Release repo (canonical)** | **`AgentWrapper/agent-orchestrator`**                                  | per release owner               |
+| Forge publisher repo (TODAY) | `aoagents/agent-orchestrator` — **stale, must change to AgentWrapper** | `frontend/forge.config.ts:86`   |
+| GitHub release mode          | **`draft: true`**, `prerelease: false`                                 | `frontend/forge.config.ts`      |
 
 > `aoagents/agent-orchestrator` was the **temporary** home during the rewrite; the
 > code is now ported and releases land on **`AgentWrapper/agent-orchestrator`**.
@@ -58,7 +58,7 @@ app present? if not, fetch it; then open it."
   makers configured but never run (upstream issue AgentWrapper/agent-orchestrator#2191).
 - Maker outputs (today): macOS `@electron-forge/maker-zip` → versioned `.zip`
   under `out/make/zip/darwin/<arch>/`; Windows `MakerNSIS` → `Agent Orchestrator
-  Setup.exe` (per-user installer); Linux `maker-deb`/`maker-rpm` →
+Setup.exe` (per-user installer); Linux `maker-deb`/`maker-rpm` →
   `agent-orchestrator-<version>.{deb,rpm}`.
 - **No asset-rename step** and **`draft: true`** → a constant
   `releases/latest/download/<stable-name>` URL cannot resolve until both are fixed.
@@ -144,15 +144,16 @@ waits for ready) and runs a first-boot legacy import (`maybeFirstBootImport`,
    - **Test/dev:** GitHub **`harshitsinghbhandari/agent-orchestrator`** (the fork);
      npm scope **`@theharshitsingh/ao`**. All `ao start` download/open testing runs
      against fork releases and the test npm scope.
-   The download repo and npm scope are **build-time overridable** (§6.3, §8) so a
-   test binary fetches from the fork and a prod binary from AgentWrapper, with no
-   code edit between them.
+     The download repo and npm scope are **build-time overridable** (§6.3, §8) so a
+     test binary fetches from the fork and a prod binary from AgentWrapper, with no
+     code edit between them.
 
 ---
 
 ## 3. Scope
 
 **In scope (Track A):**
+
 - Rewrite the Go **`ao start`** subcommand: `resolve → fetch → open` the desktop
   app, then print a deprecation notice. (`backend/internal/cli/start.go`.)
 - Decide the fate of `ao start`'s current first-boot legacy import (§6.4).
@@ -166,6 +167,7 @@ waits for ready) and runs a first-boot legacy import (`maybeFirstBootImport`,
 - macOS / Windows (NSIS) / Linux (deb/rpm or AppImage) fetch+open paths.
 
 **Out of scope:**
+
 - Track B: real version stamping, making the wired `update-electron-app` updater
   live, configuring signing/notarization CI secrets, any copy promising
   auto-update.
@@ -201,23 +203,23 @@ New file, **app-written**, mirroring the daemon's proven atomic write
 
 ```json
 {
-  "schemaVersion": 1,
-  "appPath": "/Applications/Agent Orchestrator.app",
-  "version": "0.0.0",
-  "installedAt": "2026-06-26T10:00:00Z",
-  "lastReconciledAt": "2026-06-26T10:05:00Z",
-  "installSource": "npm-bootstrap"
+	"schemaVersion": 1,
+	"appPath": "/Applications/Agent Orchestrator.app",
+	"version": "0.0.0",
+	"installedAt": "2026-06-26T10:00:00Z",
+	"lastReconciledAt": "2026-06-26T10:05:00Z",
+	"installSource": "npm-bootstrap"
 }
 ```
 
-| Field | Writer | Meaning |
-|---|---|---|
-| `schemaVersion` | app | Marker format version. |
-| `appPath` | app | Bundle path as of the last launch. |
-| `version` | app | `app.getVersion()`. For the tour/migration, NOT for `ao start` update decisions. |
-| `installedAt` | app | First marker write. |
-| `lastReconciledAt` | app | Last launch that touched the marker. |
-| `installSource` | app | `npm-bootstrap` / `website` / `github` / `unknown`; set only on first creation. |
+| Field              | Writer | Meaning                                                                          |
+| ------------------ | ------ | -------------------------------------------------------------------------------- |
+| `schemaVersion`    | app    | Marker format version.                                                           |
+| `appPath`          | app    | Bundle path as of the last launch.                                               |
+| `version`          | app    | `app.getVersion()`. For the tour/migration, NOT for `ao start` update decisions. |
+| `installedAt`      | app    | First marker write.                                                              |
+| `lastReconciledAt` | app    | Last launch that touched the marker.                                             |
+| `installSource`    | app    | `npm-bootstrap` / `website` / `github` / `unknown`; set only on first creation.  |
 
 **Ownership:** only the app writes it, on **every launch**, self-healing a
 stale/missing marker no matter how the app arrived. `ao start` only reads it, only
@@ -302,15 +304,19 @@ Hook into `app.whenReady()` (`main.ts:822`), **before** `createWindow()`, ordere
 
 ```ts
 app.whenReady().then(async () => {
-  if (process.platform === "darwin" && app.isPackaged) {
-    try { app.moveToApplicationsFolder(); } catch { /* declined / not movable */ }
-    // success restarts the app, so code past here runs only if no move happened
-  }
-  await writeAppStateMarker();   // atomic temp+rename, mirror runfile.Write
-  registerRendererProtocol();
-  createWindow();
-  void startDaemon();
-  initAutoUpdates();
+	if (process.platform === "darwin" && app.isPackaged) {
+		try {
+			app.moveToApplicationsFolder();
+		} catch {
+			/* declined / not movable */
+		}
+		// success restarts the app, so code past here runs only if no move happened
+	}
+	await writeAppStateMarker(); // atomic temp+rename, mirror runfile.Write
+	registerRendererProtocol();
+	createWindow();
+	void startDaemon();
+	initAutoUpdates();
 });
 ```
 
@@ -358,19 +364,19 @@ website.
 
 ## 10. Acceptance criteria / test matrix
 
-| # | Scenario | Expected |
-|---|---|---|
-| 1 | `npm i -g @theharshitsingh/ao` (test scope) | Zero `allow-scripts` warning; nothing listed by `npm approve-scripts --allow-scripts-pending`. |
-| 2 | `npm i -g @theharshitsingh/ao --ignore-scripts` (v12 sim) | Install succeeds; `ao` runs; `ao start` works (binary delivered via optionalDeps, not a script). |
-| 3 | Fresh macOS `ao start` | Fetches `.zip`, `ditto`-unpacks, opens `Agent Orchestrator.app`; app relocates to `/Applications`; `~/.ao/app-state.json` records the `/Applications` path. |
-| 4 | Website install first, then `ao start` | Known-location scan finds it; opens; no second copy fetched. |
-| 5 | App trashed (marker stale), then `ao start` | Marker `stat` misses → scan misses → re-fetch. |
-| 6 | App relocated by the app | Marker path rewritten; next `ao start` opens the right path; no orphan. |
-| 7 | Installed-but-old app, `ao start` | Opens it and exits; does NOT fetch a newer one. |
-| 8 | Windows `ao start` | Downloads NSIS `.exe`, runs installer, resolves + opens installed exe. |
-| 9 | Linux `ao start` | Fetches chosen artifact and launches. |
-| 10 | `ao stop`/`ao status`/`ao spawn` after `ao start` | Work against the app-owned daemon (CLI is a client). |
-| 11 | Existing CLI user runs `npm update` then `ao start` | New binary in place; `ao start` no longer starts a daemon, it opens the app; their `ao import` data migrates (per §6.4). |
+| #   | Scenario                                                  | Expected                                                                                                                                                    |
+| --- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `npm i -g @theharshitsingh/ao` (test scope)               | Zero `allow-scripts` warning; nothing listed by `npm approve-scripts --allow-scripts-pending`.                                                              |
+| 2   | `npm i -g @theharshitsingh/ao --ignore-scripts` (v12 sim) | Install succeeds; `ao` runs; `ao start` works (binary delivered via optionalDeps, not a script).                                                            |
+| 3   | Fresh macOS `ao start`                                    | Fetches `.zip`, `ditto`-unpacks, opens `Agent Orchestrator.app`; app relocates to `/Applications`; `~/.ao/app-state.json` records the `/Applications` path. |
+| 4   | Website install first, then `ao start`                    | Known-location scan finds it; opens; no second copy fetched.                                                                                                |
+| 5   | App trashed (marker stale), then `ao start`               | Marker `stat` misses → scan misses → re-fetch.                                                                                                              |
+| 6   | App relocated by the app                                  | Marker path rewritten; next `ao start` opens the right path; no orphan.                                                                                     |
+| 7   | Installed-but-old app, `ao start`                         | Opens it and exits; does NOT fetch a newer one.                                                                                                             |
+| 8   | Windows `ao start`                                        | Downloads NSIS `.exe`, runs installer, resolves + opens installed exe.                                                                                      |
+| 9   | Linux `ao start`                                          | Fetches chosen artifact and launches.                                                                                                                       |
+| 10  | `ao stop`/`ao status`/`ao spawn` after `ao start`         | Work against the app-owned daemon (CLI is a client).                                                                                                        |
+| 11  | Existing CLI user runs `npm update` then `ao start`       | New binary in place; `ao start` no longer starts a daemon, it opens the app; their `ao import` data migrates (per §6.4).                                    |
 
 > `ao start` opens the app through the calling shell's enriched env, so a green
 > `ao start` proves nothing about the Dock-launch path. Test the Dock path
@@ -384,7 +390,7 @@ website.
    packages (recommended, zero-install-script) vs porting whatever the old AO
    package did. Test scope is **`@theharshitsingh/ao`**; the **prod package name**
    (the legacy `ao` users already have) still needs confirming, plus an `NPM_TOKEN`
-   + publish workflow for each.
+   - publish workflow for each.
 2. **Legacy first-boot import** (§6.4): move into the desktop app, or drop from
    `ao start` and rely on `ao import`?
 3. **Linux artifact form:** `.deb`/`.rpm` (install) vs **AppImage** (fetch-and-run).
@@ -403,14 +409,15 @@ website.
 ## 12. Task breakdown (for AO execution, dependency-ordered)
 
 **Batch 1 — wiring (parallel):**
+
 - **T1. Rewrite `ao start` core (Go).** Replace `start.go` daemon-spawn with
   `resolveApp()` + the macOS fetch/open path + deprecation notice; remove
   `waitForReady`/daemon logic; decide §11.2. Check: on a mac with the app present,
   `ao start` opens it and writes nothing; with it absent, it fetches+opens.
 - **T2. npm delivery of the Go binary.** Per §11.1: optionalDeps platform packages
-  + JS `bin` shim, zero install scripts; publish workflow. **Publish to the
-  `@theharshitsingh/ao` test scope**, not the prod package. Check: `npm i -g
-  @theharshitsingh/ao --ignore-scripts` yields a working `ao`.
+  - JS `bin` shim, zero install scripts; publish workflow. **Publish to the
+    `@theharshitsingh/ao` test scope**, not the prod package. Check: `npm i -g
+@theharshitsingh/ao --ignore-scripts` yields a working `ao`.
 - **T3. Release repo + asset wiring (override-driven).** Make the forge publisher
   repo + the `ao start` download repo build-time overridable (§6.3, §8); add the
   stable-asset rename step; finalize the draft (§11.4); add Linux to the matrix.
@@ -420,6 +427,7 @@ website.
   release is cut during development.**
 
 **Batch 2 — app-side + macOS end-to-end (after T1):**
+
 - **T4. App-side marker + relocation** (`main.ts whenReady`, §7.1). Check: a
   packaged launch writes/updates `~/.ao/app-state.json` with the real bundle path.
 - **T5. macOS `ao start` end-to-end against the FORK release** (needs T3): build the
@@ -428,11 +436,13 @@ website.
   fetching from the fork.
 
 **Batch 3 — cross-platform + integrity (after T1/T3):**
+
 - **T6. Windows path** (NSIS fetch+install+resolve, §6.3).
 - **T7. Linux path** (§11.3).
 - **T8. Download integrity** (§11.6).
 
 **Batch 4 — rollout:**
+
 - **T9.** Deprecation notice / optional tour + `installSource` (§11.7); legacy
   import placement (§11.2) if not done in T1.
 
