@@ -96,9 +96,17 @@ describe("useBrowserView", () => {
 		// overflow, so the reported bounds must be intersected with the column.
 		const column = document.createElement("div");
 		column.setAttribute("data-panel", "");
-		column.getBoundingClientRect = vi.fn(
-			() => ({ x: 100, y: 0, width: 150, height: 600, top: 0, right: 250, bottom: 600, left: 100, toJSON: () => ({}) }),
-		);
+		column.getBoundingClientRect = vi.fn(() => ({
+			x: 100,
+			y: 0,
+			width: 150,
+			height: 600,
+			top: 0,
+			right: 250,
+			bottom: 600,
+			left: 100,
+			toJSON: () => ({}),
+		}));
 		const slot = createSlot();
 		column.appendChild(slot);
 		document.body.appendChild(column);
