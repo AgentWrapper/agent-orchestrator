@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-latest, macos-13, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -82,13 +82,14 @@ jobs:
       # to the space-free names `ao start` fetches and upload to the v<version>
       # release the publish step just created, with --clobber (so re-runs replace).
       #
-      # Arch-coverage note: each runner only builds its host arch, so macos-latest
-      # (Apple silicon) produces darwin-arm64 only. The darwin-x64 alias needs an
-      # Intel macOS runner (e.g. macos-13) and is NOT produced here (gap, spec §8).
+      # Arch-coverage note: each runner only builds its host arch. macos-latest
+      # (Apple silicon) produces darwin-arm64; macos-13 (Intel x64) produces
+      # darwin-x64. Both macOS runners run this step (see the `if` below), so the
+      # arm64 and x64 stable aliases are now both built (spec §8).
       # The Linux stable name is undecided (spec §11.3), so we build the deb/rpm
       # but intentionally upload no Linux alias yet.
       - name: Upload stable asset aliases (macOS)
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           # electron-forge publisher-github creates the release as v<package.json
