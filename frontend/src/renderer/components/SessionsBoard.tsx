@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
@@ -263,11 +263,22 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.target !== event.currentTarget) {
+			return;
+		}
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			onOpen();
+		}
+	};
 	return (
-		<button
+		<div
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
 			onClick={onOpen}
-			type="button"
+			onKeyDown={handleKeyDown}
+			role="button"
+			tabIndex={0}
 		>
 			<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
 				<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
@@ -303,7 +314,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					"no PR yet"
 				)}
 			</div>
-		</button>
+		</div>
 	);
 }
 
@@ -316,7 +327,7 @@ function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSu
 			</span>
 			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
 			<PRStatusStrip pr={pr} />
-			<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={pr} />
+			<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={pr} />
 		</div>
 	);
 }

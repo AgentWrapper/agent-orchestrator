@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prDiffSummary, prStatusRows } from "./pr-display";
+import { prAttentionItems, prBrowserUrl, prDiffSummary, prStatusRows } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -56,6 +56,19 @@ describe("prDiffSummary", () => {
 	});
 });
 
+describe("prBrowserUrl", () => {
+	it("normalizes issue-shaped GitHub PR URLs to the pull request page", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					url: "https://github.com/acme/repo/issues/7",
+					htmlUrl: "https://github.com/acme/repo/issues/7",
+				}),
+			),
+		).toBe("https://github.com/acme/repo/pull/7");
+	});
+});
+
 describe("prAttentionItems", () => {
 	it("returns no attention for clean open PRs", () => {
 		expect(prAttentionItems(summary())).toEqual([]);
@@ -97,6 +110,44 @@ describe("prAttentionItems", () => {
 		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
 			label: "alice +5",
 			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+		});
+	});
+
+	it("links requested changes to the PR comments surface when comment URLs are missing", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: false,
+					unresolvedBy: [],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "comments",
+			href: "https://github.com/acme/repo/pull/7/files",
+		});
+	});
+
+	it("links merge conflicts to GitHub's conflict resolution page", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				mergeability: {
+					state: "conflicting",
+					reasons: [],
+					prUrl: "https://github.com/acme/repo/issues/7",
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "merge_conflict")?.links[0]).toMatchObject({
+			label: "conflicts",
+			href: "https://github.com/acme/repo/pull/7/conflicts",
 		});
 	});
 

@@ -15,7 +15,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
+import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
@@ -219,7 +219,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					{pr.state}
 				</Badge>
 				<a
-					href={pr.htmlUrl || pr.url}
+					href={prBrowserUrl(pr)}
 					target="_blank"
 					rel="noopener noreferrer"
 					className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
