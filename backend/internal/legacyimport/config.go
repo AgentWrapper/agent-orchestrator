@@ -2,6 +2,7 @@ package legacyimport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -22,7 +23,9 @@ type legacyConfig struct {
 type legacyProjectConfig struct {
 	Path          string             `yaml:"path"`
 	Name          string             `yaml:"name"`
-	Repo          string             `yaml:"repo"`
+	// Repo is captured as a raw YAML node but never consumed; the origin URL is
+	// re-resolved from the repo path at import time.
+	Repo *yaml.Node `yaml:"repo"`
 	DefaultBranch string             `yaml:"defaultBranch"`
 	SessionPrefix string             `yaml:"sessionPrefix"`
 	Env           map[string]string  `yaml:"env"`
@@ -65,7 +68,12 @@ func loadLegacyConfig(root string) (legacyConfig, error) {
 	}
 	var cfg legacyConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return legacyConfig{}, fmt.Errorf("parse legacy config.yaml: %w", err)
+		var typeErr *yaml.TypeError
+		if !errors.As(err, &typeErr) {
+			return legacyConfig{}, fmt.Errorf("parse legacy config.yaml: %w", err)
+		}
+		// A type mismatch (e.g. a scalar where a mapping is expected) is a
+		// partial decode: keep the decoded fields and continue.
 	}
 	return cfg, nil
 }
