@@ -11,7 +11,7 @@ import {
 	WebContentsView,
 	type OpenDialogOptions,
 } from "electron";
-import { startAutoUpdates } from "./main/auto-updater";
+import { startAutoUpdates, ensureUpdatePrefs } from "./main/auto-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
@@ -819,7 +819,8 @@ function initAutoUpdates(): void {
 	if (!app.isPackaged) return;
 	const runFile = runFilePath();
 	if (!runFile) return;
-	void startAutoUpdates(path.dirname(runFile));
+	const stateDir = path.dirname(runFile);
+	void ensureUpdatePrefs(stateDir).then(() => startAutoUpdates(stateDir));
 }
 
 // Resolve the bundle path `ao start` will later `open` and stat as a usable app.
