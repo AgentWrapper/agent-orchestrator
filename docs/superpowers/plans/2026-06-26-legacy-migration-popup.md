@@ -22,20 +22,20 @@
 
 ## File Structure
 
-| File | Status | Responsibility |
-| --- | --- | --- |
-| (backend import API) | per import-offer plan | projects-only `legacyimport`, `service/importer`, controller, DTOs, OpenAPI, wiring |
-| `backend/internal/service/importer/importer.go` | create (modified Status) | `Status` = `HasLegacyData` only; `Run` |
-| `backend/internal/cli/start.go` | modify | drop the `§6.4` TODO comment (`:78`) |
-| `frontend/src/main/app-state.ts` | modify | `MigrationState`, schema v2, preserve, `updateMigration`, `readMigrationState` |
-| `frontend/src/main/app-state.test.ts` | modify | marker v2 + migration tests |
-| `frontend/src/main.ts` | modify | `appState:getMigration` / `appState:setMigration` IPC handlers |
-| `frontend/src/preload.ts` | modify | `ao.appState` bridge methods |
-| `frontend/src/renderer/lib/bridge.ts` | modify | `appState` preview fallback |
-| `frontend/src/renderer/hooks/useMigrationOffer.ts` | create | gate: IPC marker + daemon GET |
-| `frontend/src/renderer/components/MigrationPopup.tsx` | create | the three-action dialog |
-| `frontend/src/renderer/components/MigrationPopup.test.tsx` | create | popup tests |
-| `frontend/src/renderer/routes/_shell.index.tsx` | modify | mount `<MigrationPopup/>` on the board |
+| File                                                       | Status                   | Responsibility                                                                      |
+| ---------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| (backend import API)                                       | per import-offer plan    | projects-only `legacyimport`, `service/importer`, controller, DTOs, OpenAPI, wiring |
+| `backend/internal/service/importer/importer.go`            | create (modified Status) | `Status` = `HasLegacyData` only; `Run`                                              |
+| `backend/internal/cli/start.go`                            | modify                   | drop the `§6.4` TODO comment (`:78`)                                                |
+| `frontend/src/main/app-state.ts`                           | modify                   | `MigrationState`, schema v2, preserve, `updateMigration`, `readMigrationState`      |
+| `frontend/src/main/app-state.test.ts`                      | modify                   | marker v2 + migration tests                                                         |
+| `frontend/src/main.ts`                                     | modify                   | `appState:getMigration` / `appState:setMigration` IPC handlers                      |
+| `frontend/src/preload.ts`                                  | modify                   | `ao.appState` bridge methods                                                        |
+| `frontend/src/renderer/lib/bridge.ts`                      | modify                   | `appState` preview fallback                                                         |
+| `frontend/src/renderer/hooks/useMigrationOffer.ts`         | create                   | gate: IPC marker + daemon GET                                                       |
+| `frontend/src/renderer/components/MigrationPopup.tsx`      | create                   | the three-action dialog                                                             |
+| `frontend/src/renderer/components/MigrationPopup.test.tsx` | create                   | popup tests                                                                         |
+| `frontend/src/renderer/routes/_shell.index.tsx`            | modify                   | mount `<MigrationPopup/>` on the board                                              |
 
 ---
 
@@ -54,6 +54,7 @@ Execute the committed plan `docs/plans/2026-06-26-import-offer.md`, **Tasks 1, 3
 **Files:** Create `backend/internal/service/importer/importer.go`, `…/importer_test.go`
 
 **Interfaces:**
+
 - Produces: `importer.Status{Available bool; LegacyRoot string}`, `importer.Service` (`Status(ctx)`, `Run(ctx)`), `importer.Deps{Store, Root}`, `importer.New(Deps) *Manager`. `Store` is exactly `legacyimport.Store` (the projects-only `GetProject`/`UpsertProject`) — **no `ListProjects`** (the design drops the empty-DB heuristic; the app marker governs prompting).
 
 - [ ] **Step 1: Write `importer.go`:**
@@ -229,6 +230,7 @@ func TestNew_DefaultsRoot(t *testing.T) {
 **Files:** Modify `frontend/src/main/app-state.ts`, `frontend/src/main/app-state.test.ts`
 
 **Interfaces:**
+
 - Produces: `MigrationStatus`, `MigrationState`, `updateMigration({stateDir, migration, now})`, `readMigrationState(stateDir) => Promise<MigrationState>`. `AppStateMarker` gains `migration?: MigrationState`. `SCHEMA_VERSION === 2`. **B2/B3/B4 depend on these names.**
 
 - [ ] **Step 1 (TDD): add tests to `app-state.test.ts`** (follows the file's existing temp-dir style):
@@ -239,12 +241,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import {
-	APP_STATE_FILE_NAME,
-	readMigrationState,
-	updateMigration,
-	writeAppStateMarker,
-} from "./app-state";
+import { APP_STATE_FILE_NAME, readMigrationState, updateMigration, writeAppStateMarker } from "./app-state";
 
 const fixedNow = () => new Date("2026-06-26T10:00:00.000Z");
 async function tmp() {
@@ -478,7 +475,8 @@ const { getMock, postMock, getMigration, setMigration } = vi.hoisted(() => ({
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock },
-	apiErrorMessage: (e: unknown, fb = "Request failed") => (e instanceof Error ? e.message : (e as { message?: string })?.message ?? fb),
+	apiErrorMessage: (e: unknown, fb = "Request failed") =>
+		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
 }));
 vi.mock("../lib/bridge", () => ({ aoBridge: { appState: { getMigration, setMigration } } }));
 
@@ -629,14 +627,12 @@ export function MigrationPopup() {
 						Import projects from your earlier AO?
 					</Dialog.Title>
 					<Dialog.Description className="mt-2 text-[13px] leading-[1.5] text-muted-foreground">
-						We found an existing install at{" "}
-						<span className="font-mono text-[11px] text-foreground">{legacyRoot}</span>. Importing brings in
-						your projects. Your old files are never modified, and you can do this later.
+						We found an existing install at <span className="font-mono text-[11px] text-foreground">{legacyRoot}</span>.
+						Importing brings in your projects. Your old files are never modified, and you can do this later.
 					</Dialog.Description>
 					{error && (
 						<div className="mt-3 text-[12px] text-destructive">
-							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You
-							can retry.
+							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You can retry.
 						</div>
 					)}
 					<p className="mt-3 text-[11px] text-muted-foreground">You can run this again later.</p>

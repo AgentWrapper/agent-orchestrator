@@ -3,7 +3,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { APP_STATE_FILE_NAME, writeAppStateMarker, readMigrationState, updateMigration, type AppStateMarker } from "./app-state";
+import {
+	APP_STATE_FILE_NAME,
+	writeAppStateMarker,
+	readMigrationState,
+	updateMigration,
+	type AppStateMarker,
+} from "./app-state";
 
 // The exact key set the Go reader (start.go `appState`) unmarshals.
 const GO_READER_KEYS = ["schemaVersion", "appPath", "version", "installedAt", "lastReconciledAt", "installSource"];

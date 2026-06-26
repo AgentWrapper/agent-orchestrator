@@ -71,14 +71,12 @@ export function MigrationPopup() {
 						Import projects from your earlier AO?
 					</Dialog.Title>
 					<Dialog.Description className="mt-2 text-[13px] leading-[1.5] text-muted-foreground">
-						We found an existing install at{" "}
-						<span className="font-mono text-[11px] text-foreground">{legacyRoot}</span>. Importing brings in
-						your projects. Your old files are never modified, and you can do this later.
+						We found an existing install at <span className="font-mono text-[11px] text-foreground">{legacyRoot}</span>.
+						Importing brings in your projects. Your old files are never modified, and you can do this later.
 					</Dialog.Description>
 					{error && (
 						<div className="mt-3 text-[12px] text-destructive">
-							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You
-							can retry.
+							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You can retry.
 						</div>
 					)}
 					<p className="mt-3 text-[11px] text-muted-foreground">You can run this again later.</p>

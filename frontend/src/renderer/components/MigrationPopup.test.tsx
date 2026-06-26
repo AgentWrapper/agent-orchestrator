@@ -13,7 +13,8 @@ const { getMock, postMock, getMigration, setMigration } = vi.hoisted(() => ({
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: postMock },
-	apiErrorMessage: (e: unknown, fb = "Request failed") => (e instanceof Error ? e.message : (e as { message?: string })?.message ?? fb),
+	apiErrorMessage: (e: unknown, fb = "Request failed") =>
+		e instanceof Error ? e.message : ((e as { message?: string })?.message ?? fb),
 }));
 vi.mock("../lib/bridge", () => ({ aoBridge: { appState: { getMigration, setMigration } } }));
 

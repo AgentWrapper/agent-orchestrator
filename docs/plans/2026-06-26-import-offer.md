@@ -20,30 +20,30 @@
 
 ## File Structure
 
-| File | Status | Responsibility |
-| --- | --- | --- |
-| `backend/internal/legacyimport/orchestrator.go` (+`_test.go`) | delete | orchestrator-session mapping/import (out of scope) |
-| `backend/internal/legacyimport/claude.go` (+`_test.go`) | delete | Claude transcript relocation (out of scope) |
-| `backend/internal/storage/sqlite/store/session_import_store.go` (+`_test.go`) | delete | `ImportSession` (only used by orchestrator import) |
-| `backend/internal/legacyimport/importer.go` | modify | trim `Store`/`Options`/`Report`; drop orchestrator loop; add `quote()` |
-| `backend/internal/legacyimport/config.go` | modify | `Repo` -> `*yaml.Node`; tolerate `*yaml.TypeError` |
-| `backend/internal/legacyimport/paths.go` | modify | drop `defaultClaudeProjectsDir` + `projectSessionsDir` |
-| `backend/internal/legacyimport/{importer,config,project}_test.go` | modify | projects-only assertions |
-| `backend/internal/cli/import.go` | modify | drop orchestrator/transcript copy + summary lines |
-| `backend/internal/service/importer/importer.go` (+`_test.go`) | create | `Status`/`Run` over the daemon store |
-| `backend/internal/httpd/controllers/imports.go` (+`_test.go`) | create | `GET`/`POST /import`, 501 on nil svc |
-| `backend/internal/httpd/controllers/dto.go` | modify | `ImportStatusResponse`, `ImportRunResponse` |
-| `backend/internal/httpd/apispec/specgen/build.go` | modify | `import` tag + ops + schemaNames |
-| `backend/internal/httpd/api.go` | modify | `APIDeps.Import`, `API.imports`, wire + Register |
-| `backend/internal/daemon/daemon.go` | modify | `Import: importsvc.New(...)` |
-| `backend/internal/cli/start.go` | modify | delete `maybeFirstBootImport` + 2 imports |
-| `backend/internal/httpd/apispec/openapi.yaml` | regenerate | — |
-| `frontend/src/api/schema.ts` | regenerate | — |
-| `frontend/src/shared/daemon-discovery.ts` (+`.test.ts`) | modify | `shouldAdoptDiscoveredPort` |
-| `frontend/src/main.ts` | modify | external daemon discovery loop |
-| `frontend/src/renderer/hooks/useImportStatus.ts` | create | `useImportStatus`/`useRunImport` |
-| `frontend/src/renderer/components/ImportOffer.tsx` (+`.test.tsx`) | create | the banner |
-| `frontend/src/renderer/components/SessionsBoard.tsx` | modify | render `<ImportOffer/>` |
+| File                                                                          | Status     | Responsibility                                                         |
+| ----------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------- |
+| `backend/internal/legacyimport/orchestrator.go` (+`_test.go`)                 | delete     | orchestrator-session mapping/import (out of scope)                     |
+| `backend/internal/legacyimport/claude.go` (+`_test.go`)                       | delete     | Claude transcript relocation (out of scope)                            |
+| `backend/internal/storage/sqlite/store/session_import_store.go` (+`_test.go`) | delete     | `ImportSession` (only used by orchestrator import)                     |
+| `backend/internal/legacyimport/importer.go`                                   | modify     | trim `Store`/`Options`/`Report`; drop orchestrator loop; add `quote()` |
+| `backend/internal/legacyimport/config.go`                                     | modify     | `Repo` -> `*yaml.Node`; tolerate `*yaml.TypeError`                     |
+| `backend/internal/legacyimport/paths.go`                                      | modify     | drop `defaultClaudeProjectsDir` + `projectSessionsDir`                 |
+| `backend/internal/legacyimport/{importer,config,project}_test.go`             | modify     | projects-only assertions                                               |
+| `backend/internal/cli/import.go`                                              | modify     | drop orchestrator/transcript copy + summary lines                      |
+| `backend/internal/service/importer/importer.go` (+`_test.go`)                 | create     | `Status`/`Run` over the daemon store                                   |
+| `backend/internal/httpd/controllers/imports.go` (+`_test.go`)                 | create     | `GET`/`POST /import`, 501 on nil svc                                   |
+| `backend/internal/httpd/controllers/dto.go`                                   | modify     | `ImportStatusResponse`, `ImportRunResponse`                            |
+| `backend/internal/httpd/apispec/specgen/build.go`                             | modify     | `import` tag + ops + schemaNames                                       |
+| `backend/internal/httpd/api.go`                                               | modify     | `APIDeps.Import`, `API.imports`, wire + Register                       |
+| `backend/internal/daemon/daemon.go`                                           | modify     | `Import: importsvc.New(...)`                                           |
+| `backend/internal/cli/start.go`                                               | modify     | delete `maybeFirstBootImport` + 2 imports                              |
+| `backend/internal/httpd/apispec/openapi.yaml`                                 | regenerate | —                                                                      |
+| `frontend/src/api/schema.ts`                                                  | regenerate | —                                                                      |
+| `frontend/src/shared/daemon-discovery.ts` (+`.test.ts`)                       | modify     | `shouldAdoptDiscoveredPort`                                            |
+| `frontend/src/main.ts`                                                        | modify     | external daemon discovery loop                                         |
+| `frontend/src/renderer/hooks/useImportStatus.ts`                              | create     | `useImportStatus`/`useRunImport`                                       |
+| `frontend/src/renderer/components/ImportOffer.tsx` (+`.test.tsx`)             | create     | the banner                                                             |
+| `frontend/src/renderer/components/SessionsBoard.tsx`                          | modify     | render `<ImportOffer/>`                                                |
 
 ---
 
@@ -52,6 +52,7 @@
 **Files:** Delete `legacyimport/orchestrator.go`, `orchestrator_test.go`, `claude.go`, `claude_test.go`, `storage/sqlite/store/session_import_store.go`, `session_import_store_test.go`. Modify `legacyimport/importer.go`, `config.go`, `paths.go`, and their tests; `cli/import.go`.
 
 **Interfaces:**
+
 - Produces: trimmed `legacyimport.Store` (`GetProject`, `UpsertProject` only), `legacyimport.Options{Root, DryRun, Now, RepoOriginURL}`, `legacyimport.Report{DryRun, ProjectsImported, ProjectsSkipped, Notes}`. **Tasks 2 and 3 depend on this `Report` shape.**
 
 - [ ] **Step 1: Delete the orchestrator/transcript files.**
@@ -84,7 +85,7 @@ func quote(s string) string {
 
 - [ ] **Step 3: `legacyimport/config.go` parsing-robustness fix (PR-bundled, improves project import).**
   - Add `"errors"` import.
-  - Change the project config's `Repo string \`yaml:"repo"\`` field to `Repo *yaml.Node \`yaml:"repo"\`` with a comment that it is captured but never consumed (origin is re-resolved from the repo path).
+  - Change the project config's `Repo string \`yaml:"repo"\``field to`Repo \*yaml.Node \`yaml:"repo"\`` with a comment that it is captured but never consumed (origin is re-resolved from the repo path).
   - In `loadLegacyConfig`, when `yaml.Unmarshal` errors, keep the partial decode on a `*yaml.TypeError` instead of failing the whole registry:
 
 ```go
@@ -107,6 +108,7 @@ func quote(s string) string {
 **Files:** Create `backend/internal/service/importer/importer.go`, `…/importer_test.go`
 
 **Interfaces:**
+
 - Consumes: trimmed `legacyimport.Store`, `legacyimport.Run`, `legacyimport.HasLegacyData`, `legacyimport.DefaultLegacyRootDir`, `legacyimport.Report`, `legacyimport.Options{Root}`; `domain.ProjectRecord`.
 - Produces: `importer.Status{Available bool; LegacyRoot string}`, `importer.Service` (`Status(ctx)`, `Run(ctx)`), `importer.Deps{Store, Root}`, `importer.New(Deps) *Manager`. **Controller (Task 3) and daemon (Task 5) depend on these exact names.**
 
@@ -214,6 +216,7 @@ func (m *Manager) Run(ctx context.Context) (legacyimport.Report, error) {
 **Files:** Create `backend/internal/httpd/controllers/imports.go`, `…/imports_test.go`; Modify `…/controllers/dto.go`
 
 **Interfaces:**
+
 - Consumes: `importsvc.Status`, `legacyimport.Report`, `apispec.NotImplemented`, `envelope.WriteJSON`/`WriteError`, `httpd.NewRouterWithControl(cfg, log, termMgr, APIDeps, ControlDeps)`.
 - Produces: `controllers.ImportService`, `controllers.ImportController{Svc}`, `controllers.ImportStatusResponse`, `controllers.ImportRunResponse`. **api.go (Task 5) and specgen (Task 4) depend on these.**
 
@@ -332,9 +335,13 @@ type ImportRunResponse struct {
 - [ ] **Step 1:** Add `import { ImportOffer } from "./ImportOffer";` and, directly under the `<DashboardSubhead .../>` line, insert:
 
 ```tsx
-			{/* First-run legacy-AO import opt-in. Renders only when the daemon
-			    reports an importable install, and only on the top-level board. */}
-			{!projectId && <ImportOffer />}
+{
+	/* First-run legacy-AO import opt-in. Renders only when the daemon
+			    reports an importable install, and only on the top-level board. */
+}
+{
+	!projectId && <ImportOffer />;
+}
 ```
 
 - [ ] **Step 2:** `npm --prefix frontend run typecheck && npm --prefix frontend run test` → expect PASS.

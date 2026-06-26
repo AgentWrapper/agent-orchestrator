@@ -25,20 +25,20 @@ or declined import loses nothing.
 
 ## 1. Ground truth (what the code is today)
 
-| Fact | Value | Source |
-| --- | --- | --- |
-| Marker file | `~/.ao/app-state.json`, **app is sole writer**, written every launch | `frontend/src/main/app-state.ts`; spec §5, invariant 3 |
-| Marker fields today | `schemaVersion, appPath, version, installedAt, lastReconciledAt, installSource` | `frontend/src/main/app-state.ts` `AppStateMarker` |
-| Marker write call site | `app.whenReady()` before `createWindow()` | `frontend/src/main.ts:859` (inside `whenReady`, `:868`) |
-| Go reader of marker | read-only, ignores unknown JSON fields, does NOT gate on `schemaVersion` | `backend/internal/cli/start.go` `appState` struct (~`:38`) |
-| Import engine | `internal/legacyimport` (projects + per-project settings + orchestrator + transcripts) + `ao import` CLI | present from #314 |
-| Import **daemon API** | **does not exist on main** (no `service/importer`, no `httpd/controllers/imports.go`) | verified |
-| Daemon ownership | the app spawns + owns the daemon | `frontend/src/main.ts` `startDaemon` |
-| HTTP client (renderer) | `apiClient` over the daemon loopback API | `frontend/src/renderer/lib/api-client.ts:81` |
-| IPC bridge | `contextBridge.exposeInMainWorld("ao", api)`; renderer calls `window.ao.<ns>.*` | `frontend/src/preload.ts:73` |
-| IPC handler pattern | `ipcMain.handle("<ns>:<action>", …)` in main | `frontend/src/main.ts:773-796` |
-| Dashboard route | `_shell.index.tsx` (the board) | `frontend/src/renderer/routes/` |
-| **Global Settings page** | **none** — only per-project `_shell.projects.$projectId_.settings.tsx` | verified |
+| Fact                     | Value                                                                                                    | Source                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Marker file              | `~/.ao/app-state.json`, **app is sole writer**, written every launch                                     | `frontend/src/main/app-state.ts`; spec §5, invariant 3     |
+| Marker fields today      | `schemaVersion, appPath, version, installedAt, lastReconciledAt, installSource`                          | `frontend/src/main/app-state.ts` `AppStateMarker`          |
+| Marker write call site   | `app.whenReady()` before `createWindow()`                                                                | `frontend/src/main.ts:859` (inside `whenReady`, `:868`)    |
+| Go reader of marker      | read-only, ignores unknown JSON fields, does NOT gate on `schemaVersion`                                 | `backend/internal/cli/start.go` `appState` struct (~`:38`) |
+| Import engine            | `internal/legacyimport` (projects + per-project settings + orchestrator + transcripts) + `ao import` CLI | present from #314                                          |
+| Import **daemon API**    | **does not exist on main** (no `service/importer`, no `httpd/controllers/imports.go`)                    | verified                                                   |
+| Daemon ownership         | the app spawns + owns the daemon                                                                         | `frontend/src/main.ts` `startDaemon`                       |
+| HTTP client (renderer)   | `apiClient` over the daemon loopback API                                                                 | `frontend/src/renderer/lib/api-client.ts:81`               |
+| IPC bridge               | `contextBridge.exposeInMainWorld("ao", api)`; renderer calls `window.ao.<ns>.*`                          | `frontend/src/preload.ts:73`                               |
+| IPC handler pattern      | `ipcMain.handle("<ns>:<action>", …)` in main                                                             | `frontend/src/main.ts:773-796`                             |
+| Dashboard route          | `_shell.index.tsx` (the board)                                                                           | `frontend/src/renderer/routes/`                            |
+| **Global Settings page** | **none** — only per-project `_shell.projects.$projectId_.settings.tsx`                                   | verified                                                   |
 
 ---
 
@@ -65,6 +65,7 @@ or declined import loses nothing.
 ## 3. Scope
 
 **In scope:**
+
 - Backend: the projects-only import daemon API: `GET /api/v1/import` (availability)
   and `POST /api/v1/import` (run), plus `service/importer`, DTOs, OpenAPI regen.
   (= the import-offer plan, with the status-semantics tweak in §5.2.)
@@ -75,6 +76,7 @@ or declined import loses nothing.
   reassurance.
 
 **Out of scope (deferred / separate):**
+
 - Global Settings page + the Migration section / redo entry point → #2205.
 - The engine simplification details themselves live in the import-offer plan; this
   design consumes that API, it does not re-specify the engine internals.
@@ -99,6 +101,7 @@ or declined import loses nothing.
 ## 5. Backend: the import daemon API
 
 ### 5.1 Surface (from the import-offer plan)
+
 - `GET /api/v1/import` → `{ available: bool, legacyRoot: string }`.
 - `POST /api/v1/import` → `{ report: { dryRun, projectsImported, projectsSkipped, notes? } }`.
 - `internal/service/importer` wraps `legacyimport` (projects-only); wired into
@@ -106,6 +109,7 @@ or declined import loses nothing.
 - A nil service answers OpenAPI-backed `501`. OpenAPI + `schema.ts` regenerated.
 
 ### 5.2 Status semantics (the one change vs the import-offer plan)
+
 The import-offer plan computed `available = HasLegacyData(root) && len(projects)==0`
 (the empty-DB heuristic). **Here the marker governs whether to prompt**, so the DB
 heuristic is redundant and can be wrong (a user who added projects but never
@@ -129,11 +133,11 @@ Bump `SCHEMA_VERSION` to `2` and extend `AppStateMarker`
 export type MigrationStatus = "pending" | "completed" | "declined" | "failed";
 
 export interface MigrationState {
-	status: MigrationStatus;     // absent file => treated as "pending"
-	lastAttemptAt?: string;      // last Proceed attempt (success or failure)
-	completedAt?: string;        // set when status -> completed
+	status: MigrationStatus; // absent file => treated as "pending"
+	lastAttemptAt?: string; // last Proceed attempt (success or failure)
+	completedAt?: string; // set when status -> completed
 	report?: { projectsImported: number; projectsSkipped: number };
-	error?: string;              // last failure message (status === "failed")
+	error?: string; // last failure message (status === "failed")
 }
 
 export interface AppStateMarker {
@@ -143,7 +147,7 @@ export interface AppStateMarker {
 	installedAt: string;
 	lastReconciledAt: string;
 	installSource: string;
-	migration?: MigrationState;  // new; preserved across launches
+	migration?: MigrationState; // new; preserved across launches
 }
 ```
 
@@ -166,14 +170,17 @@ Terminal states (never auto-prompt): `completed`, `declined`. Prompting states:
 ## 7. Renderer: detection, gate, popup
 
 ### 7.1 IPC additions
+
 - main: `ipcMain.handle("appState:getMigration", …)` → returns `MigrationState`
   (or `{status:"pending"}` when absent); `ipcMain.handle("appState:setMigration",
-  (_e, partial) => updateMigration(...))`.
+(_e, partial) => updateMigration(...))`.
 - preload: extend the `ao` bridge with
   `appState: { getMigration, setMigration }`.
 
 ### 7.2 Gate (where the popup decides to show)
+
 A `useMigrationOffer()` hook, consumed on the dashboard (`_shell.index.tsx`):
+
 1. read `window.ao.appState.getMigration()`,
 2. if `status ∈ {completed, declined}` → render nothing,
 3. else `GET /api/v1/import`; show the popup only when `available === true`
@@ -185,13 +192,14 @@ keeping `Don't Migrate` permanent.
 
 ### 7.3 Popup actions / data flow
 
-| Action | Effect |
-| --- | --- |
-| **Proceed** | `POST /api/v1/import`. On success: `setMigration({status:"completed", completedAt, report})`, then invalidate the workspace query so projects appear. On failure: `setMigration({status:"failed", lastAttemptAt, error})` and show the reassurance inline. |
-| **Skip** | session-only dismiss; no marker write; re-prompts next launch. |
-| **Don't Migrate** (red) | `setMigration({status:"declined", lastAttemptAt})`; never auto-prompts again. |
+| Action                  | Effect                                                                                                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Proceed**             | `POST /api/v1/import`. On success: `setMigration({status:"completed", completedAt, report})`, then invalidate the workspace query so projects appear. On failure: `setMigration({status:"failed", lastAttemptAt, error})` and show the reassurance inline. |
+| **Skip**                | session-only dismiss; no marker write; re-prompts next launch.                                                                                                                                                                                             |
+| **Don't Migrate** (red) | `setMigration({status:"declined", lastAttemptAt})`; never auto-prompts again.                                                                                                                                                                              |
 
 ### 7.4 Copy
+
 - Heading: "Import projects from your earlier AO?"
 - Body: names the legacy root; "Importing brings in your projects. Your old files
   are never modified, and you can do this later." (projects-only; **no orchestrator
@@ -212,6 +220,7 @@ keeping `Don't Migrate` permanent.
 `openapi.yaml` + `frontend/src/api/schema.ts`.
 
 **App / renderer (new in this design):**
+
 - `frontend/src/main/app-state.ts` — `MigrationState`, schema v2, preserve +
   `updateMigration`.
 - `frontend/src/main.ts` — `appState:getMigration` / `appState:setMigration`
