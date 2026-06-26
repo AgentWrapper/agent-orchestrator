@@ -3758,19 +3758,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           : {}),
       },
     };
-    // Orchestrator launches need the original systemPromptFile so the agent
-    // boots as the orchestrator (not a bare TUI). spawnOrchestrator wrote it to
-    // {baseDir}/orchestrator-prompt-{sessionId}.md and references it via
-    // agentLaunchConfig.systemPromptFile. On restore we must re-attach it,
-    // otherwise getLaunchCommand() (the fallback when getRestoreCommand returns
-    // null — e.g. Codex with no resumable thread for the worktree) starts a
-    // plain agent without orchestrator instructions.
-    const orchestratorSystemPromptFile = ((): string | undefined => {
-      if (selection.role !== "orchestrator") return undefined;
-      // V2 storage: orchestrator-prompt-{sessionId}.md lives in the project dir
+    // Launches need the original persona/rules file so the agent boots in-role
+    // (orchestrator or worker) instead of as a bare TUI. spawn wrote it to
+    // {projectDir}/{orchestrator|worker}-prompt-{sessionId}.md and references it
+    // via agentLaunchConfig.systemPromptFile. On restore we must re-attach it for
+    // BOTH roles:
+    //   - tmux runtime: getLaunchCommand()'s --append-system-prompt (the fallback
+    //     when getRestoreCommand returns null) would otherwise start a plain agent.
+    //   - SDK runtime: getEnvironment() turns it into AO_SDK_SYSTEM_PROMPT_FILE,
+    //     which sdk-host appends to the Claude Code preset on every request. Without
+    //     it a restored SDK session loses its role and drifts to generic Claude Code
+    //     (the persona is a system prompt, not part of the resumed message history).
+    const restoredSystemPromptFile = ((): string | undefined => {
+      // V2 storage: prompt files live in the project dir
       // (~/.agent-orchestrator/projects/{projectId}/), not the legacy hashed base dir.
       const baseDir = getProjectDir(projectId);
-      const file = join(baseDir, `orchestrator-prompt-${sessionId}.md`);
+      const name =
+        selection.role === "orchestrator"
+          ? `orchestrator-prompt-${sessionId}.md`
+          : `worker-prompt-${sessionId}.md`;
+      const file = join(baseDir, name);
       return existsSync(file) ? file : undefined;
     })();
 
@@ -3782,7 +3789,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       permissions: selection.role === "orchestrator" ? "permissionless" : selection.permissions,
       model: selection.model,
       subagent: selection.subagent,
-      ...(orchestratorSystemPromptFile && { systemPromptFile: orchestratorSystemPromptFile }),
+      ...(restoredSystemPromptFile && { systemPromptFile: restoredSystemPromptFile }),
     };
 
     if (plugins.agent.getRestoreCommand) {

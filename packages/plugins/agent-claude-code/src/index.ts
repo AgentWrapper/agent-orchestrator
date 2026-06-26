@@ -1485,6 +1485,18 @@ function createClaudeCodeAgent(): Agent {
       if (config.prompt) {
         env["AO_SDK_INITIAL_PROMPT"] = config.prompt;
       }
+      // Persona/rules persistence for the SDK runtime. The tmux runtime delivers
+      // the system prompt via the launch command's --append-system-prompt; the
+      // SDK runtime has NO launch command, so it reads the persona file path from
+      // this env var and appends it to the Claude Code preset on EVERY request
+      // (sdk-host readAppendSystemPrompt). This is what makes the orchestrator/
+      // worker persona survive resume — turn-1 (AO_SDK_INITIAL_PROMPT) is not
+      // re-submitted on host restart, but the system prompt always is. We pass the
+      // FILE path (not the content) to avoid env bloat: the file is already on
+      // disk (worker-prompt-*.md / orchestrator-prompt-*.md) and outlives the spawn.
+      if (config.systemPromptFile) {
+        env["AO_SDK_SYSTEM_PROMPT_FILE"] = config.systemPromptFile;
+      }
       if (config.model) {
         env["AO_SDK_MODEL"] = config.model;
       }

@@ -109,6 +109,13 @@ export function create(): Runtime {
       for (const key of [
         "AO_SDK_RESUME",
         "AO_SDK_INITIAL_PROMPT",
+        // Persistent persona/rules — per-session ONLY. Without stripping, a worker
+        // spawned by an orchestrator would inherit the orchestrator's persona file
+        // path (or inline rules) from process.env and load the WRONG system prompt.
+        // session-manager re-sets these explicitly per session (worker/orchestrator
+        // prompt file) so the correct value still reaches each host.
+        "AO_SDK_APPEND_SYSTEM_PROMPT",
+        "AO_SDK_SYSTEM_PROMPT_FILE",
         "AO_SDK_MODEL",
         "AO_SDK_PERMISSION_MODE",
         "AO_GLM_API_KEY",

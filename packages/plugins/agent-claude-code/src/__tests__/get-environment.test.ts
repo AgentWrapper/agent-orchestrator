@@ -35,3 +35,32 @@ describe("claude-code getEnvironment — model routing", () => {
     expect(env["AO_SDK_MODEL"]).toBeUndefined();
   });
 });
+
+describe("claude-code getEnvironment — persistent system prompt", () => {
+  it("maps config.systemPromptFile to AO_SDK_SYSTEM_PROMPT_FILE", () => {
+    const agent = create();
+    const env = agent.getEnvironment(
+      makeLaunchConfig({ systemPromptFile: "/proj/worker-prompt-app-1.md" }),
+    );
+    expect(env["AO_SDK_SYSTEM_PROMPT_FILE"]).toBe("/proj/worker-prompt-app-1.md");
+  });
+
+  it("omits AO_SDK_SYSTEM_PROMPT_FILE when no systemPromptFile is set", () => {
+    const agent = create();
+    const env = agent.getEnvironment(makeLaunchConfig({}));
+    expect(env["AO_SDK_SYSTEM_PROMPT_FILE"]).toBeUndefined();
+  });
+
+  it("keeps persona (system prompt file) separate from the turn-1 task prompt", () => {
+    const agent = create();
+    const env = agent.getEnvironment(
+      makeLaunchConfig({
+        systemPromptFile: "/proj/worker-prompt-app-1.md",
+        prompt: "Work on issue #42",
+      }),
+    );
+    // Persona persists via the system prompt file; the task is the one-shot turn-1.
+    expect(env["AO_SDK_SYSTEM_PROMPT_FILE"]).toBe("/proj/worker-prompt-app-1.md");
+    expect(env["AO_SDK_INITIAL_PROMPT"]).toBe("Work on issue #42");
+  });
+});

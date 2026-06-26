@@ -59,6 +59,35 @@ const MIMO_ANTHROPIC_BASE_URL =
   process.env.AO_MIMO_ANTHROPIC_BASE_URL ?? "https://api.xiaomimimo.com/anthropic";
 
 /**
+ * Resolve the PERSISTENT system-prompt addendum (persona + rules) for this
+ * session. Returned content is appended to Claude Code's preset system prompt
+ * via `query({ options.systemPrompt })`, so it is re-sent on EVERY request — it
+ * therefore survives resume (host restart) by construction, unlike the turn-1
+ * `AO_SDK_INITIAL_PROMPT` which is only submitted once.
+ *
+ * Two sources, inline first:
+ *   - AO_SDK_APPEND_SYSTEM_PROMPT — literal content (used by tests / external callers)
+ *   - AO_SDK_SYSTEM_PROMPT_FILE  — path to a file with the content (how the engine
+ *     plumbs it: the orchestrator/worker prompt file already on disk, no env bloat)
+ * Returns null when neither yields non-empty content → query() omits systemPrompt
+ * entirely and behavior is exactly as before (default Claude Code preset only).
+ */
+function readAppendSystemPrompt(): string | null {
+  const inline = process.env.AO_SDK_APPEND_SYSTEM_PROMPT;
+  if (inline && inline.trim().length > 0) return inline;
+  const file = process.env.AO_SDK_SYSTEM_PROMPT_FILE;
+  if (file) {
+    try {
+      const content = readFileSync(file, "utf-8");
+      if (content.trim().length > 0) return content;
+    } catch {
+      /* missing/unreadable file → no append (fail-open, never break the spawn) */
+    }
+  }
+  return null;
+}
+
+/**
  * Drive the host using any OpenAI-compatible chat completions API.
  * Used for ZhipuAI GLM (`glm-*`) and MiMo (`mimo-*`) providers instead of
  * the Claude SDK query(). Emits the same normalized events as the Claude path
@@ -74,6 +103,7 @@ async function runOpenAiCompatMode(
   baseUrl: string,
   cwd: string,
   initialPrompt: string | null,
+  appendSystemPrompt: string | null = null,
 ): Promise<void> {
   // Announce session init — gives the Swift side a session_id and model name.
   const providerPrefix = model.split("-")[0] ?? "openai-compat";
@@ -94,7 +124,11 @@ async function runOpenAiCompatMode(
   if (initialPrompt) host.submitTurn(initialPrompt);
 
   let turn = 0;
-  const history: { role: "user" | "assistant"; content: string }[] = [];
+  const history: { role: "user" | "assistant" | "system"; content: string }[] = [];
+  // Persona/rules as the leading system message so this OpenAI-compatible path
+  // (GLM, MiMo legacy fallback) carries the same persistent instructions as the
+  // Claude SDK path. Re-sent with every /chat/completions request → survives resume.
+  if (appendSystemPrompt) history.push({ role: "system", content: appendSystemPrompt });
 
   for await (const userMsg of host.input) {
     turn++;
@@ -239,8 +273,9 @@ function runGlmMode(
   apiKey: string,
   cwd: string,
   initialPrompt: string | null,
+  appendSystemPrompt: string | null = null,
 ): Promise<void> {
-  return runOpenAiCompatMode(host, model, apiKey, GLM_BASE_URL, cwd, initialPrompt);
+  return runOpenAiCompatMode(host, model, apiKey, GLM_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
 }
 
 /** A live subscriber: a function that writes one already-encoded NDJSON line. */
@@ -618,6 +653,9 @@ async function runStandalone(): Promise<void> {
   const model = process.env.AO_SDK_MODEL || null;
   const cwd = process.env.AO_SDK_CWD || process.cwd();
   const initialPrompt = process.env.AO_SDK_INITIAL_PROMPT || null;
+  // Persistent persona/rules (orchestrator/worker) — appended to the Claude Code
+  // preset system prompt and re-sent on every request, so it survives resume.
+  const appendSystemPrompt = readAppendSystemPrompt();
   const permissionTimeoutMs = Number(process.env.AO_SDK_PERMISSION_TIMEOUT_MS || "0") || 0;
 
   // Host-instance epoch: read the prior value from session.json (if any) and
@@ -724,10 +762,10 @@ async function runStandalone(): Promise<void> {
 
   if (glmApiKey && isGlmModel) {
     // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
-    await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt);
+    await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
   } else if (mimoApiKey && isMimoModel && mimoForceOpenAiCompat) {
     // MiMo legacy fallback — OpenAI-compatible chat loop (no agent tools).
-    await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt);
+    await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
   } else {
     // MiMo (Xiaomi) FULL-AGENT path: point the Claude Agent SDK at MiMo's
     // Anthropic-compatible endpoint so MiMo gets tools + system prompt (our
@@ -767,6 +805,22 @@ async function runStandalone(): Promise<void> {
         // through permissionMode/allowDangerouslySkipPermissions below, so
         // bypassPermissions keeps priority and no MCP/permission surprises leak in.
         settingSources: ["user", "project", "local"],
+        // PERSISTENT persona/rules. Append to the Claude Code preset (do NOT
+        // replace it) so the agent keeps its base tooling/system prompt and only
+        // GAINS our orchestrator/worker rules. Sent on every request by the
+        // Anthropic API, so it survives resume — the whole point of this seam.
+        // Omitted entirely when no persona is configured → unchanged behavior.
+        // The MiMo full-agent path (Anthropic-compatible endpoint) shares this
+        // query() call, so MiMo gets the persona for free too.
+        ...(appendSystemPrompt
+          ? {
+              systemPrompt: {
+                type: "preset" as const,
+                preset: "claude_code" as const,
+                append: appendSystemPrompt,
+              },
+            }
+          : {}),
         permissionMode,
         allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
         includePartialMessages: true,
