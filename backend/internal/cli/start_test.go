@@ -31,11 +31,19 @@ func writeMarker(t *testing.T, cfg testConfig, appPath string) {
 	}
 }
 
-// makeBundle creates a directory that stats as a usable bundle on every OS.
+// makeBundle creates a path that stats as a usable bundle on the host OS:
+// a directory on macOS (.app), a regular file on Windows/Linux (exe/AppImage),
+// matching isUsableBundle's per-OS rule.
 func makeBundle(t *testing.T, name string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(p, 0o750); err != nil {
+	if runtime.GOOS == "darwin" {
+		if err := os.MkdirAll(p, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -49,10 +57,7 @@ func TestResolveApp_MarkerHit(t *testing.T) {
 	t.Cleanup(swapScanLocations(func() []string { return nil }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != bundle {
 		t.Fatalf("resolveApp = %q, want marker path %q", got, bundle)
 	}
@@ -66,10 +71,7 @@ func TestResolveApp_MarkerMissThenScanHit(t *testing.T) {
 	t.Cleanup(swapScanLocations(func() []string { return []string{scanBundle} }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != scanBundle {
 		t.Fatalf("resolveApp = %q, want scan path %q", got, scanBundle)
 	}
@@ -82,10 +84,7 @@ func TestResolveApp_ScanMissReturnsEmpty(t *testing.T) {
 	}))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != "" {
 		t.Fatalf("resolveApp = %q, want empty", got)
 	}
@@ -114,6 +113,101 @@ func TestAssetArchMapping(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("assetArch(%q) = %q, want %q", goarch, got, tc.want)
 		}
+	}
+}
+
+func TestAssetName_PerOS(t *testing.T) {
+	got, err := assetName()
+	if err != nil {
+		// On unsupported arch (e.g. arm64 win/linux) an error is expected; the
+		// per-OS expectation below only applies on amd64/arm64 darwin.
+		if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+			if runtime.GOARCH != "amd64" {
+				return // unsupported-arch error is correct
+			}
+		}
+		t.Fatalf("assetName() unexpected error: %v", err)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		if got != "agent-orchestrator-darwin-arm64.zip" && got != "agent-orchestrator-darwin-x64.zip" {
+			t.Fatalf("darwin assetName = %q", got)
+		}
+	case "windows":
+		if got != "agent-orchestrator-win32-x64.exe" {
+			t.Fatalf("windows assetName = %q, want agent-orchestrator-win32-x64.exe", got)
+		}
+	case "linux":
+		if got != "agent-orchestrator-linux-x64.AppImage" {
+			t.Fatalf("linux assetName = %q, want agent-orchestrator-linux-x64.AppImage", got)
+		}
+	}
+}
+
+func TestRequireAMD64(t *testing.T) {
+	// Host-independent: requireAMD64 keys off runtime.GOARCH, which is amd64 or
+	// arm64 on every CI/dev host. Either branch is a valid assertion.
+	got, err := requireAMD64()
+	if runtime.GOARCH == "amd64" {
+		if err != nil || got != "x64" {
+			t.Fatalf("requireAMD64() on amd64 = (%q, %v), want (x64, nil)", got, err)
+		}
+	} else if err == nil {
+		t.Fatalf("requireAMD64() on %s = nil error, want unsupported-arch error", runtime.GOARCH)
+	}
+}
+
+func TestWindowsInstalledExe(t *testing.T) {
+	got := windowsInstalledExe("C:\\Users\\me\\AppData\\Local")
+	want := filepath.Join("C:\\Users\\me\\AppData\\Local", "Programs", "Agent Orchestrator", "agent-orchestrator.exe")
+	if got != want {
+		t.Fatalf("windowsInstalledExe = %q, want %q", got, want)
+	}
+}
+
+func TestKnownAppLocations_HostOS(t *testing.T) {
+	// knownAppLocations must return at least one candidate on every supported OS
+	// (given the relevant env). Windows needs LOCALAPPDATA; set it so the test is
+	// deterministic regardless of host.
+	if runtime.GOOS == "windows" {
+		t.Setenv("LOCALAPPDATA", "C:\\Users\\me\\AppData\\Local")
+	}
+	switch runtime.GOOS {
+	case "darwin", "windows", "linux":
+		if len(knownAppLocations()) == 0 {
+			t.Fatalf("knownAppLocations() empty on %s", runtime.GOOS)
+		}
+	}
+}
+
+func TestIsUsableBundle_RegularFileVsDir(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "agent-orchestrator.AppImage")
+	if err := os.WriteFile(file, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	subdir := filepath.Join(dir, "Agent Orchestrator.app")
+	if err := os.MkdirAll(subdir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		if !isUsableBundle(subdir) {
+			t.Fatal("darwin: dir bundle should be usable")
+		}
+		if isUsableBundle(file) {
+			t.Fatal("darwin: regular file should not be a usable bundle")
+		}
+	case "windows", "linux":
+		if !isUsableBundle(file) {
+			t.Fatal("win/linux: regular file should be usable")
+		}
+		if isUsableBundle(subdir) {
+			t.Fatal("win/linux: directory should not be a usable bundle")
+		}
+	}
+	if isUsableBundle(filepath.Join(dir, "missing")) {
+		t.Fatal("missing path should not be usable")
 	}
 }
 
@@ -156,6 +250,52 @@ func TestOpenApp_ArgConstruction(t *testing.T) {
 	wantArgs := []string{"/Applications/Agent Orchestrator.app", "--args", "--installed-via=npm-bootstrap"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+func TestOpenApp_DetachedSpawnOnWinLinux(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("openApp spawns detached only on windows/linux")
+	}
+	var gotCfg processStartConfig
+	c := &commandContext{deps: Deps{
+		StartProcess: func(cfg processStartConfig) error {
+			gotCfg = cfg
+			return nil
+		},
+	}.withDefaults()}
+
+	appPath := "/some/agent-orchestrator.AppImage"
+	opened, err := c.openApp(context.Background(), appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opened {
+		t.Fatal("openApp reported not opened")
+	}
+	if gotCfg.Path != appPath {
+		t.Fatalf("spawn path = %q, want %q", gotCfg.Path, appPath)
+	}
+	wantArgs := []string{"--installed-via=npm-bootstrap"}
+	if !reflect.DeepEqual(gotCfg.Args, wantArgs) {
+		t.Fatalf("spawn args = %v, want %v", gotCfg.Args, wantArgs)
+	}
+}
+
+func TestOpenApp_SpawnFailureFallsBackToManual(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("detached-spawn fallback only on windows/linux")
+	}
+	c := &commandContext{deps: Deps{
+		StartProcess: func(processStartConfig) error { return os.ErrNotExist },
+	}.withDefaults()}
+
+	opened, err := c.openApp(context.Background(), "/some/app")
+	if err != nil {
+		t.Fatalf("openApp should swallow spawn errors, got %v", err)
+	}
+	if opened {
+		t.Fatal("openApp should report not-opened on spawn failure")
 	}
 }
 

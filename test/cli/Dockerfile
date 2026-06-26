@@ -4,10 +4,9 @@
 #   docker build -f test/cli/Dockerfile -t ao-cli-smoke .
 #   docker run --rm --init ao-cli-smoke
 #
-# Run with --init so the real daemon spawned during the `start` test (it detaches
-# via setsid) is reaped promptly after `stop` instead of lingering as a zombie.
-# The suite does NOT depend on it — the stale-daemon case uses a fabricated dead
-# PID — but --init keeps process accounting clean.
+# `ao start` is now the desktop-app launcher (it no longer runs a daemon); the
+# fresh-box check just proves the binary is sane and start reaches the fetch
+# path. --init keeps process accounting clean for any short-lived child.
 
 # ---- stage 1: build the binary (the "release" a user would download) ----
 FROM golang:1.25-bookworm AS build

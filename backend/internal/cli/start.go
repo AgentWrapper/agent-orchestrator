@@ -84,12 +84,10 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 	out := cmd.OutOrStdout()
 	res := startResult{}
 
-	appPath, err := c.resolveApp()
-	if err != nil {
-		return err
-	}
+	appPath := c.resolveApp()
 	res.Resolved = appPath != ""
 
+	var err error
 	if appPath == "" {
 		appPath, err = c.fetchApp(ctx)
 		if err != nil {
@@ -119,16 +117,16 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 // resolveApp returns the path to a usable desktop bundle, or "" when none is
 // found (spec §6.2). Resolution order is fixed: marker path -> stat -> known
 // location scan. It never compares versions (invariant 5).
-func (c *commandContext) resolveApp() (string, error) {
+func (c *commandContext) resolveApp() string {
 	if p := c.markerAppPath(); p != "" && isUsableBundle(p) {
-		return p, nil
+		return p
 	}
 	for _, p := range appScanLocations() {
 		if isUsableBundle(p) {
-			return p, nil
+			return p
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // appScanLocations is the known-location scan source. It is a package var so
@@ -169,19 +167,55 @@ func aoStateDir() (string, error) {
 func knownAppLocations() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		paths := []string{filepath.Join("/Applications", appBundleName)}
+		paths := []string{"/Applications/" + appBundleName}
 		if home, err := os.UserHomeDir(); err == nil {
 			paths = append(paths, filepath.Join(home, "Applications", appBundleName))
 		}
 		return paths
+	case "windows":
+		var paths []string
+		// Default electron-builder NSIS per-user install (perMachine:false).
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			paths = append(paths, windowsInstalledExe(local))
+		}
+		// Per-machine fallback (if a user chose an all-users install).
+		if pf := os.Getenv("ProgramFiles"); pf != "" {
+			paths = append(paths, filepath.Join(pf, "Agent Orchestrator", "agent-orchestrator.exe"))
+		}
+		return paths
+	case "linux":
+		paths := []string{linuxAppImagePath()}
+		if home, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(home, "Applications", "agent-orchestrator.AppImage"))
+		}
+		return paths
 	default:
-		// Windows/Linux scan locations land in T6/T7.
 		return nil
 	}
 }
 
+// windowsInstalledExe is the default per-user electron-builder NSIS install
+// target for the app exe under %LOCALAPPDATA%.
+func windowsInstalledExe(localAppData string) string {
+	return filepath.Join(localAppData, "Programs", "Agent Orchestrator", "agent-orchestrator.exe")
+}
+
+// linuxAppImagePath is the stable location `ao start` downloads the AppImage to
+// and scans for. Keeping it out of the cleared staging dir lets re-runs resolve
+// the existing download instead of re-fetching (spec §6.2/§6.3).
+func linuxAppImagePath() string {
+	dir, err := aoStateDir()
+	if err != nil {
+		// Fall back to a bare filename so a misconfigured state dir surfaces as a
+		// clear "not found" rather than a panic; fetch will re-error on download.
+		return "agent-orchestrator.AppImage"
+	}
+	return filepath.Join(dir, "agent-orchestrator.AppImage")
+}
+
 // isUsableBundle reports whether p stats as a usable app bundle. On macOS a
-// bundle is a directory; the filesystem is the source of truth (invariant 2).
+// bundle is a directory; on Windows/Linux it is a regular file (the installed
+// exe / the AppImage). The filesystem is the source of truth (invariant 2).
 func isUsableBundle(p string) bool {
 	if p == "" {
 		return false
@@ -193,18 +227,31 @@ func isUsableBundle(p string) bool {
 	if runtime.GOOS == "darwin" {
 		return info.IsDir()
 	}
-	return true
+	// Windows exe / Linux AppImage: must be a regular file, not a directory.
+	return info.Mode().IsRegular()
 }
 
-// fetchApp downloads the latest desktop release for this platform, unpacks it
-// into a staging dir under ~/.ao/staging, and returns the bundle path (spec
-// §6.3). Windows/Linux are tracked as T6/T7.
+// fetchApp downloads the latest desktop release for this platform and returns
+// the resolved bundle path (spec §6.3). macOS unpacks a signed zip into staging,
+// Windows runs the NSIS installer silently, and Linux drops a chmod'd AppImage at
+// a stable path.
 func (c *commandContext) fetchApp(ctx context.Context) (string, error) {
-	if runtime.GOOS != "darwin" {
-		return "", fmt.Errorf("ao start: fetch not yet implemented for %s (tracked as spec T6/T7)", runtime.GOOS)
+	switch runtime.GOOS {
+	case "darwin":
+		return c.fetchAppDarwin(ctx)
+	case "windows":
+		return c.fetchAppWindows(ctx)
+	case "linux":
+		return c.fetchAppLinux(ctx)
+	default:
+		return "", fmt.Errorf("ao start: fetch not supported on %s", runtime.GOOS)
 	}
+}
 
-	asset, err := darwinAssetName()
+// fetchAppDarwin downloads the latest macOS release zip and unpacks it into a
+// staging dir under ~/.ao/staging, returning the .app bundle path (spec §6.3).
+func (c *commandContext) fetchAppDarwin(ctx context.Context) (string, error) {
+	asset, err := assetName()
 	if err != nil {
 		return "", err
 	}
@@ -241,9 +288,91 @@ func (c *commandContext) fetchApp(ctx context.Context) (string, error) {
 	return appPath, nil
 }
 
+// fetchAppWindows downloads the NSIS installer into staging, runs it silently,
+// and returns the default per-user install path (spec §6.3).
+//
+// ponytail: the silent-install flow (NSIS `/S`, default per-user dir) is
+// untested on real Windows hardware (this build host is macOS). If the installed
+// exe isn't where electron-builder's defaults put it, this surfaces as a clear
+// "not found" error rather than silently launching the wrong thing.
+func (c *commandContext) fetchAppWindows(ctx context.Context) (string, error) {
+	asset, err := assetName()
+	if err != nil {
+		return "", err
+	}
+	url := downloadURL(asset)
+
+	stateDir, err := aoStateDir()
+	if err != nil {
+		return "", err
+	}
+	staging := filepath.Join(stateDir, "staging")
+	if err := os.RemoveAll(staging); err != nil {
+		return "", fmt.Errorf("clear staging dir: %w", err)
+	}
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		return "", fmt.Errorf("create staging dir: %w", err)
+	}
+
+	installerPath := filepath.Join(staging, asset)
+	if err := c.download(ctx, url, installerPath); err != nil {
+		return "", fmt.Errorf("download %s: %w", url, err)
+	}
+
+	// NSIS silent install (`/S`) to the default per-user location. The installer
+	// is configured oneClick:false/perMachine:false, so `/S` installs without UI
+	// under %LOCALAPPDATA% for the current user.
+	if out, err := c.deps.CommandOutput(ctx, installerPath, "/S"); err != nil {
+		return "", fmt.Errorf("silent install: %w: %s", err, out)
+	}
+
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return "", fmt.Errorf("ao start: LOCALAPPDATA not set; cannot locate installed app")
+	}
+	appPath := windowsInstalledExe(local)
+	if !isUsableBundle(appPath) {
+		return "", fmt.Errorf("ao start: installed app not found at %s", appPath)
+	}
+	return appPath, nil
+}
+
+// fetchAppLinux downloads the self-contained AppImage to a stable path under
+// ~/.ao, makes it executable, and returns it. There is no install step (spec
+// §6.3). Re-runs resolve the existing file via knownAppLocations and skip fetch.
+func (c *commandContext) fetchAppLinux(ctx context.Context) (string, error) {
+	asset, err := assetName()
+	if err != nil {
+		return "", err
+	}
+	url := downloadURL(asset)
+
+	appPath := linuxAppImagePath()
+	if err := os.MkdirAll(filepath.Dir(appPath), 0o750); err != nil {
+		return "", fmt.Errorf("create state dir: %w", err)
+	}
+	// Download to a temp name in the same dir, then rename for atomicity so a
+	// killed download never leaves a half-written executable at the stable path.
+	tmpPath := appPath + ".part"
+	if err := c.download(ctx, url, tmpPath); err != nil {
+		return "", fmt.Errorf("download %s: %w", url, err)
+	}
+	// An AppImage is a self-contained executable; it must be 0755 to launch.
+	if err := os.Chmod(tmpPath, 0o755); err != nil { //nolint:gosec // G302: AppImage must be executable
+		return "", fmt.Errorf("chmod AppImage: %w", err)
+	}
+	if err := os.Rename(tmpPath, appPath); err != nil {
+		return "", fmt.Errorf("install AppImage: %w", err)
+	}
+	if !isUsableBundle(appPath) {
+		return "", fmt.Errorf("ao start: AppImage not found at %s", appPath)
+	}
+	return appPath, nil
+}
+
 // download streams url to dst using the injected HTTP client.
 func (c *commandContext) download(ctx context.Context, url, dst string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -273,14 +402,42 @@ func (c *commandContext) download(ctx context.Context, url, dst string) error {
 	return f.Close()
 }
 
-// darwinAssetName maps Go's runtime.GOARCH to the release asset name. The
-// release pipeline publishes "x64" for amd64 (spec §6.3, §8).
-func darwinAssetName() (string, error) {
-	arch, err := assetArch(runtime.GOARCH)
-	if err != nil {
-		return "", err
+// assetName maps the current GOOS/GOARCH to the stable release asset name the
+// release pipeline publishes (spec §6.3, §8). The pipeline uses "x64" for amd64.
+//   - darwin: agent-orchestrator-darwin-{arm64,x64}.zip (signed bundle zip)
+//   - windows: agent-orchestrator-win32-x64.exe (NSIS installer, amd64 only)
+//   - linux: agent-orchestrator-linux-x64.AppImage (self-contained, amd64 only)
+func assetName() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		arch, err := assetArch(runtime.GOARCH)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("agent-orchestrator-darwin-%s.zip", arch), nil
+	case "windows":
+		if _, err := requireAMD64(); err != nil {
+			return "", err
+		}
+		return "agent-orchestrator-win32-x64.exe", nil
+	case "linux":
+		if _, err := requireAMD64(); err != nil {
+			return "", err
+		}
+		return "agent-orchestrator-linux-x64.AppImage", nil
+	default:
+		return "", fmt.Errorf("ao start: no release asset for %s", runtime.GOOS)
 	}
-	return fmt.Sprintf("agent-orchestrator-darwin-%s.zip", arch), nil
+}
+
+// requireAMD64 enforces the amd64/x64-only support window for Windows and Linux.
+// arm64 Windows/Linux are not published yet; surface a clear unsupported error
+// mirroring assetArch rather than fetching a 404.
+func requireAMD64() (string, error) {
+	if runtime.GOARCH != "amd64" {
+		return "", fmt.Errorf("ao start: unsupported architecture %q on %s (only amd64 is published)", runtime.GOARCH, runtime.GOOS)
+	}
+	return "x64", nil
 }
 
 // assetArch maps a Go GOARCH to the release-asset arch token.
@@ -302,18 +459,37 @@ func downloadURL(asset string) string {
 
 // openApp launches the resolved bundle detached and reports whether it launched
 // (spec §6.5). It passes --installed-via=npm-bootstrap so the app can record the
-// install source in its marker. It never waits on the app.
+// install source in its marker. It never waits on the app. A launch failure
+// returns (false, nil) so the caller falls back to manual-open instructions.
 func (c *commandContext) openApp(ctx context.Context, appPath string) (bool, error) {
-	if runtime.GOOS != "darwin" {
-		// Non-darwin open lands in T6/T7; treat as "not opened" so the caller
-		// prints manual-open instructions.
+	switch runtime.GOOS {
+	case "darwin":
+		// `open` returns immediately; --args forwards the rest to the app.
+		if out, err := c.deps.CommandOutput(ctx, "open", appPath, "--args", "--installed-via=npm-bootstrap"); err != nil {
+			return false, fmt.Errorf("open %s: %w: %s", appPath, err, out)
+		}
+		return true, nil
+	case "windows", "linux":
+		// No `open`-style launcher on these platforms; exec the bundle directly,
+		// detached, so `ao start` does not block on the app. StartProcess uses
+		// cmd.Start() + a detached SysProcAttr (see process.go).
+		//
+		// ponytail: on some Linux hosts the AppImage may need --no-sandbox; not
+		// added here without evidence the bundled Electron requires it. If sandbox
+		// launch failures appear, append "--no-sandbox" as the follow-up.
+		err := c.deps.StartProcess(processStartConfig{
+			Path: appPath,
+			Args: []string{"--installed-via=npm-bootstrap"},
+		})
+		if err != nil {
+			// Treat a launch failure as "not opened" so the caller prints the
+			// manual-open path rather than aborting the whole command.
+			return false, nil //nolint:nilerr // launch failure is reported via the bool, not as an error
+		}
+		return true, nil
+	default:
 		return false, nil
 	}
-	// `open` returns immediately; --args forwards the rest to the app.
-	if out, err := c.deps.CommandOutput(ctx, "open", appPath, "--args", "--installed-via=npm-bootstrap"); err != nil {
-		return false, fmt.Errorf("open %s: %w: %s", appPath, err, out)
-	}
-	return true, nil
 }
 
 // printDeprecationNotice explains the new role of the npm `ao` binary. Keep it

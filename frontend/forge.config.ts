@@ -1,6 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
+import MakerAppImage from "./makers/maker-appimage";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -69,6 +70,18 @@ const config: ForgeConfig = {
 			["win32"],
 		),
 		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
+		// Linux fetch-and-run artifact for `ao start`: a single self-contained
+		// AppImage the Go bootstrapper downloads and runs directly (see
+		// makers/maker-appimage.ts). The deb/rpm makers below stay for users who
+		// prefer a system package.
+		new MakerAppImage(
+			{
+				appId: "dev.agent-orchestrator.desktop",
+				productName: "Agent Orchestrator",
+				icon: "assets/icon.png",
+			},
+			["linux"],
+		),
 		{
 			name: "@electron-forge/maker-deb",
 			config: {

@@ -125,7 +125,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Linux: deb/rpm build on this runner (issue #2191), but the stable asset
-      # name for the fetch-and-run bootstrapper is still undecided (deb/rpm vs
-      # AppImage, spec §11.3). No alias is uploaded until that decision lands; the
-      # versioned deb/rpm are still published by the forge publisher above.
+      # Linux: deb/rpm AND an AppImage build on this runner (issue #2191). The
+      # AppImage is the fetch-and-run artifact for `ao start` (spec §11.3); we
+      # copy it to the stable, space-free name the bootstrapper fetches and
+      # upload to the v<version> release. The versioned deb/rpm are still
+      # published by the forge publisher above for users who want a system package.
+      - name: Upload stable asset aliases (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          # Forge publishes to v<version> (see the macOS step), not the git tag.
+          tag="v$(node -p "require('./package.json').version")"
+          alias_name="agent-orchestrator-linux-x64.AppImage"
+          # AppImage (electron-builder) output: out/make/<productName>-<version>.AppImage
+          src="$(ls out/make/*.AppImage | head -n1)"
+          if [ -z "$src" ]; then echo "no AppImage found under out/make" >&2; exit 1; fi
+          cp "$src" "$alias_name"
+          gh release upload "$tag" "$alias_name" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
