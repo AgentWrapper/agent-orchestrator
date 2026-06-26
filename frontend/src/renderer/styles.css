@@ -1060,15 +1060,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	gap: 4px;
 }
 
-.reviewer-card__session {
+.reviewer-card__label {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 10.5px;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-	color: var(--fg-passive);
+	font-size: 12px;
+	font-weight: 650;
+	color: var(--fg-muted);
 }
 
 .reviewer-status {

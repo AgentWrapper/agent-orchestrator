@@ -252,7 +252,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows the session reviewer identity, worker session name, and aggregate verdict", async () => {
+	it("shows the reviewer identity and aggregate verdict", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
@@ -260,8 +260,8 @@ describe("SessionInspector reviews tab", () => {
 
 		expect(await screen.findByText("codex")).toBeInTheDocument();
 		expect(screen.getByText("reviewer")).toBeInTheDocument();
-		expect(screen.getByText("sess-1")).toBeInTheDocument();
-		expect(screen.getByText("review session")).toBeInTheDocument();
+		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
+		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 

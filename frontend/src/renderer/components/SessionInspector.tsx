@@ -504,13 +504,7 @@ function ReviewPanel({
 			</div>
 			<div className="reviewer-card">
 				<div className="reviewer-card__top">
-					<div className="reviewer-card__identity">
-						<div className="reviewer-card__name">
-							<GitPullRequest aria-hidden="true" />
-							<span>{session.id}</span>
-						</div>
-						<div className="reviewer-card__session">review session</div>
-					</div>
+					<span className="reviewer-card__label">Pull requests</span>
 					<span className={cn("reviewer-status", `reviewer-status--${aggregateVerdict.tone}`)}>
 						{aggregateVerdict.label}
 					</span>
