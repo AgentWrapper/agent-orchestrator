@@ -188,7 +188,8 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 			kind: "review_changes_requested",
 			title: "Address requested changes",
 			summary: links.length === 0 ? "Requested changes still active" : undefined,
-			links: links.length > 0 ? links : [{ label: "comments", href: reviewCommentsUrl(pr), title: "Open review comments" }],
+			links:
+				links.length > 0 ? links : [{ label: "comments", href: reviewCommentsUrl(pr), title: "Open review comments" }],
 			overflowLabel: overflowLabel(pr.review.unresolvedBy.length, 3, "reviewer"),
 			tone: "warning",
 		});
@@ -335,7 +336,8 @@ function mergeAttention(
 	fallback: string,
 	tone: PRDisplayTone,
 ): PRAttentionItem {
-	const href = kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
+	const href =
+		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
 		href: file.url || href,
