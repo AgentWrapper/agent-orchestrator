@@ -570,9 +570,7 @@ function ReviewStateRow({ reviewState }: { reviewState: PRReviewState }) {
 					<span className="reviewer-row__number">#{reviewState.prNumber}</span>
 				</div>
 			</div>
-			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>
-				{verdict.label}
-			</span>
+			<span className={cn("reviewer-row__verdict", `reviewer-row__verdict--${verdict.tone}`)}>{verdict.label}</span>
 		</div>
 	);
 }
