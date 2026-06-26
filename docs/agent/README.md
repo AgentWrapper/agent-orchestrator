@@ -118,6 +118,7 @@ flowchart LR
 ```
 
 **Input (`LaunchConfig`):**
+
 - `SessionID` — AO session identifier
 - `ProjectID` — AO project identifier
 - `Prompt` — User prompt to send
@@ -159,6 +160,7 @@ flowchart TD
 ```
 
 **Requirements:**
+
 - Preserve all user hooks
 - Deduplicate AO hook entries
 - Make AO hooks machine-portable (use `ao hooks ...` command)
@@ -169,11 +171,13 @@ flowchart TD
 Builds a command to resume an existing session:
 
 **Input (`RestoreConfig`):**
+
 - `Session` — Complete session record with metadata
 - `Permissions` — Permission mode to apply
 - `SystemPrompt` — System prompt to re-apply
 
 **Output:**
+
 - `cmd` — Restore command argv
 - `ok` — True if restore is supported
 - `err` — Error if restore fails
@@ -242,13 +246,13 @@ sequenceDiagram
 
 AO supports hooks for these agent events:
 
-| Event | Purpose | Activity State |
-|-------|---------|----------------|
-| `SessionStart` | Session initialized | - |
-| `UserPromptSubmit` | User submitted prompt | `active` |
-| `AssistantMessage` | Assistant response | - |
-| `ToolUse` | Agent used a tool | `active` |
-| `Stop` | Session stopped | `idle` or `exited` |
+| Event              | Purpose               | Activity State     |
+| ------------------ | --------------------- | ------------------ |
+| `SessionStart`     | Session initialized   | -                  |
+| `UserPromptSubmit` | User submitted prompt | `active`           |
+| `AssistantMessage` | Assistant response    | -                  |
+| `ToolUse`          | Agent used a tool     | `active`           |
+| `Stop`             | Session stopped       | `idle` or `exited` |
 
 ### Hook Contract
 
@@ -288,6 +292,7 @@ flowchart TD
 ```
 
 **Critical rules:**
+
 1. **Always exit 0** — Hook failure must never break the user's agent
 2. **Log failures** — Append to `hooks.log` under `AO_DATA_DIR`
 3. **Best-effort delivery** — The daemon may be temporarily unavailable
@@ -302,9 +307,9 @@ Different agents use different hook mechanisms:
 ```json
 // .claude/hooks.json
 {
-  "SessionStart": ["ao hooks claude-code SessionStart"],
-  "UserPromptSubmit": ["ao hooks claude-code UserPromptSubmit"],
-  "Stop": ["ao hooks claude-code Stop"]
+	"SessionStart": ["ao hooks claude-code SessionStart"],
+	"UserPromptSubmit": ["ao hooks claude-code UserPromptSubmit"],
+	"Stop": ["ao hooks claude-code Stop"]
 }
 ```
 
@@ -313,16 +318,16 @@ Different agents use different hook mechanisms:
 ```json
 // .factory/hooks.json
 {
-  "hooks": [
-    {
-      "event": "agent:beforeThinking",
-      "command": "ao hooks droid beforeThinking"
-    },
-    {
-      "event": "agent:afterThinking",
-      "command": "ao hooks droid afterThinking"
-    }
-  ]
+	"hooks": [
+		{
+			"event": "agent:beforeThinking",
+			"command": "ao hooks droid beforeThinking"
+		},
+		{
+			"event": "agent:afterThinking",
+			"command": "ao hooks droid afterThinking"
+		}
+	]
 }
 ```
 
@@ -797,16 +802,16 @@ backend/internal/adapters/agent/
 
 ### Adapter Capabilities
 
-| Agent | Permissions | System Prompt | Restore | Hooks |
-|-------|-------------|---------------|---------|-------|
-| Claude Code | ✓ | ✓ | ✓ | ✓ |
-| Codex | ✓ | ✓ | ✓ | ✓ (session flags) |
-| Cursor | ✓ | ✓ | ✗ | ✗ |
-| OpenCode | ✓ | ✓ | ✗ | ✗ |
-| Aider | ✓ | ✓ | ✓ | ✓ |
-| Amp | ✓ | ✓ | ✓ | ✓ |
-| Grok | ✓ | ✓ | ✓ | ✓ (Claude compat) |
-| ... | ... | ... | ... | ... |
+| Agent       | Permissions | System Prompt | Restore | Hooks             |
+| ----------- | ----------- | ------------- | ------- | ----------------- |
+| Claude Code | ✓           | ✓             | ✓       | ✓                 |
+| Codex       | ✓           | ✓             | ✓       | ✓ (session flags) |
+| Cursor      | ✓           | ✓             | ✗       | ✗                 |
+| OpenCode    | ✓           | ✓             | ✗       | ✗                 |
+| Aider       | ✓           | ✓             | ✓       | ✓                 |
+| Amp         | ✓           | ✓             | ✓       | ✓                 |
+| Grok        | ✓           | ✓             | ✓       | ✓ (Claude compat) |
+| ...         | ...         | ...           | ...     | ...               |
 
 ---
 

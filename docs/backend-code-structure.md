@@ -134,12 +134,14 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Shared IDs: `ProjectID`, `SessionID`, `IssueID`
 - Enums and status vocabulary
 - Durable fact records used across packages
 - PR, tracker, project, session vocabulary
 
 **Does NOT belong here:**
+
 - HTTP request/response DTOs
 - CLI output shapes
 - OpenAPI wrapper types
@@ -169,11 +171,13 @@ graph LR
 ```
 
 **Belongs here:**
+
 - Interfaces consumed by core packages, implemented by adapters
 - Capability structs: `RuntimeConfig`, `WorkspaceConfig`, `SpawnConfig`
 - Vocabulary at the boundary between core and adapters
 
 **Does NOT belong here:**
+
 - Resource read models (belongs in `service/*`)
 - HTTP request/response DTOs (belongs in `httpd`)
 - sqlc rows (belongs in `storage/sqlite`)
@@ -181,15 +185,15 @@ graph LR
 
 **Key Port Interfaces:**
 
-| Port | Purpose | Implementations |
-|------|---------|-----------------|
-| `Runtime` | Process isolation | `tmux`, `conpty` |
-| `Workspace` | Git worktree management | `gitworktree` |
-| `Agent` | Agent launching | 23+ agent adapters |
-| `SCM` | PR/CI observation | `github` |
-| `Tracker` | Issue tracking | `github` (adapter only) |
-| `AgentMessenger` | Agent communication | Agent hooks |
-| `PRWriter` | PR persistence | `pr.Manager` |
+| Port             | Purpose                 | Implementations         |
+| ---------------- | ----------------------- | ----------------------- |
+| `Runtime`        | Process isolation       | `tmux`, `conpty`        |
+| `Workspace`      | Git worktree management | `gitworktree`           |
+| `Agent`          | Agent launching         | 23+ agent adapters      |
+| `SCM`            | PR/CI observation       | `github`                |
+| `Tracker`        | Issue tracking          | `github` (adapter only) |
+| `AgentMessenger` | Agent communication     | Agent hooks             |
+| `PRWriter`       | PR persistence          | `pr.Manager`            |
 
 ---
 
@@ -243,6 +247,7 @@ graph LR
 ```
 
 **Belongs here:**
+
 - Resource use cases called by HTTP controllers and CLI
 - Resource read models and command/result types
 - Display-model assembly (e.g., session status derivation)
@@ -250,6 +255,7 @@ graph LR
 - Small store interfaces consumed by the service
 
 **Does NOT belong here:**
+
 - Low-level runtime/workspace/agent process control
 - Raw sqlc generated rows as public results
 - HTTP routing, path parsing, status-code decisions
@@ -284,12 +290,14 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Multi-step session mutations with rollback
 - Resource sequencing (workspace → runtime → agent)
 - Resource teardown safety and cleanup
 - Internal errors: not found, terminated, not restorable
 
 **Does NOT belong here:**
+
 - HTTP request decoding
 - CLI formatting
 - Controller-facing list/get read-model assembly
@@ -340,11 +348,13 @@ graph LR
 ```
 
 **Belongs here:**
+
 - Updates to lifecycle-owned session facts
 - Guardrails around runtime/activity observations
 - Lifecycle-triggered agent nudges for actionable PR facts
 
 **Does NOT belong here:**
+
 - Display status persistence (use service layer instead)
 - HTTP/CLI DTOs
 - Direct adapter implementation details
@@ -385,15 +395,18 @@ graph TD
 ```
 
 **Current observation packages:**
+
 - `internal/observe/scm` — SCM (GitHub) observer loop
 - `internal/observe/reaper` — Runtime liveness observation loop
 
 **Belongs here:**
+
 - Polling loops and observation logic
 - External state transformation into domain facts
 - Observation error handling and retry logic
 
 **Does NOT belong here:**
+
 - Product workflow decisions (belongs in service layer)
 - Direct storage writes (use lifecycle instead)
 
@@ -420,6 +433,7 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Connection setup and PRAGMAs
 - Goose migrations
 - sqlc queries and generated code
@@ -427,6 +441,7 @@ graph TD
 - Transactions and CDC-triggered persistence behavior
 
 **Does NOT belong here:**
+
 - HTTP response types
 - CLI output formatting
 - Product display status rules
@@ -454,11 +469,13 @@ graph LR
 ```
 
 **Belongs here:**
+
 - Event type definitions for the CDC stream
 - Poller and broadcaster logic
 - Subscriber fan-out behavior
 
 **Does NOT belong here:**
+
 - Terminal byte streams (belongs in `internal/terminal`)
 - Product workflow decisions (belongs in service layer)
 - Database schema ownership (belongs in `storage/sqlite`)
@@ -485,11 +502,13 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Per-client attachment lifecycle
 - Input/output framing independent of HTTP
 - PTY-backed attach handling and terminal protocol tests
 
 **Does NOT belong here:**
+
 - HTTP-specific concerns (belongs in `httpd`)
 - HTTP routing or WebSocket upgrade logic
 
@@ -520,6 +539,7 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Routing and middleware
 - HTTP request decoding and response encoding
 - Path/query parameter handling
@@ -529,6 +549,7 @@ graph TD
 - WebSocket upgrade handling for terminal mux
 
 **Does NOT belong here:**
+
 - Direct adapter or SQLite store access
 - Application read models shared with CLI (belongs in `service/*`)
 
@@ -556,12 +577,14 @@ graph LR
 ```
 
 **Belongs here:**
+
 - Daemon discovery
 - HTTP API calls
 - Command output formatting
 - Process control: start/stop/status/doctor
 
 **Does NOT belong here:**
+
 - Duplicate daemon business logic (put in daemon service/API)
 - Direct storage, runtime, or adapter access
 
@@ -592,12 +615,14 @@ graph TD
 ```
 
 **Adapter principles:**
+
 - Adapters are leaves in the import graph
 - Adapters translate external behavior into AO ports/domain concepts
 - Adapters should not own product workflows
 - All adapter-written files must be gitignored
 
 **Good dependencies:**
+
 ```
 session_manager → ports.Runtime
 adapters/runtime/tmux → ports + domain
@@ -606,6 +631,7 @@ daemon → adapters + services + storage
 ```
 
 **Avoid:**
+
 ```
 domain → adapters
 service/session → adapters/runtime/tmux
@@ -635,14 +661,16 @@ graph TD
 ```
 
 **Belongs here:**
+
 - Production dependency construction
 - Adapter registration
 - Startup/shutdown sequencing
 - Cross-component wiring
 
 **Does NOT belong here:**
+
 - Business logic (belongs in service, lifecycle, or manager packages)
-- Adapter implementation details (belongs in adapters/*)
+- Adapter implementation details (belongs in adapters/\*)
 
 ---
 
@@ -669,6 +697,7 @@ graph LR
 ```
 
 **Key environment variables:**
+
 - `AO_PORT` — HTTP bind port (default: 3001)
 - `AO_REQUEST_TIMEOUT` — Per-request timeout (default: 60s)
 - `AO_SHUTDOWN_TIMEOUT` — Graceful shutdown cap (default: 10s)
@@ -769,6 +798,7 @@ graph TD
 ```
 
 **Key patterns:**
+
 - All arrows point downward (no cycles)
 - Adapters and domain are leaves
 - CLI and HTTPD don't touch storage directly
@@ -790,6 +820,7 @@ flowchart LR
 ```
 
 **Steps:**
+
 1. Add controller in `httpd/controllers/`
 2. Call a `service/*` package
 3. Update OpenAPI generation
@@ -808,6 +839,7 @@ flowchart TD
 ```
 
 **Steps:**
+
 1. Add shared IDs/vocabulary to `domain`
 2. Create use cases in `service/<resource>`
 3. Add storage in `storage/sqlite`
@@ -828,6 +860,7 @@ flowchart LR
 ```
 
 **Steps:**
+
 1. Implement a `ports` interface under `adapters/<capability>/<impl>`
 2. For agents: implement hooks with gitignored files
 3. Wire in `daemon`
@@ -929,12 +962,14 @@ func (s *Service) Create(ctx context.Context, cfg Config) (MyResource, error) {
 6. **Daemon** wires it all — composition root
 
 **Always ask:**
+
 - Does this belong in domain (shared concept)?
 - Does this belong in ports (shared capability)?
 - Does this belong in service (use case)?
 - Does this belong in adapters (external system)?
 
 **Never:**
+
 - Put HTTP types in domain
 - Put display status in storage
 - Put business logic in CLI
