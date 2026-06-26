@@ -29,6 +29,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // Tones are theme vars so the pill tracks the light/dark status palettes.
 const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
+	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },

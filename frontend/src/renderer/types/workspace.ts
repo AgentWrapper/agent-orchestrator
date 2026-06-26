@@ -135,6 +135,7 @@ export type WorkspaceSession = {
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
 	| "working"
+	| "idle"
 	| "needs_you"
 	| "mergeable"
 	| "ci_failed"
@@ -159,6 +160,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "merged":
 		case "terminated":
 			return "done";
+		case "idle":
+			return "idle";
 		case "unknown":
 			return "unknown";
 		default:
@@ -228,6 +231,7 @@ export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 
 export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	working: "working",
+	idle: "idle",
 	needs_you: "needs you",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
@@ -257,7 +261,7 @@ export const attentionZoneLabel: Record<AttentionZone, string> = {
 	merge: "Ready to merge",
 	action: "Needs you",
 	pending: "Pending",
-	working: "Working",
+	working: "Pending",
 	done: "Done",
 };
 
