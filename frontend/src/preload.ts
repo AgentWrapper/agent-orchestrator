@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
+import type { MigrationState } from "./main/app-state";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -67,6 +68,11 @@ const api = {
 				ipcRenderer.off("notifications:click", wrapped);
 			};
 		},
+	},
+	appState: {
+		getMigration: () => ipcRenderer.invoke("appState:getMigration") as Promise<MigrationState>,
+		setMigration: (migration: MigrationState) =>
+			ipcRenderer.invoke("appState:setMigration", migration) as Promise<void>,
 	},
 };
 

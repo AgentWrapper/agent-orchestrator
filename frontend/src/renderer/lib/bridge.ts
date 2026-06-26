@@ -92,4 +92,8 @@ export const aoBridge: AoBridge =
 			show: async () => undefined,
 			onClick: () => () => undefined,
 		},
+		appState: {
+			getMigration: async () => ({ status: "pending" }),
+			setMigration: async () => undefined,
+		},
 	} satisfies AoBridge);

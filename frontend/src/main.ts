@@ -35,7 +35,7 @@ import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
-import { writeAppStateMarker } from "./main/app-state";
+import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -794,6 +794,17 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	}
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+ipcMain.handle("appState:getMigration", async (): Promise<MigrationState> => {
+	const runFile = runFilePath();
+	if (!runFile) return { status: "pending" };
+	return readMigrationState(path.dirname(runFile));
+});
+ipcMain.handle("appState:setMigration", async (_event, migration: MigrationState) => {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await updateMigration({ stateDir: path.dirname(runFile), migration, now: () => new Date() });
+});
 
 ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
 	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;

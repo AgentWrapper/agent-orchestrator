@@ -137,5 +137,9 @@ if (typeof window !== "undefined") {
 			show: async () => undefined,
 			onClick: () => () => undefined,
 		},
+		appState: {
+			getMigration: async () => ({ status: "pending" }),
+			setMigration: async () => undefined,
+		},
 	};
 } // end if (typeof window !== "undefined")
