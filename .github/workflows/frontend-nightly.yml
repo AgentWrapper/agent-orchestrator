@@ -70,8 +70,10 @@ jobs:
       - run: npm ci
       - name: Stamp nightly version
         shell: bash
+        env:
+          NIGHTLY_VERSION: ${{ needs.guard.outputs.version }}
         run: |
-          node -e "const v='${{ needs.guard.outputs.version }}'.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
+          node -e "const v=process.env.NIGHTLY_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
       - name: Publish
         run: npm run publish
         env:
