@@ -137,6 +137,16 @@ waits for ready) and runs a first-boot legacy import (`maybeFirstBootImport`,
 4. **Marker = `~/.ao/app-state.json`**, written only by the app, every launch.
 5. **Scope = Track A only** (de-scope auto-update copy; Track B is separate).
 6. **All three platforms; Windows installer is NSIS.**
+7. **Two release targets, never conflated:**
+   - **Production:** GitHub `AgentWrapper/agent-orchestrator`; npm = the real
+     package name (legacy `ao`). Cutting a prod release is a deliberate, gated
+     step, never part of the dev/test loop.
+   - **Test/dev:** GitHub **`harshitsinghbhandari/agent-orchestrator`** (the fork);
+     npm scope **`@theharshitsingh/ao`**. All `ao start` download/open testing runs
+     against fork releases and the test npm scope.
+   The download repo and npm scope are **build-time overridable** (§6.3, §8) so a
+   test binary fetches from the fork and a prod binary from AgentWrapper, with no
+   code edit between them.
 
 ---
 
@@ -248,8 +258,13 @@ resolution already in `backend/internal/config`.
 
 ### 6.3 `fetchApp()` + `openApp()` — platform asymmetry (real design point)
 
-Constant URL: `https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/<stable-asset>`
-(302 → asset; requires non-draft release + stable names, §8).
+Constant URL: `https://github.com/<owner>/<repo>/releases/latest/download/<stable-asset>`
+(302 → asset; requires non-draft release + stable names, §8). `<owner>/<repo>` is
+**build-time overridable**, not hardcoded: default `AgentWrapper/agent-orchestrator`
+(prod), overridden to `harshitsinghbhandari/agent-orchestrator` for test builds via
+a `-ldflags -X …cli.releaseRepo=<owner>/<repo>` injection (mirrors how the daemon
+version will be stamped). So the dev loop fetches from the fork; prod fetches from
+AgentWrapper, with no source edit.
 
 - **macOS:** download `.zip` → unpack with **`ditto -x -k`** (preserves the `.app`
   signature; plain unzip corrupts it) → `open <app> --args --installed-via=npm-bootstrap`.
@@ -313,7 +328,12 @@ pin (`main.ts:64`) are in place. Do not re-implement.
 
 ## 8. Release / build wiring
 
-- **Publisher → `AgentWrapper/agent-orchestrator`** (`forge.config.ts:86`).
+- **Publisher repo is overridable** (`forge.config.ts:86`): default prod
+  `AgentWrapper/agent-orchestrator`, but read from an env var (e.g.
+  `AO_RELEASE_REPO`) so a fork build publishes to
+  `harshitsinghbhandari/agent-orchestrator`. The dev loop publishes a draft+finalize
+  release **on the fork** and points the test binary's `cli.releaseRepo` at the same
+  fork. Never publish to AgentWrapper from a test run.
 - **Stable asset names:** add a release-workflow step renaming each maker output to
   space-free names (`agent-orchestrator-darwin-arm64.zip`,
   `agent-orchestrator-win32-x64.exe`, the Linux artifact per §11) before upload.
@@ -340,8 +360,8 @@ website.
 
 | # | Scenario | Expected |
 |---|---|---|
-| 1 | `npm i -g @aoagents/ao` (or current name) | Zero `allow-scripts` warning; nothing listed by `npm approve-scripts --allow-scripts-pending`. |
-| 2 | `npm i -g … --ignore-scripts` (v12 sim) | Install succeeds; `ao` runs; `ao start` works (binary delivered via optionalDeps, not a script). |
+| 1 | `npm i -g @theharshitsingh/ao` (test scope) | Zero `allow-scripts` warning; nothing listed by `npm approve-scripts --allow-scripts-pending`. |
+| 2 | `npm i -g @theharshitsingh/ao --ignore-scripts` (v12 sim) | Install succeeds; `ao` runs; `ao start` works (binary delivered via optionalDeps, not a script). |
 | 3 | Fresh macOS `ao start` | Fetches `.zip`, `ditto`-unpacks, opens `Agent Orchestrator.app`; app relocates to `/Applications`; `~/.ao/app-state.json` records the `/Applications` path. |
 | 4 | Website install first, then `ao start` | Known-location scan finds it; opens; no second copy fetched. |
 | 5 | App trashed (marker stale), then `ao start` | Marker `stat` misses → scan misses → re-fetch. |
@@ -362,8 +382,9 @@ website.
 
 1. **npm delivery mechanism** for the Go binary: per-platform `optionalDependencies`
    packages (recommended, zero-install-script) vs porting whatever the old AO
-   package did. Needs the npm package name (current published name) and an
-   `NPM_TOKEN` + publish workflow.
+   package did. Test scope is **`@theharshitsingh/ao`**; the **prod package name**
+   (the legacy `ao` users already have) still needs confirming, plus an `NPM_TOKEN`
+   + publish workflow for each.
 2. **Legacy first-boot import** (§6.4): move into the desktop app, or drop from
    `ao start` and rely on `ao import`?
 3. **Linux artifact form:** `.deb`/`.rpm` (install) vs **AppImage** (fetch-and-run).
@@ -387,19 +408,24 @@ website.
   `waitForReady`/daemon logic; decide §11.2. Check: on a mac with the app present,
   `ao start` opens it and writes nothing; with it absent, it fetches+opens.
 - **T2. npm delivery of the Go binary.** Per §11.1: optionalDeps platform packages
-  + JS `bin` shim, zero install scripts; publish workflow on an `ao-v*` tag. Check:
-  `npm i -g … --ignore-scripts` yields a working `ao`.
-- **T3. Release repo + asset wiring.** Point forge publisher at
-  `AgentWrapper/agent-orchestrator`; add the stable-asset rename step; finalize the
-  draft (§11.4); add Linux to the matrix. Check: a `workflow_dispatch` produces a
-  published AgentWrapper release whose `releases/latest/download/<stable-name>`
-  302-resolves.
+  + JS `bin` shim, zero install scripts; publish workflow. **Publish to the
+  `@theharshitsingh/ao` test scope**, not the prod package. Check: `npm i -g
+  @theharshitsingh/ao --ignore-scripts` yields a working `ao`.
+- **T3. Release repo + asset wiring (override-driven).** Make the forge publisher
+  repo + the `ao start` download repo build-time overridable (§6.3, §8); add the
+  stable-asset rename step; finalize the draft (§11.4); add Linux to the matrix.
+  Check: a `workflow_dispatch` **on the fork** produces a published
+  `harshitsinghbhandari/agent-orchestrator` release whose
+  `releases/latest/download/<stable-name>` 302-resolves. **No prod (AgentWrapper)
+  release is cut during development.**
 
 **Batch 2 — app-side + macOS end-to-end (after T1):**
 - **T4. App-side marker + relocation** (`main.ts whenReady`, §7.1). Check: a
   packaged launch writes/updates `~/.ao/app-state.json` with the real bundle path.
-- **T5. macOS `ao start` end-to-end** against a real published release (needs T3).
-  Check: acceptance #3–#7 on a mac.
+- **T5. macOS `ao start` end-to-end against the FORK release** (needs T3): build the
+  test `ao` with `cli.releaseRepo=harshitsinghbhandari/agent-orchestrator`, install
+  it from `@theharshitsingh/ao`, run `ao start`. Check: acceptance #3–#7 on a mac,
+  fetching from the fork.
 
 **Batch 3 — cross-platform + integrity (after T1/T3):**
 - **T6. Windows path** (NSIS fetch+install+resolve, §6.3).
