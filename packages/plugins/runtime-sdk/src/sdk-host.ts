@@ -43,33 +43,37 @@ import {
 } from "./protocol.js";
 
 // ===========================================================================
-// GLM (ZhipuAI) provider — OpenAI-compatible alternative to Claude SDK
+// OpenAI-compatible provider — shared implementation for GLM and MiMo
 // ===========================================================================
 
 const GLM_BASE_URL = process.env.AO_GLM_BASE_URL ?? "https://open.bigmodel.cn/api/paas/v4";
+const MIMO_BASE_URL = process.env.AO_MIMO_BASE_URL ?? "https://api.xiaomimimo.com/v1";
 
 /**
- * Drive the host using ZhipuAI GLM via OpenAI-compatible chat completions.
- * Used instead of Claude SDK query() when AO_GLM_API_KEY is set and the
- * model name starts with "glm-".
+ * Drive the host using any OpenAI-compatible chat completions API.
+ * Used for ZhipuAI GLM (`glm-*`) and MiMo (`mimo-*`) providers instead of
+ * the Claude SDK query(). Emits the same normalized events as the Claude path
+ * so downstream consumers (Maestro) need no changes.
  *
- * Emits the same normalized events as the Claude path so downstream
- * consumers (Maestro) need no changes.
+ * Only `delta.content` is extracted from each SSE chunk — `reasoning_content`
+ * and other provider-specific fields are intentionally ignored.
  */
-async function runGlmMode(
+async function runOpenAiCompatMode(
   host: SessionHost,
   model: string,
   apiKey: string,
+  baseUrl: string,
   cwd: string,
   initialPrompt: string | null,
 ): Promise<void> {
   // Announce session init — gives the Swift side a session_id and model name.
-  const glmSessionId = `glm-${Date.now()}`;
+  const providerPrefix = model.split("-")[0] ?? "openai-compat";
+  const providerSessionId = `${providerPrefix}-${Date.now()}`;
   host.emit(
     {
       type: "session",
       subtype: "init",
-      session_id: glmSessionId,
+      session_id: providerSessionId,
       model,
       cwd,
       permission_mode: "bypassPermissions",
@@ -95,7 +99,7 @@ async function runGlmMode(
     let fullText = "";
 
     try {
-      const resp = await fetch(`${GLM_BASE_URL}/chat/completions`, {
+      const resp = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -107,7 +111,7 @@ async function runGlmMode(
       if (!resp.ok) {
         const errBody = await resp.text();
         host.emit(
-          { type: "error", message: `GLM API error ${resp.status}: ${errBody}`, fatal: false },
+          { type: "error", message: `${providerPrefix.toUpperCase()} API error ${resp.status}: ${errBody}`, fatal: false },
           turn,
         );
         // Emit an error result so the turn closes cleanly in the UI.
@@ -142,6 +146,7 @@ async function runGlmMode(
           const payload = trimmed.slice(6);
           if (payload === "[DONE]") break outer;
           try {
+            // Only extract delta.content — ignore reasoning_content and other fields.
             const chunk = JSON.parse(payload) as {
               choices?: Array<{ delta?: { content?: string } }>;
             };
@@ -169,7 +174,7 @@ async function runGlmMode(
         },
         turn,
       );
-      // Emit a usage stub — we don't get token counts back from GLM streaming.
+      // Emit a usage stub — token counts are not available from SSE streaming.
       host.emit(
         {
           type: "usage",
@@ -216,6 +221,17 @@ async function runGlmMode(
   }
 
   host.end();
+}
+
+/** @deprecated Use runOpenAiCompatMode directly. Kept as a named alias for GLM. */
+function runGlmMode(
+  host: SessionHost,
+  model: string,
+  apiKey: string,
+  cwd: string,
+  initialPrompt: string | null,
+): Promise<void> {
+  return runOpenAiCompatMode(host, model, apiKey, GLM_BASE_URL, cwd, initialPrompt);
 }
 
 /** A live subscriber: a function that writes one already-encoded NDJSON line. */
@@ -686,13 +702,18 @@ async function runStandalone(): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGHUP", () => shutdown("SIGHUP"));
 
-  // --- start the streaming session (Claude SDK or GLM) ---
+  // --- start the streaming session (Claude SDK, GLM, or MiMo) ---
   const glmApiKey = process.env.AO_GLM_API_KEY ?? null;
+  const mimoApiKey = process.env.AO_MIMO_API_KEY ?? null;
   const isGlmModel = model?.startsWith("glm-") ?? false;
+  const isMimoModel = model?.startsWith("mimo-") ?? false;
 
   if (glmApiKey && isGlmModel) {
     // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
-    await runGlmMode(host, model!, glmApiKey, cwd, initialPrompt);
+    await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt);
+  } else if (mimoApiKey && isMimoModel) {
+    // MiMo (Xiaomi) path — OpenAI-compatible, no Claude SDK needed.
+    await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt);
   } else {
     // Default: Claude via @anthropic-ai/claude-agent-sdk.
     const useCanUseTool = permissionMode !== "bypassPermissions";

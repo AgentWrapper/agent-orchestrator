@@ -95,7 +95,7 @@ export function create(): Runtime {
       // AO_GLM_API_KEY is also stripped: it's provider-level auth that must be
       // set explicitly per-session from the global config, not inherited from the
       // orchestrator's environment (same "inherited secret bleeds into workers" risk).
-      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY", "AO_GLM_BASE_URL"]) {
+      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY", "AO_GLM_BASE_URL", "AO_MIMO_API_KEY", "AO_MIMO_BASE_URL"]) {
         if (!config.environment || !(key in config.environment)) {
           delete hostEnv[key];
         }
@@ -122,6 +122,24 @@ export function create(): Runtime {
         const glmBaseUrl = zhipuCfg?.baseUrl;
         if (glmBaseUrl && (!config.environment || !config.environment["AO_GLM_BASE_URL"])) {
           hostEnv["AO_GLM_BASE_URL"] = glmBaseUrl;
+        }
+      }
+
+      // Inject the MiMo API key from the global config (mimo.apiKey) when the
+      // per-session model is a `mimo-*` model and the key was not already set
+      // explicitly in config.environment. Same pattern as GLM/Zhipu above.
+      if (
+        sessionModel?.startsWith("mimo-") &&
+        (!config.environment || !config.environment["AO_MIMO_API_KEY"])
+      ) {
+        const mimoCfg = loadGlobalConfig()?.mimo;
+        const mimoKey = mimoCfg?.apiKey;
+        if (mimoKey) {
+          hostEnv["AO_MIMO_API_KEY"] = mimoKey;
+        }
+        const mimoBaseUrl = mimoCfg?.baseUrl;
+        if (mimoBaseUrl && (!config.environment || !config.environment["AO_MIMO_BASE_URL"])) {
+          hostEnv["AO_MIMO_BASE_URL"] = mimoBaseUrl;
         }
       }
 

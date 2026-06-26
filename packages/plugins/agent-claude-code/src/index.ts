@@ -1498,6 +1498,12 @@ function createClaudeCodeAgent(): Agent {
         const glmKey = process.env.AO_GLM_API_KEY;
         if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
       }
+      // MiMo (Xiaomi) provider: inject the API key when the model is a MiMo model.
+      // Same pattern as GLM above.
+      if (config.model?.startsWith("mimo-")) {
+        const mimoKey = process.env.AO_MIMO_API_KEY;
+        if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
+      }
 
       return env;
     },
