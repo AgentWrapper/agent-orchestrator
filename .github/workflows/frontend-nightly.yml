@@ -7,7 +7,7 @@ name: Desktop nightly
 # there are no new commits since the last nightly.
 on:
   schedule:
-    - cron: "0 3 * * *" # 03:00 UTC daily
+    - cron: "30 13 * * *" # 13:30 UTC = 19:00 IST daily
   workflow_dispatch:
 
 jobs:
