@@ -135,6 +135,16 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("opens global settings from the footer menu when no project is selected", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getAllByLabelText("Settings")[0]);
+		await user.click(await screen.findByRole("menuitem", { name: "Global settings" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
 	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
