@@ -76,10 +76,25 @@ release:
 - stable: `latest-mac.yml`, `latest.yml`, `latest-linux.yml` (+ `.blockmap`s).
 - nightly: `nightly-mac.yml`, `nightly.yml`, `nightly-linux.yml` (+ blockmaps).
 
-Windows and Linux already build through electron-builder via the custom makers
-(`maker-nsis`, `maker-appimage`), so they emit this metadata naturally. macOS
-ships via forge's `maker-zip`, which does not, so the macOS build step gains a
-small "generate + upload `latest-mac.yml` / `nightly-mac.yml`" step.
+**CORRECTION (verified 2026-06-26, final review):** the original assumption that
+"Windows and Linux emit this metadata naturally via the electron-builder makers"
+is FALSE. Both `maker-nsis.ts` and `maker-appimage.ts` set `config.publish: null`
+(deliberately, so electron-builder does not try to upload, forge owns publishing).
+With `publish: null`, `getPublishConfigs` returns null and
+`artifactCreatedWithoutExplicitPublishConfig` returns early BEFORE
+`createUpdateInfoTasks` runs (app-builder-lib `PublishManager.js:143`,`356`,`163`),
+so NO feed `*.yml` is generated on Windows or Linux either. macOS (forge
+`maker-zip`) never emitted it. Net: as currently built, no platform produces a
+feed, so the updater is inert everywhere until this is fixed.
+
+Generating the feed `*.yml` (and `.blockmap`) on all three platforms WITHOUT
+letting electron-builder upload (forge does the upload), then uploading the yml
+to each release, is its own coherent "feed-publishing" workstream. It is
+verifiable only on real CI and is coupled to Track-B macOS signing. It is OUT OF
+SCOPE for this spec's implementation and tracked separately (see Open
+prerequisites). The runtime half (the in-app updater, settings, prompts, and
+nightly build) ships first as groundwork and is inert-but-harmless until the
+feed exists, the same state the prior `update-electron-app` was in.
 
 ## Version scheme
 
@@ -189,7 +204,11 @@ not unit-tested (Electron runtime).
 
 | Item | Status | Blocks |
 |---|---|---|
+| Feed `*.yml` publishing (all 3 platforms) | NOT done (verified gap) | ALL auto-update (no feed = updater inert everywhere) |
 | CI signing + notarization | Track B, not done | macOS auto-update (functional) |
 | Stable version stamping | Track B, not done | stable channel correctness |
 | Polished channel UI (#2207) | deferred | nicety only; minimal selector now |
 | Global Settings page (#2218) | done | (unblocks #2207) |
+
+The feed-publishing item is the load-bearing prerequisite the original spec
+missed. The runtime implemented here does nothing useful until it lands.
