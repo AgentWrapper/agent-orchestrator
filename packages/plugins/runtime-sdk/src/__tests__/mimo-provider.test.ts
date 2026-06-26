@@ -200,7 +200,8 @@ describe("MiMo provider — prefix gate (AO_MIMO_API_KEY dispatch)", () => {
     expect(model.startsWith("mimo-")).toBe(true);
     expect(!!apiKey).toBe(true);
     // Without a key the condition must be falsy.
-    expect(!!"").toBe(false);
+    const missingKey = "";
+    expect(!!missingKey).toBe(false);
   });
 
   it("glm- model does NOT match mimo- prefix gate", () => {
