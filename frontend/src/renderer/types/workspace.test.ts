@@ -82,7 +82,7 @@ describe("workerDisplayStatus", () => {
 		["terminated", "done"],
 		["unknown", "unknown"],
 		["working", "working"],
-		["idle", "working"],
+		["idle", "idle"],
 	] as const)("maps %s to %s", (status, expected) => {
 		expect(workerDisplayStatus(sessionWith({ status }))).toBe(expected);
 	});
@@ -153,6 +153,7 @@ describe("workerStatusPulses", () => {
 	it("pulses only for working and needs_you", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
+		expect(workerStatusPulses("idle")).toBe(false);
 		expect(workerStatusPulses("mergeable")).toBe(false);
 		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);

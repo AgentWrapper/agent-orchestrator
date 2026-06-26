@@ -337,22 +337,19 @@ function activityDetail(status: SessionStatus): string | null {
 	}
 }
 
-const STATUS_PILL: Record<
-	ReturnType<typeof workerDisplayStatus> | "idle",
-	{ label: string; tone: string; breathe: boolean }
-> = {
+const STATUS_PILL: Record<ReturnType<typeof workerDisplayStatus>, { label: string; tone: string; breathe: boolean }> = {
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
+	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
 	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
-	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 };
 
 function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
-	const key = session.status === "idle" ? "idle" : workerDisplayStatus(session);
+	const key = workerDisplayStatus(session);
 	const { label, tone, breathe } = STATUS_PILL[key];
 	return (
 		<span
