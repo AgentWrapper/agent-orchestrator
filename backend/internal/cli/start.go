@@ -84,12 +84,10 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 	out := cmd.OutOrStdout()
 	res := startResult{}
 
-	appPath, err := c.resolveApp()
-	if err != nil {
-		return err
-	}
+	appPath := c.resolveApp()
 	res.Resolved = appPath != ""
 
+	var err error
 	if appPath == "" {
 		appPath, err = c.fetchApp(ctx)
 		if err != nil {
@@ -119,16 +117,16 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 // resolveApp returns the path to a usable desktop bundle, or "" when none is
 // found (spec §6.2). Resolution order is fixed: marker path -> stat -> known
 // location scan. It never compares versions (invariant 5).
-func (c *commandContext) resolveApp() (string, error) {
+func (c *commandContext) resolveApp() string {
 	if p := c.markerAppPath(); p != "" && isUsableBundle(p) {
-		return p, nil
+		return p
 	}
 	for _, p := range appScanLocations() {
 		if isUsableBundle(p) {
-			return p, nil
+			return p
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // appScanLocations is the known-location scan source. It is a package var so
@@ -169,7 +167,7 @@ func aoStateDir() (string, error) {
 func knownAppLocations() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		paths := []string{filepath.Join("/Applications", appBundleName)}
+		paths := []string{"/Applications/" + appBundleName}
 		if home, err := os.UserHomeDir(); err == nil {
 			paths = append(paths, filepath.Join(home, "Applications", appBundleName))
 		}
@@ -359,7 +357,8 @@ func (c *commandContext) fetchAppLinux(ctx context.Context) (string, error) {
 	if err := c.download(ctx, url, tmpPath); err != nil {
 		return "", fmt.Errorf("download %s: %w", url, err)
 	}
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
+	// An AppImage is a self-contained executable; it must be 0755 to launch.
+	if err := os.Chmod(tmpPath, 0o755); err != nil { //nolint:gosec // G302: AppImage must be executable
 		return "", fmt.Errorf("chmod AppImage: %w", err)
 	}
 	if err := os.Rename(tmpPath, appPath); err != nil {
@@ -373,7 +372,7 @@ func (c *commandContext) fetchAppLinux(ctx context.Context) (string, error) {
 
 // download streams url to dst using the injected HTTP client.
 func (c *commandContext) download(ctx context.Context, url, dst string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -485,7 +484,7 @@ func (c *commandContext) openApp(ctx context.Context, appPath string) (bool, err
 		if err != nil {
 			// Treat a launch failure as "not opened" so the caller prints the
 			// manual-open path rather than aborting the whole command.
-			return false, nil
+			return false, nil //nolint:nilerr // launch failure is reported via the bool, not as an error
 		}
 		return true, nil
 	default:

@@ -31,11 +31,19 @@ func writeMarker(t *testing.T, cfg testConfig, appPath string) {
 	}
 }
 
-// makeBundle creates a directory that stats as a usable bundle on every OS.
+// makeBundle creates a path that stats as a usable bundle on the host OS:
+// a directory on macOS (.app), a regular file on Windows/Linux (exe/AppImage),
+// matching isUsableBundle's per-OS rule.
 func makeBundle(t *testing.T, name string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(p, 0o750); err != nil {
+	if runtime.GOOS == "darwin" {
+		if err := os.MkdirAll(p, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -49,10 +57,7 @@ func TestResolveApp_MarkerHit(t *testing.T) {
 	t.Cleanup(swapScanLocations(func() []string { return nil }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != bundle {
 		t.Fatalf("resolveApp = %q, want marker path %q", got, bundle)
 	}
@@ -66,10 +71,7 @@ func TestResolveApp_MarkerMissThenScanHit(t *testing.T) {
 	t.Cleanup(swapScanLocations(func() []string { return []string{scanBundle} }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != scanBundle {
 		t.Fatalf("resolveApp = %q, want scan path %q", got, scanBundle)
 	}
@@ -82,10 +84,7 @@ func TestResolveApp_ScanMissReturnsEmpty(t *testing.T) {
 	}))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
-	got, err := c.resolveApp()
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := c.resolveApp()
 	if got != "" {
 		t.Fatalf("resolveApp = %q, want empty", got)
 	}
