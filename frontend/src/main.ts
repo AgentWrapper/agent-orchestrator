@@ -35,6 +35,7 @@ import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
+import { writeAppStateMarker } from "./main/app-state";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -819,7 +820,71 @@ function initAutoUpdates(): void {
 	updateElectronApp();
 }
 
-app.whenReady().then(() => {
+// Resolve the bundle path `ao start` will later `open` and stat as a usable app.
+// On macOS process.execPath is .../Agent Orchestrator.app/Contents/MacOS/<exe>;
+// the thing `ao start` opens is the enclosing `.app` directory, so walk up three
+// levels (MacOS -> Contents -> .app). app.getAppPath() is WRONG here: it returns
+// the app.asar archive path inside the bundle, not the bundle itself.
+// On win32/linux there is no .app wrapper, so record execPath; a richer
+// resolveApp() for those platforms lands in T6/T7.
+function resolveBundlePath(): string {
+	if (process.platform === "darwin") {
+		return path.resolve(process.execPath, "..", "..", "..");
+	}
+	return process.execPath;
+}
+
+// `ao start` opens the app with `--installed-via=<value>` so the app can record
+// how it arrived on first marker creation. Parse it out of argv; absent => the
+// marker defaults installSource to "unknown".
+function parseInstalledVia(argv: string[]): string | undefined {
+	const flag = argv.find((a) => a.startsWith("--installed-via="));
+	return flag ? flag.slice("--installed-via=".length) : undefined;
+}
+
+// Write ~/.ao/app-state.json so `ao start`'s resolveApp() can find this bundle
+// (spec §7.1). The app is the sole writer (invariant 3) and writes every launch.
+// A failure here must NOT block startup, so the caller wraps this in try/catch;
+// we still surface it via the log.
+async function writeAppStateOnLaunch(): Promise<void> {
+	// Reuse the same ~/.ao resolution as running.json; the marker lives beside it
+	// (the Go side computes its dir as dirname(RunFilePath)). runFilePath() returns
+	// null only when the home dir is unresolvable, in which case we cannot place
+	// the marker; the caller's try/catch logs it.
+	const runFile = runFilePath();
+	if (!runFile) {
+		throw new Error("cannot resolve ~/.ao run-file path; skipping app-state marker");
+	}
+	const stateDir = path.dirname(runFile);
+	await writeAppStateMarker({
+		stateDir,
+		appPath: resolveBundlePath(),
+		version: app.getVersion(),
+		installedVia: parseInstalledVia(process.argv),
+		now: () => new Date(),
+	});
+}
+
+app.whenReady().then(async () => {
+	// Order is load-bearing: relocate FIRST, then write the marker, so the marker
+	// records the post-relocation bundle path (spec §7.1).
+	if (process.platform === "darwin" && app.isPackaged) {
+		try {
+			// On success this restarts the app from /Applications, so code past
+			// here only runs when no move happened (already there, or declined).
+			app.moveToApplicationsFolder();
+		} catch (err) {
+			console.error("relocation to Applications failed:", err);
+		}
+	}
+
+	// A marker-write failure is non-fatal: log and continue so the app still boots.
+	try {
+		await writeAppStateOnLaunch();
+	} catch (err) {
+		console.error("failed to write app-state marker:", err);
+	}
+
 	registerRendererProtocol();
 	createWindow();
 	void startDaemon();
