@@ -95,7 +95,34 @@ export function create(): Runtime {
       // AO_GLM_API_KEY is also stripped: it's provider-level auth that must be
       // set explicitly per-session from the global config, not inherited from the
       // orchestrator's environment (same "inherited secret bleeds into workers" risk).
-      for (const key of ["AO_SDK_RESUME", "AO_SDK_INITIAL_PROMPT", "AO_SDK_MODEL", "AO_SDK_PERMISSION_MODE", "AO_GLM_API_KEY", "AO_GLM_BASE_URL", "AO_MIMO_API_KEY", "AO_MIMO_BASE_URL"]) {
+      //
+      // The ANTHROPIC_* overrides are stripped for the SAME reason, and it is
+      // CRITICAL for MiMo: a mimo session drives the Claude SDK against MiMo's
+      // Anthropic-compatible endpoint by setting ANTHROPIC_BASE_URL/AUTH_TOKEN/
+      // MODEL inside its OWN sdk-host process (per-session, from AO_MIMO_*). If a
+      // claude worker spawned from that mimo orchestrator inherited those vars it
+      // would be misrouted to MiMo. By stripping any inherited ANTHROPIC_BASE_URL/
+      // AUTH_TOKEN/MODEL not set explicitly for THIS session, claude workers go to
+      // the REAL Anthropic. ANTHROPIC_API_KEY is intentionally NOT stripped — real
+      // claude workers depend on it for auth; the mimo path deletes it locally in
+      // sdk-host instead so it can't override the MiMo token.
+      for (const key of [
+        "AO_SDK_RESUME",
+        "AO_SDK_INITIAL_PROMPT",
+        "AO_SDK_MODEL",
+        "AO_SDK_PERMISSION_MODE",
+        "AO_GLM_API_KEY",
+        "AO_GLM_BASE_URL",
+        "AO_MIMO_API_KEY",
+        "AO_MIMO_BASE_URL",
+        "AO_MIMO_ANTHROPIC_BASE_URL",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      ]) {
         if (!config.environment || !(key in config.environment)) {
           delete hostEnv[key];
         }
@@ -140,6 +167,16 @@ export function create(): Runtime {
         const mimoBaseUrl = mimoCfg?.baseUrl;
         if (mimoBaseUrl && (!config.environment || !config.environment["AO_MIMO_BASE_URL"])) {
           hostEnv["AO_MIMO_BASE_URL"] = mimoBaseUrl;
+        }
+        // Anthropic-compatible endpoint — drives the full Claude Agent SDK path
+        // (tools + system prompt + hooks) for MiMo. sdk-host reads this via
+        // AO_MIMO_ANTHROPIC_BASE_URL and falls back to the Xiaomi default.
+        const mimoAnthropicBaseUrl = mimoCfg?.anthropicBaseUrl;
+        if (
+          mimoAnthropicBaseUrl &&
+          (!config.environment || !config.environment["AO_MIMO_ANTHROPIC_BASE_URL"])
+        ) {
+          hostEnv["AO_MIMO_ANTHROPIC_BASE_URL"] = mimoAnthropicBaseUrl;
         }
       }
 

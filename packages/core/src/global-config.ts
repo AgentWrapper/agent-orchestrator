@@ -259,12 +259,19 @@ export const GlobalConfigSchema = z
      * MiMo (Xiaomi) provider credentials. OpenAI-compatible API.
      * Read by the runtime-sdk plugin to inject AO_MIMO_API_KEY into the
      * sdk-host process when the session model is a `mimo-*` model.
+     *
+     * `baseUrl` is the OpenAI-compatible endpoint (…/v1) used by the legacy
+     * chat-loop fallback. `anthropicBaseUrl` is the Anthropic-compatible
+     * Messages API endpoint (default https://api.xiaomimimo.com/anthropic)
+     * that supports tool_use — used to drive MiMo through the full Claude
+     * Agent SDK path (tools + system prompt + discipline hooks).
      */
     mimo: z
       .object({
         apiKey: z.string().optional(),
         enabled: z.boolean().optional(),
         baseUrl: z.string().optional(),
+        anthropicBaseUrl: z.string().optional(),
       })
       .optional(),
   })
