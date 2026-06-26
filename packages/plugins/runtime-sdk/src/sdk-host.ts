@@ -48,6 +48,15 @@ import {
 
 const GLM_BASE_URL = process.env.AO_GLM_BASE_URL ?? "https://open.bigmodel.cn/api/paas/v4";
 const MIMO_BASE_URL = process.env.AO_MIMO_BASE_URL ?? "https://api.xiaomimimo.com/v1";
+/**
+ * MiMo's Anthropic-compatible Messages API endpoint. Unlike MIMO_BASE_URL
+ * (the OpenAI /v1 chat-loop fallback), this endpoint supports tool_use, so we
+ * point the Claude Agent SDK at it to give MiMo the full agent path (tools +
+ * system prompt with our rules + discipline hooks). Overridable per-session
+ * via AO_MIMO_ANTHROPIC_BASE_URL (injected from config mimo.anthropicBaseUrl).
+ */
+const MIMO_ANTHROPIC_BASE_URL =
+  process.env.AO_MIMO_ANTHROPIC_BASE_URL ?? "https://api.xiaomimimo.com/anthropic";
 
 /**
  * Drive the host using any OpenAI-compatible chat completions API.
@@ -708,14 +717,38 @@ async function runStandalone(): Promise<void> {
   const isGlmModel = model?.startsWith("glm-") ?? false;
   const isMimoModel = model?.startsWith("mimo-") ?? false;
 
+  // Escape hatch: force MiMo back onto the OpenAI-compat chat-loop (no tools,
+  // no system prompt) — kept as a fallback in case the Anthropic-compatible
+  // endpoint regresses. Off by default; the full-agent path below is primary.
+  const mimoForceOpenAiCompat = process.env.AO_MIMO_FORCE_OPENAI_COMPAT === "1";
+
   if (glmApiKey && isGlmModel) {
     // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
     await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt);
-  } else if (mimoApiKey && isMimoModel) {
-    // MiMo (Xiaomi) path — OpenAI-compatible, no Claude SDK needed.
+  } else if (mimoApiKey && isMimoModel && mimoForceOpenAiCompat) {
+    // MiMo legacy fallback — OpenAI-compatible chat loop (no agent tools).
     await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt);
   } else {
-    // Default: Claude via @anthropic-ai/claude-agent-sdk.
+    // MiMo (Xiaomi) FULL-AGENT path: point the Claude Agent SDK at MiMo's
+    // Anthropic-compatible endpoint so MiMo gets tools + system prompt (our
+    // orchestratorRules/agentRules) + discipline hooks for free, exactly like
+    // a native Claude agent. We set the ANTHROPIC_* env the bundled SDK reads
+    // and DELETE ANTHROPIC_API_KEY so the real Anthropic key (from
+    // defaults.environment) can't override the MiMo token (auth conflict).
+    // These are set per-session here (the parent strips inherited ANTHROPIC_*
+    // before spawn), so a claude worker spawned from a mimo session does NOT
+    // inherit MiMo's base/token — it goes to the real Anthropic.
+    if (mimoApiKey && isMimoModel && model) {
+      process.env.ANTHROPIC_BASE_URL = MIMO_ANTHROPIC_BASE_URL;
+      process.env.ANTHROPIC_AUTH_TOKEN = mimoApiKey;
+      process.env.ANTHROPIC_MODEL = model;
+      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+    // Default: Claude via @anthropic-ai/claude-agent-sdk (or MiMo via the
+    // Anthropic-compatible endpoint configured just above).
     const useCanUseTool = permissionMode !== "bypassPermissions";
     const q = query({
       prompt: host.input,
