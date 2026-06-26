@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 // Drives the real useWorkspaceQuery + real Board / PR-page consumers end to end
@@ -25,47 +25,49 @@ import { PullRequestsPage } from "../../components/PullRequestsPage";
 
 // One ordinary project with one worker session that has multiple PRs.
 function respondWithProjectAndPRs() {
+	respondWithSessions([
+		{
+			id: "sess-1",
+			projectId: "proj-1",
+			displayName: "fix the bug",
+			harness: "claude-code",
+			status: "pr_open",
+			isTerminated: false,
+			updatedAt: "2026-06-10T16:15:04Z",
+			prs: [
+				{
+					number: 278,
+					state: "open",
+					url: "https://github.com/aoagents/ReverbCode/pull/278",
+					ci: "passing",
+					review: "approved",
+					mergeability: "clean",
+					reviewComments: false,
+					updatedAt: "2026-06-10T16:15:04Z",
+				},
+				{
+					number: 279,
+					state: "draft",
+					url: "https://github.com/aoagents/ReverbCode/pull/279",
+					ci: "pending",
+					review: "pending",
+					mergeability: "unknown",
+					reviewComments: false,
+					updatedAt: "2026-06-10T16:20:04Z",
+				},
+			],
+		},
+	]);
+}
+
+function respondWithSessions(sessions: Array<Record<string, unknown>>) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") {
 			return { data: { projects: [{ id: "proj-1", name: "my-app", path: "/repo/my-app" }] }, error: undefined };
 		}
 		if (url === "/api/v1/sessions") {
 			return {
-				data: {
-					sessions: [
-						{
-							id: "sess-1",
-							projectId: "proj-1",
-							displayName: "fix the bug",
-							harness: "claude-code",
-							status: "pr_open",
-							isTerminated: false,
-							updatedAt: "2026-06-10T16:15:04Z",
-							prs: [
-								{
-									number: 278,
-									state: "open",
-									url: "https://github.com/aoagents/ReverbCode/pull/278",
-									ci: "passing",
-									review: "approved",
-									mergeability: "clean",
-									reviewComments: false,
-									updatedAt: "2026-06-10T16:15:04Z",
-								},
-								{
-									number: 279,
-									state: "draft",
-									url: "https://github.com/aoagents/ReverbCode/pull/279",
-									ci: "pending",
-									review: "pending",
-									mergeability: "unknown",
-									reviewComments: false,
-									updatedAt: "2026-06-10T16:20:04Z",
-								},
-							],
-						},
-					],
-				},
+				data: { sessions },
 				error: undefined,
 			};
 		}
@@ -84,6 +86,10 @@ beforeEach(() => {
 	respondWithProjectAndPRs();
 });
 
+afterEach(() => {
+	cleanup();
+});
+
 describe("PR hydration for a normal project (#251)", () => {
 	it("renders every session PR on the Board card instead of 'no PR yet'", async () => {
 		renderWithProviders(<SessionsBoard />);
@@ -100,5 +106,45 @@ describe("PR hydration for a normal project (#251)", () => {
 		expect(screen.getByText("#279")).toBeInTheDocument();
 		expect(screen.queryByText("No open pull requests.")).not.toBeInTheDocument();
 		expect(screen.getAllByText("fix the bug")).toHaveLength(2);
+	});
+
+	it("keeps four board columns and splits pending work into working and idle sections", async () => {
+		respondWithSessions([
+			{
+				id: "active-1",
+				projectId: "proj-1",
+				displayName: "active worker",
+				harness: "codex",
+				status: "working",
+				isTerminated: false,
+				updatedAt: "2026-06-10T16:15:04Z",
+				prs: [],
+			},
+			{
+				id: "idle-1",
+				projectId: "proj-1",
+				displayName: "idle worker",
+				harness: "codex",
+				status: "idle",
+				isTerminated: false,
+				updatedAt: "2026-06-10T16:16:04Z",
+				prs: [],
+			},
+		]);
+
+		renderWithProviders(<SessionsBoard />);
+
+		expect(await screen.findByText("active worker")).toBeInTheDocument();
+		expect(await screen.findByText("idle worker")).toBeInTheDocument();
+		expect(screen.getByText("Pending")).toBeInTheDocument();
+		expect(screen.getByText("Needs you")).toBeInTheDocument();
+		expect(screen.getByText("In review")).toBeInTheDocument();
+		expect(screen.getByText("Ready to merge")).toBeInTheDocument();
+
+		const workingSection = screen.getByLabelText("Working sessions");
+		const idleSection = screen.getByLabelText("Idle sessions");
+		expect(within(workingSection).getByText("active worker")).toBeInTheDocument();
+		expect(within(idleSection).getByText("idle worker")).toBeInTheDocument();
+		expect(within(idleSection).getAllByText("Idle").length).toBeGreaterThan(0);
 	});
 });

@@ -32,7 +32,7 @@ type Column = {
 const COLUMNS: Column[] = [
 	{
 		level: "working",
-		label: "Working",
+		label: "Pending",
 		glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
 		dot: "var(--orange)",
 		dotGlow: true,
@@ -248,12 +248,63 @@ function ZoneColumn({
 				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
+				{col.level === "working" ? (
+					<PendingColumnSections sessions={sessions} onOpen={onOpen} />
+				) : (
+					<div className="flex flex-col gap-2.5">
+						{sessions.map((session) => (
+							<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+						))}
+					</div>
+				)}
+			</div>
+		</section>
+	);
+}
+
+function PendingColumnSections({
+	sessions,
+	onOpen,
+}: {
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+}) {
+	const workingSessions = sessions.filter((session) => session.status !== "idle");
+	const idleSessions = sessions.filter((session) => session.status === "idle");
+
+	return (
+		<div className="grid min-h-full grid-rows-[minmax(0,1fr)_auto] gap-2">
+			<PendingColumnSection onOpen={onOpen} sessions={workingSessions} title="Working" />
+			<PendingColumnSection onOpen={onOpen} sessions={idleSessions} title="Idle" />
+		</div>
+	);
+}
+
+function PendingColumnSection({
+	title,
+	sessions,
+	onOpen,
+}: {
+	title: "Working" | "Idle";
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+}) {
+	return (
+		<section
+			aria-label={`${title} sessions`}
+			className="flex min-h-0 flex-col gap-2 border-t border-border pt-2 first:border-t-0 first:pt-0"
+		>
+			<div className="flex min-h-5 items-center gap-2 px-1">
+				<span className="font-mono text-[10px] font-medium uppercase tracking-[0.05em] text-passive">{title}</span>
+				<span className="ml-auto font-mono text-[10px] leading-none text-passive">{sessions.length}</span>
+			</div>
+			{sessions.length > 0 && (
 				<div className="flex flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
 					))}
 				</div>
-			</div>
+			)}
 		</section>
 	);
 }
@@ -365,6 +416,8 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 			return { label: "Merged", className: "text-passive" };
 		case "terminated":
 			return { label: "Terminated", className: "text-passive" };
+		case "idle":
+			return { label: "Idle", className: "text-passive" };
 		default:
 			return { label: "Working", className: "text-working" };
 	}
