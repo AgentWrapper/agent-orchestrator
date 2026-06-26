@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { APP_STATE_FILE_NAME, writeAppStateMarker, readMigrationState, updateMigration, type AppStateMarker } from "./app-state";
@@ -130,13 +130,27 @@ describe("writeAppStateMarker", () => {
 // ---- migration marker tests (B1) ----
 
 const fixedNow = () => new Date("2026-06-26T10:00:00.000Z");
-async function tmp() {
-	return mkdtemp(path.join(os.tmpdir(), "ao-appstate-"));
-}
 
 describe("migration marker", () => {
+	const dirs: string[] = [];
+	async function tmp() {
+		const dir = await mkdtemp(path.join(os.tmpdir(), "ao-appstate-"));
+		dirs.push(dir);
+		return dir;
+	}
+
+	afterEach(async () => {
+		await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+	});
+
 	it("readMigrationState defaults to pending when the file is absent", async () => {
 		expect(await readMigrationState(await tmp())).toEqual({ status: "pending" });
+	});
+
+	it("readMigrationState defaults to pending when the file is corrupt", async () => {
+		const dir = await tmp();
+		await writeFile(path.join(dir, APP_STATE_FILE_NAME), "{ not valid json", "utf8");
+		expect(await readMigrationState(dir)).toEqual({ status: "pending" });
 	});
 
 	it("updateMigration persists status without an existing marker", async () => {
