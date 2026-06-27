@@ -20,11 +20,13 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions  map[domain.SessionID]domain.SessionRecord
-	pr        map[domain.SessionID]domain.PRFacts
-	projects  map[string]domain.ProjectRecord
-	num       int
-	deleteErr error
+	sessions      map[domain.SessionID]domain.SessionRecord
+	pr            map[domain.SessionID]domain.PRFacts
+	projects      map[string]domain.ProjectRecord
+	workspaceRepo map[string][]domain.WorkspaceRepoRecord
+	num           int
+	deleteErr     error
+	upsertWTErr   error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -34,15 +36,19 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:  map[domain.SessionID]domain.SessionRecord{},
-		pr:        map[domain.SessionID]domain.PRFacts{},
-		projects:  map[string]domain.ProjectRecord{},
-		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		sessions:      map[domain.SessionID]domain.SessionRecord{},
+		pr:            map[domain.SessionID]domain.PRFacts{},
+		projects:      map[string]domain.ProjectRecord{},
+		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
+		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	r, ok := f.projects[id]
 	return r, ok, nil
+}
+func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
+	return f.workspaceRepo[projectID], nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	f.num++
@@ -96,6 +102,9 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 	return domain.PRFacts{}, false, nil
 }
 func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionWorktreeRecord) error {
+	if f.upsertWTErr != nil {
+		return f.upsertWTErr
+	}
 	if f.sharedLog != nil {
 		*f.sharedLog = append(*f.sharedLog, "UpsertSessionWorktree:"+string(row.SessionID))
 	}
@@ -252,10 +261,14 @@ type missingAgents struct{}
 func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
 
 type fakeWorkspace struct {
-	createErr  error
-	destroyErr error
-	destroyed  int
-	lastCfg    ports.WorkspaceConfig
+	createErr         error
+	destroyErr        error
+	destroyed         int
+	lastCfg           ports.WorkspaceConfig
+	projectErr        error
+	projectDestroyed  int
+	lastProjectCfg    ports.WorkspaceProjectConfig
+	projectCreateInfo ports.WorkspaceProjectInfo
 	// path, when set, is returned as the workspace path so provisioning tests
 	// can point at a real temp directory.
 	path string
@@ -284,8 +297,52 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
+func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
+	if w.projectErr != nil {
+		return ports.WorkspaceProjectInfo{}, w.projectErr
+	}
+	w.lastProjectCfg = cfg
+	if len(w.projectCreateInfo.Worktrees) > 0 {
+		return w.projectCreateInfo, nil
+	}
+	rootPath := w.path
+	if rootPath == "" {
+		rootPath = "/ws/" + string(cfg.SessionID)
+	}
+	branch := cfg.Branch
+	root := ports.WorkspaceInfo{Path: rootPath, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}
+	out := ports.WorkspaceProjectInfo{
+		Root: root,
+		Worktrees: []ports.WorkspaceRepoInfo{{
+			RepoName:  domain.RootWorkspaceRepoName,
+			RepoPath:  cfg.RootRepoPath,
+			Path:      rootPath,
+			Branch:    branch,
+			BaseSHA:   "root-base",
+			SessionID: cfg.SessionID,
+			ProjectID: cfg.ProjectID,
+		}},
+	}
+	for _, repo := range cfg.Repos {
+		out.Worktrees = append(out.Worktrees, ports.WorkspaceRepoInfo{
+			RepoName:     repo.Name,
+			RepoPath:     repo.RepoPath,
+			Path:         filepath.Join(rootPath, filepath.FromSlash(repo.RelativePath)),
+			Branch:       branch,
+			BaseSHA:      repo.Name + "-base",
+			SessionID:    cfg.SessionID,
+			ProjectID:    cfg.ProjectID,
+			RelativePath: repo.RelativePath,
+		})
+	}
+	return out, nil
+}
 func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	w.destroyed++
+	return w.destroyErr
+}
+func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.WorkspaceProjectInfo) error {
+	w.projectDestroyed++
 	return w.destroyErr
 }
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
@@ -513,6 +570,125 @@ func TestSpawn_ParksRowTerminatedWhenSeedDeleteFails(t *testing.T) {
 		t.Fatal("row must fall back to terminated when the seed delete fails")
 	}
 }
+
+func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   "/repo/mer",
+		Kind:   domain.ProjectKindWorkspace,
+		Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{Name: "api", RelativePath: "services/api"},
+		{Name: "web", RelativePath: "apps/web"},
+	}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: "/managed/mer-1"}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.WorkspacePath != "/managed/mer-1" {
+		t.Fatalf("workspace path = %q, want root worktree path", rec.Metadata.WorkspacePath)
+	}
+	if rec.Metadata.Branch != "ao/mer-1" {
+		t.Fatalf("workspace branch = %q, want ao/mer-1", rec.Metadata.Branch)
+	}
+	if got := ws.lastProjectCfg.RootRepoPath; got != "/repo/mer" {
+		t.Fatalf("root repo path = %q, want /repo/mer", got)
+	}
+	if len(ws.lastProjectCfg.Repos) != 2 {
+		t.Fatalf("child repo configs = %d, want 2", len(ws.lastProjectCfg.Repos))
+	}
+	if got := ws.lastProjectCfg.Repos[0].RepoPath; got != "/repo/mer/services/api" {
+		t.Fatalf("api repo path = %q, want /repo/mer/services/api", got)
+	}
+	if got := ws.lastProjectCfg.Repos[1].RepoPath; got != "/repo/mer/apps/web" {
+		t.Fatalf("web repo path = %q, want /repo/mer/apps/web", got)
+	}
+	rows := st.worktrees["mer-1"]
+	if len(rows) != 3 {
+		t.Fatalf("session worktree rows = %d, want 3: %#v", len(rows), rows)
+	}
+	want := map[string]string{
+		domain.RootWorkspaceRepoName: "/managed/mer-1",
+		"api":                        "/managed/mer-1/services/api",
+		"web":                        "/managed/mer-1/apps/web",
+	}
+	for _, row := range rows {
+		if row.Branch != rec.Metadata.Branch {
+			t.Fatalf("row %s branch = %q, want %q", row.RepoName, row.Branch, rec.Metadata.Branch)
+		}
+		if want[row.RepoName] != row.WorktreePath {
+			t.Fatalf("row %s path = %q, want %q", row.RepoName, row.WorktreePath, want[row.RepoName])
+		}
+		if row.BaseSHA == "" {
+			t.Fatalf("row %s missing base sha", row.RepoName)
+		}
+	}
+	if rt.created != 1 {
+		t.Fatal("runtime should be created")
+	}
+	if ws.destroyed != 0 || ws.projectDestroyed != 0 {
+		t.Fatal("successful spawn should not destroy workspaces")
+	}
+}
+
+func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   "/repo/mer",
+		Kind:   domain.ProjectKindWorkspace,
+		Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil {
+		t.Fatal("expected failure")
+	}
+	if ws.projectDestroyed != 1 {
+		t.Fatalf("workspace project destroy calls = %d, want 1", ws.projectDestroyed)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("single-workspace destroy calls = %d, want 0", ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("orphaned spawn should be terminated")
+	}
+}
+
+func TestSpawn_WorkspaceProjectRollsBackWhenWorktreeRowsFail(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   "/repo/mer",
+		Kind:   domain.ProjectKindWorkspace,
+		Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	st.upsertWTErr = errors.New("db locked")
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "record workspace worktree") {
+		t.Fatalf("err = %v, want worktree row failure", err)
+	}
+	if ws.projectDestroyed != 1 {
+		t.Fatalf("workspace project destroy calls = %d, want 1", ws.projectDestroyed)
+	}
+	if _, present := st.sessions["mer-1"]; present {
+		t.Fatal("seed row should be deleted after workspace row failure")
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime.Create must not run when worktree row recording fails")
+	}
+}
+
 func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")

@@ -78,6 +78,7 @@ type Store interface {
 	// GetProject loads a project row so spawn can resolve its per-project agent
 	// config into the launch command. ok=false means the project is unknown.
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -224,16 +225,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = defaultSessionBranch(id, cfg.Kind, sessionPrefix(project))
+		branch = defaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), project.Kind.WithDefault())
 	}
-	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
-		ProjectID:     cfg.ProjectID,
-		SessionID:     id,
-		Kind:          cfg.Kind,
-		SessionPrefix: sessionPrefix(project),
-		Branch:        branch,
-		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
-	})
+	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
@@ -245,20 +239,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, agentConfig); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
@@ -273,7 +267,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
@@ -282,7 +276,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
@@ -293,7 +287,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
 	})
 	if err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
@@ -301,7 +295,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
-		_ = m.workspace.Destroy(ctx, ws)
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
@@ -322,6 +316,74 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 		return domain.ProjectRecord{}, nil
 	}
 	return row, nil
+}
+
+func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+			ProjectID:     cfg.ProjectID,
+			SessionID:     id,
+			Kind:          cfg.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        branch,
+			BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		})
+		return ws, nil, err
+	}
+	workspaceProject, ok := m.workspace.(ports.WorkspaceProject)
+	if !ok {
+		return ports.WorkspaceInfo{}, nil, errors.New("workspace project materialization is not supported by workspace adapter")
+	}
+	repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
+	if err != nil {
+		return ports.WorkspaceInfo{}, nil, err
+	}
+	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
+	for _, repo := range repos {
+		childRepos = append(childRepos, ports.WorkspaceProjectRepoConfig{
+			Name:         repo.Name,
+			RelativePath: repo.RelativePath,
+			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
+			BaseBranch:   project.Config.WithDefaults().DefaultBranch,
+		})
+	}
+	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
+		ProjectID:     cfg.ProjectID,
+		SessionID:     id,
+		Kind:          cfg.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        branch,
+		RootRepoPath:  project.Path,
+		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		Repos:         childRepos,
+	})
+	if err != nil {
+		return ports.WorkspaceInfo{}, nil, err
+	}
+	for _, wt := range info.Worktrees {
+		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
+			SessionID:    id,
+			RepoName:     wt.RepoName,
+			Branch:       wt.Branch,
+			BaseSHA:      wt.BaseSHA,
+			WorktreePath: wt.Path,
+			State:        "active",
+		}); err != nil {
+			_ = workspaceProject.DestroyWorkspaceProject(ctx, info)
+			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
+		}
+	}
+	return info.Root, &info, nil
+}
+
+func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
+	if workspaceProject != nil {
+		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
+			_ = adapter.DestroyWorkspaceProject(ctx, *workspaceProject)
+			return
+		}
+	}
+	_ = m.workspace.Destroy(ctx, ws)
 }
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
@@ -1009,6 +1071,13 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix s
 	// branch under a session namespace so sibling PR branches such as
 	// ao/<session>/<topic> remain valid Git refs.
 	return "ao/" + string(id) + "/root"
+}
+
+func defaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind) string {
+	if projectKind == domain.ProjectKindWorkspace {
+		return "ao/" + string(id)
+	}
+	return defaultSessionBranch(id, kind, prefix)
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
