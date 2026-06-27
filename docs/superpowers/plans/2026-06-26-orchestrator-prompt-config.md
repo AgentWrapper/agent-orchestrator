@@ -23,10 +23,12 @@
 ### Task 1: Domain field + validation
 
 **Files:**
+
 - Modify: `backend/internal/domain/projectconfig.go`
 - Test: `backend/internal/domain/projectconfig_test.go`
 
 **Interfaces:**
+
 - Produces: `ProjectConfig.OrchestratorPrompt string` (json `orchestratorPrompt`); `Validate()` rejects > 64 KiB.
 
 - [ ] **Step 1: Write the failing tests** (append to `projectconfig_test.go`)
@@ -116,10 +118,12 @@ git commit -m "feat(config): add orchestratorPrompt to ProjectConfig"
 ### Task 2: Wire buildSystemPrompt to the configured prompt
 
 **Files:**
+
 - Modify: `backend/internal/session_manager/manager.go` (`buildSystemPrompt`, ~965-985)
 - Test: `backend/internal/session_manager/manager_test.go`
 
 **Interfaces:**
+
 - Consumes: `ProjectConfig.OrchestratorPrompt` (Task 1), `Store.GetProject` (existing, `manager.go:79`).
 
 - [ ] **Step 1: Write the failing tests** (append to `manager_test.go`)
@@ -201,10 +205,12 @@ git commit -m "feat(config): use per-project orchestratorPrompt in buildSystemPr
 ### Task 3: CLI flag `--orchestrator-prompt-file` + mirror field
 
 **Files:**
+
 - Modify: `backend/internal/cli/project.go` (mirror type `projectConfig`, `projectSetConfigOptions`, `buildProjectConfig`, `newProjectSetConfigCommand`, imports)
 - Test: `backend/internal/cli/project_test.go`
 
 **Interfaces:**
+
 - Consumes: nothing new.
 - Produces: `setConfigRequest.Config.OrchestratorPrompt` populated from the flag/file/stdin.
 
@@ -366,6 +372,7 @@ git commit -m "feat(cli): add --orchestrator-prompt-file to project set-config"
 ### Task 4: Controller acceptance + regenerate API artifacts
 
 **Files:**
+
 - Test: `backend/internal/httpd/controllers/projects_test.go` (extend `TestProjectsAPI_RejectsUnknownConfigKeys` or add a sibling)
 - Regenerate: `backend/internal/httpd/apispec/openapi.yaml`, `frontend/src/api/schema.ts`
 
