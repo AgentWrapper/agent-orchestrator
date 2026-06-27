@@ -204,7 +204,14 @@ process.exit(1);
 export function installMockGit(
   tmpDir: string,
   remoteBranches: string[],
+  localRefs: string[] = [],
 ): string {
+  // remoteBranches: short branch names returned by `ls-remote --heads origin`
+  //   (e.g. "session/app-22") — these become refs/heads/<branch> heads.
+  // localRefs: FULL refnames returned by `for-each-ref <pattern>`
+  //   (e.g. "refs/heads/session/app-9", "refs/ao-salvage/session/app-9-dead").
+  //   The mock honors the requested glob pattern exactly like real git, so a
+  //   ref outside the requested namespace (a salvage ref) is never emitted.
   const binDir = join(tmpDir, "mock-git-bin");
   mkdirSync(binDir, { recursive: true });
 
@@ -220,6 +227,14 @@ if (args[0] === "ls-remote" && args[1] === "--heads" && args[2] === "origin") {
   process.stdout.write(${JSON.stringify(refs)} + "\\n");
   process.exit(0);
 }
+if (args[0] === "for-each-ref") {
+  const pattern = args[args.length - 1];
+  const prefix = pattern.replace(/\\*$/, "");
+  const localRefs = ${JSON.stringify(localRefs)};
+  const matched = localRefs.filter((ref) => ref.startsWith(prefix));
+  process.stdout.write(matched.join("\\n") + (matched.length ? "\\n" : ""));
+  process.exit(0);
+}
 process.exit(1);
 `,
       "utf-8",
@@ -232,6 +247,16 @@ process.exit(1);
       .map((branch) => `deadbeef\trefs/heads/${branch}`)
       .join("\\n")
       .replace(/'/g, "'\\''");
+    // Explicit per-ref `if` blocks (no bash arrays / negative offsets) so the
+    // mock stays compatible with macOS's stock bash 3.2. `pattern="$3"` because
+    // production always calls `for-each-ref --format=%(refname) <pattern>`. The
+    // unquoted RHS makes `[[ ... == $pattern ]]` a glob match, exactly like git.
+    const forEachRefCases = localRefs
+      .map((ref) => {
+        const escaped = ref.replace(/'/g, "'\\''");
+        return `  if [[ '${escaped}' == $pattern ]]; then printf '%s\\n' '${escaped}'; fi`;
+      })
+      .join("\n");
     writeFileSync(
       scriptPath,
       [
@@ -241,9 +266,16 @@ process.exit(1);
         `  printf '%b\\n' '${refs}'`,
         "  exit 0",
         "fi",
+        'if [[ "$1" == "for-each-ref" ]]; then',
+        '  pattern="$3"',
+        forEachRefCases,
+        "  exit 0",
+        "fi",
         "exit 1",
         "",
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
       "utf-8",
     );
     chmodSync(scriptPath, 0o755);

@@ -441,6 +441,72 @@ describe("spawn", () => {
     expect(session.branch).toBe("session/app-23");
   });
 
+  it("skips LOCAL session branches when allocating a fresh session id", async () => {
+    // Worker branches session/<prefix>-N are frequently local-only (never
+    // pushed). Allocation must see them so it never reuses a live branch's id.
+    const mockGitBin = installMockGit(tmpDir, [], ["refs/heads/session/app-30"]);
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.id).toBe("app-31");
+    expect(session.branch).toBe("session/app-31");
+  });
+
+  it("does not reuse a local branch id after a registry wipe", async () => {
+    // Regression: a crash-cycle can wipe the registry (sessions/ empty) while a
+    // worker's local branch session/app-9 survives. Without the local scan the
+    // allocator handed out app-1 again → branch_collision → destructive -B reset
+    // that silently discarded the prior session's commits. The local scan now
+    // skips straight past the surviving branch.
+    const mockGitBin = installMockGit(tmpDir, [], ["refs/heads/session/app-9"]);
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.id).toBe("app-10");
+    expect(session.branch).toBe("session/app-10");
+  });
+
+  it("allocates above the max of remote AND local session branches", async () => {
+    const mockGitBin = installMockGit(
+      tmpDir,
+      ["session/app-22"],
+      ["refs/heads/session/app-30"],
+    );
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.id).toBe("app-31");
+    expect(session.branch).toBe("session/app-31");
+  });
+
+  it("ignores salvage refs (outside refs/heads) when allocating a session id", async () => {
+    // Fix B salvages a diverged branch tip to refs/ao-salvage/<branch>-<sha>.
+    // That ref must NOT count toward the next id — the allocation scan queries
+    // refs/heads/session/<prefix>-* only, so the salvage ref is never matched.
+    const mockGitBin = installMockGit(tmpDir, [], [
+      "refs/heads/session/app-5",
+      "refs/ao-salvage/session/app-99-deadbeef0000",
+    ]);
+    process.env.PATH = `${mockGitBin}${PATH_SEP}${originalPath ?? ""}`;
+    mkdirSync(config.projects["my-app"]!.path, { recursive: true });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    // app-99 salvage ref ignored → next id is max(local heads = {5}) + 1.
+    expect(session.id).toBe("app-6");
+    expect(session.branch).toBe("session/app-6");
+  });
+
   it("writes metadata file", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.spawn({ projectId: "my-app", issueId: "INT-42" });

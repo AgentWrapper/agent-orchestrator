@@ -980,6 +980,53 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
   }
 
+  async function listLocalSessionNumbers(project: ProjectConfig): Promise<number[]> {
+    // Counterpart to listRemoteSessionNumbers: worker branches
+    // session/<prefix>-N are frequently LOCAL (never pushed — workers merge
+    // locally). After a registry wipe the allocator only sees remote heads, so
+    // a low id can be reused while its local branch still exists, colliding in
+    // workspace create() and triggering the destructive `-B` reset. Scanning
+    // local heads here keeps reused ids out of the new-spawn allocation.
+    //
+    // `git for-each-ref refs/heads/session/<prefix>-*` already covers every
+    // local branch, including those attached to a worktree, so no separate
+    // `git worktree list` scan is needed. Salvage refs (refs/ao-salvage/*) live
+    // outside refs/heads and carry a -<sha> suffix, so they never match here.
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        [
+          "for-each-ref",
+          "--format=%(refname)",
+          `refs/heads/session/${project.sessionPrefix}-*`,
+        ],
+        {
+          cwd: project.path,
+          timeout: 5_000,
+          ...EXEC_SHELL_OPTION,
+        },
+      );
+
+      return stdout
+        .split("\n")
+        .flatMap((line: string) => {
+          const ref = line.trim();
+          if (!ref) return [];
+
+          const match = ref.match(
+            new RegExp(`refs/heads/session/${escapeRegex(project.sessionPrefix)}-(\\d+)$`),
+          );
+          if (!match) return [];
+
+          const parsed = Number.parseInt(match[1], 10);
+          return Number.isNaN(parsed) ? [] : [parsed];
+        })
+        .filter((num: number, index: number, values: number[]) => values.indexOf(num) === index);
+    } catch {
+      return [];
+    }
+  }
+
   async function reserveNextSessionIdentity(
     project: ProjectConfig,
     sessionsDir: string,
@@ -994,6 +1041,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (num !== undefined) usedNumbers.add(num);
     }
     for (const num of await listRemoteSessionNumbers(project)) {
+      usedNumbers.add(num);
+    }
+    for (const num of await listLocalSessionNumbers(project)) {
       usedNumbers.add(num);
     }
 

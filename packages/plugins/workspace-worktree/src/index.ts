@@ -411,6 +411,40 @@ export function create(config?: Record<string, unknown>): Workspace {
           if (existingBranchSha === baseSha) {
             await git(repoPath, "worktree", "add", worktreePath, cfg.branch);
           } else {
+            // Divergent collision: about to `-B` force-reset the branch onto
+            // base, which discards whatever it currently points at. Primary
+            // defense (id allocation) makes this rare, but if a real divergent
+            // tip still exists — a genuine restore race, a hand-made branch —
+            // salvage it to a ref first so its commits are never lost silently.
+            // The salvage ref lives under refs/ao-salvage/ (outside refs/heads)
+            // and carries a -<sha> suffix, so it never matches the session
+            // id-allocation scan.
+            if (existingBranchSha !== undefined) {
+              const shortSha = existingBranchSha.slice(0, 12);
+              const salvageRef = `refs/ao-salvage/${cfg.branch}-${shortSha}`;
+              try {
+                await git(repoPath, "update-ref", salvageRef, existingBranchSha);
+              } catch {
+                // Best-effort — the warn event below still records the SHA so
+                // the tip is recoverable via `git fsck`/reflog even if the ref
+                // write failed.
+              }
+              recordActivityEvent({
+                projectId: cfg.projectId,
+                sessionId: cfg.sessionId,
+                source: "workspace",
+                kind: "workspace.branch_reset_salvaged",
+                level: "warn",
+                summary: `branch "${cfg.branch}" diverged from base; tip ${shortSha} salvaged to ${salvageRef} before reset`,
+                data: {
+                  plugin: "workspace-worktree",
+                  branch: cfg.branch,
+                  salvagedSha: existingBranchSha,
+                  salvageRef,
+                  baseSha,
+                },
+              });
+            }
             await git(repoPath, "worktree", "add", "-B", cfg.branch, worktreePath, baseRef);
           }
         } catch (retryErr: unknown) {

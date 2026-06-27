@@ -553,10 +553,15 @@ describe("workspace.create()", () => {
       { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
     );
 
+    // A branch already equal to base has nothing to lose — no salvage, no -B.
+    expect(recordActivityEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "workspace.branch_reset_salvaged" }),
+    );
+
     expect(info.branch).toBe("feat/TEST-1");
   });
 
-  it("resets an existing stale branch against the resolved base", async () => {
+  it("salvages the diverged tip before resetting an existing stale branch", async () => {
     const ws = create();
 
     mockOriginRemote();
@@ -566,9 +571,31 @@ describe("workspace.create()", () => {
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
     mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // git update-ref (salvage diverged tip)
     mockGitSuccess(""); // worktree add -B existing branch
 
     const info = await ws.create(makeCreateConfig());
+
+    // The diverged tip is salvaged to refs/ao-salvage/<branch>-<shortsha>
+    // BEFORE the destructive -B, so its commits are never lost silently.
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["update-ref", "refs/ao-salvage/feat/TEST-1-old-sha", "old-sha"],
+      { cwd: "/repo/path", windowsHide: true, timeout: 30_000 },
+    );
+
+    // A loud warn event records the branch + SHA for recoverability.
+    expect(recordActivityEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "workspace.branch_reset_salvaged",
+        level: "warn",
+        data: expect.objectContaining({
+          branch: "feat/TEST-1",
+          salvagedSha: "old-sha",
+          salvageRef: "refs/ao-salvage/feat/TEST-1-old-sha",
+        }),
+      }),
+    );
 
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
@@ -618,6 +645,7 @@ describe("workspace.create()", () => {
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
     mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // git update-ref (salvage diverged tip)
     mockGitError("worktree add failed: branch checked out"); // worktree add -B fails
     mockGitSuccess(""); // worktree remove (cleanup)
 
@@ -643,6 +671,7 @@ describe("workspace.create()", () => {
     mockGitSuccess("base-sha"); // git rev-parse origin/main
     mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/feat/TEST-1
     mockGitSuccess("old-sha"); // git rev-parse refs/heads/feat/TEST-1
+    mockGitSuccess(""); // git update-ref (salvage diverged tip)
     mockGitError("worktree add failed"); // worktree add -B fails
     mockGitError("worktree remove failed"); // cleanup also fails
 
