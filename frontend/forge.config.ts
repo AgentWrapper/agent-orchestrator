@@ -3,7 +3,6 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 // Default GitHub release target (production). aoagents was the temporary rewrite
 // home; releases land on AgentWrapper (spec §1.1).
@@ -32,7 +31,7 @@ const config: ForgeConfig = {
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png"],
+		extraResource: ["daemon", "assets/icon.png", "app-update.yml"],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -56,31 +55,20 @@ const config: ForgeConfig = {
 				: undefined,
 	},
 	hooks: {
-		// electron-forge does not generate app-update.yml (electron-builder does).
-		// electron-updater looks for this file in the app's Resources dir at
-		// runtime to know which GitHub repo to pull updates from. Without it the
-		// updater throws ENOENT during download. We write it here so the correct
-		// owner/repo (baked from AO_RELEASE_REPO at build time) is always present.
-		postPackage: async (_forgeConfig, { platform, outputPaths }) => {
+		// electron-forge does not generate app-update.yml (electron-builder does);
+		// electron-updater reads it from the app's Resources dir at runtime to know
+		// which GitHub repo to pull from, else it throws ENOENT during download.
+		// Generate it in prePackage (BEFORE osxSign) and ship it via extraResource
+		// above, so it is copied into the bundle and SIGNED as part of the seal.
+		// Writing it after signing (a postPackage hook) adds an unsealed resource
+		// and macOS reports the app as "damaged". owner/repo are baked from
+		// AO_RELEASE_REPO at build time.
+		prePackage: async () => {
 			const { owner, name } = parseReleaseRepo(process.env.AO_RELEASE_REPO);
-			const yml =
-				[
-					"provider: github",
-					`owner: ${owner}`,
-					`repo: ${name}`,
-					"updaterCacheDirName: agent-orchestrator-updater",
-				].join("\n") + "\n";
-
-			for (const outputPath of outputPaths) {
-				let resourcesDir: string;
-				if (platform === "darwin") {
-					resourcesDir = join(outputPath, "Agent Orchestrator.app", "Contents", "Resources");
-				} else {
-					resourcesDir = join(outputPath, "resources");
-				}
-				writeFileSync(join(resourcesDir, "app-update.yml"), yml, "utf8");
-				console.log(`[postPackage] wrote app-update.yml -> ${resourcesDir}`);
-			}
+			const yml = ["provider: github", `owner: ${owner}`, `repo: ${name}`, "updaterCacheDirName: agent-orchestrator-updater", ""].join(
+				"\n",
+			);
+			writeFileSync("app-update.yml", yml);
 		},
 	},
 	rebuildConfig: {},
