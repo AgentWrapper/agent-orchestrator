@@ -117,6 +117,7 @@ export function UpdatesSection() {
 // updates are off, so users who never opted in can still pull the latest build.
 function UpdateActions() {
 	const [status, setStatus] = useState<UpdateStatus>({ state: "idle" });
+	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 
 	useEffect(() => {
 		let live = true;
@@ -135,7 +136,11 @@ function UpdateActions() {
 	const busy = checking || downloading;
 
 	return (
-		<div className="flex flex-col gap-2 border-t border-border pt-4">
+		<div className="flex flex-col gap-3 border-t border-border pt-4">
+			<div className="flex items-center gap-2 text-[12px]">
+				<span className="text-passive">Current version</span>
+				<span className="font-mono text-[11px] text-foreground">{version.data ? `v${version.data}` : "…"}</span>
+			</div>
 			<div className="flex items-center gap-3">
 				<Button type="button" variant="outline" onClick={() => void aoBridge.updates.check()} disabled={busy}>
 					{checking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

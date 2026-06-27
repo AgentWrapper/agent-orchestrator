@@ -16,6 +16,7 @@ const {
 	updDownload,
 	updInstall,
 	updOnStatus,
+	getVersion,
 } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
@@ -28,6 +29,7 @@ const {
 	updDownload: vi.fn(),
 	updInstall: vi.fn(),
 	updOnStatus: vi.fn(),
+	getVersion: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -37,6 +39,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
+		app: { getVersion },
 		appState: { getMigration, setMigration },
 		updateSettings: { get: getUpdate, set: setUpdate },
 		updates: {
@@ -72,6 +75,7 @@ beforeEach(() => {
 	updDownload.mockResolvedValue(undefined);
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
+	getVersion.mockResolvedValue("1.4.0");
 });
 
 describe("GlobalSettingsForm", () => {
@@ -127,6 +131,11 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 		expect(await screen.findByText("None found")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Run migration" })).toBeDisabled();
+	});
+
+	it("shows the current app version", async () => {
+		renderForm();
+		expect(await screen.findByText("v1.4.0")).toBeInTheDocument();
 	});
 
 	it("Check for updates triggers a manual check", async () => {
