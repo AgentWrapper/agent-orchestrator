@@ -426,17 +426,18 @@ The `service.Session` computes display status from durable facts using this prec
 ```mermaid
 flowchart TD
     CheckTerm{is_terminated?}
-    CheckTerm -->|Yes| PRMerged{PR merged?}
-    CheckTerm -->|No| CheckWait{activity_state<br/>== waiting_input?}
+    CheckTerm -->|Yes| TermPRMerged{PR merged?}
+    CheckTerm -->|No| CheckOpenPR{Has open PR facts?}
 
-    PRMerged -->|Yes| Merged[merged]
-    PRMerged -->|No| Terminated[terminated]
+    TermPRMerged -->|Yes| Merged[merged]
+    TermPRMerged -->|No| Terminated[terminated]
 
+    CheckOpenPR -->|Yes| PRPipeline[PR Pipeline Check]
+    CheckOpenPR -->|No| LivePRMerged{PR merged?}
+    LivePRMerged -->|Yes| Merged
+    LivePRMerged -->|No| CheckWait{activity_state<br/>== waiting_input?}
     CheckWait -->|Yes| NeedsInput[needs_input]
-    CheckWait -->|No| CheckPR{Has PR facts?}
-
-    CheckPR -->|Yes| PRPipeline[PR Pipeline Check]
-    CheckPR -->|No| CheckActive{activity_state<br/>== active?}
+    CheckWait -->|No| CheckActive{activity_state<br/>== active?}
 
     PRPipeline --> PRState{PR State}
     PRState -->|ci failed| CIFailed[ci_failed]
