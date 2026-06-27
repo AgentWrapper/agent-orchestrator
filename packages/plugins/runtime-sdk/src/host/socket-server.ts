@@ -1,0 +1,307 @@
+/**
+ * host/socket-server.ts — the standalone host PROCESS wiring.
+ *
+ * Wires the transport-agnostic `SessionHost` to a real `net` server (Unix socket
+ * / named pipe) and the right provider driver, then survives parent exit (spawned
+ * detached by index.ts). Owns: subscriber backpressure, the snapshot/live socket,
+ * control-command handling, session.json metadata, signal-driven shutdown, and
+ * provider dispatch (Claude SDK / GLM / MiMo).
+ */
+
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import net from "node:net";
+import { type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import {
+  encodeLine,
+  LineParser,
+  sessionPaths,
+  type ClientCommand,
+  type SessionInfo,
+} from "../protocol.js";
+import { SessionHost, type Send } from "./session-host.js";
+import { createEventLogSink } from "./history-log.js";
+import {
+  GLM_BASE_URL,
+  MIMO_BASE_URL,
+  runOpenAiCompatMode,
+} from "../providers/openai-compatible.js";
+import { applyMimoAnthropicEnv } from "../providers/mimo-anthropic.js";
+import { runClaudeAgentMode } from "../providers/claude-agent-sdk.js";
+
+// ===========================================================================
+// Subscriber backpressure
+// ===========================================================================
+
+/**
+ * Max bytes Node may buffer for ONE slow subscriber before the host drops it.
+ * The host fans every event out to every subscriber synchronously; it cannot
+ * pause its own turn for one laggard, so the only bound is a per-socket queue
+ * limit. 8 MB is generous for a healthy UI (which drains in microseconds) yet
+ * far below the multi-GB blowups a stalled/never-reading client could cause.
+ */
+export const SUBSCRIBER_BUFFER_CAP = 8 * 1024 * 1024;
+
+/**
+ * The minimal socket surface the subscriber sink needs — a testable seam so the
+ * backpressure policy is unit-tested without a real `net.Socket`. `net.Socket`
+ * structurally satisfies this (it has `destroyed`, `writableLength`, `write`,
+ * `destroy`).
+ */
+export interface SubscriberSocket {
+  readonly destroyed: boolean;
+  readonly writableLength: number;
+  write(data: string): boolean;
+  destroy(): void;
+}
+
+/**
+ * Build a per-subscriber send sink with backpressure. When a subscriber can't
+ * keep up, `sock.write` returns false and Node buffers the unsent data in memory
+ * (`writableLength` grows); once it passes `cap` we `destroy()` the socket so the
+ * host doesn't balloon holding one slow client's entire backlog. destroy() fires
+ * the socket's 'close' (next tick) → the caller's unsubscribe runs → `emit()`
+ * stops fanning to it. Fast subscribers drain immediately and never approach the
+ * cap, so this is a no-op for them.
+ */
+export function makeSubscriberSink(
+  sock: SubscriberSocket,
+  cap: number = SUBSCRIBER_BUFFER_CAP,
+): Send {
+  return (line: string) => {
+    if (sock.destroyed) return;
+    sock.write(line);
+    if (sock.writableLength > cap) sock.destroy();
+  };
+}
+
+// ===========================================================================
+// System-prompt resolution
+// ===========================================================================
+
+/**
+ * Resolve the PERSISTENT system-prompt addendum (persona + rules) for this
+ * session. Returned content is appended to Claude Code's preset system prompt
+ * via `query({ options.systemPrompt })`, so it is re-sent on EVERY request — it
+ * therefore survives resume (host restart) by construction, unlike the turn-1
+ * `AO_SDK_INITIAL_PROMPT` which is only submitted once.
+ *
+ * Two sources, inline first:
+ *   - AO_SDK_APPEND_SYSTEM_PROMPT — literal content (used by tests / external callers)
+ *   - AO_SDK_SYSTEM_PROMPT_FILE  — path to a file with the content (how the engine
+ *     plumbs it: the orchestrator/worker prompt file already on disk, no env bloat)
+ * Returns null when neither yields non-empty content → query() omits systemPrompt
+ * entirely and behavior is exactly as before (default Claude Code preset only).
+ */
+export function readAppendSystemPrompt(): string | null {
+  const inline = process.env.AO_SDK_APPEND_SYSTEM_PROMPT;
+  if (inline && inline.trim().length > 0) return inline;
+  const file = process.env.AO_SDK_SYSTEM_PROMPT_FILE;
+  if (file) {
+    try {
+      const content = readFileSync(file, "utf-8");
+      if (content.trim().length > 0) return content;
+    } catch {
+      /* missing/unreadable file → no append (fail-open, never break the spawn) */
+    }
+  }
+  return null;
+}
+
+// ===========================================================================
+// Standalone entry-point
+// ===========================================================================
+
+export async function runStandalone(): Promise<void> {
+  const aoSessionId = process.argv[2];
+  if (!aoSessionId) {
+    process.stderr.write("Usage: node sdk-host.js <aoSessionId>\n");
+    process.exit(1);
+  }
+
+  const paths = sessionPaths(aoSessionId);
+  mkdirSync(paths.base, { recursive: true });
+
+  const permissionMode = (process.env.AO_SDK_PERMISSION_MODE ||
+    "bypassPermissions") as PermissionMode;
+  const resumeFrom = process.env.AO_SDK_RESUME || null;
+  const model = process.env.AO_SDK_MODEL || null;
+  const cwd = process.env.AO_SDK_CWD || process.cwd();
+  const initialPrompt = process.env.AO_SDK_INITIAL_PROMPT || null;
+  // Persistent persona/rules (orchestrator/worker) — appended to the Claude Code
+  // preset system prompt and re-sent on every request, so it survives resume.
+  const appendSystemPrompt = readAppendSystemPrompt();
+  const permissionTimeoutMs = Number(process.env.AO_SDK_PERMISSION_TIMEOUT_MS || "0") || 0;
+
+  // Host-instance epoch: read the prior value from session.json (if any) and
+  // advance it. Each host process for this AO session gets a higher epoch, so
+  // subscribers detect a resurrected host deterministically.
+  let priorEpoch = -1;
+  try {
+    const prev = JSON.parse(readFileSync(paths.sessionInfo, "utf-8")) as Partial<SessionInfo>;
+    if (typeof prev.epoch === "number") priorEpoch = prev.epoch;
+  } catch {
+    /* no prior session.json — fresh epoch */
+  }
+  const epoch = priorEpoch + 1;
+
+  const host = new SessionHost({
+    aoSessionId,
+    permissionMode,
+    resumeFrom,
+    model,
+    permissionTimeoutMs,
+    epoch,
+    persist: createEventLogSink(paths.eventLog),
+  });
+
+  const writeSessionInfo = (sdkSessionId: string | null, modelName: string | null): void => {
+    const info: SessionInfo = {
+      aoSessionId,
+      sdkSessionId,
+      model: modelName,
+      hostPid: process.pid,
+      startedAt: new Date().toISOString(),
+      resumedFrom: resumeFrom,
+      epoch,
+    };
+    try {
+      writeFileSync(paths.sessionInfo, JSON.stringify(info, null, 2));
+    } catch {
+      /* best effort */
+    }
+  };
+  host.onSessionInfo = ({ sdkSessionId, model: m }) => writeSessionInfo(sdkSessionId, m);
+  writeSessionInfo(resumeFrom, model);
+
+  // --- net server: subscribers + control commands ---
+  // The socket may live in a short, hashed dir distinct from the session base
+  // (see protocol.socketAddress) — ensure it exists on POSIX.
+  if (process.platform !== "win32") {
+    mkdirSync(dirname(paths.socket), { recursive: true });
+  }
+  if (process.platform !== "win32" && existsSync(paths.socket)) {
+    try {
+      unlinkSync(paths.socket);
+    } catch {
+      /* stale socket cleanup is best effort */
+    }
+  }
+
+  const server = net.createServer((sock) => {
+    sock.setEncoding("utf-8");
+    // Backpressure-aware sink: a subscriber that stops reading is dropped once
+    // its in-memory write buffer exceeds SUBSCRIBER_BUFFER_CAP, so one slow UI
+    // client can't grow the host's memory without bound.
+    const unsubscribe = host.subscribe(makeSubscriberSink(sock));
+    const parser = new LineParser((obj) => handleClientCommand(host, sock, obj));
+    sock.on("data", (chunk) => parser.feed(chunk));
+    sock.on("close", unsubscribe);
+    sock.on("error", unsubscribe);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(paths.socket, () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
+
+  // Signal readiness to the parent (index.ts reads this before returning).
+  process.stdout.write(`READY:${aoSessionId}\n`);
+
+  const shutdown = (reason: string): void => {
+    host.end();
+    try {
+      server.close();
+    } catch {
+      /* noop */
+    }
+    process.stderr.write(`sdk-host [${aoSessionId}] shutdown: ${reason}\n`);
+    setTimeout(() => process.exit(0), 50).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
+
+  // --- start the streaming session (Claude SDK, GLM, or MiMo) ---
+  const glmApiKey = process.env.AO_GLM_API_KEY ?? null;
+  const mimoApiKey = process.env.AO_MIMO_API_KEY ?? null;
+  const isGlmModel = model?.startsWith("glm-") ?? false;
+  const isMimoModel = model?.startsWith("mimo-") ?? false;
+
+  // Escape hatch: force MiMo back onto the OpenAI-compat chat-loop (no tools,
+  // no system prompt) — kept as a fallback in case the Anthropic-compatible
+  // endpoint regresses. Off by default; the full-agent path below is primary.
+  const mimoForceOpenAiCompat = process.env.AO_MIMO_FORCE_OPENAI_COMPAT === "1";
+
+  if (glmApiKey && isGlmModel) {
+    // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
+    await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
+  } else if (mimoApiKey && isMimoModel && mimoForceOpenAiCompat) {
+    // MiMo legacy fallback — OpenAI-compatible chat loop (no agent tools).
+    await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
+  } else {
+    // MiMo (Xiaomi) FULL-AGENT path: point the Claude Agent SDK at MiMo's
+    // Anthropic-compatible endpoint so MiMo gets tools + system prompt (our
+    // orchestratorRules/agentRules) + discipline hooks for free, exactly like
+    // a native Claude agent. applyMimoAnthropicEnv sets the ANTHROPIC_* env the
+    // bundled SDK reads and DELETES ANTHROPIC_API_KEY so the real Anthropic key
+    // can't override the MiMo token. Set per-session here (the parent strips
+    // inherited ANTHROPIC_* before spawn), so a claude worker spawned from a mimo
+    // session does NOT inherit MiMo's base/token — it goes to real Anthropic.
+    if (mimoApiKey && isMimoModel && model) {
+      applyMimoAnthropicEnv(model, mimoApiKey);
+    }
+    // Default: Claude via @anthropic-ai/claude-agent-sdk (or MiMo via the
+    // Anthropic-compatible endpoint configured just above).
+    await runClaudeAgentMode(host, {
+      cwd,
+      permissionMode,
+      appendSystemPrompt,
+      resumeFrom,
+      model,
+      initialPrompt,
+    });
+  }
+  shutdown("session-ended");
+}
+
+/** Handle one decoded client command line. */
+export function handleClientCommand(host: SessionHost, sock: net.Socket, obj: unknown): void {
+  if (typeof obj !== "object" || obj === null) return;
+  const cmd = obj as ClientCommand;
+  switch (cmd.cmd) {
+    case "send":
+      if (typeof cmd.text === "string") host.submitTurn(cmd.text);
+      break;
+    case "status": {
+      const s = host.status();
+      if (!sock.destroyed) sock.write(encodeLine({ type: "status", ...s }));
+      break;
+    }
+    case "output": {
+      const text = host.renderOutput(typeof cmd.lines === "number" ? cmd.lines : 50);
+      if (!sock.destroyed) sock.write(encodeLine({ type: "output", text }));
+      break;
+    }
+    case "permission":
+      if (typeof cmd.request_id === "string") {
+        host.resolvePermission(cmd.request_id, cmd.behavior, cmd.message);
+      }
+      break;
+    case "kill":
+      host.end();
+      setTimeout(() => process.exit(0), 50).unref();
+      break;
+    default:
+      break;
+  }
+}
