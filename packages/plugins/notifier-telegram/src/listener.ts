@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -557,16 +557,38 @@ async function sendButtonChoices(
 // missing `/orc` / answered-question deletion) then keeps running until someone
 // restarts it by hand.
 //
-// Fix: stamp the lock with the identity of the daemon that owns the listener. A
-// later daemon compares — a listener it doesn't own is evicted and replaced with
-// one running the current code; its own listener is left alone (single-instance).
+// Fix: stamp the lock with the identity of the engine BUILD that owns the listener.
+// A later daemon compares — a listener from a *different build* (an upgrade) is
+// evicted and replaced with one running the current code; a listener from the *same
+// build* (a plain restart / crash-loop) is recognised as ours and left alone.
 //
-// Owner identity is `pid:random`, not the bare pid, so that a fresh daemon which
-// happens to reuse a dead daemon's PID still gets a *distinct* id and correctly
-// evicts the orphaned listener instead of mistaking it for its own.
+// Owner identity is the build, NOT `pid:random`. The old `pid:random` id differed on
+// every restart, so each fresh daemon treated the previous daemon's listener as
+// foreign and evicted+spawned its own. In a crash-restart cycle those fire-and-forget
+// evictions raced and *several* listeners piled up (the incident this fixes). A
+// build-stable id collapses that to one: same build → skip, changed build → evict.
 
-/** Stable identity of THIS process for the lifetime of the process. */
-const OWNER_ID = `${process.pid}:${randomBytes(4).toString("hex")}`;
+/**
+ * Stable identity of the engine BUILD running this listener: the listener module's
+ * absolute path plus its mtime. Identical across plain restarts of the same build
+ * (so a restart recognises an already-running listener as its own and never spawns a
+ * parallel one) but different after a redeploy (a new build bumps the file mtime), so
+ * an engine upgrade still evicts the stale-code listener and takes over.
+ */
+function engineOwnerId(): string {
+  try {
+    const self = fileURLToPath(import.meta.url);
+    const mtime = Math.floor(statSync(self).mtimeMs);
+    return `engine:${self}:${mtime}`;
+  } catch {
+    // Module path unreadable (should not happen in a real install): degrade to a
+    // per-process id rather than throw — never worse than the old behaviour.
+    return `engine:${process.pid}:${randomBytes(4).toString("hex")}`;
+  }
+}
+
+/** Stable identity of THIS engine build for the lifetime of the process. */
+const OWNER_ID = engineOwnerId();
 
 /** Env var by which a daemon hands its identity down to the listener it spawns. */
 const OWNER_ENV = "AO_TELEGRAM_OWNER_ID";
@@ -689,6 +711,151 @@ function releaseListenerLock(path = lockPath()): void {
   }
 }
 
+/** Block the current thread for `ms` without busy-spinning (Atomics-based). */
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* SharedArrayBuffer unavailable — skip the wait (best effort) */
+  }
+}
+
+/** Injectable side-effects for evictStrayListener (real signals/sleeps in prod). */
+export interface EvictDeps {
+  kill?: (pid: number, signal: NodeJS.Signals | number) => void;
+  alive?: (pid: number) => boolean;
+  sleep?: (ms: number) => void;
+}
+
+/**
+ * Synchronously stop a stray listener and WAIT until it is gone before returning, so
+ * the caller never spawns a replacement while the old one is still draining its 25s
+ * long-poll (the race that let listeners pile up). SIGTERM first — the listener's
+ * handler calls process.exit, so it normally dies at once — then a bounded liveness
+ * poll, then SIGKILL as a last resort. Bounded throughout so a daemon boot can never
+ * hang on it. Works off a bare pid, so it kills a stray held by a legacy / owner-less
+ * / stale lock just the same. Deps are injectable for tests (no real signals/sleeps).
+ */
+export function evictStrayListener(pid: number, deps: EvictDeps = {}): void {
+  const kill = deps.kill ?? ((p, s) => process.kill(p, s));
+  const alive = deps.alive ?? isPidAlive;
+  const sleep = deps.sleep ?? sleepSync;
+  // Never signal an invalid pid or ourselves.
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return;
+  if (!alive(pid)) return;
+  try {
+    kill(pid, "SIGTERM");
+  } catch {
+    /* already gone or not ours */
+  }
+  // Up to ~2s for a graceful exit.
+  for (let i = 0; i < 40 && alive(pid); i++) sleep(50);
+  if (!alive(pid)) return;
+  // Still alive (stuck mid-syscall, or deaf to SIGTERM) → force it.
+  try {
+    kill(pid, "SIGKILL");
+  } catch {
+    /* nothing more we can do */
+  }
+  for (let i = 0; i < 20 && alive(pid); i++) sleep(50);
+}
+
+// ---------------------------------------------------------------------------
+// Long-poll offset persistence + skip-to-latest
+// ---------------------------------------------------------------------------
+//
+// `getUpdates` returns every still-unconfirmed update from `offset` onward. A fresh
+// listener that started from `offset = 0` re-read the whole backlog and re-injected
+// old `/orc` commands — catastrophic in a crash-loop, where the daemon kept
+// respawning listeners that each replayed the queue. We now persist the last
+// confirmed offset and resume from it; on a first run (no file) we skip PAST the
+// backlog so queued commands are dropped, not replayed.
+
+/** Path of the persisted long-poll offset (last confirmed update_id + 1). */
+function offsetPath(): string {
+  return join(stateRoot(), "telegram-listener.offset");
+}
+
+/**
+ * Read the persisted long-poll offset. A missing, empty, or corrupt file yields null
+ * (the caller treats that as a first run → skip-to-latest). Never throws.
+ */
+export function readPersistedOffset(path = offsetPath()): number | null {
+  try {
+    if (!existsSync(path)) return null;
+    const raw = readFileSync(path, "utf8").trim();
+    if (!/^\d+$/.test(raw)) return null;
+    const n = parseInt(raw, 10);
+    return Number.isSafeInteger(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Atomically persist the long-poll offset (temp file + rename). Best-effort. */
+export function writePersistedOffset(offset: number, path = offsetPath()): void {
+  try {
+    const tmp = `${path}.tmp.${process.pid}`;
+    writeFileSync(tmp, String(offset));
+    renameSync(tmp, path);
+  } catch {
+    /* best-effort; a write failure just means a future restart re-skips the backlog */
+  }
+}
+
+/**
+ * Probe Telegram for the id of the most recent pending update WITHOUT routing it, by
+ * asking for only the last update (`offset=-1`). Returns that update_id, or null when
+ * the queue is empty / the call fails. Used on a first run to jump PAST any backlog so
+ * a freshly-(re)started listener never replays old `/orc` commands.
+ */
+export async function probeLatestUpdateId(
+  botToken: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<number | null> {
+  try {
+    const res = await fetchFn(getUpdatesUrl(botToken, -1, 0));
+    const json = (await res.json()) as { ok?: boolean; result?: unknown[] };
+    if (!json.ok || !Array.isArray(json.result) || json.result.length === 0) return null;
+    let maxId: number | null = null;
+    for (const raw of json.result) {
+      const id = parseUpdate(raw)?.updateId;
+      if (typeof id === "number" && id >= 0 && (maxId === null || id > maxId)) maxId = id;
+    }
+    return maxId;
+  } catch {
+    return null;
+  }
+}
+
+/** Injectable inputs for resolveStartOffset (real fs + Telegram probe in prod). */
+export interface StartOffsetDeps {
+  readPersisted?: (path?: string) => number | null;
+  probeLatest?: () => Promise<number | null>;
+}
+
+/**
+ * Decide the offset the long-poll loop should start from.
+ *   - A persisted offset (a previous run advanced past it) → resume there exactly,
+ *     no probe, no replay.
+ *   - No / corrupt persisted offset (first run after install, or a crash that never
+ *     persisted) → skip-to-latest: `lastUpdateId + 1`, so the next confirming poll
+ *     makes Telegram drop the whole backlog and we never re-inject old commands.
+ *   - Empty queue / probe failure → 0 (nothing to skip; a later real update is new).
+ * `seeded` marks the skip path so the caller can persist it (durable skip).
+ */
+export async function resolveStartOffset(
+  deps: StartOffsetDeps = {},
+): Promise<{ offset: number; seeded: boolean }> {
+  const readPersisted = deps.readPersisted ?? readPersistedOffset;
+  const persisted = readPersisted();
+  if (persisted !== null) return { offset: persisted, seeded: false };
+  const last = deps.probeLatest ? await deps.probeLatest() : null;
+  if (last !== null) return { offset: last + 1, seeded: true };
+  return { offset: 0, seeded: false };
+}
+
 // ---------------------------------------------------------------------------
 // The long-poll loop
 // ---------------------------------------------------------------------------
@@ -738,8 +905,14 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 
-  console.error(`[telegram-listener] listening (chat ${chatId})`);
-  let offset = 0;
+  // Resume from the persisted offset, or — on a first run / after a crash that never
+  // persisted — skip PAST any queued backlog so we never replay old `/orc` commands.
+  const start = await resolveStartOffset({ probeLatest: () => probeLatestUpdateId(botToken) });
+  let offset = start.offset;
+  if (start.seeded) writePersistedOffset(offset);
+  console.error(
+    `[telegram-listener] listening (chat ${chatId}) from offset ${offset}${start.seeded ? " (skipped backlog)" : ""}`,
+  );
   let backoff = 1000;
 
   while (running) {
@@ -756,7 +929,14 @@ export async function runListener(cfg: TelegramListenerConfig = readTelegramConf
       backoff = 1000;
       for (const raw of json.result ?? []) {
         const parsed = parseUpdate(raw);
-        if (parsed) offset = Math.max(offset, parsed.updateId + 1);
+        if (parsed) {
+          const next = Math.max(offset, parsed.updateId + 1);
+          if (next !== offset) {
+            offset = next;
+            // Persist atomically so a restart resumes here instead of replaying.
+            writePersistedOffset(offset);
+          }
+        }
         if (!parsed) continue;
         const route = decideRoute(parsed, chatId, resolveOrc, resolvePending);
         if (!route) continue;
@@ -850,14 +1030,12 @@ export function maybeStartListener(config?: Record<string, unknown>): void {
   const action = decideListenerAction(existing, OWNER_ID, isPidAlive);
   if (action === "skip") return; // our own listener is already running
   if (action === "evict" && existing) {
-    // Stop the previous daemon's listener. The listener we spawn below takes over
-    // the lock (see acquireListenerLock), which also covers the brief window where
-    // the evicted process is still shutting down.
-    try {
-      process.kill(existing.listenerPid, "SIGTERM");
-    } catch {
-      /* already gone or not killable — spawn anyway */
-    }
+    // A listener from a *different build* (an engine upgrade) — or a legacy / owner-less
+    // / stale lock — holds the lock. Stop it SYNCHRONOUSLY and wait for it to actually
+    // die before we spawn ours, so a fast restart cycle can never leave two listeners
+    // polling at once. evictStrayListener works off the bare pid, so it also clears a
+    // stray whose owning daemon is long dead (the exact state this fix migrates from).
+    evictStrayListener(existing.listenerPid);
   }
 
   try {

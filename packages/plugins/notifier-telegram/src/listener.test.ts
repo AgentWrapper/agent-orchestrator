@@ -14,6 +14,11 @@ import {
   readListenerLock,
   acquireListenerLock,
   decideListenerAction,
+  evictStrayListener,
+  readPersistedOffset,
+  writePersistedOffset,
+  probeLatestUpdateId,
+  resolveStartOffset,
   PendingChoices,
   type OrcResolver,
 } from "./listener.js";
@@ -562,5 +567,179 @@ describe("acquireListenerLock — eviction & single-instance", () => {
     writeFileSync(path, JSON.stringify({ listenerPid: 999999, ownerId: "owner-mine" }));
     expect(acquireListenerLock(path, () => false)).toBe(true);
     expect(readListenerLock(path)).toEqual({ listenerPid: process.pid, ownerId: "owner-mine" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix A — long-poll offset persistence + skip-to-latest (no /orc replay)
+// ---------------------------------------------------------------------------
+
+describe("offset persistence", () => {
+  it("writes and reads back an offset atomically (resume-from-last)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-tg-off-"));
+    const path = join(dir, "telegram-listener.offset");
+    writePersistedOffset(4242, path);
+    expect(readPersistedOffset(path)).toBe(4242);
+  });
+
+  it("treats a missing file as no offset (null → first run)", () => {
+    expect(readPersistedOffset(join(tmpdir(), "no-such-offset-xyz"))).toBeNull();
+  });
+
+  it("treats a corrupt file as no offset (null → first-run skip, never throws)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-tg-off-"));
+    const path = join(dir, "telegram-listener.offset");
+    writeFileSync(path, "not-a-number");
+    expect(readPersistedOffset(path)).toBeNull();
+  });
+});
+
+describe("resolveStartOffset", () => {
+  it("resumes from the persisted offset — no probe, no replay", async () => {
+    let probed = false;
+    const r = await resolveStartOffset({
+      readPersisted: () => 5000,
+      probeLatest: async () => {
+        probed = true;
+        return 999;
+      },
+    });
+    expect(r).toEqual({ offset: 5000, seeded: false });
+    expect(probed).toBe(false); // a resume never re-probes the backlog
+  });
+
+  it("first run WITH a backlog → skip-to-latest (lastId + 1), marked seeded", async () => {
+    const r = await resolveStartOffset({ readPersisted: () => null, probeLatest: async () => 7777 });
+    expect(r).toEqual({ offset: 7778, seeded: true });
+  });
+
+  it("first run with an empty queue → offset 0, not seeded", async () => {
+    const r = await resolveStartOffset({ readPersisted: () => null, probeLatest: async () => null });
+    expect(r).toEqual({ offset: 0, seeded: false });
+  });
+});
+
+describe("first-run skip-to-latest drops the backlog (reproduces & fixes /orc replay)", () => {
+  // A fetch-mock standing in for Telegram getUpdates(offset=-1).
+  const mockFetch = (result: unknown[]): typeof fetch =>
+    (async () => ({ json: async () => ({ ok: true, result }) })) as unknown as typeof fetch;
+
+  it("jumps PAST a queued /orc backlog so old commands are never re-routed", async () => {
+    // The incident: a crash-loop left old `/orc` commands queued (ids 100,101,102).
+    // With the old `offset = 0` a fresh listener would re-read and re-inject all three.
+    const backlog = [100, 101, 102].map((id) => ({
+      update_id: id,
+      message: { chat: { id: 999 }, text: `/orc maestro stale command ${id}` },
+    }));
+    const fetchFn = mockFetch(backlog);
+
+    const last = await probeLatestUpdateId("TKN", fetchFn);
+    expect(last).toBe(102);
+
+    const start = await resolveStartOffset({
+      readPersisted: () => null,
+      probeLatest: () => probeLatestUpdateId("TKN", fetchFn),
+    });
+    // The next real poll starts ABOVE every backlog id → Telegram confirms+drops them
+    // and not one of the stale `/orc` commands is ever handed to decideRoute.
+    expect(start).toEqual({ offset: 103, seeded: true });
+    expect(start.offset).toBeGreaterThan(Math.max(...backlog.map((b) => b.update_id)));
+  });
+
+  it("probeLatestUpdateId returns null on an empty queue (nothing to skip)", async () => {
+    expect(await probeLatestUpdateId("TKN", mockFetch([]))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix B — hard singleton: build-stable owner + synchronous eviction
+// ---------------------------------------------------------------------------
+
+describe("evictStrayListener — synchronous kill before respawn", () => {
+  it("SIGTERMs a live stray and returns once it is gone (no SIGKILL needed)", () => {
+    const signals: Array<string | number> = [];
+    let aliveCalls = 0;
+    evictStrayListener(4242, {
+      kill: (_pid, sig) => signals.push(sig),
+      // alive on the pre-check, dead on the first poll after SIGTERM (graceful exit).
+      alive: () => aliveCalls++ === 0,
+      sleep: () => {},
+    });
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  it("escalates to SIGKILL when SIGTERM doesn't take", () => {
+    const signals: Array<string | number> = [];
+    evictStrayListener(4242, {
+      kill: (_pid, sig) => signals.push(sig),
+      alive: () => true, // deaf to SIGTERM → must be forced
+      sleep: () => {},
+    });
+    expect(signals).toContain("SIGTERM");
+    expect(signals).toContain("SIGKILL");
+  });
+
+  it("kills a stray held by a legacy / owner-less lock (just a bare pid)", () => {
+    // The exact prod state this fix migrates from: the lock has a live listenerPid
+    // whose owning daemon is dead (no ownerId). evictStrayListener works off the bare
+    // pid alone — no owner needed to clear it.
+    const signals: Array<string | number> = [];
+    let aliveCalls = 0;
+    evictStrayListener(80523, {
+      kill: (_pid, sig) => signals.push(sig),
+      alive: () => aliveCalls++ === 0,
+      sleep: () => {},
+    });
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  it("is a no-op for a dead, invalid, or self pid", () => {
+    const signals: Array<string | number> = [];
+    evictStrayListener(4242, { kill: (_p, s) => signals.push(s), alive: () => false, sleep: () => {} });
+    evictStrayListener(0, { kill: (_p, s) => signals.push(s), alive: () => true, sleep: () => {} });
+    evictStrayListener(process.pid, { kill: (_p, s) => signals.push(s), alive: () => true, sleep: () => {} });
+    expect(signals).toEqual([]);
+  });
+});
+
+describe("crash-restart cycle — build-stable owner prevents the 3-listener pile-up", () => {
+  const live = () => true;
+
+  it("every restart of the SAME build SKIPS (one listener total), unlike per-restart random owners", () => {
+    // One live listener, owned by the running build.
+    const buildOwner = "engine:/Applications/Maestro.app/.../listener.js:1700000000000";
+    const lock = { listenerPid: 80523, ownerId: buildOwner };
+
+    // OLD model — each restart minted a fresh `pid:random` owner, so every daemon saw
+    // the lock as foreign and evicted+spawned: three restarts ⇒ three new listeners.
+    const oldActions = ["111:aaaa", "222:bbbb", "333:cccc"].map((o) => decideListenerAction(lock, o, live));
+    expect(oldActions).toEqual(["evict", "evict", "evict"]); // ⇐ reproduces the pile-up
+
+    // NEW model — the build owner is identical across restarts, so every daemon skips
+    // and the single live listener is never duplicated.
+    const newActions = [buildOwner, buildOwner, buildOwner].map((o) => decideListenerAction(lock, o, live));
+    expect(newActions).toEqual(["skip", "skip", "skip"]); // ⇐ the fix: at most one
+  });
+
+  it("a genuine engine UPGRADE (different build owner) still evicts the stale listener", () => {
+    const lock = { listenerPid: 80523, ownerId: "engine:/path/listener.js:1700000000000" };
+    const upgraded = "engine:/path/listener.js:1700009999999"; // newer mtime = new build
+    expect(decideListenerAction(lock, upgraded, live)).toBe("evict");
+  });
+
+  it("a legacy / owner-less stray is still evicted by the current build", () => {
+    expect(decideListenerAction({ listenerPid: 80523 }, "engine:/path:1700000000000", live)).toBe("evict");
+  });
+
+  it("the same-build acquire net refuses a second concurrent listener (no double-poll)", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "ao-tg-lock-")), "telegram-listener.pid");
+    process.env.AO_TELEGRAM_OWNER_ID = "engine:build-x";
+    try {
+      writeFileSync(path, JSON.stringify({ listenerPid: 999999, ownerId: "engine:build-x" }));
+      // A sibling listener of the same build is already live → we must not start a second.
+      expect(acquireListenerLock(path, () => true)).toBe(false);
+    } finally {
+      delete process.env.AO_TELEGRAM_OWNER_ID;
+    }
   });
 });
