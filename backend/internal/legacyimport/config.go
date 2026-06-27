@@ -21,11 +21,11 @@ type legacyConfig struct {
 // represent are typed; the rest are captured as raw nodes purely so the importer
 // can report them as dropped (issue #247 §4).
 type legacyProjectConfig struct {
-	Path          string             `yaml:"path"`
-	Name          string             `yaml:"name"`
+	Path string `yaml:"path"`
+	Name string `yaml:"name"`
 	// Repo is captured as a raw YAML node but never consumed; the origin URL is
 	// re-resolved from the repo path at import time.
-	Repo *yaml.Node `yaml:"repo"`
+	Repo          *yaml.Node         `yaml:"repo"`
 	DefaultBranch string             `yaml:"defaultBranch"`
 	SessionPrefix string             `yaml:"sessionPrefix"`
 	Env           map[string]string  `yaml:"env"`
