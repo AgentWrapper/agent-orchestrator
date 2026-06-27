@@ -226,17 +226,20 @@ function ShellLayout() {
           header instead of cutting through the titlebar strip. The bar lives
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
-			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+			{/* SidebarProvider is the outer column (topbar + the sidebar/main row)
+          so the mobile hamburger in ShellTopbar lives inside the sidebar
+          context and can open the offcanvas drawer. Controlled by the
+          ui-store so TitlebarNav / Topbar toggles (which call the store
+          directly) stay in sync. --sidebar-width chains to the drag-resizable
+          --ao-sidebar-w set on :root by useResizable. */}
+			<SidebarProvider
+				className="h-screen min-h-0 flex-col bg-background text-foreground"
+				onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
+				open={isSidebarOpen}
+				style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties}
+			>
 				<ShellTopbar />
-				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
-            call the store directly) stay in sync. --sidebar-width chains to
-            the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
-				<SidebarProvider
-					className="min-h-0 flex-1"
-					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
-					open={isSidebarOpen}
-					style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties}
-				>
+				<div className="flex min-h-0 w-full flex-1">
 					<Sidebar
 						daemonStatus={daemonStatus}
 						underTopbar
@@ -259,17 +262,17 @@ function ShellLayout() {
               strips they overlap. Rendered first, real clicks get swallowed
               by window-drag even though DOM hit-testing looks correct. */}
 					<TitlebarNav />
-				</SidebarProvider>
-				<OrchestratorReplacementDialog
-					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
-					onOpenChange={(open) => {
-						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
-					}}
-					onRetry={(projectId) => void restartOrchestrator(projectId)}
-					projectId={replacementErrorProjectId}
-					workspaces={workspaces}
-				/>
-			</div>
+				</div>
+			</SidebarProvider>
+			<OrchestratorReplacementDialog
+				error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
+				onOpenChange={(open) => {
+					if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
+				}}
+				onRetry={(projectId) => void restartOrchestrator(projectId)}
+				projectId={replacementErrorProjectId}
+				workspaces={workspaces}
+			/>
 		</ShellProvider>
 	);
 }

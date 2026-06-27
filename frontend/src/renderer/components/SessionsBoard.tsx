@@ -201,7 +201,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				type="button"
 			>
 				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
-				New task
+				<span className="hidden md:inline">New task</span>
 			</button>
 			<button
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
@@ -211,13 +211,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isProjectRestarting
-					? "Restarting..."
-					: isSpawning
-						? "Spawning..."
-						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+				<span className="hidden md:inline">
+					{isProjectRestarting
+						? "Restarting..."
+						: isSpawning
+							? "Spawning..."
+							: orchestrator
+								? "Orchestrator"
+								: "Spawn Orchestrator"}
+				</span>
 			</button>
 		</>
 	) : undefined;
@@ -235,7 +237,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				/>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
+			{/* Mobile: the whole board scrolls vertically with the columns stacked
+			    (each full-width). md+: the four-column grid fills the height and each
+			    column scrolls internally. */}
+			<div className="min-h-0 flex-1 overflow-y-auto p-3 md:overflow-hidden md:p-[18px]">
 				{projectId && health.state !== "ok" ? (
 					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
 						<AlertTriangle className="size-4 shrink-0 text-warning" aria-hidden="true" />
@@ -267,7 +272,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					<div className="grid h-full grid-cols-4 gap-2">
+					<div className="flex flex-col gap-3 md:grid md:h-full md:grid-cols-4 md:gap-2">
 						{COLUMNS.map((col) => (
 							<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
 						))}
@@ -276,7 +281,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{done.length > 0 && (
-				<div className="shrink-0 border-t border-border px-[18px]">
+				<div className="shrink-0 border-t border-border px-3 md:px-[18px]">
 					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
 					    a full-width chevron + label + count toggle row. min-h matches
 					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
@@ -340,7 +345,7 @@ function ZoneColumn({
 }) {
 	return (
 		<section
-			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
+			className="flex flex-col overflow-hidden rounded-[13px] md:min-w-0"
 			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
 		>
 			<div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
@@ -354,7 +359,9 @@ function ZoneColumn({
 				<span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
 				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
+			{/* md+: the column owns its scroll inside the fixed-height grid cell.
+			    Mobile: it grows with its cards and the page scrolls instead. */}
+			<div className="px-[11px] pb-3 md:min-h-0 md:flex-1 md:overflow-y-auto">
 				<div className="flex flex-col gap-2.5">
 					{sessions.map((session) => (
 						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
@@ -401,12 +408,16 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					className={cn(
 						"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
 						showBranch ? "pb-2" : "pb-3",
-						"line-clamp-2 overflow-hidden",
+						"line-clamp-2 overflow-hidden break-words",
 					)}
 				>
 					{session.title}
 				</div>
-				{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
+				{showBranch && (
+					<div className="truncate px-[13px] pb-2.5 font-mono text-[10.5px] text-passive" title={branch}>
+						{branch}
+					</div>
+				)}
 			</div>
 			<div
 				className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive"
