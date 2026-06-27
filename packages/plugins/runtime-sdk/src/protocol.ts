@@ -161,12 +161,34 @@ export interface OutputMessage {
   text: string;
 }
 
+/**
+ * #2 control-command ACK (additive). Sent on the requesting socket right after the
+ * host processes a `send` / `permission` command, so the UI gets strict confirmation
+ * the host received it (the socket write succeeding only proves the bytes left the
+ * client). `ok:false` means the command could not be applied (host ended for `send`;
+ * no matching pending request for `permission`).
+ *
+ * Deliberately carries NO top-level `seq`: an OLD client decodes an unknown
+ * `type:"ack"` line and would dedup a real event against a colliding `seq`. Without
+ * a `seq` the ack is an inert unknown event the old client ignores — strictly
+ * additive. The new client correlates a `permission` ack by `request_id` and a
+ * `send` ack FIFO (acks return in command order on the one ordered socket).
+ */
+export interface AckMessage {
+  type: "ack";
+  cmd: "send" | "permission";
+  ok: boolean;
+  /** Present for `permission` acks — the request being answered. */
+  request_id?: string;
+}
+
 export type HostMessage =
   | NormalizedEvent
   | HelloMessage
   | SnapshotCompleteMessage
   | StatusMessage
-  | OutputMessage;
+  | OutputMessage
+  | AckMessage;
 
 export type ClientCommand =
   | { cmd: "subscribe"; tail_events?: number; since_seq?: number }

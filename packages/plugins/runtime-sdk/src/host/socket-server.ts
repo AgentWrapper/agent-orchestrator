@@ -393,7 +393,16 @@ export function handleClientCommand(host: SessionHost, sock: net.Socket, obj: un
   const cmd = obj as ClientCommand;
   switch (cmd.cmd) {
     case "send":
-      if (typeof cmd.text === "string") host.submitTurn(cmd.text);
+      if (typeof cmd.text === "string") {
+        // #2 ACK: confirm host receipt of the turn. `ok:false` means the host has
+        // ended and dropped the turn — the UI flips the optimistic send to failed
+        // instead of waiting out the delivery timeout. Deliberately carries NO
+        // top-level `seq`: an old client decodes an unknown `type:"ack"` and would
+        // dedup a real event by a colliding seq, so the ack must not look like a
+        // data event (request_id is read only by the new client).
+        const accepted = host.submitTurn(cmd.text) !== null;
+        if (!sock.destroyed) sock.write(encodeLine({ type: "ack", cmd: "send", ok: accepted }));
+      }
       break;
     case "status": {
       const s = host.status();
@@ -407,7 +416,15 @@ export function handleClientCommand(host: SessionHost, sock: net.Socket, obj: un
     }
     case "permission":
       if (typeof cmd.request_id === "string") {
-        host.resolvePermission(cmd.request_id, cmd.behavior, cmd.message);
+        // #2 ACK: confirm the answer reached the host. `ok:false` means no such
+        // pending request (already resolved / timed out / unknown id) → the UI can
+        // re-surface the still-blocking card instead of silently dropping it.
+        const resolved = host.resolvePermission(cmd.request_id, cmd.behavior, cmd.message);
+        if (!sock.destroyed) {
+          sock.write(
+            encodeLine({ type: "ack", cmd: "permission", ok: resolved, request_id: cmd.request_id }),
+          );
+        }
       }
       break;
     case "kill":

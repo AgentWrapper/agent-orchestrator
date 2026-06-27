@@ -248,16 +248,21 @@ export class SessionHost {
 
   // --- input / turns ----------------------------------------------------
 
-  /** Push a user turn into the streaming input. */
-  submitTurn(text: string): void {
-    if (this.ended) return;
+  /**
+   * Push a user turn into the streaming input. Returns the seq of the emitted user
+   * echo on success, or `null` if the host has ended and cannot accept the turn —
+   * the caller turns that into the send ACK's `ok` (see #2).
+   */
+  submitTurn(text: string): number | null {
+    if (this.ended) return null;
     this.submittedTurns += 1;
     // Emit the user turn so events.ndjson is a complete transcript (and live
     // subscribers can render it without an optimistic echo). The echo is stamped
     // with the just-submitted turn (its own number), independent of which turn's
     // response is currently streaming.
-    this.emit({ type: "user", subtype: "input", text }, this.submittedTurns);
+    const echo = this.emit({ type: "user", subtype: "input", text }, this.submittedTurns);
     this.input.push(text);
+    return echo.seq;
   }
 
   // --- permission seam --------------------------------------------------
@@ -301,15 +306,22 @@ export class SessionHost {
     });
   };
 
-  /** Answer a pending permission request (delivered over the socket). */
-  resolvePermission(requestId: string, behavior: "allow" | "deny", message?: string): void {
+  /**
+   * Answer a pending permission request (delivered over the socket). Returns `true`
+   * if a matching pending request was found and resolved, `false` if there was no
+   * such request (already resolved / timed out / unknown id) — the caller turns that
+   * into the permission ACK's `ok`, so the UI can tell a delivered answer from one
+   * that landed too late (see #2).
+   */
+  resolvePermission(requestId: string, behavior: "allow" | "deny", message?: string): boolean {
     const pending = this.pendingPermissions.get(requestId);
-    if (!pending) return;
+    if (!pending) return false;
     pending(
       behavior === "allow"
         ? { behavior: "allow", updatedInput: {} }
         : { behavior: "deny", message: message ?? "denied" },
     );
+    return true;
   }
 
   // --- query consumption ------------------------------------------------

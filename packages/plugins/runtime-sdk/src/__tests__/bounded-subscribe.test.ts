@@ -3,6 +3,7 @@ import type { Socket } from "node:net";
 import {
   SessionHost,
   handleConnection,
+  handleClientCommand,
   SUBSCRIBE_GRACE_MS,
 } from "../sdk-host.js";
 
@@ -121,5 +122,65 @@ describe("handleConnection — bounded-subscribe handshake (#1)", () => {
     host.emit({ type: "text-delta", block: 0, text: "live" }, 3);
     const msgs = sock.parsed();
     expect(msgs[msgs.length - 1]).toMatchObject({ type: "text-delta", text: "live", seq: 6 });
+  });
+});
+
+describe("control-command ACK (#2)", () => {
+  function freshHost(): SessionHost {
+    return new SessionHost({
+      aoSessionId: "s",
+      permissionMode: "bypassPermissions",
+      persist: () => {},
+      now: () => new Date("2026-06-28T00:00:00.000Z"),
+    });
+  }
+
+  it("acks send ok:true with NO top-level seq (inert to an old client)", () => {
+    const host = freshHost();
+    const sock = fakeSocket();
+    handleClientCommand(host, sock as unknown as Socket, { cmd: "send", text: "hi" });
+    const ack = sock.parsed().find((m) => m.type === "ack");
+    expect(ack).toMatchObject({ type: "ack", cmd: "send", ok: true });
+    expect(ack).not.toHaveProperty("seq");
+  });
+
+  it("acks send ok:false once the host has ended", () => {
+    const host = freshHost();
+    host.end();
+    const sock = fakeSocket();
+    handleClientCommand(host, sock as unknown as Socket, { cmd: "send", text: "late" });
+    expect(sock.parsed().find((m) => m.type === "ack")).toMatchObject({ cmd: "send", ok: false });
+  });
+
+  it("acks permission ok:true for a pending request, carrying request_id", () => {
+    const host = freshHost();
+    void host.canUseTool("Bash", { command: "ls" }); // creates perm-1
+    const sock = fakeSocket();
+    handleClientCommand(host, sock as unknown as Socket, {
+      cmd: "permission",
+      request_id: "perm-1",
+      behavior: "allow",
+    });
+    expect(sock.parsed().find((m) => m.type === "ack")).toMatchObject({
+      type: "ack",
+      cmd: "permission",
+      ok: true,
+      request_id: "perm-1",
+    });
+  });
+
+  it("acks permission ok:false for an unknown / already-resolved request", () => {
+    const host = freshHost();
+    const sock = fakeSocket();
+    handleClientCommand(host, sock as unknown as Socket, {
+      cmd: "permission",
+      request_id: "perm-404",
+      behavior: "deny",
+    });
+    expect(sock.parsed().find((m) => m.type === "ack")).toMatchObject({
+      cmd: "permission",
+      ok: false,
+      request_id: "perm-404",
+    });
   });
 });
