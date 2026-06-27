@@ -33,6 +33,7 @@ export {
   SUBSCRIBER_BUFFER_CAP,
   type SubscriberSocket,
   readAppendSystemPrompt,
+  resolveHostDispatch,
   runStandalone,
   handleClientCommand,
 } from "./host/socket-server.js";

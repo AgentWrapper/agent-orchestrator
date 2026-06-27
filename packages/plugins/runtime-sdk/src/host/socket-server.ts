@@ -115,6 +115,33 @@ export function readAppendSystemPrompt(): string | null {
 }
 
 // ===========================================================================
+// Provider dispatch
+// ===========================================================================
+
+/**
+ * Decide whether THIS host runs the GLM or MiMo branch. The parent (agent plugin
+ * / runtime-sdk) resolves the provider via the central ModelRegistry and passes
+ * it down as AO_SDK_PROVIDER; the host trusts that — the registry is the single
+ * source of truth, the host does not re-guess. When AO_SDK_PROVIDER is absent
+ * (a legacy/external spawn) it falls back to the original model-string prefix,
+ * which routes the current GLM/MiMo models identically. A tiny pure seam so the
+ * dispatch is unit-testable without a net server and the host needs no
+ * @aoagents/ao-core import.
+ */
+export function resolveHostDispatch(
+  provider: string | null | undefined,
+  model: string | null | undefined,
+): { isGlm: boolean; isMimo: boolean } {
+  if (provider) {
+    return { isGlm: provider === "zhipu", isMimo: provider === "mimo" };
+  }
+  return {
+    isGlm: model?.startsWith("glm-") ?? false,
+    isMimo: model?.startsWith("mimo-") ?? false,
+  };
+}
+
+// ===========================================================================
 // Standalone entry-point
 // ===========================================================================
 
@@ -242,8 +269,7 @@ export async function runStandalone(): Promise<void> {
   // the original prefix dispatch, which routes the current GLM/MiMo models
   // identically. The host stays dependency-light (no @aoagents/ao-core import).
   const provider = process.env.AO_SDK_PROVIDER ?? null;
-  const isGlmModel = provider ? provider === "zhipu" : (model?.startsWith("glm-") ?? false);
-  const isMimoModel = provider ? provider === "mimo" : (model?.startsWith("mimo-") ?? false);
+  const { isGlm: isGlmModel, isMimo: isMimoModel } = resolveHostDispatch(provider, model);
 
   // Escape hatch: force MiMo back onto the OpenAI-compat chat-loop (no tools,
   // no system prompt) — kept as a fallback in case the Anthropic-compatible

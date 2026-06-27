@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { SessionHost, type SessionHostOptions } from "../sdk-host.js";
+import { SessionHost, resolveHostDispatch, type SessionHostOptions } from "../sdk-host.js";
 
 const FIXED = () => new Date("2026-06-26T00:00:00.000Z");
 
@@ -193,29 +193,30 @@ describe("MiMo provider — runOpenAiCompatMode via sdk-host", () => {
   });
 });
 
-describe("MiMo provider — prefix gate (AO_MIMO_API_KEY dispatch)", () => {
-  it("mimo- prefix with AO_MIMO_API_KEY is truthy — dispatch condition holds", () => {
-    const model = "mimo-v2.5-pro";
-    const apiKey = "test-mimo-key";
-    expect(model.startsWith("mimo-")).toBe(true);
-    expect(!!apiKey).toBe(true);
-    // Without a key the condition must be falsy.
-    const missingKey = "";
-    expect(!!missingKey).toBe(false);
+describe("host dispatch — resolveHostDispatch (AO_SDK_PROVIDER first, prefix fallback)", () => {
+  it("trusts AO_SDK_PROVIDER over the model string", () => {
+    expect(resolveHostDispatch("mimo", "mimo-v2.5-pro")).toEqual({ isGlm: false, isMimo: true });
+    expect(resolveHostDispatch("zhipu", "glm-5.2")).toEqual({ isGlm: true, isMimo: false });
+    expect(resolveHostDispatch("anthropic", "opus")).toEqual({ isGlm: false, isMimo: false });
   });
 
-  it("glm- model does NOT match mimo- prefix gate", () => {
-    expect("glm-5.2".startsWith("mimo-")).toBe(false);
+  it("provider wins even when it disagrees with the model prefix (registry is source of truth)", () => {
+    // A future registered model whose id has no glm-/mimo- prefix but whose
+    // provider is resolved upstream must still route by provider.
+    expect(resolveHostDispatch("mimo", "xiaomi-next")).toEqual({ isGlm: false, isMimo: true });
+    expect(resolveHostDispatch("zhipu", "zhipu-next")).toEqual({ isGlm: true, isMimo: false });
   });
 
-  it("mimo- model does NOT match glm- prefix gate", () => {
-    expect("mimo-v2.5".startsWith("glm-")).toBe(false);
+  it("falls back to the model prefix when AO_SDK_PROVIDER is absent (legacy/external spawn)", () => {
+    expect(resolveHostDispatch(null, "mimo-v2.5")).toEqual({ isGlm: false, isMimo: true });
+    expect(resolveHostDispatch(undefined, "glm-4.6")).toEqual({ isGlm: true, isMimo: false });
+    expect(resolveHostDispatch(null, "opus")).toEqual({ isGlm: false, isMimo: false });
+    expect(resolveHostDispatch(null, null)).toEqual({ isGlm: false, isMimo: false });
   });
 
-  it("all four advertised MiMo models match the prefix gate", () => {
-    const models = ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-flash"];
-    for (const m of models) {
-      expect(m.startsWith("mimo-")).toBe(true);
+  it("all four advertised MiMo models route to the MiMo branch via provider", () => {
+    for (const m of ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-flash"]) {
+      expect(resolveHostDispatch("mimo", m).isMimo).toBe(true);
     }
   });
 });
