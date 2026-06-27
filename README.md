@@ -163,6 +163,7 @@ All configuration is environment-driven. The daemon takes no config file.
 | `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake          |
 | `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory       |
 | `AO_AGENT`            | `claude-code`        | Compatibility agent adapter |
+| `AO_KEEP_DAEMON`      | unset (off)          | Keep the desktop app's daemon running after the window closes; stop only via `ao stop` |
 | `GITHUB_TOKEN`        | -                    | GitHub auth token           |
 
 ### Health Checks
