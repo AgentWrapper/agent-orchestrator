@@ -6,6 +6,8 @@
 
 <h1 align="center">Agent Orchestrator</h1>
 
+> Dogfooding Agent Orchestrator on this repo.
+
 <p align="center"><strong>The orchestration layer for parallel AI coding agents</strong></p>
 
 <p align="center">
