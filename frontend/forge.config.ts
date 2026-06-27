@@ -19,6 +19,10 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 	return { owner, name };
 }
 
+type OSXNotarizeConfig =
+	| { tool: "notarytool"; keychainProfile: string }
+	| { appleId: string; appleIdPassword: string; teamId: string };
+
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
@@ -47,7 +51,7 @@ const config: ForgeConfig = {
 			? ({
 					tool: "notarytool",
 					keychainProfile: process.env.AO_NOTARY_PROFILE,
-				} as unknown as ForgeConfig["packagerConfig"]["osxNotarize"])
+				} as OSXNotarizeConfig)
 			: process.env.APPLE_ID
 				? {
 						appleId: process.env.APPLE_ID,

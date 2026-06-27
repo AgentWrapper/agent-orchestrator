@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -140,6 +142,58 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandWorkerDefaultsToStrictEmptyMCP(t *testing.T) {
+	workspace := t.TempDir()
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindWorker,
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantPath := filepath.Join(workspace, ".claude", "ao-mcp.json")
+	if !containsSubsequence(cmd, []string{"--mcp-config", wantPath, "--strict-mcp-config"}) {
+		t.Fatalf("command %#v missing strict worker MCP config %q", cmd, wantPath)
+	}
+}
+
+func TestGetLaunchCommandWorkerCanInheritMCP(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindWorker,
+		WorkspacePath: t.TempDir(),
+		Config:        ports.AgentConfig{MCP: domain.MCPConfig{Mode: domain.MCPModeInherit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--mcp-config") || contains(cmd, "--strict-mcp-config") {
+		t.Fatalf("command %#v unexpectedly restricts MCP when mode=inherit", cmd)
+	}
+}
+
+func TestGetLaunchCommandCustomMCPConfigFile(t *testing.T) {
+	workspace := t.TempDir()
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindWorker,
+		WorkspacePath: workspace,
+		Config: ports.AgentConfig{MCP: domain.MCPConfig{
+			Mode:       domain.MCPModeCustom,
+			ConfigFile: ".ao/worker-mcp.json",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath := filepath.Join(workspace, ".ao", "worker-mcp.json")
+	if !containsSubsequence(cmd, []string{"--mcp-config", wantPath, "--strict-mcp-config"}) {
+		t.Fatalf("command %#v missing custom MCP config %q", cmd, wantPath)
+	}
+}
+
 func TestClaudeSessionUUIDDeterministicAndUnique(t *testing.T) {
 	a1 := claudeSessionUUID("alpha")
 	a2 := claudeSessionUUID("alpha")
@@ -152,6 +206,48 @@ func TestClaudeSessionUUIDDeterministicAndUnique(t *testing.T) {
 	}
 	if _, err := uuid.Parse(a1); err != nil {
 		t.Fatalf("derived value is not a valid UUID: %q (%v)", a1, err)
+	}
+}
+
+func TestPreLaunchWritesManagedMCPConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := t.TempDir()
+	p := &Plugin{resolvedBinary: "claude"}
+
+	err := p.PreLaunch(context.Background(), ports.LaunchConfig{
+		Kind:          domain.KindWorker,
+		WorkspacePath: workspace,
+		Config: ports.AgentConfig{MCP: domain.MCPConfig{
+			Mode: domain.MCPModeCustom,
+			Servers: map[string]domain.MCPServerConfig{
+				"code-graph": {"command": "code-graph-mcp", "args": []any{"--stdio"}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workspace, ".claude", "ao-mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.MCPServers["code-graph"]["command"] != "code-graph-mcp" {
+		t.Fatalf("MCP config = %s", data)
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(workspace, ".claude", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitignore), "/settings.local.json") || !strings.Contains(string(gitignore), "/ao-mcp.json") {
+		t.Fatalf("gitignore does not cover AO Claude files:\n%s", gitignore)
 	}
 }
 
@@ -401,6 +497,25 @@ func TestGetRestoreCommandReappendsSystemPrompt(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	want := []string{"claude", "--permission-mode", "bypassPermissions", "--append-system-prompt", "You are an orchestrator.", "--resume", "claude-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandWorkerDefaultsToStrictEmptyMCP(t *testing.T) {
+	workspace := t.TempDir()
+	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Kind: domain.KindWorker,
+		Session: ports.SessionRef{
+			ID:            "sess-r",
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	want := []string{"claude", "--mcp-config", filepath.Join(workspace, ".claude", "ao-mcp.json"), "--strict-mcp-config", "--resume", "claude-native-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}

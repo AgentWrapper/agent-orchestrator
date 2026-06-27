@@ -6,7 +6,7 @@
 // and supports resume: GetLaunchCommand pins a stable `--session-id` so
 // GetRestoreCommand can rebuild `claude --resume <uuid>`. SessionInfo reads the
 // hook-captured metadata from the store — it does not parse transcripts.
-// GetConfigSpec remains a no-op (no agent-specific config keys yet).
+// GetConfigSpec reports Claude-specific model, permission, and MCP config.
 //
 // Claude Code starts an interactive session by default (no -p/--print), which
 // is exactly what AO wants: a live agent the user can attach to in the
@@ -103,6 +103,11 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Description: "Starting permission mode.",
 				Enum:        permissionConfigEnum,
 			},
+			{
+				Key:         "mcp",
+				Type:        ports.ConfigFieldObject,
+				Description: "MCP server selection: inherit, none, or custom servers/configFile. Workers default to none.",
+			},
 		},
 	}, nil
 }
@@ -154,6 +159,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
 	}
+	if err := appendClaudeMCPFlags(&cmd, cfg); err != nil {
+		return nil, err
+	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
 	if err != nil {
@@ -203,7 +211,10 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 	if err != nil {
 		return err
 	}
-	return ensureWorkspaceTrusted(cfgPath, cfg.WorkspacePath)
+	if err := ensureWorkspaceTrusted(cfgPath, cfg.WorkspacePath); err != nil {
+		return err
+	}
+	return ensureClaudeMCPConfig(cfg)
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Claude Code
@@ -218,6 +229,9 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
+	}
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, false, fmt.Errorf("claude-code: %w", err)
 	}
 
 	sessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
@@ -242,6 +256,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		// not stored in the transcript), so standing instructions must be
 		// re-appended or a restored orchestrator loses its role.
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	}
+	if err := appendClaudeMCPFlags(&cmd, ports.LaunchConfig{Config: cfg.Config, Kind: cfg.Kind, WorkspacePath: cfg.Session.WorkspacePath}); err != nil {
+		return nil, false, err
 	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil

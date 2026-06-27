@@ -509,6 +509,7 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            mcp?: components["schemas"]["MCPConfig"];
             model?: string;
             permissions?: string;
         };
@@ -603,6 +604,16 @@ export interface components {
         };
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
+        };
+        MCPConfig: {
+            configFile?: string;
+            mode?: string;
+            servers?: {
+                [key: string]: components["schemas"]["MCPServerConfig"];
+            };
+        };
+        MCPServerConfig: {
+            [key: string]: unknown;
         };
         MarkAllNotificationsReadResponse: {
             notifications: components["schemas"]["NotificationResponse"][];

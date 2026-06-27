@@ -107,7 +107,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := writeClaudeSettings(settingsPath, topLevel, rawHooks); err != nil {
 		return fmt.Errorf("claude-code.GetAgentHooks: %w", err)
 	}
-	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(settingsPath), claudeSettingsFileName); err != nil {
+	if err := ensureClaudeSettingsGitignore(filepath.Dir(settingsPath)); err != nil {
 		return fmt.Errorf("claude-code.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
