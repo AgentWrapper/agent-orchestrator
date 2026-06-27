@@ -9,7 +9,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-type fakeStore struct{ projects map[string]domain.ProjectRecord }
+type fakeStore struct {
+	projects map[string]domain.ProjectRecord
+}
 
 func newFakeStore() *fakeStore { return &fakeStore{projects: map[string]domain.ProjectRecord{}} }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {

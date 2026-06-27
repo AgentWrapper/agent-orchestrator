@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	yaml "gopkg.in/yaml.v3"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // nonNilNode returns a non-nil *yaml.Node for struct fields that are captured
