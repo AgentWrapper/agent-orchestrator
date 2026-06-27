@@ -10,22 +10,12 @@ import {
 	type UpdateStatus,
 } from "./update-settings";
 
-// Default release repo, mirroring backend cli.releaseRepo. Override via env for
-// fork test builds (AO_RELEASE_REPO=owner/repo).
-const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
-
-function repo(): { owner: string; name: string } {
-	const [owner, name] = (process.env.AO_RELEASE_REPO || DEFAULT_RELEASE_REPO).split("/");
-	if (owner && name) return { owner, name };
-	const [defOwner, defName] = DEFAULT_RELEASE_REPO.split("/");
-	return { owner: defOwner, name: defName };
-}
-
-// configureFeed points electron-updater at the GitHub Releases feed for the
-// chosen channel. Shared by the launch auto-check and the manual Settings flow.
+// configureFeed sets the update channel on electron-updater. The repo/owner
+// are loaded automatically from app-update.yml (written by forge.config.ts's
+// postPackage hook into the app's Resources dir at build time). No runtime env
+// or setFeedURL call is needed; electron-updater reads the bundled yml on first
+// checkForUpdates.
 function configureFeed(channel: UpdateChannel): void {
-	const { owner, name } = repo();
-	autoUpdater.setFeedURL({ provider: "github", owner, repo: name });
 	autoUpdater.channel = channel; // "latest" | "nightly"
 	autoUpdater.allowDowngrade = true; // permits a nightly -> stable channel switch
 }
