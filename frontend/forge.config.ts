@@ -65,9 +65,13 @@ const config: ForgeConfig = {
 		// AO_RELEASE_REPO at build time.
 		prePackage: async () => {
 			const { owner, name } = parseReleaseRepo(process.env.AO_RELEASE_REPO);
-			const yml = ["provider: github", `owner: ${owner}`, `repo: ${name}`, "updaterCacheDirName: agent-orchestrator-updater", ""].join(
-				"\n",
-			);
+			const yml = [
+				"provider: github",
+				`owner: ${owner}`,
+				`repo: ${name}`,
+				"updaterCacheDirName: agent-orchestrator-updater",
+				"",
+			].join("\n");
 			writeFileSync("app-update.yml", yml);
 		},
 	},
