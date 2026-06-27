@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { SessionHost, type SessionHostOptions } from "../sdk-host.js";
+import {
+  SessionHost,
+  type SessionHostOptions,
+  isSubscribeCommand,
+  subscribeOptionsFrom,
+} from "../sdk-host.js";
 
 const FIXED = () => new Date("2026-06-23T00:00:00.000Z");
 
@@ -58,6 +63,80 @@ describe("SessionHost.subscribe (snapshot -> live)", () => {
     host.subscribe((line) => lines.push(JSON.parse(line)));
     const replayed = lines.filter((l) => l.type === "text-delta");
     expect(replayed).toHaveLength(2);
+  });
+});
+
+describe("SessionHost.subscribe bounded (#1 opt-in)", () => {
+  // Build a host with three turns of three events each (seqs 0..8).
+  function threeTurns() {
+    const { host } = makeHost();
+    for (let turn = 1; turn <= 3; turn++) {
+      for (let b = 0; b < 3; b++) {
+        host.emit({ type: "text-delta", block: 0, text: `t${turn}-${b}` }, turn);
+      }
+    }
+    return host;
+  }
+  function dataSeqs(host: SessionHost, opts?: { tailEvents?: number; sinceSeq?: number }): number[] {
+    const lines: Array<Record<string, unknown>> = [];
+    host.subscribe((l) => lines.push(JSON.parse(l)), opts);
+    return lines.filter((l) => l.type === "text-delta").map((l) => l.seq as number);
+  }
+
+  it("no options replays the FULL buffer (unchanged behavior)", () => {
+    expect(dataSeqs(threeTurns())).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("tail_events trims to the last N events, EXTENDED back to a turn boundary", () => {
+    // Naive last 4 = seqs 5,6,7,8 (turns 2,3,3,3); turn-align pulls in the rest of
+    // turn 2 (seqs 3,4) so the tail starts at a turn boundary.
+    expect(dataSeqs(threeTurns(), { tailEvents: 4 })).toEqual([3, 4, 5, 6, 7, 8]);
+  });
+
+  it("tail_events larger than the buffer returns everything", () => {
+    expect(dataSeqs(threeTurns(), { tailEvents: 100 })).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("tail_events: 0 sends no snapshot events (live only)", () => {
+    expect(dataSeqs(threeTurns(), { tailEvents: 0 })).toEqual([]);
+  });
+
+  it("since_seq sends only events after the given seq", () => {
+    expect(dataSeqs(threeTurns(), { sinceSeq: 5 })).toEqual([6, 7, 8]);
+  });
+
+  it("hello + snapshot-complete still carry the TRUE head seq under bounding", () => {
+    const host = threeTurns();
+    const lines: Array<Record<string, unknown>> = [];
+    host.subscribe((l) => lines.push(JSON.parse(l)), { tailEvents: 1 });
+    expect(lines[0]).toMatchObject({ type: "hello", seq_head: 8 });
+    expect(lines[lines.length - 1]).toMatchObject({ type: "snapshot-complete", seq: 8 });
+  });
+
+  it("a bounded subscriber still receives live events after the snapshot", () => {
+    const host = threeTurns();
+    const lines: Array<Record<string, unknown>> = [];
+    host.subscribe((l) => lines.push(JSON.parse(l)), { tailEvents: 1 });
+    host.emit({ type: "text-delta", block: 0, text: "live" }, 3);
+    expect(lines[lines.length - 1]).toMatchObject({ type: "text-delta", text: "live", seq: 9 });
+  });
+});
+
+describe("bounded-subscribe command parsing", () => {
+  it("recognizes the subscribe command", () => {
+    expect(isSubscribeCommand({ cmd: "subscribe" })).toBe(true);
+    expect(isSubscribeCommand({ cmd: "subscribe", tail_events: 10 })).toBe(true);
+    expect(isSubscribeCommand({ cmd: "send", text: "x" })).toBe(false);
+    expect(isSubscribeCommand(null)).toBe(false);
+    expect(isSubscribeCommand("subscribe")).toBe(false);
+  });
+
+  it("extracts numeric tail_events / since_seq, ignoring junk", () => {
+    expect(subscribeOptionsFrom({ tail_events: 500 })).toEqual({ tailEvents: 500 });
+    expect(subscribeOptionsFrom({ since_seq: 12 })).toEqual({ sinceSeq: 12 });
+    expect(subscribeOptionsFrom({ tail_events: 5, since_seq: 2 })).toEqual({ tailEvents: 5, sinceSeq: 2 });
+    expect(subscribeOptionsFrom({ tail_events: "nope" as unknown as number })).toEqual({});
+    expect(subscribeOptionsFrom({})).toEqual({});
   });
 });
 

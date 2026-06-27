@@ -27,6 +27,7 @@ export {
   SessionHost,
   type SessionHostOptions,
   type Send,
+  type SubscribeOptions,
 } from "./host/session-host.js";
 export {
   makeSubscriberSink,
@@ -36,6 +37,11 @@ export {
   resolveHostDispatch,
   runStandalone,
   handleClientCommand,
+  handleConnection,
+  // #1 bounded subscribe (opt-in snapshot handshake).
+  SUBSCRIBE_GRACE_MS,
+  isSubscribeCommand,
+  subscribeOptionsFrom,
 } from "./host/socket-server.js";
 export {
   createEventLogSink,

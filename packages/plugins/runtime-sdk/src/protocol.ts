@@ -14,11 +14,18 @@
  * (seq/turn reset to 0) deterministically instead of guessing from seq_head.
  *
  * Control lines (subscriber -> host); a pure subscriber sends none:
+ *   { cmd: "subscribe", tail_events?, since_seq? }  OPT-IN bounded snapshot (see below)
  *   { cmd: "send", text }                          push a user turn
  *   { cmd: "status" }                  -> reply    { type: "status", ... }
  *   { cmd: "output", lines }           -> reply    { type: "output", text }
  *   { cmd: "permission", request_id, behavior, message? }   answer a request
  *   { cmd: "kill" }                                graceful host shutdown
+ *
+ * Bounded subscribe (#1, additive + opt-in): on connect the host holds the
+ * snapshot for a short grace window. A client that sends `subscribe` first gets
+ * only the requested tail (`tail_events`) / events after `since_seq`; the rest it
+ * reads from the durable log. A client that sends NO subscribe command (any old
+ * client) gets the FULL snapshot after the grace — exactly the prior behavior.
  *
  * Paths are derived from the AO session id (known at create() time), NOT the
  * provider session id (which is unknown until the first turn produces init).
@@ -162,6 +169,7 @@ export type HostMessage =
   | OutputMessage;
 
 export type ClientCommand =
+  | { cmd: "subscribe"; tail_events?: number; since_seq?: number }
   | { cmd: "send"; text: string }
   | { cmd: "status" }
   | { cmd: "output"; lines?: number }

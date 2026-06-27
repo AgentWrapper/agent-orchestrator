@@ -23,6 +23,25 @@ import { encodeLine } from "../protocol.js";
 /** A live subscriber: a function that writes one already-encoded NDJSON line. */
 export type Send = (line: string) => void;
 
+/**
+ * #1 bounded subscribe (opt-in). A subscriber MAY ask for only a tail of history
+ * instead of the full buffer, to avoid the RAM/CPU spike of replaying thousands of
+ * events on attach to a long-lived session. Absent/empty options = the full
+ * snapshot (the original, unbounded behavior — an old client that sends no
+ * subscribe command gets exactly this).
+ */
+export interface SubscribeOptions {
+  /**
+   * Send only the last N events. The tail is TURN-ALIGNED: it is extended back to
+   * the first event of the turn containing the Nth-from-end event, so it never
+   * begins mid-turn. That lets the subscriber page strictly-older WHOLE turns from
+   * the durable log with no split/overlap at the boundary.
+   */
+  tailEvents?: number;
+  /** Send only events whose seq is strictly greater than this. */
+  sinceSeq?: number;
+}
+
 export interface SessionHostOptions {
   aoSessionId: string;
   permissionMode: PermissionMode;
@@ -173,8 +192,13 @@ export class SessionHost {
    * handshake, then keeps the subscriber for live events. Returns an
    * unsubscribe function. No `await` here, so no event can interleave between
    * the snapshot and joining the live set.
+   *
+   * `hello` and `snapshot-complete` always carry the TRUE head seq (`this.seq-1`)
+   * regardless of how much of the snapshot is replayed — they mark the live
+   * boundary. With bounded `opts`, only a tail of the buffer is replayed; the
+   * subscriber reads the strictly-older remainder from the durable log itself.
    */
-  subscribe(send: Send): () => void {
+  subscribe(send: Send, opts?: SubscribeOptions): () => void {
     send(
       encodeLine({
         type: "hello",
@@ -186,10 +210,40 @@ export class SessionHost {
         resumed_from: this.resumedFrom,
       }),
     );
-    for (const event of this.events) send(encodeLine(event));
+    for (const event of this.snapshotEvents(opts)) send(encodeLine(event));
     send(encodeLine({ type: "snapshot-complete", seq: this.seq > 0 ? this.seq - 1 : -1 }));
     this.subscribers.add(send);
     return () => this.subscribers.delete(send);
+  }
+
+  /**
+   * The slice of the buffer to replay on subscribe. Default (no/empty opts) = the
+   * WHOLE buffer — byte-for-byte the original behavior, so an old client that sends
+   * no subscribe command is unaffected. Bounded opts filter by `sinceSeq` then trim
+   * to the last `tailEvents`, extended back to a turn boundary (see SubscribeOptions).
+   */
+  private snapshotEvents(opts?: SubscribeOptions): NormalizedEvent[] {
+    if (!opts || (opts.tailEvents == null && opts.sinceSeq == null)) {
+      return this.events;
+    }
+    let evs: NormalizedEvent[] = this.events;
+    if (opts.sinceSeq != null) {
+      const since = opts.sinceSeq;
+      evs = evs.filter((e) => e.seq > since);
+    }
+    if (opts.tailEvents != null && opts.tailEvents >= 0) {
+      if (opts.tailEvents === 0) return []; // explicit "live only"
+      if (evs.length > opts.tailEvents) {
+        let start = evs.length - opts.tailEvents;
+        // Turn-align: walk back over the partial first turn so the tail begins at a
+        // turn boundary. Turns are contiguous in the buffer (a turn's events are
+        // emitted in sequence), so this includes the whole head turn.
+        const startTurn = evs[start].turn;
+        while (start > 0 && evs[start - 1].turn === startTurn) start--;
+        evs = evs.slice(start);
+      }
+    }
+    return evs;
   }
 
   // --- input / turns ----------------------------------------------------

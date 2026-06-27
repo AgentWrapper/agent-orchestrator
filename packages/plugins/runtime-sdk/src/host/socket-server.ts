@@ -25,7 +25,7 @@ import {
   type ClientCommand,
   type SessionInfo,
 } from "../protocol.js";
-import { SessionHost, type Send } from "./session-host.js";
+import { SessionHost, type Send, type SubscribeOptions } from "./session-host.js";
 import { createEventLogSink } from "./history-log.js";
 import {
   GLM_BASE_URL,
@@ -79,6 +79,46 @@ export function makeSubscriberSink(
     sock.write(line);
     if (sock.writableLength > cap) sock.destroy();
   };
+}
+
+// ===========================================================================
+// Bounded subscribe (#1) — opt-in snapshot handshake
+// ===========================================================================
+
+/**
+ * Grace window the connection holds the snapshot for, letting an opt-in
+ * `{cmd:"subscribe",...}` (which a new client sends immediately on connect) arrive
+ * BEFORE the default full snapshot is sent. A new client's command crosses the
+ * local socket in well under this, so it sees no added latency; only an OLD client
+ * (which never sends one) waits the full window before its full snapshot — the only
+ * behavioral delta for old clients, and well below human perception.
+ */
+export const SUBSCRIBE_GRACE_MS = 75;
+
+/** Type-guard for the opt-in subscribe command. */
+export function isSubscribeCommand(
+  obj: unknown,
+): obj is { cmd: "subscribe"; tail_events?: number; since_seq?: number } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    (obj as { cmd?: unknown }).cmd === "subscribe"
+  );
+}
+
+/** Pull the (validated) bounded-subscribe options out of a subscribe command. */
+export function subscribeOptionsFrom(obj: {
+  tail_events?: unknown;
+  since_seq?: unknown;
+}): SubscribeOptions {
+  const opts: SubscribeOptions = {};
+  if (typeof obj.tail_events === "number" && Number.isFinite(obj.tail_events)) {
+    opts.tailEvents = obj.tail_events;
+  }
+  if (typeof obj.since_seq === "number" && Number.isFinite(obj.since_seq)) {
+    opts.sinceSeq = obj.since_seq;
+  }
+  return opts;
 }
 
 // ===========================================================================
@@ -221,17 +261,7 @@ export async function runStandalone(): Promise<void> {
     }
   }
 
-  const server = net.createServer((sock) => {
-    sock.setEncoding("utf-8");
-    // Backpressure-aware sink: a subscriber that stops reading is dropped once
-    // its in-memory write buffer exceeds SUBSCRIBER_BUFFER_CAP, so one slow UI
-    // client can't grow the host's memory without bound.
-    const unsubscribe = host.subscribe(makeSubscriberSink(sock));
-    const parser = new LineParser((obj) => handleClientCommand(host, sock, obj));
-    sock.on("data", (chunk) => parser.feed(chunk));
-    sock.on("close", unsubscribe);
-    sock.on("error", unsubscribe);
-  });
+  const server = net.createServer((sock) => handleConnection(host, sock));
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -306,6 +336,55 @@ export async function runStandalone(): Promise<void> {
     });
   }
   shutdown("session-ended");
+}
+
+/**
+ * Wire one accepted connection to the host: backpressure sink, the #1 bounded-
+ * subscribe grace handshake, the command parser, and teardown. Extracted from the
+ * server callback so the arming logic is unit-testable with a fake socket + fake
+ * timers (no real `net` server).
+ *
+ * Bounded subscribe: hold the snapshot until EITHER an opt-in `{cmd:"subscribe"}`
+ * arrives (new client → bounded tail) OR the grace timer fires (old client → full
+ * snapshot, the prior behavior). `arm` runs exactly once. Subscribing is atomic
+ * (snapshot then join live, no await), so no event is missed or duplicated whenever
+ * arming happens — events emitted during the grace window are in `host.events` and
+ * land in the snapshot.
+ */
+export function handleConnection(host: SessionHost, sock: net.Socket): void {
+  sock.setEncoding("utf-8");
+  const sink = makeSubscriberSink(sock);
+
+  let armed = false;
+  let unsubscribe: (() => void) | null = null;
+  const arm = (opts?: SubscribeOptions): void => {
+    if (armed) return;
+    armed = true;
+    clearTimeout(graceTimer);
+    unsubscribe = host.subscribe(sink, opts);
+  };
+  const graceTimer = setTimeout(() => arm(), SUBSCRIBE_GRACE_MS);
+  graceTimer.unref?.();
+
+  const parser = new LineParser((obj) => {
+    // The subscribe command only takes effect BEFORE arming (it sets the snapshot
+    // bounds). After arming it's a no-op (already streaming); any other command
+    // routes to the normal handler. A late/duplicate subscribe is harmlessly ignored.
+    if (!armed && isSubscribeCommand(obj)) {
+      arm(subscribeOptionsFrom(obj));
+      return;
+    }
+    handleClientCommand(host, sock, obj);
+  });
+  sock.on("data", (chunk) => parser.feed(chunk));
+  sock.on("close", () => {
+    clearTimeout(graceTimer);
+    unsubscribe?.();
+  });
+  sock.on("error", () => {
+    clearTimeout(graceTimer);
+    unsubscribe?.();
+  });
 }
 
 /** Handle one decoded client command line. */
