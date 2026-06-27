@@ -282,6 +282,63 @@ func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
 	}
 }
 
+func TestRestoreWorkspaceProjectWorktreeMovesStrayPathAside(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess", "api")
+	if err := mkdirFile(path, "keep.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	var addPath string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse"):
+			return []byte("commit"), nil
+		case strings.Contains(joined, "worktree add"):
+			if len(args) >= 2 {
+				addPath = args[len(args)-2]
+			}
+			if addPath == "" {
+				t.Fatalf("could not find worktree add path in args: %v", args)
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.RestoreWorkspaceProjectWorktree(context.Background(), ports.WorkspaceRepoInfo{
+		RepoName:  "api",
+		RepoPath:  repo,
+		Path:      path,
+		Branch:    "ao/proj-1",
+		SessionID: "proj-1",
+		ProjectID: "proj",
+	})
+	if err != nil {
+		t.Fatalf("RestoreWorkspaceProjectWorktree: %v", err)
+	}
+	if info.Path != path || addPath != path {
+		t.Fatalf("restored path=%q addPath=%q, want %q", info.Path, addPath, path)
+	}
+	if _, err := os.Stat(filepath.Join(path+".stray", "keep.txt")); err != nil {
+		t.Fatalf("stray path was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "keep.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original path still has stray file: %v", err)
+	}
+}
+
 func TestDestroyRefusesStillRegisteredPathAndPreservesDirectory(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
