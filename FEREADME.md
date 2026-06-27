@@ -24,6 +24,7 @@ restart fixes it. It does **not** self-heal.
 The known-good origin value is documented in the comment block of `lan-web-server.sh`.
 
 ### Verify the fix
+
 ```sh
 # Should print "HTTP/1.1 101 Switching Protocols" (was 403 when broken):
 curl -s -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
@@ -66,16 +67,16 @@ re-checks-out each session's git worktree and relaunches the agent as `claude --
 
 ## File map
 
-| Path | What |
-|---|---|
-| `bin/` | helper shims (e.g. `gh` wrapper used for git credential) |
-| `daemon.log` | daemon HTTP + lifecycle log |
-| `data/` | sqlite (`ao.db`), worktrees, session state, `hooks.log` |
-| `electron/` | Electron desktop shell state |
-| `lan-web-server.sh` | launchd-run Vite UI launcher (port 3000, LAN) |
-| `lan-web.{out,err}.log` | Vite UI server stdout/stderr |
-| `running.json` | live daemon `{pid, port, startedAt}` |
-| `mandates/` | session mandate backups |
+| Path                    | What                                                     |
+| ----------------------- | -------------------------------------------------------- |
+| `bin/`                  | helper shims (e.g. `gh` wrapper used for git credential) |
+| `daemon.log`            | daemon HTTP + lifecycle log                              |
+| `data/`                 | sqlite (`ao.db`), worktrees, session state, `hooks.log`  |
+| `electron/`             | Electron desktop shell state                             |
+| `lan-web-server.sh`     | launchd-run Vite UI launcher (port 3000, LAN)            |
+| `lan-web.{out,err}.log` | Vite UI server stdout/stderr                             |
+| `running.json`          | live daemon `{pid, port, startedAt}`                     |
+| `mandates/`             | session mandate backups                                  |
 
 ## Health check
 
