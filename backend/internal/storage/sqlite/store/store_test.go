@@ -84,8 +84,15 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 		Env:           map[string]string{"FOO": "bar"},
 		Symlinks:      []string{".env"},
 		PostCreate:    []string{"echo hi"},
-		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
-		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		AgentConfig: domain.AgentConfig{
+			Model:       "claude-opus-4-5",
+			Permissions: domain.PermissionModeAcceptEdits,
+			MCP: domain.MCPConfig{
+				Mode:    domain.MCPModeCustom,
+				Servers: map[string]domain.MCPServerConfig{"browser": {"command": "browser-mcp"}},
+			},
+		},
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
 	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,

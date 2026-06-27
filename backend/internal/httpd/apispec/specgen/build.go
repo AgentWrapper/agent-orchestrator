@@ -124,13 +124,16 @@ var schemaNames = map[string]string{
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
-	"DomainProjectID":     "ProjectID",
-	"DomainSessionID":     "SessionID",
-	"DomainIssueID":       "IssueID",
-	"DomainSession":       "Session",
-	"DomainProjectConfig": "ProjectConfig",
-	"DomainAgentConfig":   "AgentConfig",
-	"DomainRoleOverride":  "RoleOverride",
+	"DomainProjectID":       "ProjectID",
+	"DomainSessionID":       "SessionID",
+	"DomainIssueID":         "IssueID",
+	"DomainSession":         "Session",
+	"DomainProjectConfig":   "ProjectConfig",
+	"DomainAgentConfig":     "AgentConfig",
+	"DomainMCPConfig":       "MCPConfig",
+	"DomainMCPMode":         "MCPMode",
+	"DomainMCPServerConfig": "MCPServerConfig",
+	"DomainRoleOverride":    "RoleOverride",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",

@@ -1481,6 +1481,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        mcp:
+          $ref: '#/components/schemas/MCPConfig'
         model:
           type: string
         permissions:
@@ -1745,6 +1747,20 @@ components:
           type: array
       required:
       - sessions
+      type: object
+    MCPConfig:
+      properties:
+        configFile:
+          type: string
+        mode:
+          type: string
+        servers:
+          additionalProperties:
+            $ref: '#/components/schemas/MCPServerConfig'
+          type: object
+      type: object
+    MCPServerConfig:
+      additionalProperties: {}
       type: object
     MarkAllNotificationsReadResponse:
       properties:

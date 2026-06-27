@@ -158,6 +158,21 @@ worker:
 
 Use this when planning/review needs a stronger model but routine implementation can use a faster or cheaper worker.
 
+Claude Code worker sessions default to no MCP servers, even if your user-level Claude config has MCP servers enabled for the orchestrator. Opt workers into a specific set under the worker role:
+
+```yaml
+worker:
+  agent: claude-code
+  agentConfig:
+    mcp:
+      mode: custom
+      servers:
+        code-graph:
+          command: code-graph-mcp
+```
+
+Use `mode: inherit` when a worker should intentionally load Claude Code's normal MCP configuration, or `mode: none` to make that isolation explicit.
+
 ## Tracker And SCM
 
 AO usually infers tracker and SCM from the registered repository. Override them only when needed.

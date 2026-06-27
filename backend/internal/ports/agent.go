@@ -94,6 +94,7 @@ const (
 	ConfigFieldString     ConfigFieldType = "string"
 	ConfigFieldBool       ConfigFieldType = "bool"
 	ConfigFieldNumber     ConfigFieldType = "number"
+	ConfigFieldObject     ConfigFieldType = "object"
 	ConfigFieldStringList ConfigFieldType = "string_list"
 	ConfigFieldEnum       ConfigFieldType = "enum"
 )
@@ -102,6 +103,7 @@ const (
 type LaunchConfig struct {
 	Config           AgentConfig
 	IssueID          string
+	Kind             domain.SessionKind
 	Permissions      PermissionMode
 	Prompt           string
 	SessionID        string
@@ -114,6 +116,7 @@ type LaunchConfig struct {
 type WorkspaceHookConfig struct {
 	Config        AgentConfig
 	DataDir       string
+	Kind          domain.SessionKind
 	SessionID     string
 	WorkspacePath string
 }
@@ -121,6 +124,7 @@ type WorkspaceHookConfig struct {
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
 	Config      AgentConfig
+	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the

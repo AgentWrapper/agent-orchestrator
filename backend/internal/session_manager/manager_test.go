@@ -340,9 +340,12 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
 		DefaultBranch: "develop",
 		Env:           map[string]string{"FOO": "bar"},
-		AgentConfig:   domain.AgentConfig{Model: "base-model"},
+		AgentConfig:   domain.AgentConfig{Model: "base-model", MCP: domain.MCPConfig{Mode: domain.MCPModeInherit}},
 		// A worker role override wins over the base agent config for workers.
-		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{
+			Model: "worker-model",
+			MCP:   domain.MCPConfig{Mode: domain.MCPModeCustom, Servers: map[string]domain.MCPServerConfig{"code-graph": {"command": "code-graph-mcp"}}},
+		}},
 	}}
 	agent := &recordingAgent{}
 	rt := &fakeRuntime{}
@@ -356,6 +359,9 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "worker-model" {
 		t.Fatalf("launch model = %q, want role override worker-model", agent.lastConfig.Model)
+	}
+	if agent.lastConfig.MCP.Mode != domain.MCPModeCustom || agent.lastConfig.MCP.Servers["code-graph"]["command"] != "code-graph-mcp" {
+		t.Fatalf("launch MCP config = %#v, want worker role override", agent.lastConfig.MCP)
 	}
 	if rec.Harness != domain.HarnessCodex {
 		t.Fatalf("harness = %q, want codex from role override", rec.Harness)
@@ -704,7 +710,7 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions, MCP: domain.MCPConfig{Mode: domain.MCPModeNone}},
 	}}
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID:           "mer-1",
@@ -726,6 +732,9 @@ func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	}
 	if agent.lastRestore.Permissions != domain.PermissionModeBypassPermissions {
 		t.Fatalf("restore permissions = %q, want bypass", agent.lastRestore.Permissions)
+	}
+	if agent.lastRestore.Config.MCP.Mode != domain.MCPModeNone {
+		t.Fatalf("restore MCP mode = %q, want none", agent.lastRestore.Config.MCP.Mode)
 	}
 }
 
