@@ -2,6 +2,7 @@ import {
   shellEscape,
   normalizeAgentPermissionMode,
   isWindows,
+  resolveProvider,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -1499,22 +1500,26 @@ function createClaudeCodeAgent(): Agent {
       }
       if (config.model) {
         env["AO_SDK_MODEL"] = config.model;
-      }
-      // GLM (ZhipuAI) provider: inject the API key when the model is a GLM model.
-      // The key is read from the global AO_GLM_API_KEY environment variable for
-      // now (Phase-1 PoC); Phase-2 will read it from the AO config / Keychain and
-      // store it via Settings ▸ Agents ▸ GLM. The strip list in runtime-sdk/index.ts
-      // prevents this value from accidentally leaking from an orchestrator worker
-      // into its children — it must be set explicitly here.
-      if (config.model?.startsWith("glm-")) {
-        const glmKey = process.env.AO_GLM_API_KEY;
-        if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
-      }
-      // MiMo (Xiaomi) provider: inject the API key when the model is a MiMo model.
-      // Same pattern as GLM above.
-      if (config.model?.startsWith("mimo-")) {
-        const mimoKey = process.env.AO_MIMO_API_KEY;
-        if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
+        // Resolve the provider through the central ModelRegistry (registry-first,
+        // prefix-fallback) instead of ad-hoc `startsWith` checks, and hand the
+        // result to the sdk-host as AO_SDK_PROVIDER so the host dispatches the
+        // driver from the registry rather than re-guessing from the model string.
+        // For the current Claude/GLM/MiMo models this yields exactly the same
+        // routing the prefix checks did. The strip list in runtime-sdk/index.ts
+        // keeps AO_SDK_PROVIDER (and the keys below) per-session so they never
+        // leak from an orchestrator into its workers.
+        const provider = resolveProvider(config.model);
+        env["AO_SDK_PROVIDER"] = provider;
+        // GLM (ZhipuAI): inject the API key from the global AO_GLM_API_KEY env.
+        if (provider === "zhipu") {
+          const glmKey = process.env.AO_GLM_API_KEY;
+          if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
+        }
+        // MiMo (Xiaomi): same pattern as GLM.
+        if (provider === "mimo") {
+          const mimoKey = process.env.AO_MIMO_API_KEY;
+          if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
+        }
       }
 
       return env;

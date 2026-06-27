@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import {
   killProcessTree,
   loadGlobalConfig,
+  resolveProvider,
   type PluginModule,
   type Runtime,
   type RuntimeCreateConfig,
@@ -117,6 +118,10 @@ export function create(): Runtime {
         "AO_SDK_APPEND_SYSTEM_PROMPT",
         "AO_SDK_SYSTEM_PROMPT_FILE",
         "AO_SDK_MODEL",
+        // Resolved provider for THIS session (registry → driver dispatch in the
+        // host). Per-session like AO_SDK_MODEL: a worker must not inherit the
+        // orchestrator's provider and misroute its own model.
+        "AO_SDK_PROVIDER",
         "AO_SDK_PERMISSION_MODE",
         "AO_GLM_API_KEY",
         "AO_GLM_BASE_URL",
@@ -135,17 +140,31 @@ export function create(): Runtime {
         }
       }
 
-      // Inject the GLM API key from the global config (zhipu.apiKey) when the
-      // per-session model is a `glm-*` model and the key was not already set
-      // explicitly in config.environment. This bridges the gap between the
-      // user's Settings → ZhipuAI config and the sdk-host process, which reads
-      // AO_GLM_API_KEY at runtime (sdk-host.ts) to take the GLM path.
+      // Resolve the provider through the central ModelRegistry (registry-first,
+      // prefix-fallback) so the GLM/MiMo credential injection below — and the
+      // host's driver dispatch — share one source of truth instead of duplicated
+      // `startsWith` checks. For the current Claude/GLM/MiMo models this yields
+      // exactly the same provider the prefix checks did.
       //
       // The session model arrives via AO_SDK_MODEL (RuntimeCreateConfig has no
       // `model` field); sdk-host derives `model` from process.env.AO_SDK_MODEL.
       const sessionModel = config.environment?.["AO_SDK_MODEL"];
+      const provider = sessionModel ? resolveProvider(sessionModel) : undefined;
+      // Hand the resolved provider to the host (AO_SDK_PROVIDER) so it dispatches
+      // the driver from the registry rather than re-guessing from the model
+      // string. Respect an explicit value already set in config.environment
+      // (e.g. by the agent plugin's getEnvironment).
+      if (provider && (!config.environment || !config.environment["AO_SDK_PROVIDER"])) {
+        hostEnv["AO_SDK_PROVIDER"] = provider;
+      }
+
+      // Inject the GLM API key from the global config (zhipu.apiKey) when the
+      // per-session provider is ZhipuAI and the key was not already set
+      // explicitly in config.environment. This bridges the gap between the
+      // user's Settings → ZhipuAI config and the sdk-host process, which reads
+      // AO_GLM_API_KEY at runtime (sdk-host.ts) to take the GLM path.
       if (
-        sessionModel?.startsWith("glm-") &&
+        provider === "zhipu" &&
         (!config.environment || !config.environment["AO_GLM_API_KEY"])
       ) {
         const zhipuCfg = loadGlobalConfig()?.zhipu;
@@ -160,10 +179,10 @@ export function create(): Runtime {
       }
 
       // Inject the MiMo API key from the global config (mimo.apiKey) when the
-      // per-session model is a `mimo-*` model and the key was not already set
-      // explicitly in config.environment. Same pattern as GLM/Zhipu above.
+      // per-session provider is MiMo and the key was not already set explicitly
+      // in config.environment. Same pattern as GLM/Zhipu above.
       if (
-        sessionModel?.startsWith("mimo-") &&
+        provider === "mimo" &&
         (!config.environment || !config.environment["AO_MIMO_API_KEY"])
       ) {
         const mimoCfg = loadGlobalConfig()?.mimo;

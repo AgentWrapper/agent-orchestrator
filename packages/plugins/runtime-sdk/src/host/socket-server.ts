@@ -234,8 +234,16 @@ export async function runStandalone(): Promise<void> {
   // --- start the streaming session (Claude SDK, GLM, or MiMo) ---
   const glmApiKey = process.env.AO_GLM_API_KEY ?? null;
   const mimoApiKey = process.env.AO_MIMO_API_KEY ?? null;
-  const isGlmModel = model?.startsWith("glm-") ?? false;
-  const isMimoModel = model?.startsWith("mimo-") ?? false;
+  // The provider for THIS session is resolved by the parent (agent plugin /
+  // runtime-sdk) through the central ModelRegistry and handed down as
+  // AO_SDK_PROVIDER. The host trusts it and does NOT re-guess from the model
+  // string — that's the whole point of the registry (one source of truth).
+  // Back-compat: a legacy/external spawn with no AO_SDK_PROVIDER falls back to
+  // the original prefix dispatch, which routes the current GLM/MiMo models
+  // identically. The host stays dependency-light (no @aoagents/ao-core import).
+  const provider = process.env.AO_SDK_PROVIDER ?? null;
+  const isGlmModel = provider ? provider === "zhipu" : (model?.startsWith("glm-") ?? false);
+  const isMimoModel = provider ? provider === "mimo" : (model?.startsWith("mimo-") ?? false);
 
   // Escape hatch: force MiMo back onto the OpenAI-compat chat-loop (no tools,
   // no system prompt) — kept as a fallback in case the Anthropic-compatible
