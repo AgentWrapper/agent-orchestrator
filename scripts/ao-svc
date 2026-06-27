@@ -1,0 +1,28 @@
+#!/bin/zsh
+# Stop/start the AO launchd jobs (daemon + LAN web UI). Reversible.
+#   ao-svc down     # bootout both (clean stop, no respawn)
+#   ao-svc up       # bootstrap both (daemon comes up pinned to the current LAN IP)
+#   ao-svc status   # show which jobs are loaded
+set -u
+dom="gui/$(id -u)"
+LA="$HOME/Library/LaunchAgents"
+services=(dev.agent-orchestrator.daemon dev.agent-orchestrator.lan-web)
+
+case "${1:-status}" in
+  down)
+    for s in $services; do
+      launchctl bootout "$dom/$s" 2>/dev/null && echo "down: $s" || echo "down: $s (not loaded)"
+    done
+    ;;
+  up)
+    for s in $services; do
+      launchctl bootstrap "$dom" "$LA/$s.plist" 2>/dev/null && echo "up:   $s" || echo "up:   $s (already loaded / failed)"
+    done
+    ;;
+  status)
+    launchctl list | grep agent-orchestrator || echo "(no agent-orchestrator jobs loaded)"
+    ;;
+  *)
+    echo "usage: ao-svc {up|down|status}" >&2; exit 2
+    ;;
+esac
