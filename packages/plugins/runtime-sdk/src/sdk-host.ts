@@ -17,7 +17,7 @@
  * Module layout after the split (#6):
  *   host/session-host.ts   — SessionHost core (unit-tested, no sockets/SDK)
  *   host/socket-server.ts  — net server, backpressure, control commands, dispatch
- *   host/history-log.ts    — durable events.ndjson sink
+ *   host/history-log.ts    — durable events.ndjson sink + sidecar offset indexes (#4)
  *   providers/claude-agent-sdk.ts — default Claude path (+ MiMo full-agent)
  *   providers/openai-compatible.ts — GLM / MiMo legacy chat-loop
  *   providers/mimo-anthropic.ts    — MiMo Anthropic-compatible env setup
@@ -37,6 +37,19 @@ export {
   runStandalone,
   handleClientCommand,
 } from "./host/socket-server.js";
+export {
+  createEventLogSink,
+  // #4 indexed-history readers (seek via sidecar .idx; full-scan fallback).
+  readTailLines,
+  readAllLines,
+  readLinesFrom,
+  readEpochIndex,
+  readTurnIndex,
+  rebuildIndex,
+  indexPaths,
+  CHECKPOINT_INTERVAL,
+  type IndexRecord,
+} from "./host/history-log.js";
 
 import { runStandalone } from "./host/socket-server.js";
 
