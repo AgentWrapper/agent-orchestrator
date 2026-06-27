@@ -1,0 +1,327 @@
+/**
+ * model-registry.ts — the SINGLE SOURCE OF TRUTH for model → provider → driver.
+ *
+ * Before this, "which provider runs this model" was decided by string-prefix
+ * checks (`model.startsWith("glm-")` / `"mimo-"`) duplicated across three sites
+ * (agent-claude-code getEnvironment, runtime-sdk create, the sdk-host dispatch).
+ * That does not scale (GPT/OpenAI, Qwen, Grok, OpenRouter, local models all add
+ * more prefixes) and drifts out of sync. This module centralizes the mapping.
+ *
+ * Two SEPARATE axes — do not collapse them:
+ *   - provider:      billing / auth identity (anthropic | zhipu | mimo | openai)
+ *   - runtimeDriver: the actual runtime path that streams the session
+ *
+ * They are NOT 1:1. The load-bearing example is MiMo: its provider is `mimo`
+ * but its driver is `claude-agent-sdk` (we point the Claude Agent SDK at MiMo's
+ * Anthropic-compatible endpoint to get the FULL agent path — tools + system
+ * prompt + discipline hooks). Resolving MiMo to an "openai" driver would silently
+ * downgrade it to the chat-loop fallback. Hence the descriptor carries both.
+ *
+ * RESOLUTION POLICY (registry-first, prefix-fallback): {@link resolveProvider}
+ * looks the model up in the registry; an UNKNOWN model (the CLI accepts any
+ * `--model` string) falls back to {@link inferProviderFromId}, which reproduces
+ * the legacy prefix heuristic. So existing behavior is preserved exactly while
+ * the registry becomes the authoritative path for known models.
+ */
+
+import type { GlobalConfig } from "./global-config.js";
+
+/** Billing / auth identity of a model. */
+export type ProviderId = "anthropic" | "zhipu" | "mimo" | "openai";
+
+/**
+ * The runtime path that actually streams a session. Distinct from {@link ProviderId}:
+ *   - claude-agent-sdk  — @anthropic-ai/claude-agent-sdk query() (Claude native)
+ *   - mimo-anthropic    — the SAME SDK pointed at MiMo's Anthropic-compatible
+ *                         endpoint (full agent path for MiMo)
+ *   - openai-compat     — OpenAI-compatible /chat/completions chat loop (GLM,
+ *                         MiMo legacy fallback) — text only, no tools
+ *   - openai-responses  — native OpenAI Responses API driver (added in a later
+ *                         phase; declared here so types are ready)
+ */
+export type RuntimeDriver =
+  | "claude-agent-sdk"
+  | "mimo-anthropic"
+  | "openai-compat"
+  | "openai-responses";
+
+/**
+ * What a provider/model actually supports, so the UI never promises more than
+ * the runtime delivers (e.g. GLM's chat-loop has no tools/approvals/resume).
+ */
+export interface ModelCapabilities {
+  /** Token-level streaming of the assistant message. */
+  streaming: boolean;
+  /** Agentic tool use (Read/Edit/Bash/...) with a real tool loop. */
+  tools: boolean;
+  /** Interactive permission/approval prompts for tool calls. */
+  approvals: boolean;
+  /** Reasoning / thinking content is surfaced. */
+  reasoning: boolean;
+  /** Real token-usage accounting (not a zero stub). */
+  usage: boolean;
+  /** Conversation can be resumed as a provider session after host restart. */
+  resume: boolean;
+}
+
+/** Where the credentials for a model's provider come from. */
+export interface ModelAuth {
+  /**
+   * The GlobalConfig block holding this provider's creds, or null for Anthropic
+   * (which authenticates from the ambient ANTHROPIC_API_KEY / login, not a config
+   * block). Used by availability checks and the config→env bridge.
+   */
+  configKey: "zhipu" | "mimo" | "openai" | null;
+  /**
+   * The env var the sdk-host reads the API key from (AO_GLM_API_KEY /
+   * AO_MIMO_API_KEY / AO_OPENAI_API_KEY), or null when none is needed.
+   */
+  envKey: string | null;
+}
+
+/** A single known model and everything the system needs to route + describe it. */
+export interface ModelDescriptor {
+  /** Canonical model id sent to the provider API (for Claude this is the alias — see module docs). */
+  id: string;
+  provider: ProviderId;
+  /** DEFAULT runtime driver. Provider ≠ driver — see module docs (MiMo). */
+  runtimeDriver: RuntimeDriver;
+  /** Human-facing name shown in the model picker. */
+  label: string;
+  /** UI grouping header (mirrors the app's preset sections). */
+  section: string;
+  /** Extra UX aliases that resolve to this descriptor (lowercased on lookup). */
+  aliases: string[];
+  capabilities: ModelCapabilities;
+  auth: ModelAuth;
+  /** Hint for default selection by session role, if any. */
+  defaultFor?: "orchestrator" | "worker" | "cheap-worker";
+}
+
+// ===========================================================================
+// Capability presets — the three runtime tiers we have today.
+// ===========================================================================
+
+/** Claude / MiMo full-agent: everything on. */
+const FULL_AGENT_CAPS: ModelCapabilities = {
+  streaming: true,
+  tools: true,
+  approvals: true,
+  reasoning: true,
+  usage: true,
+  resume: true,
+};
+
+/** OpenAI-compatible chat loop (GLM today): text streaming only. */
+const CHAT_ONLY_CAPS: ModelCapabilities = {
+  streaming: true,
+  tools: false,
+  approvals: false,
+  reasoning: false,
+  usage: false,
+  resume: false,
+};
+
+// ===========================================================================
+// The registry. Mirrors the app's hardcoded presets (ModelPresetsClient.swift)
+// so `ao models list` can become the single source the app reads from.
+// ===========================================================================
+
+/**
+ * Built-in model descriptors. Order is display order within each section.
+ *
+ * Claude ids are the SDK aliases (`opus`/`sonnet`/`haiku`) ON PURPOSE: the
+ * Agent SDK resolves them to the concrete dated model itself (via
+ * ANTHROPIC_DEFAULT_*_MODEL), so we pass them through unchanged. Rewriting them
+ * to a pinned id here would fight that resolution.
+ */
+export const MODEL_REGISTRY: ModelDescriptor[] = [
+  // --- Claude (anthropic → claude-agent-sdk) ---
+  {
+    id: "opus",
+    provider: "anthropic",
+    runtimeDriver: "claude-agent-sdk",
+    label: "Claude Opus",
+    section: "Claude",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: null, envKey: null },
+    defaultFor: "orchestrator",
+  },
+  {
+    id: "sonnet",
+    provider: "anthropic",
+    runtimeDriver: "claude-agent-sdk",
+    label: "Claude Sonnet",
+    section: "Claude",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: null, envKey: null },
+  },
+  {
+    id: "haiku",
+    provider: "anthropic",
+    runtimeDriver: "claude-agent-sdk",
+    label: "Claude Haiku",
+    section: "Claude",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: null, envKey: null },
+    defaultFor: "cheap-worker",
+  },
+
+  // --- ZhipuAI GLM (zhipu → openai-compat chat loop) ---
+  ...(["glm-5.2", "glm-4.5-air", "glm-4.5", "glm-4.6", "glm-4.7"].map(
+    (id): ModelDescriptor => ({
+      id,
+      provider: "zhipu",
+      runtimeDriver: "openai-compat",
+      label: id.replace(/^glm-/, "GLM-").replace("-air", " Air"),
+      section: "ZhipuAI (GLM)",
+      aliases: [],
+      capabilities: CHAT_ONLY_CAPS,
+      auth: { configKey: "zhipu", envKey: "AO_GLM_API_KEY" },
+    }),
+  )),
+
+  // --- MiMo (mimo → claude-agent-sdk via Anthropic-compatible endpoint) ---
+  // provider ≠ driver: full agent path, NOT the openai-compat fallback.
+  {
+    id: "mimo-v2.5-pro",
+    provider: "mimo",
+    runtimeDriver: "mimo-anthropic",
+    label: "MiMo v2.5 Pro",
+    section: "MiMo (Xiaomi)",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
+  },
+  {
+    id: "mimo-v2.5",
+    provider: "mimo",
+    runtimeDriver: "mimo-anthropic",
+    label: "MiMo v2.5",
+    section: "MiMo (Xiaomi)",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
+  },
+  {
+    id: "mimo-v2-pro",
+    provider: "mimo",
+    runtimeDriver: "mimo-anthropic",
+    label: "MiMo v2 Pro",
+    section: "MiMo (Xiaomi)",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
+  },
+  {
+    id: "mimo-v2-flash",
+    provider: "mimo",
+    runtimeDriver: "mimo-anthropic",
+    label: "MiMo v2 Flash",
+    section: "MiMo (Xiaomi)",
+    aliases: [],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
+  },
+];
+
+// ===========================================================================
+// Lookup index (id + aliases, lowercased).
+// ===========================================================================
+
+const BY_KEY: Map<string, ModelDescriptor> = (() => {
+  const m = new Map<string, ModelDescriptor>();
+  for (const d of MODEL_REGISTRY) {
+    m.set(d.id.toLowerCase(), d);
+    for (const alias of d.aliases) m.set(alias.toLowerCase(), d);
+  }
+  return m;
+})();
+
+/** Resolve a model id or alias to its descriptor, or undefined if unknown. */
+export function resolveModel(idOrAlias: string | null | undefined): ModelDescriptor | undefined {
+  if (!idOrAlias) return undefined;
+  return BY_KEY.get(idOrAlias.trim().toLowerCase());
+}
+
+/**
+ * Legacy prefix heuristic — the FALLBACK for models not in the registry. Mirrors
+ * exactly the historical `startsWith` dispatch so unknown `--model` strings route
+ * the same as they always have. `gpt-*` / `o1`-`o4*` map to `openai` (forward-
+ * looking; the openai-responses driver lands in a later phase — until then the
+ * host treats an unknown openai model the same as before).
+ */
+export function inferProviderFromId(modelId: string | null | undefined): ProviderId {
+  const m = (modelId ?? "").trim().toLowerCase();
+  if (m.startsWith("glm-")) return "zhipu";
+  if (m.startsWith("mimo-")) return "mimo";
+  if (m.startsWith("gpt-") || /^o[1-4]\b/.test(m) || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")) {
+    return "openai";
+  }
+  return "anthropic";
+}
+
+/**
+ * Resolve the PROVIDER for a model. Registry-first, prefix-fallback. This is the
+ * one function the three former prefix-dispatch sites now call, so they share a
+ * single source of truth.
+ */
+export function resolveProvider(idOrAlias: string | null | undefined): ProviderId {
+  return resolveModel(idOrAlias)?.provider ?? inferProviderFromId(idOrAlias);
+}
+
+/**
+ * Resolve the DEFAULT runtime driver for a model. For unknown models we map the
+ * inferred provider to its conventional driver (anthropic/openai→claude-agent-sdk
+ * today, since unknown models have no openai-responses descriptor yet; zhipu→
+ * openai-compat; mimo→mimo-anthropic). Known models use their descriptor's driver.
+ */
+export function resolveDriver(idOrAlias: string | null | undefined): RuntimeDriver {
+  const known = resolveModel(idOrAlias);
+  if (known) return known.runtimeDriver;
+  switch (inferProviderFromId(idOrAlias)) {
+    case "zhipu":
+      return "openai-compat";
+    case "mimo":
+      return "mimo-anthropic";
+    // anthropic + openai (no native driver registered yet) → Claude SDK path,
+    // exactly as the legacy else-branch did.
+    default:
+      return "claude-agent-sdk";
+  }
+}
+
+// ===========================================================================
+// Availability (used by `ao models list` in a later phase).
+// ===========================================================================
+
+export interface ModelAvailability {
+  available: boolean;
+  /** Human-readable reason when unavailable (e.g. "ZhipuAI not enabled"). */
+  reason?: string;
+}
+
+/**
+ * Whether a model can actually be used given the current global config. Anthropic
+ * models are always considered available (auth is ambient). Provider-keyed models
+ * (zhipu/mimo/openai) require their config block to be `enabled` with a non-empty
+ * `apiKey` — the same gate the app's preset list uses today.
+ */
+export function modelAvailability(
+  descriptor: ModelDescriptor,
+  config: GlobalConfig | null | undefined,
+): ModelAvailability {
+  const key = descriptor.auth.configKey;
+  if (!key) return { available: true };
+  const block = (config as Record<string, unknown> | null | undefined)?.[key] as
+    | { apiKey?: string; enabled?: boolean }
+    | undefined;
+  if (!block?.enabled) return { available: false, reason: `${descriptor.section} not enabled` };
+  if (!block.apiKey || block.apiKey.trim().length === 0) {
+    return { available: false, reason: `${descriptor.section} API key missing` };
+  }
+  return { available: true };
+}

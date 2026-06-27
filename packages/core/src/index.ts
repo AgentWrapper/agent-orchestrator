@@ -50,6 +50,22 @@ export {
 } from "./agent-selection.js";
 export { sessionFromMetadata } from "./utils/session-from-metadata.js";
 
+// Model registry — single source of truth for model → provider → driver.
+export {
+  MODEL_REGISTRY,
+  resolveModel,
+  resolveProvider,
+  resolveDriver,
+  inferProviderFromId,
+  modelAvailability,
+  type ProviderId,
+  type RuntimeDriver,
+  type ModelCapabilities,
+  type ModelAuth,
+  type ModelDescriptor,
+  type ModelAvailability,
+} from "./model-registry.js";
+
 // AO-local code review store
 export { CodeReviewStore, createCodeReviewStore } from "./code-review-store.js";
 export type {
