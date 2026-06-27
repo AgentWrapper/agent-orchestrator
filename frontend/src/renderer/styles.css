@@ -1402,3 +1402,52 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--red);
 	font-size: 12px;
 }
+
+/* ── Mobile (phone widths, < md) ──────────────────────────────────────────
+ * The renderer is desktop-first; below the shadcn `md` breakpoint (768px) the
+ * sidebar collapses to an offcanvas drawer and the chrome condenses. The web
+ * app (:3000) is the only place these widths occur — and on iOS Safari the
+ * `isMac` UA test matches iPhone/iPad, which would otherwise apply the macOS
+ * titlebar inset + fixed nav meant for the Electron traffic lights. There are
+ * no traffic lights in a browser, so drop both here and reclaim the space. */
+@media (max-width: 767px) {
+	.dashboard-app-header {
+		gap: 8px;
+		padding: 0 10px;
+	}
+
+	.dashboard-app-header.is-under-titlebar-nav {
+		padding-left: 10px;
+	}
+
+	.titlebar-nav {
+		display: none;
+	}
+
+	.session-topbar__lead {
+		gap: 8px;
+	}
+
+	.dashboard-app-header__actions {
+		gap: 4px;
+	}
+
+	/* Grow the icon-only controls (labels are hidden at this width) to a
+	 * comfortable ~40px touch target. */
+	.dashboard-app-header__icon-btn {
+		width: 40px;
+		height: 40px;
+	}
+
+	.dashboard-app-header__primary-btn,
+	.dashboard-app-header__accent-btn,
+	.dashboard-app-header__primary-btn--compact {
+		height: 40px;
+		padding: 0 11px;
+	}
+
+	.dashboard-app-header__kill-btn {
+		height: 38px;
+		padding: 0 10px;
+	}
+}

@@ -18,6 +18,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { SidebarTrigger } from "./ui/sidebar";
 import { cn } from "../lib/utils";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -132,6 +133,13 @@ export function ShellTopbar() {
 	return (
 		<header className={cn("dashboard-app-header", isMac && "is-under-titlebar-nav")} style={dragStyle}>
 			<div className="session-topbar__lead">
+				{/* Mobile only: opens the offcanvas sidebar drawer (the desktop toggle
+				    lives in the sidebar / macOS titlebar, both hidden at phone widths). */}
+				<SidebarTrigger
+					aria-label="Open navigation"
+					className="-ml-1 size-10 shrink-0 rounded-md text-passive hover:bg-interactive-hover hover:text-foreground md:hidden [&_svg]:size-5"
+					style={noDragStyle}
+				/>
 				{isSessionRoute && isOrchestrator ? (
 					<div className="topbar-project-pills-group">
 						<div className="topbar-project-line">
@@ -176,7 +184,7 @@ export function ShellTopbar() {
 									type="button"
 								>
 									<Plus className="h-3.5 w-3.5" aria-hidden="true" />
-									New task
+									<span className="hidden md:inline">New task</span>
 								</button>
 								<button
 									aria-label="Open Kanban"
@@ -186,7 +194,7 @@ export function ShellTopbar() {
 									type="button"
 								>
 									<LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
-									Kanban
+									<span className="hidden md:inline">Kanban</span>
 								</button>
 							</>
 						) : null}
@@ -203,7 +211,7 @@ export function ShellTopbar() {
 								type="button"
 							>
 								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning ? "Spawning…" : "Orchestrator"}
+								<span className="hidden md:inline">{isSpawning ? "Spawning…" : "Orchestrator"}</span>
 							</button>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
@@ -304,7 +312,7 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 			type="button"
 		>
 			<Trash2 className="h-[13px] w-[13px]" aria-hidden="true" />
-			Kill
+			<span className="hidden md:inline">Kill</span>
 		</button>
 	);
 }
