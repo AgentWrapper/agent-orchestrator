@@ -41,6 +41,11 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to the worker's own harness (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+
+	// OrchestratorPrompt, when set, replaces the built-in orchestrator standing
+	// instructions for this project's orchestrator sessions. The confidentiality
+	// guard is still appended. Empty = built-in default. Used literally.
+	OrchestratorPrompt string `json:"orchestratorPrompt,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -75,6 +80,10 @@ type RoleOverride struct {
 
 // DefaultBranchName is the base branch used when a project configures none.
 const DefaultBranchName = "main"
+
+// maxOrchestratorPromptBytes bounds the per-project orchestrator prompt so it
+// stays well within process-arg limits when injected into an agent launch.
+const maxOrchestratorPromptBytes = 64 * 1024
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
 // branch "main". Every other field defaults to its zero value (no
@@ -127,6 +136,9 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	if n := len(c.OrchestratorPrompt); n > maxOrchestratorPromptBytes {
+		return fmt.Errorf("orchestratorPrompt: %d bytes exceeds max %d", n, maxOrchestratorPromptBytes)
 	}
 	return nil
 }

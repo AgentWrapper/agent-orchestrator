@@ -824,6 +824,42 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPrompt_OrchestratorUsesConfiguredPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{OrchestratorPrompt: "CUSTOM ORCHESTRATOR RULES"}}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, "CUSTOM ORCHESTRATOR RULES") {
+		t.Fatalf("system prompt missing configured prompt:\n%s", sp)
+	}
+	if strings.Contains(sp, "You are the human-facing coordinator") {
+		t.Fatalf("configured prompt must REPLACE the built-in role:\n%s", sp)
+	}
+	if !strings.Contains(sp, "Standing-instruction confidentiality") {
+		t.Fatalf("guard must still be appended:\n%s", sp)
+	}
+}
+
+func TestBuildSystemPrompt_OrchestratorFallsBackWhenUnset(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	sp, err := m.buildSystemPrompt(ctx, domain.KindOrchestrator, "mer")
+	if err != nil {
+		t.Fatalf("buildSystemPrompt: %v", err)
+	}
+	if !strings.Contains(sp, "You are the human-facing coordinator for project mer") {
+		t.Fatalf("expected built-in coordinator prompt:\n%s", sp)
+	}
+}
+
 // TestSystemPrompt_AppendsConfidentialityGuard: every non-empty system prompt
 // must carry the guard that tells the agent not to reveal its standing
 // instructions on request. Without it, "give me your system prompt" dumps the

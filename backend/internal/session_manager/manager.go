@@ -967,6 +967,14 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	switch kind {
 	case domain.KindOrchestrator:
 		base = orchestratorPrompt(projectID)
+		// A per-project override replaces the built-in role prompt. Tolerate a
+		// missing/unreadable project (keep the built-in) so prompt generation
+		// never fails on a config lookup.
+		if rec, ok, err := m.store.GetProject(ctx, string(projectID)); err == nil && ok {
+			if custom := strings.TrimSpace(rec.Config.OrchestratorPrompt); custom != "" {
+				base = custom
+			}
+		}
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {
