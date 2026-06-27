@@ -253,6 +253,143 @@ func (w *Workspace) DestroyWorkspaceProject(ctx context.Context, info ports.Work
 	return firstErr
 }
 
+// DestroyWorkspaceProjectWorktree removes one repo worktree from a workspace
+// project using that repo's canonical path. It preserves the same dirty-worktree
+// refusal contract as Destroy.
+func (w *Workspace) DestroyWorkspaceProjectWorktree(ctx context.Context, info ports.WorkspaceRepoInfo) error {
+	if info.RepoPath == "" {
+		return fmt.Errorf("gitworktree: missing repo path for worktree %q", info.Path)
+	}
+	if info.Path == "" {
+		return fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	repo, err := physicalAbs(info.RepoPath)
+	if err != nil {
+		return fmt.Errorf("gitworktree: repo path: %w", err)
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	_, removeErr := w.run(ctx, w.binary, worktreeRemoveArgs(repo, path)...)
+	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	}
+	records, err := w.listRecords(ctx, repo)
+	if err != nil {
+		return err
+	}
+	if _, ok := findWorktree(records, path); ok {
+		if removeErr != nil {
+			dirty, statusErr := w.isDirty(ctx, path)
+			if statusErr == nil && dirty {
+				return fmt.Errorf("gitworktree: refusing to remove %q: %w (worktree remove: %w)", path, ports.ErrWorkspaceDirty, removeErr)
+			}
+			if statusErr != nil {
+				return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w; dirty probe: %w)", path, removeErr, statusErr)
+			}
+			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
+		}
+		return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune", path)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
+	}
+	return nil
+}
+
+// ForceDestroyWorkspaceProjectWorktree force-removes one repo worktree after
+// its work has been preserved.
+func (w *Workspace) ForceDestroyWorkspaceProjectWorktree(ctx context.Context, info ports.WorkspaceRepoInfo) error {
+	if info.RepoPath == "" {
+		return fmt.Errorf("gitworktree: missing repo path for worktree %q", info.Path)
+	}
+	if info.Path == "" {
+		return fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	repo, err := physicalAbs(info.RepoPath)
+	if err != nil {
+		return fmt.Errorf("gitworktree: repo path: %w", err)
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	return w.forceDestroyPath(ctx, repo, path)
+}
+
+// RestoreWorkspaceProjectWorktree re-attaches one repo worktree for a workspace
+// project using the repo path captured from project registration.
+func (w *Workspace) RestoreWorkspaceProjectWorktree(ctx context.Context, info ports.WorkspaceRepoInfo) (ports.WorkspaceRepoInfo, error) {
+	if info.RepoPath == "" {
+		return ports.WorkspaceRepoInfo{}, fmt.Errorf("gitworktree: missing repo path for worktree %q", info.Path)
+	}
+	if info.Path == "" {
+		return ports.WorkspaceRepoInfo{}, fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	if info.Branch == "" {
+		return ports.WorkspaceRepoInfo{}, errors.New("gitworktree: branch is required")
+	}
+	repo, err := physicalAbs(info.RepoPath)
+	if err != nil {
+		return ports.WorkspaceRepoInfo{}, fmt.Errorf("gitworktree: repo path: %w", err)
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return ports.WorkspaceRepoInfo{}, err
+	}
+	records, err := w.listRecords(ctx, repo)
+	if err != nil {
+		return ports.WorkspaceRepoInfo{}, err
+	}
+	out := info
+	if rec, ok := findWorktree(records, path); ok {
+		if rec.Branch != "" {
+			out.Branch = rec.Branch
+		}
+		out.Path = path
+		out.RepoPath = repo
+		return out, nil
+	}
+	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
+		return ports.WorkspaceRepoInfo{}, err
+	} else if nonEmpty {
+		if _, err := moveStrayPathAside(path); err != nil {
+			return ports.WorkspaceRepoInfo{}, err
+		}
+	}
+	if err := w.validateBranch(ctx, repo, info.Branch); err != nil {
+		return ports.WorkspaceRepoInfo{}, err
+	}
+	if err := w.addWorktree(ctx, repo, path, info.Branch, ""); err != nil {
+		return ports.WorkspaceRepoInfo{}, err
+	}
+	out.Path = path
+	out.RepoPath = repo
+	return out, nil
+}
+
+// StashWorkspaceProjectWorktree captures uncommitted work for one workspace
+// project repo worktree.
+func (w *Workspace) StashWorkspaceProjectWorktree(ctx context.Context, info ports.WorkspaceRepoInfo) (string, error) {
+	return w.StashUncommitted(ctx, workspaceInfoFromRepoInfo(info))
+}
+
+// ApplyWorkspaceProjectPreserved replays a preserve ref into one workspace
+// project repo worktree.
+func (w *Workspace) ApplyWorkspaceProjectPreserved(ctx context.Context, info ports.WorkspaceRepoInfo, ref string) error {
+	return w.ApplyPreserved(ctx, workspaceInfoFromRepoInfo(info), ref)
+}
+
+func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo {
+	return ports.WorkspaceInfo{
+		Path:      info.Path,
+		Branch:    info.Branch,
+		SessionID: info.SessionID,
+		ProjectID: info.ProjectID,
+	}
+}
+
 // Destroy removes the session's worktree and prunes it from the repo, refusing
 // (rather than force-deleting) if git still has the path registered afterwards.
 func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
@@ -1008,6 +1145,25 @@ func pathExistsNonEmpty(path string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
+}
+
+func moveStrayPathAside(path string) (string, error) {
+	for i := 0; i < 100; i++ {
+		candidate := path + ".stray"
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.stray-%d", path, i+1)
+		}
+		if _, err := os.Lstat(candidate); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
+		}
+		if err := os.Rename(path, candidate); err != nil {
+			return "", fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
 }
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {

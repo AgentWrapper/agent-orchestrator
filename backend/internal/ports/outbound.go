@@ -148,6 +148,11 @@ type Workspace interface {
 type WorkspaceProject interface {
 	CreateWorkspaceProject(ctx context.Context, cfg WorkspaceProjectConfig) (WorkspaceProjectInfo, error)
 	DestroyWorkspaceProject(ctx context.Context, info WorkspaceProjectInfo) error
+	DestroyWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) error
+	ForceDestroyWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) error
+	RestoreWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) (WorkspaceRepoInfo, error)
+	StashWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) (ref string, err error)
+	ApplyWorkspaceProjectPreserved(ctx context.Context, info WorkspaceRepoInfo, ref string) error
 }
 
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
