@@ -281,6 +281,52 @@ function runGlmMode(
 /** A live subscriber: a function that writes one already-encoded NDJSON line. */
 type Send = (line: string) => void;
 
+// ===========================================================================
+// Subscriber backpressure
+// ===========================================================================
+
+/**
+ * Max bytes Node may buffer for ONE slow subscriber before the host drops it.
+ * The host fans every event out to every subscriber synchronously; it cannot
+ * pause its own turn for one laggard, so the only bound is a per-socket queue
+ * limit. 8 MB is generous for a healthy UI (which drains in microseconds) yet
+ * far below the multi-GB blowups a stalled/never-reading client could cause.
+ */
+export const SUBSCRIBER_BUFFER_CAP = 8 * 1024 * 1024;
+
+/**
+ * The minimal socket surface the subscriber sink needs — a testable seam so the
+ * backpressure policy is unit-tested without a real `net.Socket`. `net.Socket`
+ * structurally satisfies this (it has `destroyed`, `writableLength`, `write`,
+ * `destroy`).
+ */
+export interface SubscriberSocket {
+  readonly destroyed: boolean;
+  readonly writableLength: number;
+  write(data: string): boolean;
+  destroy(): void;
+}
+
+/**
+ * Build a per-subscriber send sink with backpressure. When a subscriber can't
+ * keep up, `sock.write` returns false and Node buffers the unsent data in memory
+ * (`writableLength` grows); once it passes `cap` we `destroy()` the socket so the
+ * host doesn't balloon holding one slow client's entire backlog. destroy() fires
+ * the socket's 'close' (next tick) → the caller's unsubscribe runs → `emit()`
+ * stops fanning to it. Fast subscribers drain immediately and never approach the
+ * cap, so this is a no-op for them.
+ */
+export function makeSubscriberSink(
+  sock: SubscriberSocket,
+  cap: number = SUBSCRIBER_BUFFER_CAP,
+): Send {
+  return (line: string) => {
+    if (sock.destroyed) return;
+    sock.write(line);
+    if (sock.writableLength > cap) sock.destroy();
+  };
+}
+
 export interface SessionHostOptions {
   aoSessionId: string;
   permissionMode: PermissionMode;
@@ -715,9 +761,10 @@ async function runStandalone(): Promise<void> {
 
   const server = net.createServer((sock) => {
     sock.setEncoding("utf-8");
-    const unsubscribe = host.subscribe((line) => {
-      if (!sock.destroyed) sock.write(line);
-    });
+    // Backpressure-aware sink: a subscriber that stops reading is dropped once
+    // its in-memory write buffer exceeds SUBSCRIBER_BUFFER_CAP, so one slow UI
+    // client can't grow the host's memory without bound.
+    const unsubscribe = host.subscribe(makeSubscriberSink(sock));
     const parser = new LineParser((obj) => handleClientCommand(host, sock, obj));
     sock.on("data", (chunk) => parser.feed(chunk));
     sock.on("close", unsubscribe);
