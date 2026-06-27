@@ -476,6 +476,8 @@ func toAPIError(err error) error {
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceRepoUnborn):
+		return apierr.Invalid("PROJECT_UNBORN", "This repository has no commits yet. Create an initial commit before starting an AO session.", nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
 		return apierr.Invalid("INVALID_BRANCH", err.Error(), nil)
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):

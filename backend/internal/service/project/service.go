@@ -209,6 +209,12 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if !isGitRepo(path) {
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
+	if _, err := gitOutput(ctx, path, "rev-parse", "--verify", "HEAD"); err != nil {
+		return Project{}, apierr.Invalid("PROJECT_UNBORN", "This repository has no commits yet. Create an initial commit before adding it to AO.", map[string]any{
+			"path":         path,
+			"suggestedFix": "Add and commit a file, or run `git commit --allow-empty -m \"initial commit\"`, then add the project again.",
+		})
+	}
 	// Record the repo's actual checked-out branch as the project default so
 	// session worktrees base off a branch that exists. Without this a repo on
 	// `master` (or any non-`main` default) falls back to DefaultBranchName and

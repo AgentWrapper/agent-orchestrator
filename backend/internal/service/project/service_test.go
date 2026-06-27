@@ -38,6 +38,7 @@ func gitRepo(t *testing.T) string {
 	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitTestFile(t, dir)
 	return dir
 }
 
@@ -49,7 +50,21 @@ func gitRepoOnBranch(t *testing.T, branch string) string {
 	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitTestFile(t, dir)
 	return dir
+}
+
+func commitTestFile(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
 }
 
 // gitRepoWithOriginHead creates a repo whose remote default (origin/HEAD) points
@@ -440,6 +455,13 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
+
+	unbornRepo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "main", unbornRepo).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn repo: %v (%s)", err, out)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: unbornRepo})
+	wantCode(t, err, "PROJECT_UNBORN")
 
 	// An embedded ".." passes the id pattern but would yield an invalid git
 	// branch (ao/a..b-1) at spawn time; reject it up front as a clear 400.

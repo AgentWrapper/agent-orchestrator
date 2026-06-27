@@ -206,6 +206,10 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 	repoB := gitRepo(t, "repo-b")
 
 	notRepo := t.TempDir()
+	unbornRepo := filepath.Join(t.TempDir(), "unborn")
+	if out, err := exec.Command("git", "init", "-b", "main", unbornRepo).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn fixture: %v\n%s", err, out)
+	}
 
 	cases := []struct {
 		name, body, wantCode string
@@ -218,6 +222,8 @@ func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
 		{name: "missing path", body: `{}`, wantStatus: 400, wantCode: "PATH_REQUIRED"},
 
 		{name: "not git", body: `{"path":` + quote(notRepo) + `}`, wantStatus: 400, wantCode: "NOT_A_GIT_REPO"},
+
+		{name: "unborn git repo", body: `{"path":` + quote(unbornRepo) + `}`, wantStatus: 400, wantCode: "PROJECT_UNBORN"},
 	}
 
 	for _, tc := range cases {
@@ -513,6 +519,15 @@ func gitRepo(t *testing.T, name string) string {
 
 		t.Fatalf("git init fixture: %v\n%s", err, out)
 
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme fixture: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add fixture: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v\n%s", err, out)
 	}
 
 	return dir

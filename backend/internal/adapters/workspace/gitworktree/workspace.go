@@ -33,14 +33,15 @@ var (
 // and errors.Is works because the adapter wraps the ports sentinel.
 var ErrPreservedConflict = ports.ErrPreservedConflict
 
-// ErrBranchCheckedOutElsewhere and ErrBranchNotFetched are adapter-local aliases
-// of the port-level sentinels: they preserve the gitworktree-prefixed message
-// while letting the service layer match on ports.ErrWorkspaceBranchCheckedOutElsewhere
-// / ports.ErrWorkspaceBranchNotFetched without importing this package. Tests
-// inside the adapter use these names; callers outside use the port sentinels.
+// ErrBranchCheckedOutElsewhere, ErrBranchNotFetched, and ErrRepoUnborn are
+// adapter-local aliases of the port-level sentinels: they preserve the
+// gitworktree-prefixed message while letting the service layer match on ports
+// sentinels without importing this package. Tests inside the adapter use these
+// names; callers outside use the port sentinels.
 var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
+	ErrRepoUnborn                = ports.ErrWorkspaceRepoUnborn
 	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
 )
 
@@ -497,6 +498,13 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	baseRef, err := w.resolveBaseRef(ctx, repo, branch, baseBranch)
 	if err != nil {
 		if errors.Is(err, errNoBaseRef) {
+			hasCommit, headErr := w.repoHasCommit(ctx, repo)
+			if headErr != nil {
+				return headErr
+			}
+			if !hasCommit {
+				return fmt.Errorf("%w: %q has no commits yet", ErrRepoUnborn, repo)
+			}
 			return fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
 		}
 		return err
@@ -547,6 +555,18 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch
 		return tagRef, nil
 	}
 	return "", fmt.Errorf("%w for branch %q (tried %s, %s)", errNoBaseRef, branch, strings.Join(candidates, ", "), tagRef)
+}
+
+func (w *Workspace) repoHasCommit(ctx context.Context, repo string) (bool, error) {
+	_, err := w.run(ctx, w.binary, revParseHeadArgs(repo)...)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
+		return false, nil
+	}
+	return false, fmt.Errorf("gitworktree: verify repo HEAD: %w", err)
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {

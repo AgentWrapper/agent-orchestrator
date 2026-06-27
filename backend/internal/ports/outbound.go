@@ -151,6 +151,9 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceRepoUnborn reports the source repository has no commits, so
+	// git has no commit object to use as a worktree base.
+	ErrWorkspaceRepoUnborn = errors.New("workspace: repository has no commits")
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")

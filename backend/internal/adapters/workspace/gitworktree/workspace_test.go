@@ -457,6 +457,8 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
 			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return []byte("commit"), nil
 		case strings.Contains(joined, "rev-parse"):
 			return nil, commandError{args: args, err: exitOne}
 		default:
@@ -467,6 +469,43 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/missing"})
 	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
+	}
+}
+
+func TestAddWorktreeReportsUnbornRepository(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitOne := func() error {
+		cmd := exec.Command("sh", "-c", "exit 1")
+		return cmd.Run()
+	}()
+	exit128 := func() error {
+		cmd := exec.Command("sh", "-c", "exit 128")
+		return cmd.Run()
+	}()
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify HEAD"):
+			return nil, commandError{args: args, err: exit128}
+		case strings.Contains(joined, "rev-parse"):
+			return nil, commandError{args: args, err: exitOne}
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/unborn"})
+	if !errors.Is(err, ports.ErrWorkspaceRepoUnborn) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceRepoUnborn", err)
 	}
 }
 
