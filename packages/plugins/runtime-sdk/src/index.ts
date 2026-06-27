@@ -20,6 +20,7 @@ import {
   killProcessTree,
   loadGlobalConfig,
   resolveProvider,
+  resolveProviderKey,
   type PluginModule,
   type Runtime,
   type RuntimeCreateConfig,
@@ -167,12 +168,14 @@ export function create(): Runtime {
         provider === "zhipu" &&
         (!config.environment || !config.environment["AO_GLM_API_KEY"])
       ) {
-        const zhipuCfg = loadGlobalConfig()?.zhipu;
-        const glmKey = zhipuCfg?.apiKey;
+        const gc = loadGlobalConfig();
+        // Key resolved env → Keychain → config.yaml (additive migration off
+        // plaintext); baseUrl is not a secret and stays in config.yaml.
+        const glmKey = resolveProviderKey("zhipu", gc, process.env);
         if (glmKey) {
           hostEnv["AO_GLM_API_KEY"] = glmKey;
         }
-        const glmBaseUrl = zhipuCfg?.baseUrl;
+        const glmBaseUrl = gc?.zhipu?.baseUrl;
         if (glmBaseUrl && (!config.environment || !config.environment["AO_GLM_BASE_URL"])) {
           hostEnv["AO_GLM_BASE_URL"] = glmBaseUrl;
         }
@@ -185,8 +188,10 @@ export function create(): Runtime {
         provider === "mimo" &&
         (!config.environment || !config.environment["AO_MIMO_API_KEY"])
       ) {
-        const mimoCfg = loadGlobalConfig()?.mimo;
-        const mimoKey = mimoCfg?.apiKey;
+        const gc = loadGlobalConfig();
+        const mimoCfg = gc?.mimo;
+        // Key resolved env → Keychain → config.yaml; baseUrls stay in config.yaml.
+        const mimoKey = resolveProviderKey("mimo", gc, process.env);
         if (mimoKey) {
           hostEnv["AO_MIMO_API_KEY"] = mimoKey;
         }

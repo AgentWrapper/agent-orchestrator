@@ -274,6 +274,28 @@ export function resolveProvider(idOrAlias: string | null | undefined): ProviderI
 }
 
 /**
+ * The credential coordinates for a PROVIDER (not a single model): the config
+ * block holding its key and the env var the sdk-host reads it from. Derived from
+ * the registry (the first descriptor of that provider) so it never drifts from
+ * the per-model `auth`. Providers with no descriptor yet (openai) and the ambient
+ * Anthropic provider get explicit fallbacks. Used by {@link resolveProviderKey}
+ * (credential-store.ts) so the env→Keychain→YAML resolution keys off `provider`.
+ */
+export function providerAuth(provider: ProviderId): ModelAuth {
+  const d = MODEL_REGISTRY.find((m) => m.provider === provider);
+  if (d) return d.auth;
+  // No descriptor in the registry yet — keep the conventional coordinates so the
+  // resolver still works once a descriptor is added.
+  switch (provider) {
+    case "openai":
+      return { configKey: "openai", envKey: "AO_OPENAI_API_KEY" };
+    // anthropic — authenticates ambiently (ANTHROPIC_API_KEY / login), no block.
+    default:
+      return { configKey: null, envKey: null };
+  }
+}
+
+/**
  * Resolve the DEFAULT runtime driver for a model. For unknown models we map the
  * inferred provider to its conventional driver (anthropic/openai→claude-agent-sdk
  * today, since unknown models have no openai-responses descriptor yet; zhipu→

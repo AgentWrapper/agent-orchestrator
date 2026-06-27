@@ -74,6 +74,15 @@ export interface ModelsListPayload {
  * Whether the provider credential is present, mirroring the runtime-sdk plugin's
  * config→env bridge: the config block's `apiKey` OR a pre-set AO_*_API_KEY env
  * var. Anthropic (configKey null) authenticates ambiently → always "configured".
+ *
+ * NOTE: this deliberately does NOT consult the macOS Keychain (unlike
+ * resolveProviderKey at the injection sites). `ao models list` is invoked by the
+ * app as a plain Node subprocess (no provider env exported), so a Keychain read
+ * here would trigger a cross-identity ACL prompt for users who saved a key via
+ * the app. Since the app still writes the key to config.yaml too (the Keychain
+ * migration is additive), the YAML branch already reflects a Keychain-stored
+ * key. Switch this to `resolveProviderKey` only once the YAML write is dropped
+ * AND the engine can read the Keychain prompt-free.
  */
 function isProviderConfigured(
   descriptor: ModelDescriptor,

@@ -58,6 +58,7 @@ export {
   resolveDriver,
   inferProviderFromId,
   modelAvailability,
+  providerAuth,
   type ProviderId,
   type RuntimeDriver,
   type ModelCapabilities,
@@ -65,6 +66,15 @@ export {
   type ModelDescriptor,
   type ModelAvailability,
 } from "./model-registry.js";
+
+// Provider credential resolution — env → Keychain → config.yaml (additive
+// migration off plaintext keys; see credential-store.ts).
+export {
+  resolveProviderKey,
+  readProviderKeychainSecret,
+  PROVIDER_KEYCHAIN_SERVICE,
+  type KeychainReader,
+} from "./credential-store.js";
 
 // AO-local code review store
 export { CodeReviewStore, createCodeReviewStore } from "./code-review-store.js";

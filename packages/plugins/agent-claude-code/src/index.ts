@@ -3,6 +3,8 @@ import {
   normalizeAgentPermissionMode,
   isWindows,
   resolveProvider,
+  resolveProviderKey,
+  loadGlobalConfig,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -1510,14 +1512,17 @@ function createClaudeCodeAgent(): Agent {
         // leak from an orchestrator into its workers.
         const provider = resolveProvider(config.model);
         env["AO_SDK_PROVIDER"] = provider;
-        // GLM (ZhipuAI): inject the API key from the global AO_GLM_API_KEY env.
+        // GLM (ZhipuAI): inject the API key, resolved env → Keychain → config.yaml
+        // (resolveProviderKey). env-first preserves the previous behaviour exactly
+        // (the daemon is spawned by the app with AO_GLM_API_KEY set); the Keychain
+        // and YAML steps are additive fallbacks.
         if (provider === "zhipu") {
-          const glmKey = process.env.AO_GLM_API_KEY;
+          const glmKey = resolveProviderKey("zhipu", loadGlobalConfig(), process.env);
           if (glmKey) env["AO_GLM_API_KEY"] = glmKey;
         }
         // MiMo (Xiaomi): same pattern as GLM.
         if (provider === "mimo") {
-          const mimoKey = process.env.AO_MIMO_API_KEY;
+          const mimoKey = resolveProviderKey("mimo", loadGlobalConfig(), process.env);
           if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
         }
       }
