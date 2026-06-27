@@ -22,8 +22,12 @@
  * the reply is silently never forwarded — and matching reply text by `turn` would
  * splice together answers from different segments. The append order of the NDJSON
  * file IS monotonic (it is append-only), so we cursor on the event COUNT and scope a
- * reply to the contiguous segment that follows the inject (bounded by the next
- * user/input or a session boundary). This survives any number of resumes.
+ * reply to the events that follow the inject up to the NEXT user/input. Session
+ * boundaries WITHIN that window are skipped, not treated as the end: the orchestrator
+ * resumes constantly (deploys, daemon restarts, compactions), so a boundary routinely
+ * lands between the inject and the `result` that finalizes the reply — ending there
+ * dropped the answer on the floor. Skipping it lets a reply that streams across a
+ * resume be captured whole. This survives any number of resumes.
  *
  * NOTE: the path resolution below MUST stay in sync with runtime-sdk's
  * `sdkHome()` (packages/plugins/runtime-sdk/src/protocol.ts). It is duplicated
@@ -86,8 +90,12 @@ export function snapshotReplyCursor(sessionId: string, env: EnvLike = process.en
 }
 
 /**
- * Is this event a session-segment boundary (resume/init/end)? A reply must not
- * be read across one — both the assistant text and the run counters restart there.
+ * Is this event a session-segment boundary (resume/init/end)? The orchestrator
+ * resumes constantly (deploys, daemon restarts, compactions), so a boundary
+ * routinely lands BETWEEN an inject and the `result` that finalizes its reply.
+ * We SKIP boundaries inside a reply window rather than ending on them, so a reply
+ * that streams across a resume is still read whole. The run counters (`seq`/`turn`)
+ * restart here — which is exactly why the cursor is by physical position, not `seq`.
  */
 function isSegmentBoundary(e: NormalizedEvent): boolean {
   return e.type === "session";
@@ -101,14 +109,28 @@ function isUserInput(e: NormalizedEvent): boolean {
 /**
  * Recover the orchestrator's reply to a message injected after `sinceIndex` (an
  * event count from {@link snapshotReplyCursor}): the assistant text of the FIRST
- * `user/input` appended after that cursor, returned only once that turn has
- * completed (a `result` event follows it within the same segment). Returns null
- * while the reply is still streaming or absent.
+ * `user/input` appended after that cursor. Returns null while the reply is still
+ * streaming or absent.
  *
  * The reply window is scoped by PHYSICAL POSITION — from the inject up to the next
- * `user/input` or a session boundary — so a `seq`/`turn` reset on resume can never
- * cause text from another segment to leak in. Tool-use round-trips stay within the
- * window, so the concatenated text is the full answer including post-tool prose.
+ * `user/input` — so a `seq`/`turn` reset on resume can never cause text from another
+ * inject's turn to leak in. Session boundaries (resume/init/end) INSIDE the window
+ * are skipped, not treated as the end, so an answer that streams across a resume is
+ * captured whole (the orchestrator resumes constantly, so a boundary routinely lands
+ * between the inject and its `result`). Tool-use round-trips stay within the window,
+ * so the concatenated text is the full answer including post-tool prose.
+ *
+ * The turn is FINALIZED — and the text forwarded — when either:
+ *  - a `result` event is seen (the turn ended cleanly), or
+ *  - the NEXT `user/input` arrives AND we have already captured assistant text. A
+ *    fresh inject means our turn is over; if it produced text but no `result` landed
+ *    first (a new message interleaved before the turn finalized — common on the busy
+ *    orchestrator), that text is still the real answer, so we forward it rather than
+ *    lose it to the wait deadline.
+ * If the next `user/input` arrives with NO assistant text captured yet, the reply
+ * belongs to that later inject, not ours — we return null (wait / expire) so we never
+ * forward an empty message or misattribute a queued-batch turn.
+ *
  * Returned in full; the listener chunks it across Telegram messages (a reply can
  * exceed the Bot API's 4096-char per-message limit).
  */
@@ -132,13 +154,20 @@ export function readReplyAfter(
   }
   if (injectAt === -1) return null; // our message has not been echoed into the log yet
 
-  // Collect the reply that follows, bounded by the next turn or a segment boundary.
-  // `result` inside that window means the turn finalized — only then do we forward.
+  // Collect the reply that follows, bounded by the next inject. Session boundaries
+  // inside the window are skipped (a resume mid-reply must not truncate the answer).
   let complete = false;
   const parts: string[] = [];
   for (let i = injectAt + 1; i < events.length; i++) {
     const e = events[i];
-    if (isUserInput(e) || isSegmentBoundary(e)) break;
+    if (isUserInput(e)) {
+      // A new inject ends our window. Finalize on the text we have if any was
+      // produced (turn yielded output, then a message interleaved before `result`);
+      // otherwise the reply is that later inject's, not ours — wait/expire.
+      if (parts.length > 0) complete = true;
+      break;
+    }
+    if (isSegmentBoundary(e)) continue; // resume/init/end mid-reply: keep reading
     if (e.type === "result") {
       complete = true;
       continue;

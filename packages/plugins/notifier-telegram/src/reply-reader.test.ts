@@ -167,14 +167,122 @@ describe("readReplyAfter", () => {
     expect(reply).not.toContain("STALE");
   });
 
-  it("stops at a session boundary and waits when a resume interrupts the reply", () => {
+  it("waits (null) when a resume interrupts before any result or next inject", () => {
     writeLog([
       { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
       { seq: 1, turn: 1, type: "text-delta", text: "partial" },
-      // resume before the turn produced a result → not complete yet
+      // resume before the turn produced a result → still streaming, not complete
       { seq: 0, turn: 0, type: "session", subtype: "resumed" },
     ]);
     expect(readReplyAfter(SESSION, 0, env)).toBeNull();
+  });
+
+  // --- The production bug this fix targets: the orchestrator resumes constantly,
+  // so a `session` boundary routinely lands BETWEEN the inject and the `result`.
+  // The old reader ended the window on that boundary and silently dropped the reply.
+  it("reads a reply that streams across a session resume (boundary skipped, not ending)", () => {
+    writeLog([
+      { seq: 5, turn: 2, type: "user", subtype: "input", text: "status?" },
+      { seq: 6, turn: 2, type: "text-delta", text: "all " },
+      // resume lands mid-reply — must NOT truncate the answer
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+      { seq: 1, turn: 1, type: "text-delta", text: "green" },
+      { seq: 2, turn: 1, type: "result" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBe("all green");
+  });
+
+  it("crosses init/end boundaries too, not only resumed", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
+      { seq: 1, turn: 1, type: "text-delta", text: "a" },
+      { seq: 0, turn: 0, type: "session", subtype: "end" },
+      { seq: 0, turn: 0, type: "session", subtype: "init" },
+      { seq: 1, turn: 1, type: "text-delta", text: "b" },
+      { seq: 2, turn: 1, type: "result" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBe("ab");
+  });
+
+  // Interrupted turn: substantial assistant text, but a new message interleaved
+  // before the turn produced a `result`. The text is the real answer — forward it
+  // (finalize on the next user/input once text has been captured) rather than lose it.
+  it("forwards an interrupted reply finalized by the next inject (text, no result)", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
+      { seq: 1, turn: 1, type: "text-delta", text: "here is the answer" },
+      // no result — a new message arrives and ends our window
+      { seq: 2, turn: 2, type: "user", subtype: "input", text: "next thing" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBe("here is the answer");
+  });
+
+  it("forwards an interrupted reply even when the interleave follows a resume", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q" },
+      { seq: 1, turn: 1, type: "text-delta", text: "partial answer" },
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+      { seq: 1, turn: 1, type: "user", subtype: "input", text: "another msg" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBe("partial answer");
+  });
+
+  // NEGATIVE — guards the 673 "bare queued-batch" injects: when the next inject
+  // arrives with NO assistant text yet, the reply belongs to that later inject (or a
+  // later one in the batch), not ours. We must NOT forward an empty/misattributed msg.
+  it("does not forward when the next inject arrives with no assistant text (bare batch)", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "first" },
+      // immediately another inject, no assistant text in between (queued batch)
+      { seq: 1, turn: 1, type: "user", subtype: "input", text: "second" },
+      { seq: 2, turn: 1, type: "text-delta", text: "reply to second" },
+      { seq: 3, turn: 1, type: "result" },
+    ]);
+    // The reply belongs to "second", not "first".
+    expect(readReplyAfter(SESSION, 0, env)).toBeNull();
+  });
+
+  it("does not forward when a bare inject follows a resume (batch across resume)", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "first" },
+      { seq: 0, turn: 0, type: "session", subtype: "init" },
+      { seq: 1, turn: 1, type: "user", subtype: "input", text: "second" },
+      { seq: 2, turn: 1, type: "text-delta", text: "reply to second" },
+      { seq: 3, turn: 1, type: "result" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBeNull();
+  });
+
+  // Two injects back-to-back, each WITH its own text, must not bleed into each other.
+  it("scopes each inject's reply to its own window (consecutive text-bearing turns)", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "q1" },
+      { seq: 1, turn: 1, type: "text-delta", text: "ANSWER ONE" },
+      { seq: 2, turn: 1, type: "result" },
+      { seq: 3, turn: 2, type: "user", subtype: "input", text: "q2" },
+      { seq: 4, turn: 2, type: "text-delta", text: "ANSWER TWO" },
+      { seq: 5, turn: 2, type: "result" },
+    ]);
+    // Cursor before q1 → first reply only; cursor after first result → second only.
+    expect(readReplyAfter(SESSION, 0, env)).toBe("ANSWER ONE");
+    const r2 = readReplyAfter(SESSION, 3, env);
+    expect(r2).toBe("ANSWER TWO");
+    expect(r2).not.toContain("ANSWER ONE");
+  });
+
+  // A tool-heavy turn (text → tool_use → tool_result → text) must collect the full
+  // answer including post-tool prose, across a resume that lands mid-turn.
+  it("collects a tool-heavy turn whole (text + tool round-trip + text), across resume", () => {
+    writeLog([
+      { seq: 0, turn: 1, type: "user", subtype: "input", text: "do the thing" },
+      { seq: 1, turn: 1, type: "text-delta", text: "starting. " },
+      { seq: 2, turn: 1, type: "tool_use" },
+      { seq: 3, turn: 1, type: "tool_result" },
+      { seq: 0, turn: 0, type: "session", subtype: "resumed" },
+      { seq: 1, turn: 1, type: "text-delta", text: "done." },
+      { seq: 2, turn: 1, type: "result" },
+    ]);
+    expect(readReplyAfter(SESSION, 0, env)).toBe("starting. done.");
   });
 
   it("returns the full reply untruncated (the listener chunks long replies)", () => {
