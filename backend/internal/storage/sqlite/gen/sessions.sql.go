@@ -16,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model
 FROM sessions WHERE id = ?
 `
 
@@ -44,6 +44,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.FirstSignalAt,
 		&i.PreviewURL,
 		&i.PreviewRevision,
+		&i.Model,
 	)
 	return i, err
 }
@@ -53,8 +54,8 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    preview_url, preview_revision, model, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -76,6 +77,7 @@ type InsertSessionParams struct {
 	Prompt          string
 	PreviewURL      string
 	PreviewRevision int64
+	Model           string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -100,6 +102,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
+		arg.Model,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -109,7 +112,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model
 FROM sessions ORDER BY project_id, num
 `
 
@@ -143,6 +146,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.FirstSignalAt,
 			&i.PreviewURL,
 			&i.PreviewRevision,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -160,7 +164,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -194,6 +198,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.FirstSignalAt,
 			&i.PreviewURL,
 			&i.PreviewRevision,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -287,7 +292,7 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, model = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -307,6 +312,7 @@ type UpdateSessionParams struct {
 	Prompt          string
 	PreviewURL      string
 	PreviewRevision int64
+	Model           string
 	UpdatedAt       time.Time
 	ID              domain.SessionID
 }
@@ -328,6 +334,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Prompt,
 		arg.PreviewURL,
 		arg.PreviewRevision,
+		arg.Model,
 		arg.UpdatedAt,
 		arg.ID,
 	)

@@ -253,6 +253,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	// Per-spawn --model override takes precedence over project/role config.
+	if cfg.Model != "" {
+		agentConfig.Model = cfg.Model
+	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
@@ -288,7 +292,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt, Model: agentConfig.Model}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -521,7 +525,13 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	restoreConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	// Prefer the model the session originally launched with (persisted at spawn)
+	// over a possibly-changed project config, so a restart is faithful.
+	if meta.Model != "" {
+		restoreConfig.Model = meta.Model
+	}
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, restoreConfig, rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}

@@ -82,6 +82,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 
+	// Per-session model override (set by `ao spawn --model` or project worker
+	// config). Must precede the `--` prompt separator so codex parses it as a
+	// flag, not a positional prompt arg.
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
+
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}

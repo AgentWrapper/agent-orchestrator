@@ -821,3 +821,39 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 		t.Fatalf("State = %q, want %q", got.State, "active")
 	}
 }
+
+func TestSessionModelPersists(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.Model = "claude-opus-4-8"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.Model != "claude-opus-4-8" {
+		t.Fatalf("model not persisted across reload: got %q want %q", got.Metadata.Model, "claude-opus-4-8")
+	}
+}
+
+func TestSessionModelEmptyByDefault(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	created, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, _, err := s.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.Metadata.Model != "" {
+		t.Fatalf("expected empty model, got %q", got.Metadata.Model)
+	}
+}

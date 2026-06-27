@@ -18,4 +18,7 @@ type SpawnConfig struct {
 	Harness   domain.AgentHarness
 	Branch    string
 	Prompt    string
+	// Model, when set, overrides the resolved agent config's model for this
+	// session only (per-spawn override of project/role worker.agentConfig.model).
+	Model string
 }

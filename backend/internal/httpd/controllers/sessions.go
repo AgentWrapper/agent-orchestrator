@@ -123,7 +123,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt})
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, Model: in.Model})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

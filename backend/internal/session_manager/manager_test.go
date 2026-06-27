@@ -1764,3 +1764,46 @@ func TestReconcileReap_TerminatedAndDeadTmuxLeftAlone(t *testing.T) {
 		t.Fatalf("Destroy calls = %d, want 0", rt.destroyed)
 	}
 }
+
+func TestSpawn_PerSpawnModelOverridesConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "base-model"},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "spawn-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Per-spawn --model wins over both base config and the worker role override.
+	if agent.lastConfig.Model != "spawn-model" {
+		t.Fatalf("launch model = %q, want per-spawn spawn-model", agent.lastConfig.Model)
+	}
+	// And it is persisted on the record so a restart restores the same model.
+	if rec.Metadata.Model != "spawn-model" {
+		t.Fatalf("persisted model = %q, want spawn-model", rec.Metadata.Model)
+	}
+}
+
+func TestSpawn_NoModelFallsBackToConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "base-model"},
+	}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "base-model" {
+		t.Fatalf("launch model = %q, want fallback base-model", agent.lastConfig.Model)
+	}
+}
