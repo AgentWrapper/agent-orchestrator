@@ -15,13 +15,14 @@ import { setupTestContext, teardownTestContext, makeHandle, type TestContext } f
 let ctx: TestContext;
 let tmpDir: string;
 let sessionsDir: string;
-let mockRuntime: ReturnType<typeof ctx>["mockRuntime"];
-let mockAgent: ReturnType<typeof ctx>["mockAgent"];
-let mockRegistry: ReturnType<typeof ctx>["mockRegistry"];
-let config: ReturnType<typeof ctx>["config"];
-
-// TypeScript helper to get value type of TestContext
+// TypeScript helper to get the value type of a TestContext field. `ctx` is a
+// TestContext OBJECT (not a function), so `ReturnType<typeof ctx>` is invalid —
+// index into TestContext directly instead.
 type ContextValue<K extends keyof TestContext> = TestContext[K];
+let mockRuntime: ContextValue<"mockRuntime">;
+let mockAgent: ContextValue<"mockAgent">;
+let mockRegistry: ContextValue<"mockRegistry">;
+let config: ContextValue<"config">;
 
 beforeEach(() => {
   ctx = setupTestContext();
