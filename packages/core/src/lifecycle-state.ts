@@ -68,6 +68,7 @@ const CanonicalSessionLifecycleSchema = z.object({
         "awaiting_user_input",
         "awaiting_external_review",
         "research_complete",
+        "idle_done",
         "merged_waiting_decision",
         "manually_killed",
         "runtime_lost",

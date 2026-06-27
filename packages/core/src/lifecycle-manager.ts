@@ -1651,6 +1651,44 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
     }
 
+    // A positively-alive streaming WORKER whose activity has gone `idle`
+    // finished its turn cleanly with nothing left to do (no PR and no fresh agent
+    // report reached the branches above). The native idle signal only fires once
+    // the last turn-end JSONL entry is older than the ready threshold (~5 min),
+    // so this is already a settled turn-end, not a mid-turn pause — `ready`
+    // (turn done, still within the window) keeps positive-idle false and stays
+    // `working`. Nothing else in the no-PR flow records this as a working→idle
+    // transition, so such a worker lingered in `working` forever: the board
+    // showed it under Working, and BOTH the idle-worker auto-retire and the
+    // worker completion-ping — each gated on `session.state === "idle"` — never
+    // fired. Record the clean turn-end as `idle` here so those downstream signals
+    // can observe it. (Deliberately NOT gated on isIdleBeyondThreshold: that
+    // depends on an `agent-stuck` reaction threshold many configs don't set, so
+    // it would silently never fire — the native idle signal is the ground truth.)
+    // Excluded:
+    //   - orchestrators: they legitimately sit idle between worker turns and must
+    //     persist as a live conductor → fall through, keep prior (working) state;
+    //   - a `blocked` idle signal (idleWasBlocked): an errored/stuck host, not a
+    //     clean turn-end → leave it to the stuck/preserve paths below;
+    //   - non-streaming (tmux) hosts: handled by the stuck escalation below,
+    //     whose guard already excludes streaming-alive — that path is unchanged.
+    if (
+      detectedIdleTimestamp &&
+      hasPositiveIdleEvidence(activitySignal) &&
+      isStreamingRuntime &&
+      runtimeProbe.state === "alive" &&
+      lifecycle.session.kind !== "orchestrator" &&
+      !idleWasBlocked
+    ) {
+      return commit({
+        status: SESSION_STATUS.IDLE,
+        evidence: `idle_turn_complete ${activityEvidence}`,
+        detecting: { attempts: 0 },
+        sessionState: "idle",
+        sessionReason: "idle_done",
+      });
+    }
+
     if (
       detectedIdleTimestamp &&
       hasPositiveIdleEvidence(activitySignal) &&
@@ -1659,6 +1697,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // stuck — an orchestrator legitimately waits (idle) for its workers to
       // report, and a host that finished a turn cleanly sits idle until the next
       // `send`. Don't escalate a live host to stuck/probe_failure on idleness.
+      // (A clean idle WORKER on such a host was already mapped to `idle` above;
+      // this still covers orchestrators and `blocked` idle on streaming hosts.)
       !(isStreamingRuntime && runtimeProbe.state === "alive")
     ) {
       return commit({

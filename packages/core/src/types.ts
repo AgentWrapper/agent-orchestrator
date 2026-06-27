@@ -47,6 +47,7 @@ export type CanonicalSessionReason =
   | "awaiting_user_input"
   | "awaiting_external_review"
   | "research_complete"
+  | "idle_done"
   | "merged_waiting_decision"
   | "manually_killed"
   | "pr_merged"

@@ -4566,6 +4566,91 @@ describe("auto-retire idle worker", () => {
   });
 });
 
+describe("idle worker working→idle transition (mae-219)", () => {
+  /** A live streaming SDK worker still in `working` whose activity has settled
+   *  to `idle` (turn ended past the ready threshold). No PR, no agent report —
+   *  exactly the no-PR local worker that previously hung in `working` forever.
+   *  workspacePath=null keeps the check off the filesystem. */
+  function settledIdleSdkWorker(
+    overrides: Parameters<typeof makeSession>[0] = {},
+  ): ReturnType<typeof makeSession> {
+    vi.mocked(plugins.runtime.isAlive).mockResolvedValue(true);
+    vi.mocked(plugins.agent.isProcessRunning).mockResolvedValue(true);
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle" as ActivityState,
+      timestamp: new Date(Date.now() - 600_000),
+    });
+    const session = makeSession({
+      status: "working",
+      runtimeHandle: { id: "app-1", runtimeName: "sdk", data: {} },
+      workspacePath: null,
+      ...overrides,
+    });
+    session.lifecycle.session.state = "working";
+    session.lifecycle.session.reason = "task_in_progress";
+    session.lifecycle.runtime.state = "alive";
+    session.lifecycle.runtime.handle = { id: "app-1", runtimeName: "sdk", data: {} };
+    return session;
+  }
+
+  // check() rehydrates lifecycle from persisted metadata, so the resulting
+  // canonical state is read via lm.getStates() (legacy status) and the persisted
+  // `lifecycleEvidence` — the `idle_turn_complete` evidence string is emitted
+  // only by the mae-219 transition, so it uniquely proves that path fired.
+  it("transitions a settled-idle streaming worker working→idle (idle_done)", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const lm = setupCheck("app-1", { session: settledIdleSdkWorker(), registry });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("idle");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).toContain("idle_turn_complete");
+  });
+
+  it("never flips an orchestrator to idle — it persists as a live conductor", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const session = settledIdleSdkWorker();
+    session.lifecycle.session.kind = "orchestrator";
+    const lm = setupCheck("app-1", { session, registry });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("working");
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).not.toContain("idle_turn_complete");
+  });
+
+  it("does not mark a blocked streaming worker as idle_done", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const session = settledIdleSdkWorker();
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "blocked" as ActivityState,
+      timestamp: new Date(Date.now() - 600_000),
+    });
+    const lm = setupCheck("app-1", { session, registry });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).not.toContain("idle_turn_complete");
+  });
+
+  it("does not flip a non-streaming (tmux/mock) idle worker to idle_done", async () => {
+    const registry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+    const session = settledIdleSdkWorker({
+      runtimeHandle: { id: "app-1", runtimeName: "mock", data: {} },
+    });
+    session.lifecycle.runtime.handle = { id: "app-1", runtimeName: "mock", data: {} };
+    const lm = setupCheck("app-1", { session, registry });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(meta?.["lifecycleEvidence"]).not.toContain("idle_turn_complete");
+  });
+});
+
 describe("worker completion ping (mae-178)", () => {
   function configWithRetire(
     overrides: Partial<{ autoRetireIdleWorkers: boolean; workerIdleRetireGraceMs: number }> = {},
