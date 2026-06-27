@@ -19,10 +19,6 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 	return { owner, name };
 }
 
-type OSXNotarizeConfig =
-	| { tool: "notarytool"; keychainProfile: string }
-	| { appleId: string; appleIdPassword: string; teamId: string };
-
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
@@ -35,28 +31,25 @@ const config: ForgeConfig = {
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
 		extraResource: ["daemon", "assets/icon.png"],
-		// macOS signing + notarization. Two paths are supported:
-		//  - CI: set CSC_LINK/CSC_KEY_PASSWORD and
-		//    APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID.
-		//  - Local keychain: set APPLE_SIGNING_IDENTITY (a Developer ID Application
-		//    identity in the login keychain) and AO_NOTARY_PROFILE (a notarytool
-		//    keychain profile created with `notarytool store-credentials`).
-		// See frontend/docs/desktop-release.md.
+		// Notarization. Two paths:
+		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
+		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
+		//    key id + issuer uuid. Matches the proven local runbook creds.
+		//  - Local: AO_NOTARY_PROFILE, a notarytool keychain profile created with
+		//    `notarytool store-credentials`. See ao-macos-signed-release runbook.
+		// Both are valid NotaryToolCredentials, so no cast is needed.
 		osxSign: process.env.APPLE_SIGNING_IDENTITY
 			? { identity: process.env.APPLE_SIGNING_IDENTITY }
 			: process.env.CSC_LINK
 				? {}
 				: undefined,
 		osxNotarize: process.env.AO_NOTARY_PROFILE
-			? ({
-					tool: "notarytool",
-					keychainProfile: process.env.AO_NOTARY_PROFILE,
-				} as OSXNotarizeConfig)
-			: process.env.APPLE_ID
+			? { keychainProfile: process.env.AO_NOTARY_PROFILE }
+			: process.env.APPLE_API_KEY
 				? {
-						appleId: process.env.APPLE_ID,
-						appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD!,
-						teamId: process.env.APPLE_TEAM_ID!,
+						appleApiKey: process.env.APPLE_API_KEY,
+						appleApiKeyId: process.env.APPLE_API_KEY_ID!,
+						appleApiIssuer: process.env.APPLE_API_ISSUER!,
 					}
 				: undefined,
 	},
