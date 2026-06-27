@@ -213,6 +213,8 @@ type WorkspaceProjectConfig struct {
 	Repos         []WorkspaceProjectRepoConfig
 }
 
+// WorkspaceProjectRepoConfig describes one registered child repo in a
+// workspace project session.
 type WorkspaceProjectRepoConfig struct {
 	Name         string
 	RelativePath string
@@ -227,6 +229,8 @@ type WorkspaceProjectInfo struct {
 	Worktrees []WorkspaceRepoInfo
 }
 
+// WorkspaceRepoInfo describes one materialized repo worktree in a workspace
+// project session.
 type WorkspaceRepoInfo struct {
 	RepoName     string
 	RepoPath     string
