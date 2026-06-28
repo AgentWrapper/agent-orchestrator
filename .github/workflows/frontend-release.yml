@@ -41,6 +41,11 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Gates the signed release behind the `release` environment's required
+    # reviewers: any write-access user can push a desktop-v* tag, but only
+    # designated approvers can let the build that consumes the signing secrets
+    # proceed. Configure reviewers in repo Settings > Environments > release.
+    environment: release
     permissions:
       contents: write
     defaults:
@@ -157,6 +162,7 @@ jobs:
   # finishes before publish-feed, but the feed is not gated on it.
   release-intel:
     runs-on: macos-13
+    environment: release # same approval gate as the matrix release job
     permissions:
       contents: write
     defaults:
