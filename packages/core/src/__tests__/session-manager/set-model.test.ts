@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import {
@@ -37,6 +37,12 @@ beforeEach(() => {
 afterEach(() => {
   teardownTestContext(ctx);
 });
+
+/** Pull the `environment` object the runtime was created with on the Nth call. */
+function createEnv(nth = 0): Record<string, string> {
+  const call = vi.mocked(mockRuntime.create).mock.calls[nth];
+  return (call?.[0] as { environment: Record<string, string> }).environment;
+}
 
 describe("setModel", () => {
   it("rejects empty model string", async () => {
@@ -98,6 +104,168 @@ describe("setModel", () => {
     expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-haiku-4-5" }),
     );
+  });
+
+  it("clears incompatible SDK resume metadata when switching from Claude to GPT", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-sm-cross-driver");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      sessionModel: "sonnet",
+      claudeSessionUuid: "claude-prev",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.setModel("app-1", "gpt-5.5");
+
+    expect(createEnv(0)["AO_SDK_RESUME"]).toBeUndefined();
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["sessionModel"]).toBe("gpt-5.5");
+    expect(meta!["claudeSessionUuid"]).toBeFalsy();
+    expect(meta!["previousClaudeSessionUuid"]).toBe("claude-prev");
+  });
+
+  it("restores GPT sessions from codexThreadId instead of a stale Claude UUID", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-sm-gpt-resume");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      sessionModel: "gpt-5.5",
+      claudeSessionUuid: "claude-stale",
+      codexThreadId: "codex-thread-1",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.restore("app-1", true);
+
+    expect(createEnv(0)["AO_SDK_RESUME"]).toBe("codex-thread-1");
+  });
+
+  it("does not re-persist stale Claude metadata on a GPT/Codex session", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-sm-gpt-metadata");
+    mkdirSync(wsPath, { recursive: true });
+    const sessionInfoPath = join(tmpDir, "codex-session.json");
+    writeFileSync(
+      sessionInfoPath,
+      JSON.stringify({ sdkSessionId: "codex-thread-2", model: "gpt-5.5" }),
+      "utf-8",
+    );
+    vi.mocked(mockRuntime.create).mockResolvedValue({
+      id: "rt-new",
+      runtimeName: "mock",
+      data: { sessionInfoPath },
+    });
+    vi.mocked(mockAgent.getSessionInfo).mockResolvedValue({
+      summary: null,
+      agentSessionId: "claude-stale",
+      metadata: { claudeSessionUuid: "claude-stale" },
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      sessionModel: "sonnet",
+      claudeSessionUuid: "claude-prev",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.setModel("app-1", "gpt-5.5");
+    await sm.get("app-1");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["sessionModel"]).toBe("gpt-5.5");
+    expect(meta!["codexThreadId"]).toBe("codex-thread-2");
+    expect(meta!["claudeSessionUuid"]).toBeFalsy();
+    expect(meta!["previousClaudeSessionUuid"]).toBe("claude-prev");
+  });
+
+  it("trusts runtime-sdk session info when persisted sessionModel is stale Claude", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-sm-gpt-runtime-wins");
+    mkdirSync(wsPath, { recursive: true });
+    const sessionInfoPath = join(tmpDir, "codex-runtime-wins-session.json");
+    writeFileSync(
+      sessionInfoPath,
+      JSON.stringify({ sdkSessionId: "codex-thread-runtime", model: "gpt-5.5" }),
+      "utf-8",
+    );
+    vi.mocked(mockAgent.getSessionInfo).mockResolvedValue({
+      summary: null,
+      agentSessionId: "claude-stale",
+      metadata: {
+        sessionModel: "opus",
+        claudeSessionUuid: "claude-stale",
+      },
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: {
+        ...makeHandle("rt-live"),
+        data: {
+          ...makeHandle("rt-live").data,
+          sessionInfoPath,
+        },
+      },
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      sessionModel: "opus",
+      claudeSessionUuid: "claude-stale",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.get("app-1");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["sessionModel"]).toBe("gpt-5.5");
+    expect(meta!["codexThreadId"]).toBe("codex-thread-runtime");
+    expect(meta!["claudeSessionUuid"]).toBeFalsy();
+  });
+
+  it("preserves SDK resume metadata when switching within the same runtime driver", async () => {
+    const wsPath = join(tmpDir, "ws-app-1-sm-same-driver");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: makeHandle("rt-old"),
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      sessionModel: "sonnet",
+      claudeSessionUuid: "claude-prev",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.setModel("app-1", "opus");
+
+    expect(createEnv(0)["AO_SDK_RESUME"]).toBe("claude-prev");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["sessionModel"]).toBe("opus");
+    expect(meta!["claudeSessionUuid"]).toBe("claude-prev");
+    expect(meta!["previousClaudeSessionUuid"]).toBeFalsy();
   });
 
   it("destroys live host before restoring on a working session", async () => {

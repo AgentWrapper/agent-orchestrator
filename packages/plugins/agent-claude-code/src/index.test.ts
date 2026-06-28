@@ -373,6 +373,22 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("does not inject OpenAI API key for Codex-backed GPT models", () => {
+    const previous = process.env.AO_OPENAI_API_KEY;
+    process.env.AO_OPENAI_API_KEY = "sk-test";
+    try {
+      const env = agent.getEnvironment(makeLaunchConfig({ model: "gpt-5.5" }));
+      expect(env["AO_SDK_PROVIDER"]).toBe("openai");
+      expect(env["AO_OPENAI_API_KEY"]).toBeUndefined();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AO_OPENAI_API_KEY;
+      } else {
+        process.env.AO_OPENAI_API_KEY = previous;
+      }
+    }
+  });
 });
 
 // =========================================================================

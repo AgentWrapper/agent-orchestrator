@@ -75,8 +75,9 @@ export interface ModelAuth {
    */
   configKey: "zhipu" | "mimo" | "openai" | null;
   /**
-   * The env var the sdk-host reads the API key from (AO_GLM_API_KEY /
-   * AO_MIMO_API_KEY / AO_OPENAI_API_KEY), or null when none is needed.
+   * The env var the sdk-host reads the provider API key from (AO_GLM_API_KEY /
+   * AO_MIMO_API_KEY), or null when no API-key bridge is needed. OpenAI/GPT uses
+   * Codex's own login cache for the `codex-app-server` driver.
    */
   envKey: string | null;
 }
@@ -252,7 +253,7 @@ export const MODEL_REGISTRY: ModelDescriptor[] = [
       section: "OpenAI",
       aliases: [],
       capabilities: OPENAI_CODEX_CAPS,
-      auth: { configKey: "openai", envKey: "AO_OPENAI_API_KEY" },
+      auth: { configKey: "openai", envKey: null },
     }),
   )),
 ];
@@ -279,9 +280,8 @@ export function resolveModel(idOrAlias: string | null | undefined): ModelDescrip
 /**
  * Legacy prefix heuristic — the FALLBACK for models not in the registry. Mirrors
  * exactly the historical `startsWith` dispatch so unknown `--model` strings route
- * the same as they always have. `gpt-*` / `o1`-`o4*` map to `openai` (forward-
- * looking; the openai-responses driver lands in a later phase — until then the
- * host treats an unknown openai model the same as before).
+ * the same as they always have. `gpt-*` / `o1`-`o4*` map to `openai`; the runtime
+ * driver then maps OpenAI to the Codex app-server bridge.
  */
 export function inferProviderFromId(modelId: string | null | undefined): ProviderId {
   const m = (modelId ?? "").trim().toLowerCase();
@@ -317,7 +317,7 @@ export function providerAuth(provider: ProviderId): ModelAuth {
   // resolver still works once a descriptor is added.
   switch (provider) {
     case "openai":
-      return { configKey: "openai", envKey: "AO_OPENAI_API_KEY" };
+      return { configKey: "openai", envKey: null };
     // anthropic — authenticates ambiently (ANTHROPIC_API_KEY / login), no block.
     default:
       return { configKey: null, envKey: null };
@@ -360,7 +360,7 @@ export interface ModelAvailability {
  * models are always considered available (auth is ambient). Provider-keyed models
  * require their config block to be `enabled`; GLM/MiMo additionally require a
  * non-empty `apiKey` in the block (their keys may still live in YAML for
- * back-compat). OpenAI is gated on the `enabled` flag ALONE — see below.
+ * back-compat). OpenAI is gated on the Codex-auth `enabled` flag alone.
  */
 export function modelAvailability(
   descriptor: ModelDescriptor,
@@ -372,14 +372,10 @@ export function modelAvailability(
     | { apiKey?: string; enabled?: boolean }
     | undefined;
   if (!block?.enabled) return { available: false, reason: `${descriptor.section} not enabled` };
-  // OpenAI keeps its key in the macOS Keychain, NOT in config.yaml. The Maestro
-  // app sets `enabled: true` ONLY after writing the key to the Keychain
-  // (enabled ⇒ key present), and the engine resolves it at spawn time via
-  // resolveProviderKey (env → Keychain → YAML). So the `enabled` flag alone is
-  // the availability gate here: an `apiKey` check would always fail (the YAML
-  // block never carries the secret) and would wrongly gate GPT out of the
-  // picker. Listing must also stay Keychain-free — see isProviderConfigured in
-  // cli/commands/models.ts for why we don't shell out to `security` here.
+  // OpenAI/GPT runs through Codex app-server. The actual credential lives in
+  // Codex's login cache, while `openai.enabled` is the app-managed gate that says
+  // the user completed Codex ChatGPT auth for Maestro's CODEX_HOME. Do not look
+  // for an API key here; GPT is not an API-key settings provider anymore.
   if (key === "openai") return { available: true };
   if (!block.apiKey || block.apiKey.trim().length === 0) {
     return { available: false, reason: `${descriptor.section} API key missing` };

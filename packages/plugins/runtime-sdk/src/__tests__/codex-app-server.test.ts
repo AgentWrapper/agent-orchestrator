@@ -101,6 +101,9 @@ const TEST_CODEX_HOME = join(tmpdir(), "mae-codex-test-home");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AO_OPENAI_API_KEY;
+  delete process.env.AO_CODEX_BINARY;
   // Keep CODEX_HOME hermetic: the driver mkdir's it and points the spawn at it
   // (so a real run never clobbers the user's ~/.codex). Pin it to a temp dir.
   process.env.AO_CODEX_HOME = TEST_CODEX_HOME;
@@ -110,6 +113,8 @@ describe("Codex app-server provider", () => {
   it("starts a Codex thread and maps message/tool/usage/completion notifications", async () => {
     const proc = createFakeProcess();
     const { host, events } = makeHost();
+    process.env.OPENAI_API_KEY = "sk-global";
+    process.env.AO_OPENAI_API_KEY = "sk-ao";
 
     const done = runCodexAppServerMode(host, {
       cwd: "/workspace/project",
@@ -118,18 +123,15 @@ describe("Codex app-server provider", () => {
       resumeFrom: null,
       model: "gpt-5.5",
       initialPrompt: null,
-      apiKey: "sk-test",
     });
 
     respond(proc, await waitForRequest(proc, "initialize"), {});
-    // codex app-server ignores OPENAI_API_KEY env — the driver must authenticate
-    // explicitly via account/login/start, passing the resolved key through.
-    const login = await waitForRequest(proc, "account/login/start");
-    expect(login["params"]).toMatchObject({ type: "apiKey", apiKey: "sk-test" });
-    respond(proc, login, { type: "apiKey" });
-    // CODEX_HOME is redirected to the AO-managed dir, never the user's ~/.codex.
+    // CODEX_HOME is redirected to the AO-managed dir where Settings performs
+    // `codex login`; old OpenAI API-key env vars must not leak into Codex.
     const spawnEnv = (mockSpawn.mock.calls[0]?.[2] as { env?: Record<string, string> })?.env;
     expect(spawnEnv?.["CODEX_HOME"]).toBe(TEST_CODEX_HOME);
+    expect(spawnEnv?.["OPENAI_API_KEY"]).toBeUndefined();
+    expect(spawnEnv?.["AO_OPENAI_API_KEY"]).toBeUndefined();
     const threadStart = await waitForRequest(proc, "thread/start");
     expect(threadStart["params"]).toMatchObject({
       model: "gpt-5.5",
@@ -259,7 +261,6 @@ describe("Codex app-server provider", () => {
         resumeFrom: null,
         model: "gpt-5.5",
         initialPrompt: null,
-        apiKey: null,
       });
 
       respond(proc, await waitForRequest(proc, "initialize"), {});
@@ -291,7 +292,6 @@ describe("Codex app-server provider", () => {
       resumeFrom: null,
       model: "gpt-5.5",
       initialPrompt: null,
-      apiKey: null,
     });
 
     respond(proc, await waitForRequest(proc, "initialize"), {});

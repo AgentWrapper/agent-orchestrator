@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync, readFileSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
 import { resolveRuntimeName } from "./runtime-resolution.js";
 import { execFile } from "node:child_process";
@@ -99,6 +99,7 @@ import { dedupePrUrls } from "./utils/pr.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveAgentSelectionForSession } from "./agent-selection.js";
+import { resolveDriver } from "./model-registry.js";
 import {
   buildAgentPath,
   setupPathWrapperWorkspace,
@@ -1247,6 +1248,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   function hasPersistedNativeRestoreMetadata(session: Session, agent: Agent): boolean {
     const metadata = session.metadata ?? {};
+    const runtimeDriver = metadata["sessionModel"] ? resolveDriver(metadata["sessionModel"]) : null;
+
+    if (runtimeDriver === "codex-app-server") {
+      return typeof metadata["codexThreadId"] === "string" && metadata["codexThreadId"].trim().length > 0;
+    }
 
     switch (agent.name) {
       case "claude-code":
@@ -1258,6 +1264,46 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       default:
         return false;
     }
+  }
+
+  function readRuntimeSdkSessionInfo(session: Session): { sdkSessionId?: string; model?: string } | null {
+    const infoPath = session.runtimeHandle?.data?.["sessionInfoPath"];
+    if (typeof infoPath !== "string" || !infoPath) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(infoPath, "utf-8")) as Record<string, unknown>;
+      return {
+        sdkSessionId: typeof parsed["sdkSessionId"] === "string" ? parsed["sdkSessionId"] : undefined,
+        model: typeof parsed["model"] === "string" ? parsed["model"] : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeAgentSessionMetadataForDriver(
+    session: Session,
+    metadataUpdates: Record<string, string>,
+  ): Record<string, string> {
+    const runtimeInfo = readRuntimeSdkSessionInfo(session);
+    const model = runtimeInfo?.model ?? session.metadata?.["sessionModel"] ?? metadataUpdates["sessionModel"];
+    if (!model || resolveDriver(model) !== "codex-app-server") return metadataUpdates;
+
+    const next = { ...metadataUpdates };
+    // GPT/OpenAI sessions run through Codex app-server. A Claude JSONL UUID is not
+    // a Codex rollout/thread id, even though the persisted agent plugin may still be
+    // `claude-code` for historical sessions. Never let that stale UUID back into a
+    // Codex-backed session or the next restore will ask Codex to resume a Claude id.
+    if ("claudeSessionUuid" in next || session.metadata?.["claudeSessionUuid"]) {
+      next["claudeSessionUuid"] = "";
+    }
+
+    if (runtimeInfo?.sdkSessionId) {
+      next["codexThreadId"] = runtimeInfo.sdkSessionId;
+    }
+    if (runtimeInfo?.model) {
+      next["sessionModel"] = runtimeInfo.model;
+    }
+    return next;
   }
 
   function canDiscoverSessionInfoAfterRuntimeExit(agent: Agent): boolean {
@@ -1290,7 +1336,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (!info) return;
 
       session.agentInfo = info;
-      const metadataUpdates = info.metadata ?? {};
+      const metadataUpdates = normalizeAgentSessionMetadataForDriver(session, info.metadata ?? {});
       const allAlreadyPersisted = Object.keys(metadataUpdates).every(
         (key) => session.metadata?.[key] === metadataUpdates[key],
       );
@@ -3873,6 +3919,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+    const effectiveResumeModel = selection.model ?? raw["sessionModel"];
+    const sdkResumePointer =
+      effectiveResumeModel && resolveDriver(effectiveResumeModel) === "codex-app-server"
+        ? raw["codexThreadId"]
+        : raw["claudeSessionUuid"];
 
     if (plugins.agent.preLaunchSetup) {
       await plugins.agent.preLaunchSetup(workspacePath);
@@ -3897,13 +3948,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
-        // runtime-sdk resume: a restored session that already has a provider
-        // session id (claudeSessionUuid) must resume it — otherwise the SDK
+        // runtime-sdk resume: a restored session that already has a same-driver
+        // provider session id must resume it — otherwise the SDK
         // runtime opens a FRESH conversation and the agent loses all prior
         // context on engine restart. (The tmux runtime resumes via
         // getRestoreCommand's `claude --resume`; the SDK runtime reads this env.)
-        ...(typeof raw["claudeSessionUuid"] === "string" && raw["claudeSessionUuid"]
-          ? { AO_SDK_RESUME: raw["claudeSessionUuid"] }
+        ...(typeof sdkResumePointer === "string" && sdkResumePointer
+          ? { AO_SDK_RESUME: sdkResumePointer }
           : {}),
         // runtime-sdk compaction seed (one-shot): a freshly-COMPACTED session
         // carries a transient `compactSeed` in its metadata INSTEAD of a resume
@@ -4006,14 +4057,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   /**
-   * Change the model for a session and immediately restart it on the new model,
-   * preserving the conversation. Works for both workers and the orchestrator.
+   * Change the model for a session and immediately restart it on the new model.
+   * Works for both workers and the orchestrator.
    *
    * The new model is persisted to session metadata (`sessionModel`) so every
    * subsequent engine restart (or `ao session restore`) also uses it.  If the
    * session is currently live its SDK host is destroyed first so that
-   * `restore()` can boot a fresh host with `AO_SDK_MODEL = <model>` and the
-   * same `AO_SDK_RESUME` (conversation preserved via Claude's session UUID).
+   * `restore()` can boot a fresh host with `AO_SDK_MODEL = <model>`.
+   * Same-driver changes keep the provider resume pointer. Cross-driver changes
+   * clear provider-specific resume metadata because a Claude session UUID is not
+   * a Codex thread id (and vice versa).
    */
   async function setModel(sessionId: SessionId, model: string): Promise<Session> {
     const trimmedModel = model.trim();
@@ -4028,9 +4081,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
     const { sessionsDir, project, raw } = located;
 
+    const previousSelection = resolveSelectionForSession(project, sessionId, raw);
+    const previousDriver = resolveDriver(previousSelection.model);
+    const nextDriver = resolveDriver(trimmedModel);
+    const driverChanged = previousDriver !== nextDriver;
+
     // 2. Persist the new model intent — restore() (called below) and every
     //    future restart will pick this up via resolveAgentSelectionForSession.
-    updateMetadata(sessionsDir, sessionId, { sessionModel: trimmedModel });
+    const previousClaudeSessionUuid = raw["claudeSessionUuid"];
+    const previousCodexThreadId = raw["codexThreadId"];
+    updateMetadata(sessionsDir, sessionId, {
+      sessionModel: trimmedModel,
+      ...(driverChanged && typeof previousClaudeSessionUuid === "string" && previousClaudeSessionUuid
+        ? {
+            claudeSessionUuid: "",
+            previousClaudeSessionUuid,
+          }
+        : {}),
+      ...(driverChanged && typeof previousCodexThreadId === "string" && previousCodexThreadId
+        ? {
+            codexThreadId: "",
+            previousCodexThreadId,
+          }
+        : {}),
+    });
     invalidateCache();
 
     // 3. Destroy the live runtime so the host is dead before restore() probes it.
@@ -4057,7 +4131,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // 4. Re-start on the new model (conversation preserved via AO_SDK_RESUME).
+    // 4. Re-start on the new model. Same-driver switches preserve
+    //    AO_SDK_RESUME; cross-driver switches start a fresh provider thread.
     //    force=true: skip isRestorable — we just destroyed the host above.
     return restore(sessionId, true);
   }

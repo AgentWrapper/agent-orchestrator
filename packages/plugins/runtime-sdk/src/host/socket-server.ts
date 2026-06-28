@@ -338,7 +338,6 @@ export async function runStandalone(): Promise<void> {
       resumeFrom,
       model,
       initialPrompt,
-      apiKey: openaiApiKey,
     });
   } else if (openaiApiKey && isOpenaiModel && model) {
     // OpenAI native path — the Responses API (POST /v1/responses, SSE). Text-only
