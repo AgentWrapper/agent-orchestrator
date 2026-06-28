@@ -149,10 +149,13 @@ async function gatherSessionInfo(
     if (liveBranch) branch = liveBranch;
   }
 
-  // Get last activity time — use enriched session data on Windows (no tmux),
-  // fall back to tmux display-message on Unix for backward compat.
+  // Get last activity time — use enriched session data on Windows (no tmux) and
+  // for streaming (SDK) sessions which have no tmux pane (a tmux probe there
+  // returns nothing → the row renders a false "unknown"/"-"); fall back to tmux
+  // display-message on Unix tmux sessions for backward compat.
   let lastActivity: string;
-  if (isWindows()) {
+  const isTmuxRuntime = session.runtimeHandle?.runtimeName === "tmux";
+  if (isWindows() || !isTmuxRuntime) {
     lastActivity = session.lastActivityAt ? formatAge(session.lastActivityAt.getTime()) : "-";
   } else {
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;

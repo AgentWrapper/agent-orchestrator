@@ -1000,6 +1000,33 @@ describe("status command", () => {
     expect(output).toContain("1 active session across 2 projects · 2 orchestrators");
   });
 
+  it("renders SDK orchestrator activity from lastActivityAt instead of '(unknown)' (mae-orchestrator)", async () => {
+    // A live SDK orchestrator has no tmux pane, so a tmux activity probe returns
+    // nothing and the status-line used to render "(unknown)". The enriched
+    // lastActivityAt must drive the age instead.
+    mockSessionManager.list.mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        runtimeHandle: { id: "app-orchestrator", runtimeName: "sdk", data: {} },
+        lastActivityAt: new Date(Date.now() - 90_000), // 90s ago → "1m ago"
+      }),
+    ]);
+    mockTmux.mockResolvedValue(null); // no tmux activity for an SDK host
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const orchLine = output
+      .split("\n")
+      .find((l) => l.includes("Orchestrator:") && l.includes("app-orchestrator"));
+    expect(orchLine).toBeDefined();
+    expect(orchLine).not.toContain("unknown");
+    expect(orchLine).toContain("1m ago");
+  });
+
   it("includes orchestrators in JSON output with explicit roles", async () => {
     mockSessionManager.list.mockResolvedValue([
       makeSession({

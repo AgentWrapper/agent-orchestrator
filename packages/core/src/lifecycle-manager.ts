@@ -1280,7 +1280,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               sessionReason: "awaiting_user_input",
             });
           }
-          if (detectedActivity.state === "exited" && canProbeRuntimeIdentity) {
+          // A streaming (SDK) host runs no terminal/CLI process, so the agent's
+          // process-based probe returns a FALSE `exited`. Never let it flip the
+          // canonical runtime state for an SDK session: a genuinely dead host is
+          // already marked `missing` by the runtime probe above (its isAlive
+          // checks socket/PID/event-log), so this activity-derived `exited` is
+          // pure false negative here. The ground-truth clamp below is a second
+          // line of defence; this guard stops the wrong write at the source.
+          if (detectedActivity.state === "exited" && canProbeRuntimeIdentity && !isStreamingRuntime) {
             processProbe = { state: "dead", failed: false };
             lifecycle.runtime.state = "exited";
             lifecycle.runtime.reason = "process_missing";
