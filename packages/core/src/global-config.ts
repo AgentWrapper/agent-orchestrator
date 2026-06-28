@@ -347,6 +347,13 @@ export const LocalProjectConfigSchema = z
     worker: z
       .object({ agent: z.string().optional(), agentConfig: z.object({}).passthrough().optional() })
       .optional(),
+    review: z
+      .object({
+        agent: z.enum(["codex", "claude"]).optional(),
+        model: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
     reactions: z.record(z.object({}).passthrough()).optional(),
     agentRules: z.string().optional(),
     agentRulesFile: z.string().optional(),

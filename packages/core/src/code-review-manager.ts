@@ -728,8 +728,15 @@ export function createShellCodeReviewRunner(command: string): CodeReviewRunner {
   };
 }
 
-export function buildCodexCodeReviewArgs(outputFile: string, prompt: string): string[] {
-  return ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, prompt];
+export function buildCodexCodeReviewArgs(
+  outputFile: string,
+  prompt: string,
+  model?: string,
+): string[] {
+  const args = ["exec"];
+  if (model) args.push("--model", model);
+  args.push("--sandbox", "read-only", "--output-last-message", outputFile, prompt);
+  return args;
 }
 
 export async function runCodexCodeReview(
@@ -737,7 +744,7 @@ export async function runCodexCodeReview(
 ): Promise<CodeReviewRunnerResult> {
   const outputFile = join(context.workspacePath, ".ao-code-review-output.json");
   const prompt = buildDefaultReviewPrompt(context);
-  const args = buildCodexCodeReviewArgs(outputFile, prompt);
+  const args = buildCodexCodeReviewArgs(outputFile, prompt, context.project.review?.model);
 
   try {
     const { stdout, stderr } = await execFileWithClosedStdin("codex", args, {
@@ -759,6 +766,128 @@ export async function runCodexCodeReview(
           : String(error);
     throw new Error(`Codex review failed: ${details}`, { cause: error });
   }
+}
+
+// Claude reviewer is read-only and non-interactive: headless print mode with a
+// whitelist of read-only tools so unlisted (write-capable) tools are denied
+// without an interactive prompt — the equivalent of codex's `--sandbox
+// read-only`. Output is the JSON described by buildDefaultReviewPrompt and is
+// parsed by the same parseReviewerOutput as codex (identical findings schema).
+const CLAUDE_REVIEW_ALLOWED_TOOLS = [
+  "Read",
+  "Grep",
+  "Glob",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+  "Bash(git status:*)",
+  "Bash(git rev-parse:*)",
+].join(",");
+
+export function buildClaudeCodeReviewArgs(prompt: string, model?: string): string[] {
+  const args = ["-p", prompt, "--output-format", "text", "--allowedTools", CLAUDE_REVIEW_ALLOWED_TOOLS];
+  if (model) args.push("--model", model);
+  return args;
+}
+
+export async function runClaudeCodeReview(
+  context: CodeReviewRunnerContext,
+): Promise<CodeReviewRunnerResult> {
+  const prompt = buildDefaultReviewPrompt(context);
+  const args = buildClaudeCodeReviewArgs(prompt, context.project.review?.model);
+
+  try {
+    const { stdout, stderr } = await execFileWithClosedStdin("claude", args, {
+      cwd: context.workspacePath,
+      timeout: REVIEW_COMMAND_TIMEOUT_MS,
+      maxBuffer: REVIEW_COMMAND_MAX_BUFFER,
+      env: process.env,
+      shell: isWindows(),
+    });
+    return { rawOutput: stdout.trim() || stderr.trim() };
+  } catch (error) {
+    const details =
+      error instanceof Error && "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr.trim()
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(`Claude review failed: ${details}`, { cause: error });
+  }
+}
+
+/**
+ * Codex failure signatures that mean "the provider is unavailable" (account
+ * usage/rate limits, HTTP 429, dropped transport, auth failures) rather than a
+ * genuine review failure (timeout, parse bug, non-zero normal exit). Only these
+ * trigger the claude fallback — see createCodexWithClaudeFallbackRunner.
+ */
+const CODEX_PROVIDER_UNAVAILABLE_PATTERNS: readonly RegExp[] = [
+  /usage limit/i,
+  /rate limit/i,
+  /\b429\b/,
+  /transport channel closed/i,
+  /\b401\b/,
+  /\b403\b/,
+  /unauthorized/i,
+  /not (?:logged|signed)[ -]?in/i,
+  /authentication (?:failed|error|required|expired)/i,
+  /invalid api key/i,
+  /login (?:required|expired)/i,
+];
+
+function collectErrorText(error: unknown, depth = 0): string {
+  if (depth > 5 || error === null || error === undefined) return "";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) {
+    const stderr =
+      "stderr" in error && typeof (error as { stderr?: unknown }).stderr === "string"
+        ? (error as { stderr: string }).stderr
+        : "";
+    const cause =
+      "cause" in error ? collectErrorText((error as { cause?: unknown }).cause, depth + 1) : "";
+    return `${error.message}\n${stderr}\n${cause}`;
+  }
+  return String(error);
+}
+
+export function isCodexProviderUnavailableError(error: unknown): boolean {
+  const text = collectErrorText(error);
+  return CODEX_PROVIDER_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export const CODEX_CLAUDE_FALLBACK_SUMMARY = "codex unavailable → claude fallback";
+
+/**
+ * Wrap the codex reviewer so that a provider-availability failure transparently
+ * retries via the claude reviewer, tagging the run summary so the fallback is
+ * visible. Non-provider failures (timeout, parse bug, etc.) propagate unchanged.
+ */
+export function createCodexWithClaudeFallbackRunner(
+  primary: CodeReviewRunner = runCodexCodeReview,
+  fallback: CodeReviewRunner = runClaudeCodeReview,
+): CodeReviewRunner {
+  return async (context) => {
+    try {
+      return await primary(context);
+    } catch (error) {
+      if (!isCodexProviderUnavailableError(error)) throw error;
+      const result = await fallback(context);
+      return { ...result, summary: result.summary ?? CODEX_CLAUDE_FALLBACK_SUMMARY };
+    }
+  };
+}
+
+/**
+ * Pick the reviewer runner for a project. Default (no `review` block) is codex,
+ * wrapped with a claude fallback for provider outages. Explicit `claude` runs
+ * claude directly (no fallback — it is already the resilient choice).
+ */
+export function resolveCodeReviewRunner(project: ProjectConfig): CodeReviewRunner {
+  if (project.review?.agent === "claude") {
+    return runClaudeCodeReview;
+  }
+  return createCodexWithClaudeFallbackRunner();
 }
 
 function defaultReviewSummary(session: Session, source: CodeReviewRequestSource): string {
@@ -902,7 +1031,7 @@ export async function executeCodeReviewRun(
     sessionManager,
     storeFactory = createCodeReviewStore,
     prepareWorkspace = prepareGitReviewerWorkspace,
-    runReviewer = runCodexCodeReview,
+    runReviewer,
     now = () => new Date(),
     force = false,
   }: ExecuteCodeReviewRunOptions,
@@ -946,7 +1075,8 @@ export async function executeCodeReviewRun(
       now(),
     );
     const baseRef = session.pr?.baseBranch?.trim() || project.defaultBranch;
-    const result = await runReviewer({ config, project, session, run, workspacePath, baseRef });
+    const reviewer = runReviewer ?? resolveCodeReviewRunner(project);
+    const result = await reviewer({ config, project, session, run, workspacePath, baseRef });
     const findings = result.findings ?? parseReviewerOutput(result.rawOutput ?? "");
 
     for (const finding of findings) {
