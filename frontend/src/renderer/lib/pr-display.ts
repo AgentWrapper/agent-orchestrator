@@ -414,13 +414,6 @@ function reviewAttentionLink(
 	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
 ): PRAttentionLink {
 	const inlineURL = reviewer.links.find((link) => link.url)?.url;
-	if (reviewer.reviewUrl) {
-		return {
-			label: reviewerLabel(reviewer),
-			href: reviewer.reviewUrl,
-			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
-		};
-	}
 	if (inlineURL) {
 		return {
 			label: reviewerLabel(reviewer),
@@ -429,6 +422,13 @@ function reviewAttentionLink(
 				reviewer.count > 0
 					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
 					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+		};
+	}
+	if (reviewer.reviewUrl) {
+		return {
+			label: reviewerLabel(reviewer),
+			href: reviewer.reviewUrl,
+			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
 		};
 	}
 	return {

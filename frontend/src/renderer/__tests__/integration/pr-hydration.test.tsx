@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../../hooks/useSessionScmSummary";
 
 // Drives the real useWorkspaceQuery + real Board / PR-page consumers end to end
 // for a normal project, mocking only the HTTP client and the router. Proves PR
@@ -73,7 +74,53 @@ function respondWithProjectAndPRs() {
 	});
 }
 
-function respondWithAttentionPR() {
+const attentionPRSummary = (): SessionPRSummary => ({
+	url: "https://github.com/aoagents/ReverbCode/pull/278",
+	htmlUrl: "https://github.com/aoagents/ReverbCode/pull/278",
+	number: 278,
+	title: "fix the bug",
+	state: "open",
+	provider: "github",
+	repo: "aoagents/ReverbCode",
+	author: "worker",
+	sourceBranch: "fix/bug",
+	targetBranch: "main",
+	headSha: "abc123",
+	additions: 1,
+	deletions: 1,
+	changedFiles: 1,
+	ci: { state: "passing", failingChecks: [] },
+	review: {
+		decision: "changes_requested",
+		hasUnresolvedHumanComments: true,
+		unresolvedBy: [
+			{
+				reviewerId: "reviewer-a",
+				count: 1,
+				reviewUrl: "https://github.com/aoagents/ReverbCode/pull/278#pullrequestreview-1",
+				links: [
+					{
+						url: "https://github.com/aoagents/ReverbCode/pull/278#discussion_r1",
+						file: "main.go",
+						line: 12,
+					},
+				],
+			},
+		],
+	},
+	mergeability: {
+		state: "conflicting",
+		reasons: ["conflicts"],
+		prUrl: "https://github.com/aoagents/ReverbCode/pull/278",
+		conflictFiles: [],
+	},
+	updatedAt: "2026-06-10T16:15:04Z",
+	observedAt: "2026-06-10T16:15:04Z",
+	ciObservedAt: "2026-06-10T16:15:04Z",
+	reviewObservedAt: "2026-06-10T16:15:04Z",
+});
+
+function respondWithAttentionPR(summary = attentionPRSummary()) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") {
 			return { data: { projects: [{ id: "proj-1", name: "my-app", path: "/repo/my-app" }] }, error: undefined };
@@ -82,53 +129,7 @@ function respondWithAttentionPR() {
 			return {
 				data: {
 					sessionId: "sess-1",
-					prs: [
-						{
-							url: "https://github.com/aoagents/ReverbCode/pull/278",
-							htmlUrl: "https://github.com/aoagents/ReverbCode/pull/278",
-							number: 278,
-							title: "fix the bug",
-							state: "open",
-							provider: "github",
-							repo: "aoagents/ReverbCode",
-							author: "worker",
-							sourceBranch: "fix/bug",
-							targetBranch: "main",
-							headSha: "abc123",
-							additions: 1,
-							deletions: 1,
-							changedFiles: 1,
-							ci: { state: "passing", failingChecks: [] },
-							review: {
-								decision: "changes_requested",
-								hasUnresolvedHumanComments: true,
-								unresolvedBy: [
-									{
-										reviewerId: "reviewer-a",
-										count: 1,
-										reviewUrl: "https://github.com/aoagents/ReverbCode/pull/278#pullrequestreview-1",
-										links: [
-											{
-												url: "https://github.com/aoagents/ReverbCode/pull/278#discussion_r1",
-												file: "main.go",
-												line: 12,
-											},
-										],
-									},
-								],
-							},
-							mergeability: {
-								state: "conflicting",
-								reasons: ["conflicts"],
-								prUrl: "https://github.com/aoagents/ReverbCode/pull/278",
-								conflictFiles: [],
-							},
-							updatedAt: "2026-06-10T16:15:04Z",
-							observedAt: "2026-06-10T16:15:04Z",
-							ciObservedAt: "2026-06-10T16:15:04Z",
-							reviewObservedAt: "2026-06-10T16:15:04Z",
-						},
-					],
+					prs: [summary],
 				},
 				error: undefined,
 			};
@@ -167,8 +168,9 @@ function respondWithAttentionPR() {
 	});
 }
 
-function renderWithProviders(node: ReactNode) {
+function renderWithProviders(node: ReactNode, prepare?: (queryClient: QueryClient) => void) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	prepare?.(queryClient);
 	render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
 }
 
@@ -187,13 +189,16 @@ describe("PR hydration for a normal project (#251)", () => {
 		expect(screen.queryByText("no PR yet")).not.toBeInTheDocument();
 	});
 
-	it("links Board attention states to PR fallback and merge conflict targets", async () => {
-		respondWithAttentionPR();
-		renderWithProviders(<SessionsBoard />);
+	it("links Board attention states to review thread and merge conflict targets", async () => {
+		const summary = attentionPRSummary();
+		respondWithAttentionPR(summary);
+		renderWithProviders(<SessionsBoard />, (queryClient) => {
+			queryClient.setQueryData(sessionScmSummaryQueryKey("sess-1"), [summary]);
+		});
 
-		expect(await screen.findByRole("link", { name: "PR" })).toHaveAttribute(
+		expect(await screen.findByRole("link", { name: "reviewer-a" })).toHaveAttribute(
 			"href",
-			"https://github.com/aoagents/ReverbCode/pull/278",
+			"https://github.com/aoagents/ReverbCode/pull/278#discussion_r1",
 		);
 		expect(screen.getByRole("link", { name: "conflicts" })).toHaveAttribute(
 			"href",

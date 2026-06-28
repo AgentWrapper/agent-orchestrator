@@ -137,7 +137,7 @@ describe("prAttentionItems", () => {
 		expect(ciItem?.overflowLabel).toBe("+1 check");
 	});
 
-	it("prefers the submitted review summary over inline comments", () => {
+	it("prefers the unresolved review thread over the submitted review summary", () => {
 		const items = prAttentionItems(
 			summary({
 				review: {
@@ -160,6 +160,31 @@ describe("prAttentionItems", () => {
 
 		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
 			label: "alice +1",
+			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+			title: "2 unresolved comments from alice",
+		});
+	});
+
+	it("falls back to the submitted review summary when no inline comments exist", () => {
+		const items = prAttentionItems(
+			summary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: false,
+					unresolvedBy: [
+						{
+							reviewerId: "alice",
+							count: 0,
+							reviewUrl: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
+							links: [],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "alice",
 			href: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
 			title: "Open requested-changes review from alice",
 		});
