@@ -594,6 +594,111 @@ describe("list", () => {
   });
 });
 
+describe("list — streaming (SDK) runtime liveness/activity", () => {
+  /** Build a registry that resolves a given runtime + agent. */
+  function registryWith(runtime: Runtime, agent: Agent): PluginRegistry {
+    return {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtime;
+        if (slot === "agent") return agent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+  }
+
+  /** An SDK runtime handle, as persisted by runtime-sdk (carries hostPid). */
+  function sdkHandle(data: Record<string, unknown> = {}): RuntimeHandle {
+    return { id: "rt-sdk", runtimeName: "sdk", data };
+  }
+
+  // (b) A live SDK worker must NOT show activity=exited just because the agent's
+  // process-based probe finds no claude CLI process (there is none for an SDK
+  // host). The canon (lifecycle session.state) is the truth → working ⇒ active.
+  it("does not surface activity=exited for a live SDK worker (mae-257)", async () => {
+    const liveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentReportingExited: Agent = {
+      ...mockAgent,
+      // The SDK host has no terminal/CLI process, so the agent always reports exited.
+      getActivityState: vi.fn().mockResolvedValue({ state: "exited" }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: sdkHandle({ hostPid: process.pid }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(liveRuntime, agentReportingExited) });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions[0].activity).not.toBe("exited");
+    // working canon ⇒ active
+    expect(sessions[0].activity).toBe("active");
+    expect(sessions[0].lifecycle.runtime.state).toBe("alive");
+  });
+
+  // (c) The auto_cleanup / auto-retire class of bug: a disagreeing/flaky runtime
+  // probe must NOT mark an SDK runtime `missing` while the host PID is still
+  // alive (mae-256). The independent kill(0) confirmation keeps it alive.
+  it("does not mark an SDK runtime missing while hostPid is alive (mae-256)", async () => {
+    const flakyRuntime: Runtime = {
+      ...mockRuntime,
+      // The primary probe wrongly reports dead…
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      // …but the host PID (this test process) is provably alive.
+      runtimeHandle: sdkHandle({ hostPid: process.pid }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(flakyRuntime, mockAgent) });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions[0].lifecycle.runtime.state).not.toBe("missing");
+    expect(sessions[0].lifecycle.runtime.state).toBe("alive");
+    expect(sessions[0].status).not.toBe("detecting");
+    expect(sessions[0].status).not.toBe("killed");
+  });
+
+  // Guard the opposite: a genuinely dead SDK host (probe dead, no live PID, no
+  // fresh event log) must still be detected — and persisted as "detecting"
+  // (never "terminated"), preserving invariant #1735.
+  it("still detects a genuinely dead SDK host as detecting/exited (#1735 preserved)", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      // No hostPid and an unreachable event-log path → nothing keeps it alive.
+      runtimeHandle: sdkHandle({ eventLogPath: "/nonexistent/events.ndjson" }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(deadRuntime, mockAgent) });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions[0].lifecycle.runtime.state).toBe("missing");
+    expect(sessions[0].status).toBe("detecting");
+    expect(sessions[0].activity).toBe("exited");
+  });
+});
+
 describe("get", () => {
   it("returns session by ID", async () => {
     writeMetadata(sessionsDir, "app-1", {

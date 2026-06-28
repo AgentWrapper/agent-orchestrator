@@ -28,6 +28,7 @@ import {
   WorkspaceMissingError,
   type OpenCodeSessionManager,
   type Session,
+  type ActivityState,
   type SessionId,
   type SessionSpawnConfig,
   type OrchestratorSpawnConfig,
@@ -1311,6 +1312,69 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return agent.name === "claude-code" || agent.name === "codex";
   }
 
+  // A streaming (SDK) host that appended to its event log within this window is
+  // provably writing right now — mirrors runtime-sdk's EVENT_LOG_FRESH_MS.
+  const SDK_EVENT_LOG_FRESH_MS = 10_000;
+
+  /**
+   * Independent liveness confirmation for a streaming (SDK) host. Mirrors the
+   * PID / event-log signals of runtime-sdk `isAlive` WITHOUT importing the
+   * plugin (core must not depend on a plugin). Used as a safety net before an
+   * SDK runtime is marked `missing`: a host whose PID still answers `kill(0)`,
+   * or whose event log was appended to within the freshness window, is provably
+   * alive and must never be retired/cleanup-marked as gone (mae-256: the
+   * auto_cleanup path marked a live host `missing` because the resolved probe
+   * disagreed with the live PID).
+   */
+  function streamingHostConfirmedAlive(handle: RuntimeHandle | null): boolean {
+    if (!handle || handle.runtimeName !== "sdk") return false;
+    const data = handle.data as Record<string, unknown> | undefined;
+    const hostPid = data?.["hostPid"];
+    if (typeof hostPid === "number" && hostPid > 0) {
+      try {
+        process.kill(hostPid, 0);
+        return true;
+      } catch (err: unknown) {
+        // EPERM = the process exists but we may not signal it → still alive.
+        if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+      }
+    }
+    const eventLogPath = data?.["eventLogPath"];
+    if (typeof eventLogPath === "string" && eventLogPath) {
+      try {
+        return Date.now() - statSync(eventLogPath).mtimeMs < SDK_EVENT_LOG_FRESH_MS;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Map the canonical lifecycle to an activity for a confirmed-alive streaming
+   * (SDK) host. A live SDK host runs no terminal/CLI process, so the agent's
+   * process-based probe reports a FALSE `exited`; for SDK the canon is the only
+   * truth. NEVER returns `exited` — that is reserved for a genuinely dead host
+   * (socket + PID + event-log all dead, surfaced by the runtime probe).
+   */
+  function deriveStreamingActivity(session: Session): ActivityState {
+    switch (session.lifecycle.session.state) {
+      case "working":
+        return "active";
+      case "needs_input":
+        return "waiting_input";
+      case "stuck":
+        return "blocked";
+      case "idle":
+      case "done":
+      case "terminated":
+        return "idle";
+      default:
+        // not_started / detecting: host is up, awaiting — alive, not working.
+        return "ready";
+    }
+  }
+
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
@@ -1363,6 +1427,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Fabricated handles (constructed as fallback for external sessions) should
     // NOT override status to "killed" — we don't know if the session ever had
     // a tmux session, and we'd clobber meaningful statuses like "pr_open".
+    // Tracks whether liveness was POSITIVELY confirmed this enrichment. Lets
+    // the activity step below trust the canon for a streaming (SDK) host whose
+    // agent probe falsely reports `exited`. null = not probed (e.g. spawning).
+    let livenessConfirmedAlive: boolean | null = null;
     if (
       handleFromMetadata &&
       session.runtimeHandle &&
@@ -1371,7 +1439,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     ) {
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-        if (!alive) {
+        // For a streaming (SDK) host, re-confirm death independently before
+        // marking the runtime gone: a flaky/disagreeing probe must not retire a
+        // host whose PID is still alive or whose event log is still fresh
+        // (mae-256, the auto_cleanup secondary bug). For non-SDK runtimes
+        // streamingHostConfirmedAlive is always false, so behaviour is unchanged.
+        livenessConfirmedAlive = alive || streamingHostConfirmedAlive(session.runtimeHandle);
+        if (!livenessConfirmedAlive) {
           session.lifecycle.runtime.state = "missing";
           session.lifecycle.runtime.reason =
             session.runtimeHandle.runtimeName === "tmux" ? "tmux_missing" : "process_missing";
@@ -1420,13 +1494,32 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       try {
         const detected = await plugins.agent.getActivityState(session, config.readyThresholdMs);
         if (detected !== null) {
-          session.activitySignal = classifyActivitySignal(detected, "native");
-          session.activity = detected.state;
-          session.lifecycle.runtime.state = "alive";
-          session.lifecycle.runtime.reason = "process_running";
-          session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
-          if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
-            session.lastActivityAt = detected.timestamp;
+          if (
+            session.runtimeHandle?.runtimeName === "sdk" &&
+            detected.state === "exited" &&
+            livenessConfirmedAlive === true
+          ) {
+            // A live streaming (SDK) host runs no terminal/CLI process, so the
+            // agent's process-based probe returns a FALSE `exited`. Liveness was
+            // positively confirmed above — derive the activity from the canon
+            // instead of letting that false `exited` overwrite it (mae-257). The
+            // bogus `exited` timestamp (now) is dropped so lastActivityAt keeps
+            // the real value carried in metadata.
+            const derived = deriveStreamingActivity(session);
+            session.activity = derived;
+            session.activitySignal = classifyActivitySignal({ state: derived }, "native");
+            session.lifecycle.runtime.state = "alive";
+            session.lifecycle.runtime.reason = "process_running";
+            session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
+          } else {
+            session.activitySignal = classifyActivitySignal(detected, "native");
+            session.activity = detected.state;
+            session.lifecycle.runtime.state = "alive";
+            session.lifecycle.runtime.reason = "process_running";
+            session.lifecycle.runtime.lastObservedAt = new Date().toISOString();
+            if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
+              session.lastActivityAt = detected.timestamp;
+            }
           }
         } else {
           session.activitySignal = createActivitySignal("null", { source: "native" });
