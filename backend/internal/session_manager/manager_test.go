@@ -807,6 +807,9 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		"You are the human-facing coordinator for project mer",
 		`ao spawn --project mer --prompt "<clear worker task>"`,
 		"`ao send`",
+		"`ao session ls`",
+		"`ao session get <worker-session-id>`",
+		"run `ao --help` before guessing",
 		"avoid doing implementation yourself unless it is necessary",
 	} {
 		if !strings.Contains(systemPrompt, want) {
