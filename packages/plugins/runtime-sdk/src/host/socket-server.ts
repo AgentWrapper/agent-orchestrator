@@ -35,6 +35,7 @@ import {
 import { applyMimoAnthropicEnv } from "../providers/mimo-anthropic.js";
 import { runClaudeAgentMode } from "../providers/claude-agent-sdk.js";
 import { OPENAI_BASE_URL, runOpenAiResponsesMode } from "../providers/openai-responses.js";
+import { runCodexAppServerMode } from "../providers/codex-app-server.js";
 
 // ===========================================================================
 // Subscriber backpressure
@@ -213,6 +214,7 @@ export async function runStandalone(): Promise<void> {
   // preset system prompt and re-sent on every request, so it survives resume.
   const appendSystemPrompt = readAppendSystemPrompt();
   const permissionTimeoutMs = Number(process.env.AO_SDK_PERMISSION_TIMEOUT_MS || "0") || 0;
+  const runtimeDriver = process.env.AO_SDK_RUNTIME_DRIVER ?? null;
 
   // Host-instance epoch: read the prior value from session.json (if any) and
   // advance it. Each host process for this AO session gets a higher epoch, so
@@ -319,13 +321,28 @@ export async function runStandalone(): Promise<void> {
   // endpoint regresses. Off by default; the full-agent path below is primary.
   const mimoForceOpenAiCompat = process.env.AO_MIMO_FORCE_OPENAI_COMPAT === "1";
 
+  const forceOpenAiResponses = process.env.AO_OPENAI_FORCE_RESPONSES === "1";
+  const useCodexAppServer =
+    isOpenaiModel && model && runtimeDriver === "codex-app-server" && !forceOpenAiResponses;
+
   if (glmApiKey && isGlmModel) {
     // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
     await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
+  } else if (useCodexAppServer) {
+    // OpenAI Codex app-server path — full agent behavior (tools, approvals,
+    // sandbox, resume) normalized into the same runtime-sdk events as Claude.
+    await runCodexAppServerMode(host, {
+      cwd,
+      permissionMode,
+      appendSystemPrompt,
+      resumeFrom,
+      model,
+      initialPrompt,
+      apiKey: openaiApiKey,
+    });
   } else if (openaiApiKey && isOpenaiModel && model) {
     // OpenAI native path — the Responses API (POST /v1/responses, SSE). Text-only
-    // for now (no tools); the registry marks capabilities.tools=false. Normalizes
-    // the Responses stream into the same events as every other provider.
+    // fallback kept for AO_OPENAI_FORCE_RESPONSES=1 / legacy chat-only sessions.
     await runOpenAiResponsesMode(host, model, openaiApiKey, OPENAI_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
   } else if (mimoApiKey && isMimoModel && mimoForceOpenAiCompat) {
     // MiMo legacy fallback — OpenAI-compatible chat loop (no agent tools).

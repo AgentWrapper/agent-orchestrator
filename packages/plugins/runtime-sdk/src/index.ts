@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import {
   killProcessTree,
   loadGlobalConfig,
+  resolveDriver,
   resolveProvider,
   resolveProviderKey,
   type PluginModule,
@@ -123,6 +124,7 @@ export function create(): Runtime {
         // host). Per-session like AO_SDK_MODEL: a worker must not inherit the
         // orchestrator's provider and misroute its own model.
         "AO_SDK_PROVIDER",
+        "AO_SDK_RUNTIME_DRIVER",
         "AO_SDK_PERMISSION_MODE",
         "AO_GLM_API_KEY",
         "AO_GLM_BASE_URL",
@@ -155,12 +157,16 @@ export function create(): Runtime {
       // `model` field); sdk-host derives `model` from process.env.AO_SDK_MODEL.
       const sessionModel = config.environment?.["AO_SDK_MODEL"];
       const provider = sessionModel ? resolveProvider(sessionModel) : undefined;
+      const runtimeDriver = sessionModel ? resolveDriver(sessionModel) : undefined;
       // Hand the resolved provider to the host (AO_SDK_PROVIDER) so it dispatches
       // the driver from the registry rather than re-guessing from the model
       // string. Respect an explicit value already set in config.environment
       // (e.g. by the agent plugin's getEnvironment).
       if (provider && (!config.environment || !config.environment["AO_SDK_PROVIDER"])) {
         hostEnv["AO_SDK_PROVIDER"] = provider;
+      }
+      if (runtimeDriver && (!config.environment || !config.environment["AO_SDK_RUNTIME_DRIVER"])) {
+        hostEnv["AO_SDK_RUNTIME_DRIVER"] = runtimeDriver;
       }
 
       // Inject the GLM API key from the global config (zhipu.apiKey) when the

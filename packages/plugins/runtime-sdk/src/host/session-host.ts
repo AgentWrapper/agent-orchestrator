@@ -148,6 +148,17 @@ export class SessionHost {
     this.epoch = opts.epoch ?? 0;
   }
 
+  /**
+   * Non-Claude providers can learn their durable provider/thread id without
+   * flowing through an Agent-SDK `system/init` message. Adopt it so subsequent
+   * events, hello frames, and session.json carry a real resume target.
+   */
+  adoptSession(sessionId: string, model?: string | null): void {
+    this.sdkSessionId = sessionId;
+    if (model !== undefined) this.model = model;
+    this.writeSessionInfo();
+  }
+
   // --- emission ---------------------------------------------------------
 
   /** Stamp the envelope, buffer, persist, and broadcast one event body. */

@@ -25,7 +25,7 @@ describe("model-registry: resolveModel", () => {
 
   it("resolves the registered OpenAI ids", () => {
     expect(resolveModel("gpt-5.5")?.provider).toBe("openai");
-    expect(resolveModel("gpt-5.1")?.runtimeDriver).toBe("openai-responses");
+    expect(resolveModel("gpt-5.1")?.runtimeDriver).toBe("codex-app-server");
     expect(resolveModel("GPT-5.5")?.label).toBe("GPT-5.5");
   });
 
@@ -106,18 +106,15 @@ describe("model-registry: resolveDriver (provider ≠ driver)", () => {
     expect(resolveDriver("glm-4.6")).toBe("openai-compat");
   });
 
-  it("registered OpenAI models resolve to the native openai-responses driver", () => {
-    expect(resolveDriver("gpt-5.5")).toBe("openai-responses");
-    expect(resolveDriver("gpt-5.1")).toBe("openai-responses");
+  it("registered OpenAI models resolve to the Codex app-server full-agent driver", () => {
+    expect(resolveDriver("gpt-5.5")).toBe("codex-app-server");
+    expect(resolveDriver("gpt-5.1")).toBe("codex-app-server");
   });
 
   it("unknown models map provider -> conventional driver", () => {
     expect(resolveDriver("glm-future")).toBe("openai-compat"); // zhipu prefix
     expect(resolveDriver("mimo-future")).toBe("mimo-anthropic"); // mimo prefix
-    // An UNREGISTERED openai id has no descriptor, so it keeps the legacy
-    // else-branch behavior (Claude SDK path) — only registered ids get the
-    // native openai-responses driver. resolveDriver's switch is unchanged.
-    expect(resolveDriver("gpt-4o")).toBe("claude-agent-sdk");
+    expect(resolveDriver("gpt-4o")).toBe("codex-app-server");
     expect(resolveDriver("claude-opus-4-8")).toBe("claude-agent-sdk");
   });
 });
@@ -210,18 +207,18 @@ describe("model-registry: integrity", () => {
     }
   });
 
-  it("OpenAI (Phase 4) capabilities are text-only with REAL usage", () => {
+  it("OpenAI capabilities are full-agent through Codex app-server", () => {
     for (const id of ["gpt-5.5", "gpt-5.1"]) {
       const caps = resolveModel(id)!.capabilities;
       expect(caps.streaming).toBe(true);
-      expect(caps.usage).toBe(true); // Responses stream reports real token counts
-      expect(caps.tools).toBe(false); // tool bridge lands in a later phase
-      expect(caps.approvals).toBe(false);
-      expect(caps.resume).toBe(false);
+      expect(caps.usage).toBe(true);
+      expect(caps.tools).toBe(true);
+      expect(caps.approvals).toBe(true);
+      expect(caps.resume).toBe(true);
     }
-    // All OpenAI descriptors use the native Responses driver (provider ≠ driver).
+    // All OpenAI descriptors use the Codex app-server bridge (provider ≠ driver).
     for (const d of MODEL_REGISTRY.filter((m) => m.provider === "openai")) {
-      expect(d.runtimeDriver).toBe("openai-responses");
+      expect(d.runtimeDriver).toBe("codex-app-server");
       expect(d.section).toBe("OpenAI");
     }
   });

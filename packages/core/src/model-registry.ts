@@ -37,13 +37,15 @@ export type ProviderId = "anthropic" | "zhipu" | "mimo" | "openai";
  *   - openai-compat     — OpenAI-compatible /chat/completions chat loop (GLM,
  *                         MiMo legacy fallback) — text only, no tools
  *   - openai-responses  — native OpenAI Responses API driver (added in a later
- *                         phase; declared here so types are ready)
+ *                         phase; text-only fallback)
+ *   - codex-app-server  — OpenAI Codex app-server bridge (full coding agent path)
  */
 export type RuntimeDriver =
   | "claude-agent-sdk"
   | "mimo-anthropic"
   | "openai-compat"
-  | "openai-responses";
+  | "openai-responses"
+  | "codex-app-server";
 
 /**
  * What a provider/model actually supports, so the UI never promises more than
@@ -122,22 +124,14 @@ const CHAT_ONLY_CAPS: ModelCapabilities = {
   resume: false,
 };
 
-/**
- * OpenAI native Responses driver — TEXT-ONLY milestone (Phase 4). Token-level
- * streaming + REAL usage accounting (the Responses stream reports token counts),
- * but no tool execution yet: `tools=false` is honest → the picker badges these
- * "chat-only". The tool bridge (OpenAI function-calling → our permission flow)
- * lands in a later phase and flips `tools`/`approvals` to true. `resume` stays
- * false: conversation state is kept locally and re-sent (no provider-session
- * resume across host restarts), exactly like the GLM/MiMo chat loop.
- */
-const OPENAI_TEXT_CAPS: ModelCapabilities = {
+/** OpenAI via Codex app-server: full local coding-agent behavior. */
+const OPENAI_CODEX_CAPS: ModelCapabilities = {
   streaming: true,
-  tools: false,
-  approvals: false,
-  reasoning: false,
+  tools: true,
+  approvals: true,
+  reasoning: true,
   usage: true,
-  resume: false,
+  resume: true,
 };
 
 // ===========================================================================
@@ -245,19 +239,19 @@ export const MODEL_REGISTRY: ModelDescriptor[] = [
     auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
   },
 
-  // --- OpenAI (openai → openai-responses native Responses API driver) ---
-  // provider ≠ driver: a dedicated native driver (POST /v1/responses, SSE), NOT
-  // the openai-compat chat-loop. TEXT-ONLY for now (capabilities.tools=false);
-  // a later phase adds the tool bridge and flips tools=true.
+  // --- OpenAI (openai → codex-app-server full agent driver) ---
+  // provider ≠ driver: a dedicated Codex app-server bridge, not the text-only
+  // Responses chat loop. This is the path that gives GPT models local coding
+  // tools, approvals, sandboxing, and resumable Codex threads.
   ...(["gpt-5.5", "gpt-5.1"].map(
     (id): ModelDescriptor => ({
       id,
       provider: "openai",
-      runtimeDriver: "openai-responses",
+      runtimeDriver: "codex-app-server",
       label: id.replace(/^gpt-/, "GPT-"),
       section: "OpenAI",
       aliases: [],
-      capabilities: OPENAI_TEXT_CAPS,
+      capabilities: OPENAI_CODEX_CAPS,
       auth: { configKey: "openai", envKey: "AO_OPENAI_API_KEY" },
     }),
   )),
@@ -332,9 +326,9 @@ export function providerAuth(provider: ProviderId): ModelAuth {
 
 /**
  * Resolve the DEFAULT runtime driver for a model. For unknown models we map the
- * inferred provider to its conventional driver (anthropic/openai→claude-agent-sdk
- * today, since unknown models have no openai-responses descriptor yet; zhipu→
- * openai-compat; mimo→mimo-anthropic). Known models use their descriptor's driver.
+ * inferred provider to its conventional driver (anthropic→claude-agent-sdk,
+ * openai→codex-app-server, zhipu→openai-compat, mimo→mimo-anthropic). Known
+ * models use their descriptor's driver.
  */
 export function resolveDriver(idOrAlias: string | null | undefined): RuntimeDriver {
   const known = resolveModel(idOrAlias);
@@ -344,8 +338,8 @@ export function resolveDriver(idOrAlias: string | null | undefined): RuntimeDriv
       return "openai-compat";
     case "mimo":
       return "mimo-anthropic";
-    // anthropic + openai (no native driver registered yet) → Claude SDK path,
-    // exactly as the legacy else-branch did.
+    case "openai":
+      return "codex-app-server";
     default:
       return "claude-agent-sdk";
   }
