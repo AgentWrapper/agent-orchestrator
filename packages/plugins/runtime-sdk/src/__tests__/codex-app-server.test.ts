@@ -243,6 +243,41 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  it("spawns the codex binary from AO_CODEX_BINARY (engine-bundled path)", async () => {
+    // The engine injects AO_CODEX_BINARY = the absolute path to the bundled codex
+    // (no PATH dependency in the shipped app). The driver must honor it as the
+    // spawned executable; this pins that contract.
+    const bundled = join(tmpdir(), "engine", "codex", "bin", "codex");
+    process.env.AO_CODEX_BINARY = bundled;
+    try {
+      const proc = createFakeProcess();
+      const { host } = makeHost();
+      const done = runCodexAppServerMode(host, {
+        cwd: "/workspace/project",
+        permissionMode: "bypassPermissions",
+        appendSystemPrompt: null,
+        resumeFrom: null,
+        model: "gpt-5.5",
+        initialPrompt: null,
+        apiKey: null,
+      });
+
+      respond(proc, await waitForRequest(proc, "initialize"), {});
+      respond(proc, await waitForRequest(proc, "thread/start"), {
+        thread: { id: "thr_1" },
+        model: "gpt-5.5",
+      });
+
+      expect(mockSpawn.mock.calls[0]?.[0]).toBe(bundled);
+      expect(mockSpawn.mock.calls[0]?.[1]).toEqual(["app-server"]);
+
+      host.input.close();
+      await done;
+    } finally {
+      delete process.env.AO_CODEX_BINARY;
+    }
+  });
+
   it("routes Codex approval requests through SessionHost permissions", async () => {
     const proc = createFakeProcess();
     const { host, events } = makeHost({

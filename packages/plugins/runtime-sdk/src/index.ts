@@ -13,7 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -239,6 +239,23 @@ export function create(): Runtime {
         const openaiBaseUrl = gc?.openai?.baseUrl;
         if (openaiBaseUrl && (!config.environment || !config.environment["AO_OPENAI_BASE_URL"])) {
           hostEnv["AO_OPENAI_BASE_URL"] = openaiBaseUrl;
+        }
+      }
+
+      // Point the codex-app-server driver at the engine-bundled `codex` binary.
+      // GPT runs as a full Codex agent by shelling out to `codex app-server`; the
+      // shipped Maestro.app bundles no global install, and a GUI-launched daemon
+      // often can't see Homebrew's PATH — so a bare `codex` lookup is `spawn
+      // ENOENT` in production. The binary is vendored as a sibling of the bundled
+      // node that runs this daemon (engine/codex/bin/codex), so resolve it from
+      // process.execPath and hand the host an absolute path via AO_CODEX_BINARY
+      // (the driver reads it). An explicit value — from config.environment or an
+      // inherited env override — always wins; in a dev checkout no bundled binary
+      // exists, so the driver falls back to PATH `codex` unchanged.
+      if (runtimeDriver === "codex-app-server" && !hostEnv["AO_CODEX_BINARY"]) {
+        const bundledCodex = resolve(dirname(process.execPath), "codex", "bin", "codex");
+        if (existsSync(bundledCodex)) {
+          hostEnv["AO_CODEX_BINARY"] = bundledCodex;
         }
       }
 
