@@ -133,6 +133,7 @@ var schemaNames = map[string]string{
 	"DomainRoleOverride":  "RoleOverride",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
+	"ControllersListProjectCollisionsResponse":    "ListProjectCollisionsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
 	"ControllersGetProjectResponse":               "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
@@ -201,6 +202,9 @@ var schemaNames = map[string]string{
 	"ProjectRemoveResult":   "RemoveProjectResult",
 	"ProjectSetConfigInput": "SetProjectConfigInput",
 	"ProjectWorkspaceRepo":  "WorkspaceRepo",
+	"ProjectCollision":      "Collision",
+	"ProjectCollisionFile":  "CollisionFile",
+	"ProjectCollisionRange": "CollisionRange",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -422,7 +426,7 @@ func eventOperations() []operation {
 	}
 }
 
-// projectOperations declares the 4 canonical /projects operations. The set must
+// projectOperations declares the canonical /projects operations. The set must
 // stay 1:1 with the routes ProjectsController.Register mounts —
 // TestRouteSpecParity fails the build otherwise.
 func projectOperations() []operation {
@@ -453,6 +457,15 @@ func projectOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.GetProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/collisions", id: "listProjectCollisions", tag: "projects",
+			summary:    "List the project's current cross-session edit collisions",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListProjectCollisionsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},

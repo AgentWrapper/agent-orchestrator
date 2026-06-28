@@ -31,6 +31,13 @@ type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
 }
 
+// ListProjectCollisionsResponse is the body of
+// GET /api/v1/projects/{id}/collisions: the project's current cross-session
+// edit collisions detected by the convergence observer.
+type ListProjectCollisionsResponse struct {
+	Collisions []projectsvc.Collision `json:"collisions"`
+}
+
 // ProjectResponse is the { project } body shared by POST /projects (201).
 type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`

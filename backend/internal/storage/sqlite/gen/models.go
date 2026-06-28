@@ -172,6 +172,17 @@ type Session struct {
 	PreviewRevision int64
 }
 
+type SessionCollision struct {
+	ProjectID   domain.ProjectID
+	SessionA    domain.SessionID
+	SessionB    domain.SessionID
+	Severity    domain.CollisionSeverity
+	Files       string
+	Signature   string
+	FirstSeenAt time.Time
+	UpdatedAt   time.Time
+}
+
 type SessionWorktree struct {
 	SessionID    domain.SessionID
 	RepoName     string
