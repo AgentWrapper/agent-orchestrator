@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter, PassThrough, Writable } from "node:stream";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { SessionHost, type SessionHostOptions } from "../sdk-host.js";
 import { runCodexAppServerMode } from "../providers/codex-app-server.js";
@@ -95,8 +97,13 @@ function respond(proc: FakeProcess, request: Record<string, unknown>, result: Re
   proc.sendLine({ id: request["id"], result });
 }
 
+const TEST_CODEX_HOME = join(tmpdir(), "mae-codex-test-home");
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // Keep CODEX_HOME hermetic: the driver mkdir's it and points the spawn at it
+  // (so a real run never clobbers the user's ~/.codex). Pin it to a temp dir.
+  process.env.AO_CODEX_HOME = TEST_CODEX_HOME;
 });
 
 describe("Codex app-server provider", () => {
@@ -115,6 +122,14 @@ describe("Codex app-server provider", () => {
     });
 
     respond(proc, await waitForRequest(proc, "initialize"), {});
+    // codex app-server ignores OPENAI_API_KEY env — the driver must authenticate
+    // explicitly via account/login/start, passing the resolved key through.
+    const login = await waitForRequest(proc, "account/login/start");
+    expect(login["params"]).toMatchObject({ type: "apiKey", apiKey: "sk-test" });
+    respond(proc, login, { type: "apiKey" });
+    // CODEX_HOME is redirected to the AO-managed dir, never the user's ~/.codex.
+    const spawnEnv = (mockSpawn.mock.calls[0]?.[2] as { env?: Record<string, string> })?.env;
+    expect(spawnEnv?.["CODEX_HOME"]).toBe(TEST_CODEX_HOME);
     const threadStart = await waitForRequest(proc, "thread/start");
     expect(threadStart["params"]).toMatchObject({
       model: "gpt-5.5",

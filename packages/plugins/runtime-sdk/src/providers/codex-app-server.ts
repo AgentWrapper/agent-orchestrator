@@ -8,6 +8,9 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionHost } from "../host/session-host.js";
@@ -272,6 +275,19 @@ class CodexAppServerJsonRpcClient {
       });
     }
     this.process = null;
+  }
+
+  /**
+   * Authenticate the app-server with an OpenAI API key. `codex app-server` does
+   * NOT read `OPENAI_API_KEY` from the environment for model requests — without an
+   * explicit `account/login/start` it answers every turn with 401 "Missing bearer".
+   * The key comes from the mae-241 resolver (env → Keychain → YAML); this is the
+   * only place it crosses into Codex. Persists `auth.json` under the (AO-managed)
+   * CODEX_HOME, so the spawn deliberately redirects CODEX_HOME away from the user's
+   * personal `~/.codex` to avoid clobbering a ChatGPT login there.
+   */
+  loginApiKey(apiKey: string): Promise<JsonObject> {
+    return this.sendRequest("account/login/start", { type: "apiKey", apiKey });
   }
 
   threadStart(params: JsonObject): Promise<JsonObject> {
@@ -759,6 +775,19 @@ class CodexNotificationTranslator {
   }
 }
 
+/**
+ * CODEX_HOME for the app-server: an AO-managed dir, NOT the user's `~/.codex`.
+ * Explicit `CODEX_HOME` / `AO_CODEX_HOME` win; otherwise it lives under the AO
+ * home (`AO_HOME` or `~/.agent-orchestrator`), matching the runtime-sdk path
+ * convention (protocol.ts) and fresh-install parity (no hardcoded user paths).
+ */
+function resolveCodexHome(): string {
+  const explicit = stringValue(process.env.AO_CODEX_HOME) ?? stringValue(process.env.CODEX_HOME);
+  if (explicit) return explicit;
+  const aoHome = stringValue(process.env.AO_HOME) ?? join(homedir(), ".agent-orchestrator");
+  return join(aoHome, "codex-home");
+}
+
 async function approvalForCodexRequest(
   host: SessionHost,
   permissionMode: PermissionMode,
@@ -786,6 +815,17 @@ export async function runCodexAppServerMode(
     env["OPENAI_API_KEY"] = opts.apiKey;
     env["AO_OPENAI_API_KEY"] = opts.apiKey;
   }
+  // Redirect CODEX_HOME to an AO-managed dir (honoring an explicit override).
+  // `account/login/start` writes auth.json into CODEX_HOME; pointing it away from
+  // the user's personal `~/.codex` keeps a ChatGPT login there intact. The dir is
+  // stable across host restarts, so resumable Codex threads persist there too.
+  const codexHome = resolveCodexHome();
+  try {
+    mkdirSync(codexHome, { recursive: true });
+  } catch {
+    /* best effort; codex will surface its own error if the dir is unusable */
+  }
+  env["CODEX_HOME"] = codexHome;
   const client = new CodexAppServerJsonRpcClient({
     cwd: opts.cwd,
     env,
@@ -795,6 +835,11 @@ export async function runCodexAppServerMode(
 
   try {
     await client.connect();
+
+    // codex app-server ignores OPENAI_API_KEY for model calls — authenticate
+    // explicitly or every turn 401s. Skipped when no key (rely on whatever auth
+    // already lives in CODEX_HOME, e.g. a prior login).
+    if (opts.apiKey) await client.loginApiKey(opts.apiKey);
 
     const permissions = permissionModeToCodexPolicy(opts.permissionMode);
     const threadResult = opts.resumeFrom
