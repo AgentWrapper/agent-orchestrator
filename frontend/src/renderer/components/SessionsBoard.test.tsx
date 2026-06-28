@@ -60,7 +60,9 @@ describe("SessionsBoard daemon recovery", () => {
 
 		expect(await screen.findByRole("button", { name: "New task" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeDisabled();
-		expect(screen.getByText("AO daemon is stopped. Restart it to create tasks or start an orchestrator.")).toBeInTheDocument();
+		expect(
+			screen.getByText("AO daemon is stopped. Restart it to create tasks or start an orchestrator."),
+		).toBeInTheDocument();
 	});
 
 	it("offers an explicit daemon restart action", async () => {
@@ -72,7 +74,11 @@ describe("SessionsBoard daemon recovery", () => {
 	});
 
 	it("surfaces spawn errors instead of leaking an unhandled rejection", async () => {
-		postMock.mockResolvedValue({ data: undefined, error: { message: "AO daemon is not ready" }, response: { status: 503 } });
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { message: "AO daemon is not ready" },
+			response: { status: 503 },
+		});
 		renderBoard({ state: "ready", port: 4567 });
 
 		await userEvent.click(await screen.findByRole("button", { name: "Spawn Orchestrator" }));
