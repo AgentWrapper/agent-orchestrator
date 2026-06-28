@@ -99,7 +99,8 @@ import { dedupePrUrls } from "./utils/pr.js";
 import { safeJsonParse, validateStatus } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveAgentSelectionForSession } from "./agent-selection.js";
-import { resolveDriver } from "./model-registry.js";
+import { resolveDriver, resolveModel, modelAvailability } from "./model-registry.js";
+import { loadGlobalConfig } from "./global-config.js";
 import {
   buildAgentPath,
   setupPathWrapperWorkspace,
@@ -4082,32 +4083,69 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const { sessionsDir, project, raw } = located;
 
     const previousSelection = resolveSelectionForSession(project, sessionId, raw);
-    const previousDriver = resolveDriver(previousSelection.model);
+    const previousModel = previousSelection.model;
+    const previousDriver = resolveDriver(previousModel);
     const nextDriver = resolveDriver(trimmedModel);
     const driverChanged = previousDriver !== nextDriver;
 
-    // 2. Persist the new model intent — restore() (called below) and every
+    // 2. PRE-VALIDATE the target model's provider auth BEFORE we touch the live
+    //    host. Switching a session — especially the orchestrator — to a model
+    //    whose provider auth is not ready (the load-bearing case: GPT via
+    //    `codex-app-server` when Codex ChatGPT login is not set up, i.e.
+    //    `openai.enabled === false`) must NOT destroy the working host and leave
+    //    the session dead. Refuse early with a clear error; the live session is
+    //    left completely untouched. Unknown models (the CLI accepts any --model
+    //    string) have no descriptor to validate, so they pass through as before.
+    const targetDescriptor = resolveModel(trimmedModel);
+    if (targetDescriptor) {
+      let availability: { available: boolean; reason?: string };
+      try {
+        // Read the SAME config file the manager was loaded from (Settings writes
+        // `openai.enabled` here, and `ao models list` reads it the same way), so
+        // the gate the UI shows and the gate we enforce never drift.
+        availability = modelAvailability(targetDescriptor, loadGlobalConfig(config.configPath));
+      } catch {
+        // A config read failure must not block a model switch — fall through.
+        availability = { available: true };
+      }
+      if (!availability.available) {
+        throw new Error(
+          `Cannot switch ${sessionId} to "${trimmedModel}": ${availability.reason ?? "model unavailable"}. ` +
+            `The current session was left untouched.`,
+        );
+      }
+    }
+
+    // 3. Persist the new model intent — restore() (called below) and every
     //    future restart will pick this up via resolveAgentSelectionForSession.
     const previousClaudeSessionUuid = raw["claudeSessionUuid"];
     const previousCodexThreadId = raw["codexThreadId"];
+    const clearedClaudeUuid =
+      driverChanged && typeof previousClaudeSessionUuid === "string" && previousClaudeSessionUuid
+        ? previousClaudeSessionUuid
+        : null;
+    const clearedCodexThreadId =
+      driverChanged && typeof previousCodexThreadId === "string" && previousCodexThreadId
+        ? previousCodexThreadId
+        : null;
     updateMetadata(sessionsDir, sessionId, {
       sessionModel: trimmedModel,
-      ...(driverChanged && typeof previousClaudeSessionUuid === "string" && previousClaudeSessionUuid
+      ...(clearedClaudeUuid
         ? {
             claudeSessionUuid: "",
-            previousClaudeSessionUuid,
+            previousClaudeSessionUuid: clearedClaudeUuid,
           }
         : {}),
-      ...(driverChanged && typeof previousCodexThreadId === "string" && previousCodexThreadId
+      ...(clearedCodexThreadId
         ? {
             codexThreadId: "",
-            previousCodexThreadId,
+            previousCodexThreadId: clearedCodexThreadId,
           }
         : {}),
     });
     invalidateCache();
 
-    // 3. Destroy the live runtime so the host is dead before restore() probes it.
+    // 4. Destroy the live runtime so the host is dead before restore() probes it.
     //    We deliberately skip kill() to avoid destroying the worktree.
     //    After destroy() we pass force=true to restore() so the restorability check
     //    is skipped — the runtime process may not have flushed its exit state to
@@ -4131,10 +4169,45 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // 4. Re-start on the new model. Same-driver switches preserve
-    //    AO_SDK_RESUME; cross-driver switches start a fresh provider thread.
-    //    force=true: skip isRestorable — we just destroyed the host above.
-    return restore(sessionId, true);
+    // 5. Re-start on the new model, GUARDED by a rollback. Same-driver switches
+    //    preserve AO_SDK_RESUME; cross-driver switches start a fresh provider
+    //    thread. force=true: skip isRestorable — we just destroyed the host above.
+    //
+    //    The pre-check (step 2) catches the common "provider not authed" case
+    //    cheaply, but restore() can still fail to boot the new model for reasons
+    //    we cannot probe in advance (broken/expired Codex login past the
+    //    enabled flag, transient runtime error). If it does, we must NOT leave
+    //    the session dead — roll the model + resume pointers back to what they
+    //    were and bring the PREVIOUS host up again, then surface a clear error.
+    try {
+      return await restore(sessionId, true);
+    } catch (err) {
+      try {
+        updateMetadata(sessionsDir, sessionId, {
+          sessionModel: previousModel,
+          // Restore the resume pointers we cleared on a cross-driver switch so
+          // the previous conversation resumes instead of starting fresh.
+          ...(clearedClaudeUuid ? { claudeSessionUuid: clearedClaudeUuid } : {}),
+          ...(clearedCodexThreadId ? { codexThreadId: clearedCodexThreadId } : {}),
+        });
+        invalidateCache();
+      } catch {
+        // Best-effort metadata rollback — never mask the original error below.
+      }
+      // Bring the previous host back so the session is not left dead. Best-effort:
+      // if even this fails the session may need a manual `ao session restore`,
+      // but we still surface the original switch failure to the caller.
+      try {
+        await restore(sessionId, true);
+      } catch {
+        // swallow — original error is the actionable one
+      }
+      throw new Error(
+        `Failed to switch ${sessionId} to "${trimmedModel}"; rolled back to "${previousModel}". ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
   }
 
   /**
