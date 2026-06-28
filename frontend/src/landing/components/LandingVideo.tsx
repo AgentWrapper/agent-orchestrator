@@ -7,9 +7,7 @@ export function LandingVideo() {
 		>
 			<div className="container-page">
 				<div className="mx-auto mb-10 max-w-[1180px] text-left">
-					<h2
-						className="inline-block font-mono text-[13px] font-bold uppercase leading-none tracking-[0.18em] text-[color:var(--fg-muted)]"
-					>
+					<h2 className="inline-block font-mono text-[13px] font-bold uppercase leading-none tracking-[0.18em] text-[color:var(--fg-muted)]">
 						See it in action
 					</h2>
 				</div>

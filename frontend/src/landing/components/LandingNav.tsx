@@ -100,25 +100,27 @@ export function LandingNav() {
 	}, []);
 
 	return (
-		<header
-			data-testid="site-nav"
-			className="pointer-events-none fixed inset-x-0 top-4 z-40 flex justify-center px-4"
-		>
-			<div
-				className="pointer-events-auto grid h-14 w-full max-w-[1040px] grid-cols-[1fr_auto] items-center gap-4 rounded-2xl bg-black/[0.58] px-4 shadow-[0_20px_70px_-52px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(255,255,255,0.055)] backdrop-blur-2xl sm:px-5 md:grid-cols-[1fr_auto_1fr]"
-			>
+		<header data-testid="site-nav" className="pointer-events-none fixed inset-x-0 top-4 z-40 flex justify-center px-4">
+			<div className="pointer-events-auto grid h-14 w-full max-w-[1040px] grid-cols-[1fr_auto] items-center gap-4 rounded-2xl bg-black/[0.58] px-4 shadow-[0_20px_70px_-52px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(255,255,255,0.055)] backdrop-blur-2xl sm:px-5 md:grid-cols-[1fr_auto_1fr]">
 				<a
 					href="#top"
 					data-testid="nav-logo"
 					className="group inline-flex h-10 shrink-0 items-center gap-3 justify-self-start"
 				>
-					<img src="/ao-logo.svg" alt="Agent Orchestrator" className="block h-9 w-9 shrink-0 -translate-y-1 object-contain" />
+					<img
+						src="/ao-logo.svg"
+						alt="Agent Orchestrator"
+						className="block h-9 w-9 shrink-0 -translate-y-1 object-contain"
+					/>
 					<span className="font-display text-[15px] font-bold leading-[1.1] tracking-tight text-[color:var(--fg)]">
 						Agent Orchestrator
 					</span>
 				</a>
 
-				<nav className="hidden items-center justify-center gap-1 rounded-xl bg-white/[0.035] p-1 justify-self-center md:flex" aria-label="Primary">
+				<nav
+					className="hidden items-center justify-center gap-1 rounded-xl bg-white/[0.035] p-1 justify-self-center md:flex"
+					aria-label="Primary"
+				>
 					{navLinks.map((item) => (
 						<a
 							key={item.label}
@@ -159,9 +161,7 @@ export function LandingNav() {
 					</a>
 				</div>
 
-				<div
-					className="flex items-center gap-2 md:hidden"
-				>
+				<div className="flex items-center gap-2 md:hidden">
 					<a
 						href="/docs/installation"
 						data-testid="nav-mobile-cta-btn"
