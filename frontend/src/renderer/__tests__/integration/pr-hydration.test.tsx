@@ -22,6 +22,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 
 import { SessionsBoard } from "../../components/SessionsBoard";
 import { PullRequestsPage } from "../../components/PullRequestsPage";
+import { ShellProvider } from "../../lib/shell-context";
 
 // One ordinary project with one worker session that has multiple PRs.
 function respondWithProjectAndPRs() {
@@ -75,7 +76,13 @@ function respondWithProjectAndPRs() {
 
 function renderWithProviders(node: ReactNode) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
+	render(
+		<QueryClientProvider client={queryClient}>
+			<ShellProvider value={{ daemonStatus: { state: "ready", port: 1234 }, createProject: vi.fn() }}>
+				{node}
+			</ShellProvider>
+		</QueryClientProvider>,
+	);
 }
 
 beforeEach(() => {

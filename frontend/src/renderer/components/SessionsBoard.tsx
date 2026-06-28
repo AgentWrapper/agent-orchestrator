@@ -8,8 +8,10 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
+import { startDaemon } from "../lib/daemon-status";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 
@@ -67,6 +69,7 @@ const COLUMNS: Column[] = [
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const { daemonStatus } = useShell();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
@@ -76,6 +79,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		: undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
+	const [actionError, setActionError] = useState<string | null>(null);
+	const daemonReady = daemonStatus.state === "ready";
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -95,6 +101,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		if (!daemonReady) {
+			setActionError("AO daemon is stopped. Restart it before starting sessions.");
+			return;
+		}
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -103,6 +113,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		setIsSpawning(true);
+		setActionError(null);
 		try {
 			const sessionId = await spawnOrchestrator(projectId);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -110,8 +121,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			});
+		} catch (error) {
+			setActionError(error instanceof Error ? error.message : "Could not start orchestrator");
 		} finally {
 			setIsSpawning(false);
+		}
+	};
+
+	const restartDaemon = async () => {
+		setIsRestartingDaemon(true);
+		setActionError(null);
+		try {
+			await startDaemon();
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		} catch (error) {
+			setActionError(error instanceof Error ? error.message : "Could not restart AO daemon");
+		} finally {
+			setIsRestartingDaemon(false);
 		}
 	};
 
@@ -126,10 +152,25 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{!daemonReady ? (
+				<button
+					aria-label="Restart daemon"
+					className="dashboard-app-header__accent-btn"
+					disabled={isRestartingDaemon}
+					onClick={() => void restartDaemon()}
+					type="button"
+				>
+					{isRestartingDaemon ? "Restarting..." : "Restart daemon"}
+				</button>
+			) : null}
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
-				onClick={() => setIsNewTaskOpen(true)}
+				disabled={!daemonReady}
+				onClick={() => {
+					setActionError(null);
+					setIsNewTaskOpen(true);
+				}}
 				type="button"
 			>
 				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -138,7 +179,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<button
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 				className="dashboard-app-header__primary-btn"
-				disabled={isSpawning}
+				disabled={isSpawning || !daemonReady}
 				onClick={() => void openOrchestrator()}
 				type="button"
 			>
@@ -155,6 +196,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				subtitle="Live agent sessions flowing from work → review → merge."
 				actions={actions}
 			/>
+			{projectId && (!daemonReady || actionError) ? (
+				<div className="mx-[18px] mt-3 rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
+					{actionError ? (
+						<p role="alert" className="text-destructive">
+							{actionError}
+						</p>
+					) : (
+						<p>AO daemon is stopped. Restart it to create tasks or start an orchestrator.</p>
+					)}
+				</div>
+			) : null}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (

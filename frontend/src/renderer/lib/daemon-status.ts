@@ -17,6 +17,12 @@ export async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	return nextStatus;
 }
 
+export async function startDaemon(): Promise<DaemonStatus> {
+	const nextStatus = await aoBridge.daemon.start();
+	applyDaemonStatus(nextStatus);
+	return nextStatus;
+}
+
 export function readDaemonStatus(): Promise<DaemonStatus> {
 	return aoBridge.daemon.getStatus();
 }
