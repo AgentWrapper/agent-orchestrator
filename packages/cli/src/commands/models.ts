@@ -12,11 +12,10 @@
  * the Swift side — add fields additively, bump the schema version for breaking
  * changes.
  *
- * `auth.configured` and `available` mirror the SAME config → key resolution the
- * runtime-sdk plugin performs today (the zhipu/mimo config blocks, or a pre-set
- * AO_*_API_KEY env override). OpenAI's key lives in the macOS Keychain rather than
- * config.yaml, so its `configured` is derived from the `enabled` flag — see
- * {@link isProviderConfigured} for why that is sound and Keychain-free.
+ * `auth.configured` and `available` mirror the provider gates the runtime uses.
+ * GLM/MiMo are API-key providers; OpenAI/GPT is a Codex-auth provider, so its
+ * `configured` is derived from `openai.enabled`, which the Maestro settings UI
+ * keeps aligned with `codex login status`.
  */
 
 import type { Command } from "commander";
@@ -37,9 +36,9 @@ export const MODELS_LIST_SCHEMA_VERSION = 1;
 
 /** Credential state for a model's provider. */
 export interface ModelAuthView {
-  /** Provider requires an API key (false for Anthropic — ambient auth). */
+  /** Provider requires an API key (false for Anthropic and Codex-auth GPT). */
   needsKey: boolean;
-  /** A usable credential is present (config block apiKey or AO_*_API_KEY env). */
+  /** A usable credential/auth gate is present. */
   configured: boolean;
 }
 
@@ -59,7 +58,7 @@ export interface ModelListEntry {
   defaultFor?: ModelDescriptor["defaultFor"];
   capabilities: ModelCapabilities;
   auth: ModelAuthView;
-  /** Usable given the current global config (enabled + key present). */
+  /** Usable given the current global config/auth gate. */
   available: boolean;
   /** Human-readable reason when `available === false`. */
   reason?: string;
@@ -72,18 +71,14 @@ export interface ModelsListPayload {
 }
 
 /**
- * Whether the provider credential is present, mirroring the runtime-sdk plugin's
- * config→env bridge: the config block's `apiKey` OR a pre-set AO_*_API_KEY env
- * var. Anthropic (configKey null) authenticates ambiently → always "configured".
+ * Whether the provider credential/auth gate is present. API-key providers use
+ * the config block's `apiKey` OR a pre-set AO_*_API_KEY env var. Anthropic
+ * authenticates ambiently. OpenAI/GPT uses Codex auth; its cheap app-managed gate
+ * is `openai.enabled`.
  *
- * NOTE: this deliberately does NOT consult the macOS Keychain (unlike
- * resolveProviderKey at the injection sites). `ao models list` is invoked by the
- * app as a plain Node subprocess (no provider env exported), so a Keychain read
- * here would trigger a cross-identity ACL prompt for users who saved a key via
- * the app. Since the app still writes the key to config.yaml too (the Keychain
- * migration is additive), the YAML branch already reflects a Keychain-stored
- * key. Switch this to `resolveProviderKey` only once the YAML write is dropped
- * AND the engine can read the Keychain prompt-free.
+ * This deliberately does not run `codex login status`; `ao models list` must
+ * stay cheap and non-interactive. Settings is responsible for updating the
+ * OpenAI enabled flag after Codex auth changes.
  */
 function isProviderConfigured(
   descriptor: ModelDescriptor,
@@ -95,18 +90,14 @@ function isProviderConfigured(
   const block = (config as Record<string, unknown> | null | undefined)?.[configKey] as
     | { apiKey?: string; enabled?: boolean }
     | undefined;
+  // OpenAI/GPT uses Codex auth, not a Maestro API-key field. Ignore stale
+  // openai.apiKey values that may remain in older configs.
+  if (configKey === "openai") return block?.enabled === true;
   if (block?.apiKey && block.apiKey.trim().length > 0) return true;
   if (envKey) {
     const fromEnv = env[envKey];
     if (fromEnv && fromEnv.trim().length > 0) return true;
   }
-  // OpenAI's key is stored in the macOS Keychain, not config.yaml. The app
-  // maintains the invariant `openai.enabled === true ⇒ key written to Keychain`,
-  // so `enabled` is a sound, ZERO-COST proxy for "credential present" — we treat
-  // it as configured without a Keychain shell-out. Reading `security` on every
-  // `models list` would be slow and could pop a cross-identity ACL dialog (see
-  // resolveProviderKey in credential-store.ts), so the cheap flag is preferred.
-  if (configKey === "openai" && block?.enabled === true) return true;
   return false;
 }
 
@@ -129,7 +120,7 @@ export function buildModelsListPayload(
       aliases: [...d.aliases],
       capabilities: { ...d.capabilities },
       auth: {
-        needsKey: d.auth.configKey !== null,
+        needsKey: d.auth.envKey !== null,
         configured: isProviderConfigured(d, config, env),
       },
       available: availability.available,

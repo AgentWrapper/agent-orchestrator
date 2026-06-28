@@ -145,14 +145,13 @@ describe("model-registry: modelAvailability", () => {
     expect(modelAvailability(mimo, { mimo: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
   });
 
-  it("OpenAI is gated on the enabled flag ALONE (key lives in the Keychain, not YAML)", () => {
+  it("OpenAI is gated on the Codex-auth enabled flag alone", () => {
     const gpt = find("gpt-5.5");
     // No config / disabled → unavailable.
     expect(modelAvailability(gpt, null).available).toBe(false);
     expect(modelAvailability(gpt, { openai: { enabled: false } } as never).available).toBe(false);
     expect(modelAvailability(gpt, { openai: { enabled: false, apiKey: "k" } } as never).available).toBe(false);
-    // enabled === true is sufficient — NO apiKey in the YAML block is required
-    // (the app writes the key to the Keychain and sets enabled ⇒ key present).
+    // enabled === true is sufficient; GPT auth lives in Codex's CODEX_HOME.
     expect(modelAvailability(gpt, { openai: { enabled: true } } as never).available).toBe(true);
     expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "" } } as never).available).toBe(true);
     expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
@@ -172,10 +171,13 @@ describe("model-registry: integrity", () => {
     }
   });
 
-  it("provider-keyed models carry auth config + env keys; Anthropic carries none", () => {
+  it("provider-keyed models carry the right auth shape", () => {
     for (const d of MODEL_REGISTRY) {
       if (d.provider === "anthropic") {
         expect(d.auth.configKey).toBeNull();
+        expect(d.auth.envKey).toBeNull();
+      } else if (d.provider === "openai") {
+        expect(d.auth.configKey).toBe("openai");
         expect(d.auth.envKey).toBeNull();
       } else {
         expect(d.auth.configKey).not.toBeNull();

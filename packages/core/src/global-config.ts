@@ -275,12 +275,10 @@ export const GlobalConfigSchema = z
       })
       .optional(),
     /**
-     * OpenAI provider credentials. Surfaced by Settings → OpenAI. Read by the
-     * runtime-sdk plugin to inject AO_OPENAI_API_KEY into the sdk-host process
-     * when the session model is an OpenAI model (provider `openai`), which then
-     * runs the native Responses API driver. `baseUrl` overrides the default
-     * https://api.openai.com/v1 (e.g. an Azure/proxy endpoint); it is not a
-     * secret and stays in config.yaml.
+     * OpenAI/Codex provider gate. Settings updates `enabled` after Codex ChatGPT
+     * auth is ready for Maestro's CODEX_HOME; GPT then runs through
+     * `codex-app-server`. `apiKey` / `baseUrl` are legacy Responses-driver fields
+     * kept so older config.yaml files still parse.
      */
     openai: z
       .object({

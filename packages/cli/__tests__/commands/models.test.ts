@@ -100,25 +100,24 @@ describe("ao models list", () => {
     }
   });
 
-  it("OpenAI becomes configured + available from the enabled flag ALONE (key in Keychain, not YAML)", () => {
-    // The app sets openai.enabled=true only after writing the key to the macOS
-    // Keychain; config.yaml never carries the secret. `enabled` is therefore a
-    // sound, Keychain-free proxy for "credential present".
+  it("OpenAI becomes configured + available from the Codex-auth enabled flag", () => {
+    // The app sets openai.enabled=true after Codex ChatGPT auth is ready for the
+    // runtime CODEX_HOME. GPT is not an API-key settings provider.
     const config = { openai: { enabled: true } } as unknown as GlobalConfig;
     const gpt = entryById(buildModelsListPayload(config, {}).models, "gpt-5.5");
-    expect(gpt.auth.needsKey).toBe(true);
+    expect(gpt.auth.needsKey).toBe(false);
     expect(gpt.auth.configured).toBe(true);
     expect(gpt.available).toBe(true);
     expect(gpt.reason).toBeUndefined();
-    // chat-only badge stays honest — no tools (the tool bridge is a later phase).
-    expect(gpt.capabilities.tools).toBe(false);
+    expect(gpt.runtimeDriver).toBe("codex-app-server");
+    expect(gpt.capabilities.tools).toBe(true);
   });
 
-  it("OpenAI disabled → unconfigured + unavailable even if a stray apiKey sits in YAML", () => {
+  it("OpenAI disabled -> unconfigured + unavailable even if a stray apiKey sits in YAML", () => {
     const config = { openai: { enabled: false, apiKey: "k" } } as unknown as GlobalConfig;
     const gpt = entryById(buildModelsListPayload(config, {}).models, "gpt-5.5");
-    // apiKey-in-YAML still flips `configured` (back-compat branch), but the model
-    // is unavailable because the provider is not enabled.
+    // GPT ignores stale openai.apiKey values; only Codex-auth `enabled` matters.
+    expect(gpt.auth.configured).toBe(false);
     expect(gpt.available).toBe(false);
     expect(gpt.reason).toBeTruthy();
   });

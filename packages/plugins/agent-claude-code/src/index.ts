@@ -2,6 +2,7 @@ import {
   shellEscape,
   normalizeAgentPermissionMode,
   isWindows,
+  resolveDriver,
   resolveProvider,
   resolveProviderKey,
   loadGlobalConfig,
@@ -1511,6 +1512,7 @@ function createClaudeCodeAgent(): Agent {
         // keeps AO_SDK_PROVIDER (and the keys below) per-session so they never
         // leak from an orchestrator into its workers.
         const provider = resolveProvider(config.model);
+        const runtimeDriver = resolveDriver(config.model);
         env["AO_SDK_PROVIDER"] = provider;
         // GLM (ZhipuAI): inject the API key, resolved env → Keychain → config.yaml
         // (resolveProviderKey). env-first preserves the previous behaviour exactly
@@ -1525,9 +1527,10 @@ function createClaudeCodeAgent(): Agent {
           const mimoKey = resolveProviderKey("mimo", loadGlobalConfig(), process.env);
           if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
         }
-        // OpenAI: same pattern — inject AO_OPENAI_API_KEY so the sdk-host takes
-        // the native Responses-API path. resolveProviderKey: env → Keychain → YAML.
-        if (provider === "openai") {
+        // OpenAI/GPT normally runs through Codex app-server (ChatGPT/Codex auth),
+        // not the legacy API-key Responses path. Only inject an API key for a
+        // non-Codex OpenAI driver.
+        if (provider === "openai" && runtimeDriver !== "codex-app-server") {
           const openaiKey = resolveProviderKey("openai", loadGlobalConfig(), process.env);
           if (openaiKey) env["AO_OPENAI_API_KEY"] = openaiKey;
         }

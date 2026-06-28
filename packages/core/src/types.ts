@@ -1924,6 +1924,11 @@ export interface SessionMetadata {
    * by compact so restore() starts a fresh conversation.
    */
   previousClaudeSessionUuid?: string;
+  /**
+   * The Codex thread id that was active before a cross-driver model switch.
+   * Kept for debugging after `codexThreadId` is cleared.
+   */
+  previousCodexThreadId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
   /**

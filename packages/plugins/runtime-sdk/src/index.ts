@@ -221,12 +221,13 @@ export function create(): Runtime {
         }
       }
 
-      // Inject the OpenAI API key from the global config (openai.apiKey) when the
-      // per-session provider is OpenAI and the key was not already set explicitly
-      // in config.environment. Same pattern as GLM/MiMo above; the sdk-host reads
-      // AO_OPENAI_API_KEY to take the native Responses-API path.
+      // OpenAI/GPT now defaults to the Codex app-server driver, which authenticates
+      // from Codex's own CODEX_HOME login cache. Only inject AO_OPENAI_API_KEY for
+      // legacy/forced Responses-API sessions; never let the old API-key settings
+      // path hijack the Codex ChatGPT login flow.
       if (
         provider === "openai" &&
+        runtimeDriver !== "codex-app-server" &&
         (!config.environment || !config.environment["AO_OPENAI_API_KEY"])
       ) {
         const gc = loadGlobalConfig();

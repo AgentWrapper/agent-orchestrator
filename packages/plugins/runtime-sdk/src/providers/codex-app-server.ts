@@ -69,7 +69,6 @@ interface CodexAppServerModeOptions {
   resumeFrom: string | null;
   model: string;
   initialPrompt: string | null;
-  apiKey: string | null;
 }
 
 interface TurnState {
@@ -207,9 +206,13 @@ class CodexAppServerJsonRpcClient {
     if (this.initialized) return;
 
     const binary = this.opts.binaryPath ?? process.env.AO_CODEX_BINARY ?? "codex";
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, ...(this.opts.env ?? {}) };
+    delete childEnv["OPENAI_API_KEY"];
+    delete childEnv["AO_OPENAI_API_KEY"];
+
     this.process = spawn(binary, ["app-server"], {
       cwd: this.opts.cwd,
-      env: this.opts.env ? { ...process.env, ...this.opts.env } : process.env,
+      env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -275,19 +278,6 @@ class CodexAppServerJsonRpcClient {
       });
     }
     this.process = null;
-  }
-
-  /**
-   * Authenticate the app-server with an OpenAI API key. `codex app-server` does
-   * NOT read `OPENAI_API_KEY` from the environment for model requests — without an
-   * explicit `account/login/start` it answers every turn with 401 "Missing bearer".
-   * The key comes from the mae-241 resolver (env → Keychain → YAML); this is the
-   * only place it crosses into Codex. Persists `auth.json` under the (AO-managed)
-   * CODEX_HOME, so the spawn deliberately redirects CODEX_HOME away from the user's
-   * personal `~/.codex` to avoid clobbering a ChatGPT login there.
-   */
-  loginApiKey(apiKey: string): Promise<JsonObject> {
-    return this.sendRequest("account/login/start", { type: "apiKey", apiKey });
   }
 
   threadStart(params: JsonObject): Promise<JsonObject> {
@@ -811,14 +801,9 @@ export async function runCodexAppServerMode(
 ): Promise<void> {
   const translator = new CodexNotificationTranslator(host, opts.model);
   const env: Record<string, string> = {};
-  if (opts.apiKey) {
-    env["OPENAI_API_KEY"] = opts.apiKey;
-    env["AO_OPENAI_API_KEY"] = opts.apiKey;
-  }
   // Redirect CODEX_HOME to an AO-managed dir (honoring an explicit override).
-  // `account/login/start` writes auth.json into CODEX_HOME; pointing it away from
-  // the user's personal `~/.codex` keeps a ChatGPT login there intact. The dir is
-  // stable across host restarts, so resumable Codex threads persist there too.
+  // Settings runs `codex login` against this same dir. The dir is stable across
+  // host restarts, so Codex auth and resumable threads persist here.
   const codexHome = resolveCodexHome();
   try {
     mkdirSync(codexHome, { recursive: true });
@@ -835,11 +820,6 @@ export async function runCodexAppServerMode(
 
   try {
     await client.connect();
-
-    // codex app-server ignores OPENAI_API_KEY for model calls — authenticate
-    // explicitly or every turn 401s. Skipped when no key (rely on whatever auth
-    // already lives in CODEX_HOME, e.g. a prior login).
-    if (opts.apiKey) await client.loginApiKey(opts.apiKey);
 
     const permissions = permissionModeToCodexPolicy(opts.permissionMode);
     const threadResult = opts.resumeFrom
