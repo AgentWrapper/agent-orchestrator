@@ -17,6 +17,11 @@ import {
 // checkForUpdates.
 function configureFeed(channel: UpdateChannel): void {
 	autoUpdater.channel = channel; // "latest" | "nightly"
+	// Nightly builds ship as GitHub *prereleases*. With allowPrerelease false
+	// (the default) electron-updater only inspects the latest NON-prerelease
+	// release and looks for nightly-mac.yml there, which 404s. Enable prerelease
+	// scanning on the nightly channel only; stable must never pull prereleases.
+	autoUpdater.allowPrerelease = channel === "nightly";
 	autoUpdater.allowDowngrade = true; // permits a nightly -> stable channel switch
 }
 
