@@ -76,6 +76,7 @@ jobs:
           apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
           apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       - name: Publish
+        shell: bash
         run: |
           # Retry transient macOS sign/notary flakes (Apple notary -1009,
           # osx-sign keychain races) so the build self-heals instead of failing.
@@ -200,6 +201,7 @@ jobs:
           apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
           apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       - name: Publish
+        shell: bash
         run: |
           # Retry transient macOS sign/notary flakes (Apple notary -1009,
           # osx-sign keychain races) so the build self-heals instead of failing.
