@@ -23,8 +23,14 @@ describe("model-registry: resolveModel", () => {
     expect(resolveModel("mimo-v2.5-pro")?.label).toBe("MiMo v2.5 Pro");
   });
 
+  it("resolves the registered OpenAI ids", () => {
+    expect(resolveModel("gpt-5.5")?.provider).toBe("openai");
+    expect(resolveModel("gpt-5.1")?.runtimeDriver).toBe("openai-responses");
+    expect(resolveModel("GPT-5.5")?.label).toBe("GPT-5.5");
+  });
+
   it("returns undefined for unknown / empty ids", () => {
-    expect(resolveModel("gpt-5.5")).toBeUndefined();
+    expect(resolveModel("gpt-4o")).toBeUndefined(); // unregistered OpenAI id
     expect(resolveModel("claude-opus-4-8")).toBeUndefined();
     expect(resolveModel("")).toBeUndefined();
     expect(resolveModel(null)).toBeUndefined();
@@ -100,12 +106,18 @@ describe("model-registry: resolveDriver (provider ≠ driver)", () => {
     expect(resolveDriver("glm-4.6")).toBe("openai-compat");
   });
 
+  it("registered OpenAI models resolve to the native openai-responses driver", () => {
+    expect(resolveDriver("gpt-5.5")).toBe("openai-responses");
+    expect(resolveDriver("gpt-5.1")).toBe("openai-responses");
+  });
+
   it("unknown models map provider -> conventional driver", () => {
     expect(resolveDriver("glm-future")).toBe("openai-compat"); // zhipu prefix
     expect(resolveDriver("mimo-future")).toBe("mimo-anthropic"); // mimo prefix
-    // openai has no native driver registered yet -> Claude SDK path (legacy
-    // else-branch behavior), so gpt-* does not regress in Phase 1.
-    expect(resolveDriver("gpt-5.5")).toBe("claude-agent-sdk");
+    // An UNREGISTERED openai id has no descriptor, so it keeps the legacy
+    // else-branch behavior (Claude SDK path) — only registered ids get the
+    // native openai-responses driver. resolveDriver's switch is unchanged.
+    expect(resolveDriver("gpt-4o")).toBe("claude-agent-sdk");
     expect(resolveDriver("claude-opus-4-8")).toBe("claude-agent-sdk");
   });
 });
@@ -134,6 +146,14 @@ describe("model-registry: modelAvailability", () => {
     const mimo = find("mimo-v2.5");
     expect(modelAvailability(mimo, { mimo: { enabled: true } } as never).available).toBe(false);
     expect(modelAvailability(mimo, { mimo: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
+  });
+
+  it("OpenAI requires openai enabled + non-empty apiKey", () => {
+    const gpt = find("gpt-5.5");
+    expect(modelAvailability(gpt, null).available).toBe(false);
+    expect(modelAvailability(gpt, { openai: { enabled: false, apiKey: "k" } } as never).available).toBe(false);
+    expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "" } } as never).available).toBe(false);
+    expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
   });
 
   it("gives a human-readable reason when unavailable", () => {
@@ -181,6 +201,22 @@ describe("model-registry: integrity", () => {
       expect(caps.tools).toBe(true);
       expect(caps.approvals).toBe(true);
       expect(caps.resume).toBe(true);
+    }
+  });
+
+  it("OpenAI (Phase 4) capabilities are text-only with REAL usage", () => {
+    for (const id of ["gpt-5.5", "gpt-5.1"]) {
+      const caps = resolveModel(id)!.capabilities;
+      expect(caps.streaming).toBe(true);
+      expect(caps.usage).toBe(true); // Responses stream reports real token counts
+      expect(caps.tools).toBe(false); // tool bridge lands in a later phase
+      expect(caps.approvals).toBe(false);
+      expect(caps.resume).toBe(false);
+    }
+    // All OpenAI descriptors use the native Responses driver (provider ≠ driver).
+    for (const d of MODEL_REGISTRY.filter((m) => m.provider === "openai")) {
+      expect(d.runtimeDriver).toBe("openai-responses");
+      expect(d.section).toBe("OpenAI");
     }
   });
 });

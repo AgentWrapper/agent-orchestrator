@@ -5,7 +5,7 @@
  * / named pipe) and the right provider driver, then survives parent exit (spawned
  * detached by index.ts). Owns: subscriber backpressure, the snapshot/live socket,
  * control-command handling, session.json metadata, signal-driven shutdown, and
- * provider dispatch (Claude SDK / GLM / MiMo).
+ * provider dispatch (Claude SDK / GLM / MiMo / OpenAI Responses).
  */
 
 import {
@@ -34,6 +34,7 @@ import {
 } from "../providers/openai-compatible.js";
 import { applyMimoAnthropicEnv } from "../providers/mimo-anthropic.js";
 import { runClaudeAgentMode } from "../providers/claude-agent-sdk.js";
+import { OPENAI_BASE_URL, runOpenAiResponsesMode } from "../providers/openai-responses.js";
 
 // ===========================================================================
 // Subscriber backpressure
@@ -159,25 +160,32 @@ export function readAppendSystemPrompt(): string | null {
 // ===========================================================================
 
 /**
- * Decide whether THIS host runs the GLM or MiMo branch. The parent (agent plugin
- * / runtime-sdk) resolves the provider via the central ModelRegistry and passes
- * it down as AO_SDK_PROVIDER; the host trusts that — the registry is the single
- * source of truth, the host does not re-guess. When AO_SDK_PROVIDER is absent
- * (a legacy/external spawn) it falls back to the original model-string prefix,
- * which routes the current GLM/MiMo models identically. A tiny pure seam so the
- * dispatch is unit-testable without a net server and the host needs no
- * @aoagents/ao-core import.
+ * Decide whether THIS host runs the GLM, MiMo, or OpenAI branch. The parent
+ * (agent plugin / runtime-sdk) resolves the provider via the central ModelRegistry
+ * and passes it down as AO_SDK_PROVIDER; the host trusts that — the registry is the
+ * single source of truth, the host does not re-guess. When AO_SDK_PROVIDER is
+ * absent (a legacy/external spawn) it falls back to the original model-string
+ * prefix, which routes the current GLM/MiMo models identically and maps the
+ * gpt- and o-series prefixes to OpenAI (mirrors inferProviderFromId). A tiny pure
+ * seam so the dispatch is unit-testable without a net server and the host needs
+ * no @aoagents/ao-core import.
  */
 export function resolveHostDispatch(
   provider: string | null | undefined,
   model: string | null | undefined,
-): { isGlm: boolean; isMimo: boolean } {
+): { isGlm: boolean; isMimo: boolean; isOpenai: boolean } {
   if (provider) {
-    return { isGlm: provider === "zhipu", isMimo: provider === "mimo" };
+    return {
+      isGlm: provider === "zhipu",
+      isMimo: provider === "mimo",
+      isOpenai: provider === "openai",
+    };
   }
+  const m = (model ?? "").toLowerCase();
   return {
-    isGlm: model?.startsWith("glm-") ?? false,
-    isMimo: model?.startsWith("mimo-") ?? false,
+    isGlm: m.startsWith("glm-"),
+    isMimo: m.startsWith("mimo-"),
+    isOpenai: m.startsWith("gpt-") || /^o[1-4]/.test(m),
   };
 }
 
@@ -288,9 +296,10 @@ export async function runStandalone(): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGHUP", () => shutdown("SIGHUP"));
 
-  // --- start the streaming session (Claude SDK, GLM, or MiMo) ---
+  // --- start the streaming session (Claude SDK, GLM, MiMo, or OpenAI) ---
   const glmApiKey = process.env.AO_GLM_API_KEY ?? null;
   const mimoApiKey = process.env.AO_MIMO_API_KEY ?? null;
+  const openaiApiKey = process.env.AO_OPENAI_API_KEY ?? null;
   // The provider for THIS session is resolved by the parent (agent plugin /
   // runtime-sdk) through the central ModelRegistry and handed down as
   // AO_SDK_PROVIDER. The host trusts it and does NOT re-guess from the model
@@ -299,7 +308,11 @@ export async function runStandalone(): Promise<void> {
   // the original prefix dispatch, which routes the current GLM/MiMo models
   // identically. The host stays dependency-light (no @aoagents/ao-core import).
   const provider = process.env.AO_SDK_PROVIDER ?? null;
-  const { isGlm: isGlmModel, isMimo: isMimoModel } = resolveHostDispatch(provider, model);
+  const {
+    isGlm: isGlmModel,
+    isMimo: isMimoModel,
+    isOpenai: isOpenaiModel,
+  } = resolveHostDispatch(provider, model);
 
   // Escape hatch: force MiMo back onto the OpenAI-compat chat-loop (no tools,
   // no system prompt) — kept as a fallback in case the Anthropic-compatible
@@ -309,6 +322,11 @@ export async function runStandalone(): Promise<void> {
   if (glmApiKey && isGlmModel) {
     // ZhipuAI GLM path — OpenAI-compatible, no Claude SDK needed.
     await runOpenAiCompatMode(host, model!, glmApiKey, GLM_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
+  } else if (openaiApiKey && isOpenaiModel && model) {
+    // OpenAI native path — the Responses API (POST /v1/responses, SSE). Text-only
+    // for now (no tools); the registry marks capabilities.tools=false. Normalizes
+    // the Responses stream into the same events as every other provider.
+    await runOpenAiResponsesMode(host, model, openaiApiKey, OPENAI_BASE_URL, cwd, initialPrompt, appendSystemPrompt);
   } else if (mimoApiKey && isMimoModel && mimoForceOpenAiCompat) {
     // MiMo legacy fallback — OpenAI-compatible chat loop (no agent tools).
     await runOpenAiCompatMode(host, model!, mimoApiKey, MIMO_BASE_URL, cwd, initialPrompt, appendSystemPrompt);

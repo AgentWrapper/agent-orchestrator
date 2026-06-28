@@ -122,6 +122,24 @@ const CHAT_ONLY_CAPS: ModelCapabilities = {
   resume: false,
 };
 
+/**
+ * OpenAI native Responses driver — TEXT-ONLY milestone (Phase 4). Token-level
+ * streaming + REAL usage accounting (the Responses stream reports token counts),
+ * but no tool execution yet: `tools=false` is honest → the picker badges these
+ * "chat-only". The tool bridge (OpenAI function-calling → our permission flow)
+ * lands in a later phase and flips `tools`/`approvals` to true. `resume` stays
+ * false: conversation state is kept locally and re-sent (no provider-session
+ * resume across host restarts), exactly like the GLM/MiMo chat loop.
+ */
+const OPENAI_TEXT_CAPS: ModelCapabilities = {
+  streaming: true,
+  tools: false,
+  approvals: false,
+  reasoning: false,
+  usage: true,
+  resume: false,
+};
+
 // ===========================================================================
 // The registry. Mirrors the app's hardcoded presets (ModelPresetsClient.swift)
 // so `ao models list` can become the single source the app reads from.
@@ -226,6 +244,23 @@ export const MODEL_REGISTRY: ModelDescriptor[] = [
     capabilities: FULL_AGENT_CAPS,
     auth: { configKey: "mimo", envKey: "AO_MIMO_API_KEY" },
   },
+
+  // --- OpenAI (openai → openai-responses native Responses API driver) ---
+  // provider ≠ driver: a dedicated native driver (POST /v1/responses, SSE), NOT
+  // the openai-compat chat-loop. TEXT-ONLY for now (capabilities.tools=false);
+  // a later phase adds the tool bridge and flips tools=true.
+  ...(["gpt-5.5", "gpt-5.1"].map(
+    (id): ModelDescriptor => ({
+      id,
+      provider: "openai",
+      runtimeDriver: "openai-responses",
+      label: id.replace(/^gpt-/, "GPT-"),
+      section: "OpenAI",
+      aliases: [],
+      capabilities: OPENAI_TEXT_CAPS,
+      auth: { configKey: "openai", envKey: "AO_OPENAI_API_KEY" },
+    }),
+  )),
 ];
 
 // ===========================================================================

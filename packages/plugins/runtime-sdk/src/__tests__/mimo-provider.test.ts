@@ -195,23 +195,27 @@ describe("MiMo provider — runOpenAiCompatMode via sdk-host", () => {
 
 describe("host dispatch — resolveHostDispatch (AO_SDK_PROVIDER first, prefix fallback)", () => {
   it("trusts AO_SDK_PROVIDER over the model string", () => {
-    expect(resolveHostDispatch("mimo", "mimo-v2.5-pro")).toEqual({ isGlm: false, isMimo: true });
-    expect(resolveHostDispatch("zhipu", "glm-5.2")).toEqual({ isGlm: true, isMimo: false });
-    expect(resolveHostDispatch("anthropic", "opus")).toEqual({ isGlm: false, isMimo: false });
+    expect(resolveHostDispatch("mimo", "mimo-v2.5-pro")).toEqual({ isGlm: false, isMimo: true, isOpenai: false });
+    expect(resolveHostDispatch("zhipu", "glm-5.2")).toEqual({ isGlm: true, isMimo: false, isOpenai: false });
+    expect(resolveHostDispatch("openai", "gpt-5.5")).toEqual({ isGlm: false, isMimo: false, isOpenai: true });
+    expect(resolveHostDispatch("anthropic", "opus")).toEqual({ isGlm: false, isMimo: false, isOpenai: false });
   });
 
   it("provider wins even when it disagrees with the model prefix (registry is source of truth)", () => {
-    // A future registered model whose id has no glm-/mimo- prefix but whose
+    // A future registered model whose id has no glm-/mimo-/gpt- prefix but whose
     // provider is resolved upstream must still route by provider.
-    expect(resolveHostDispatch("mimo", "xiaomi-next")).toEqual({ isGlm: false, isMimo: true });
-    expect(resolveHostDispatch("zhipu", "zhipu-next")).toEqual({ isGlm: true, isMimo: false });
+    expect(resolveHostDispatch("mimo", "xiaomi-next")).toEqual({ isGlm: false, isMimo: true, isOpenai: false });
+    expect(resolveHostDispatch("zhipu", "zhipu-next")).toEqual({ isGlm: true, isMimo: false, isOpenai: false });
+    expect(resolveHostDispatch("openai", "some-openai-alias")).toEqual({ isGlm: false, isMimo: false, isOpenai: true });
   });
 
   it("falls back to the model prefix when AO_SDK_PROVIDER is absent (legacy/external spawn)", () => {
-    expect(resolveHostDispatch(null, "mimo-v2.5")).toEqual({ isGlm: false, isMimo: true });
-    expect(resolveHostDispatch(undefined, "glm-4.6")).toEqual({ isGlm: true, isMimo: false });
-    expect(resolveHostDispatch(null, "opus")).toEqual({ isGlm: false, isMimo: false });
-    expect(resolveHostDispatch(null, null)).toEqual({ isGlm: false, isMimo: false });
+    expect(resolveHostDispatch(null, "mimo-v2.5")).toEqual({ isGlm: false, isMimo: true, isOpenai: false });
+    expect(resolveHostDispatch(undefined, "glm-4.6")).toEqual({ isGlm: true, isMimo: false, isOpenai: false });
+    expect(resolveHostDispatch(null, "gpt-5.5")).toEqual({ isGlm: false, isMimo: false, isOpenai: true });
+    expect(resolveHostDispatch(null, "o3-mini")).toEqual({ isGlm: false, isMimo: false, isOpenai: true });
+    expect(resolveHostDispatch(null, "opus")).toEqual({ isGlm: false, isMimo: false, isOpenai: false });
+    expect(resolveHostDispatch(null, null)).toEqual({ isGlm: false, isMimo: false, isOpenai: false });
   });
 
   it("all four advertised MiMo models route to the MiMo branch via provider", () => {

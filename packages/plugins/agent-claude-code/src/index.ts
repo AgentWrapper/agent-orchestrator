@@ -1525,6 +1525,12 @@ function createClaudeCodeAgent(): Agent {
           const mimoKey = resolveProviderKey("mimo", loadGlobalConfig(), process.env);
           if (mimoKey) env["AO_MIMO_API_KEY"] = mimoKey;
         }
+        // OpenAI: same pattern — inject AO_OPENAI_API_KEY so the sdk-host takes
+        // the native Responses-API path. resolveProviderKey: env → Keychain → YAML.
+        if (provider === "openai") {
+          const openaiKey = resolveProviderKey("openai", loadGlobalConfig(), process.env);
+          if (openaiKey) env["AO_OPENAI_API_KEY"] = openaiKey;
+        }
       }
 
       return env;

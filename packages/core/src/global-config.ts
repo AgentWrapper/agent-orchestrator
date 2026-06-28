@@ -274,6 +274,21 @@ export const GlobalConfigSchema = z
         anthropicBaseUrl: z.string().optional(),
       })
       .optional(),
+    /**
+     * OpenAI provider credentials. Surfaced by Settings → OpenAI. Read by the
+     * runtime-sdk plugin to inject AO_OPENAI_API_KEY into the sdk-host process
+     * when the session model is an OpenAI model (provider `openai`), which then
+     * runs the native Responses API driver. `baseUrl` overrides the default
+     * https://api.openai.com/v1 (e.g. an Azure/proxy endpoint); it is not a
+     * secret and stays in config.yaml.
+     */
+    openai: z
+      .object({
+        apiKey: z.string().optional(),
+        enabled: z.boolean().optional(),
+        baseUrl: z.string().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 

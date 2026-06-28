@@ -129,6 +129,10 @@ export function create(): Runtime {
         "AO_MIMO_API_KEY",
         "AO_MIMO_BASE_URL",
         "AO_MIMO_ANTHROPIC_BASE_URL",
+        // OpenAI provider auth/base — per-session, like the GLM/MiMo keys above:
+        // a worker must never inherit the orchestrator's OpenAI key.
+        "AO_OPENAI_API_KEY",
+        "AO_OPENAI_BASE_URL",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_MODEL",
@@ -208,6 +212,27 @@ export function create(): Runtime {
           (!config.environment || !config.environment["AO_MIMO_ANTHROPIC_BASE_URL"])
         ) {
           hostEnv["AO_MIMO_ANTHROPIC_BASE_URL"] = mimoAnthropicBaseUrl;
+        }
+      }
+
+      // Inject the OpenAI API key from the global config (openai.apiKey) when the
+      // per-session provider is OpenAI and the key was not already set explicitly
+      // in config.environment. Same pattern as GLM/MiMo above; the sdk-host reads
+      // AO_OPENAI_API_KEY to take the native Responses-API path.
+      if (
+        provider === "openai" &&
+        (!config.environment || !config.environment["AO_OPENAI_API_KEY"])
+      ) {
+        const gc = loadGlobalConfig();
+        // Key resolved env → Keychain → config.yaml (additive migration off
+        // plaintext); baseUrl is not a secret and stays in config.yaml.
+        const openaiKey = resolveProviderKey("openai", gc, process.env);
+        if (openaiKey) {
+          hostEnv["AO_OPENAI_API_KEY"] = openaiKey;
+        }
+        const openaiBaseUrl = gc?.openai?.baseUrl;
+        if (openaiBaseUrl && (!config.environment || !config.environment["AO_OPENAI_BASE_URL"])) {
+          hostEnv["AO_OPENAI_BASE_URL"] = openaiBaseUrl;
         }
       }
 
