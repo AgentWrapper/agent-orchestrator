@@ -244,6 +244,14 @@ const RoleAgentConfigSchema = z
   })
   .optional();
 
+// AO code-review provider selection. Absent block keeps the historical
+// behaviour (codex). `agent` picks the reviewer; `model` overrides the chosen
+// agent's default model. See code-review-manager.ts resolveCodeReviewRunner.
+const ReviewConfigSchema = z.object({
+  agent: z.enum(["codex", "claude"]).default("codex"),
+  model: z.string().optional(),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string().optional(),
@@ -266,6 +274,7 @@ const ProjectConfigSchema = z.object({
   agentConfig: AgentSpecificConfigSchema.default({}),
   orchestrator: RoleAgentConfigSchema,
   worker: RoleAgentConfigSchema,
+  review: ReviewConfigSchema.optional(),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),

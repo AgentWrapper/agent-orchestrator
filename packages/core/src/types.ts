@@ -1610,6 +1610,13 @@ export interface RoleAgentConfig {
   agentConfig?: AgentSpecificConfig;
 }
 
+export interface ReviewConfig {
+  /** Which agent runs AO code reviews. Defaults to "codex" when omitted. */
+  agent?: "codex" | "claude";
+  /** Optional model override for the selected reviewer agent. */
+  model?: string;
+}
+
 export interface ProjectConfig {
   /** Display name */
   name: string;
@@ -1661,6 +1668,9 @@ export interface ProjectConfig {
   orchestrator?: RoleAgentConfig;
 
   worker?: RoleAgentConfig;
+
+  /** AO code-review provider selection (defaults to codex when omitted) */
+  review?: ReviewConfig;
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;

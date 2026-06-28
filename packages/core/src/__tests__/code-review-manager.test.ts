@@ -1,20 +1,30 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActivitySignal } from "../activity-signal.js";
 import { createCodeReviewStore, type CodeReviewStore } from "../code-review-store.js";
 import {
+  buildClaudeCodeReviewArgs,
   buildCodexCodeReviewArgs,
+  CODEX_CLAUDE_FALLBACK_SUMMARY,
   CodeReviewNoOpenFindingsError,
+  createCodexWithClaudeFallbackRunner,
   executeCodeReviewRun,
+  isCodexProviderUnavailableError,
   markOutdatedCodeReviewRunsForSession,
   parseReviewerOutput,
   prepareGitReviewerWorkspace,
+  resolveCodeReviewRunner,
+  runClaudeCodeReview,
+  runCodexCodeReview,
   sendCodeReviewFindingsToAgent,
   triggerCodeReviewForSession,
+  type CodeReviewRunner,
+  type CodeReviewRunnerContext,
 } from "../code-review-manager.js";
 import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
 import {
@@ -23,6 +33,34 @@ import {
   type Session,
   type SessionManager,
 } from "../types.js";
+
+// Mock only spawn() so the reviewer CLIs (codex/claude via
+// execFileWithClosedStdin) are programmable; execFile/execFileSync stay real so
+// the git-backed tests in this file keep working.
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, spawn: spawnMock };
+});
+
+function fakeChild(opts: { stdout?: string; stderr?: string; code?: number }) {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    pid: number;
+    kill: (signal?: string) => void;
+  };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 4242;
+  child.kill = () => {};
+  queueMicrotask(() => {
+    if (opts.stdout) child.stdout.emit("data", Buffer.from(opts.stdout));
+    if (opts.stderr) child.stderr.emit("data", Buffer.from(opts.stderr));
+    child.emit("close", opts.code ?? 0, null);
+  });
+  return child;
+}
 
 let storeDir: string;
 let store: CodeReviewStore;
@@ -646,6 +684,196 @@ describe("runCodexCodeReview", () => {
     ]);
     expect(args).not.toContain("review");
     expect(args).not.toContain("--base");
+  });
+
+  it("injects --model when a review model is configured", () => {
+    expect(buildCodexCodeReviewArgs("/tmp/out.json", "Prompt", "gpt-5.5")).toEqual([
+      "exec",
+      "--model",
+      "gpt-5.5",
+      "--sandbox",
+      "read-only",
+      "--output-last-message",
+      "/tmp/out.json",
+      "Prompt",
+    ]);
+  });
+});
+
+describe("reviewer selection and resilience", () => {
+  function makeRunnerContext(
+    overrides: Partial<CodeReviewRunnerContext> = {},
+  ): CodeReviewRunnerContext {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-ctx",
+      status: "running",
+    });
+    return {
+      config,
+      project: config.projects.app!,
+      session: makeSession(),
+      run,
+      workspacePath: storeDir,
+      baseRef: "main",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  it("builds read-only headless claude args, optionally with a model", () => {
+    const args = buildClaudeCodeReviewArgs("Return JSON only.");
+    expect(args.slice(0, 4)).toEqual(["-p", "Return JSON only.", "--output-format", "text"]);
+    expect(args).toContain("--allowedTools");
+    expect(args).not.toContain("--model");
+
+    const withModel = buildClaudeCodeReviewArgs("Return JSON only.", "claude-opus-4-8");
+    expect(withModel.slice(-2)).toEqual(["--model", "claude-opus-4-8"]);
+  });
+
+  it("(a) default project config selects and runs codex (behaviour unchanged)", async () => {
+    spawnMock.mockImplementation(() => fakeChild({ stdout: '{"findings":[]}', code: 0 }));
+
+    const runner = resolveCodeReviewRunner(config.projects.app!);
+    const result = await runner(makeRunnerContext());
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe("codex");
+    expect(result.rawOutput).toBe('{"findings":[]}');
+    expect(result.summary).toBeUndefined();
+  });
+
+  it("(a) review.agent=claude selects and runs claude", async () => {
+    const project = { ...config.projects.app!, review: { agent: "claude" as const } };
+    expect(resolveCodeReviewRunner(project)).toBe(runClaudeCodeReview);
+
+    spawnMock.mockImplementation(() => fakeChild({ stdout: '{"findings":[]}', code: 0 }));
+
+    const runner = resolveCodeReviewRunner(project);
+    await runner(makeRunnerContext({ project }));
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe("claude");
+  });
+
+  it("(b) falls back to claude when codex hits its usage limit", async () => {
+    const calls: string[] = [];
+    spawnMock.mockImplementation((file: string) => {
+      calls.push(file);
+      if (file === "codex") {
+        return fakeChild({
+          stderr: "stream error: You hit your usage limit. Try again at 2:39.",
+          code: 1,
+        });
+      }
+      return fakeChild({
+        stdout: '{"findings":[{"severity":"error","title":"Bug","body":"Concrete issue."}]}',
+        code: 0,
+      });
+    });
+
+    const runner = resolveCodeReviewRunner(config.projects.app!);
+    const result = await runner(makeRunnerContext());
+
+    expect(calls).toEqual(["codex", "claude"]);
+    expect(result.summary).toBe(CODEX_CLAUDE_FALLBACK_SUMMARY);
+    expect(parseReviewerOutput(result.rawOutput ?? "")).toHaveLength(1);
+  });
+
+  it("(extra) does not fall back when codex fails for a non-provider reason", async () => {
+    const calls: string[] = [];
+    spawnMock.mockImplementation((file: string) => {
+      calls.push(file);
+      return fakeChild({ stderr: "Command timed out after 600000ms", code: 1 });
+    });
+
+    const runner = resolveCodeReviewRunner(config.projects.app!);
+    await expect(runner(makeRunnerContext())).rejects.toThrow(/Codex review failed/);
+    expect(calls).toEqual(["codex"]);
+  });
+
+  it("(d) codex and claude runners feed the same JSON through one parser", async () => {
+    const json =
+      '{"findings":[{"severity":"warning","title":"Risk","body":"Same issue.","filePath":"src/x.ts","startLine":3}]}';
+    spawnMock.mockImplementation(() => fakeChild({ stdout: json, code: 0 }));
+
+    const ctx = makeRunnerContext();
+    const codexResult = await runCodexCodeReview(ctx);
+    const claudeResult = await runClaudeCodeReview(ctx);
+
+    expect(codexResult.rawOutput).toBe(json);
+    expect(claudeResult.rawOutput).toBe(json);
+    expect(parseReviewerOutput(codexResult.rawOutput ?? "")).toEqual(
+      parseReviewerOutput(claudeResult.rawOutput ?? ""),
+    );
+    expect(parseReviewerOutput(codexResult.rawOutput ?? "")).toHaveLength(1);
+  });
+
+  it("createCodexWithClaudeFallbackRunner retries via fallback and tags the summary", async () => {
+    const primary: CodeReviewRunner = async () => {
+      throw new Error("Codex review failed: usage limit reached");
+    };
+    const fallback = vi.fn(async () => ({ rawOutput: '{"findings":[]}' }));
+
+    const result = await createCodexWithClaudeFallbackRunner(primary, fallback)(makeRunnerContext());
+
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(result.summary).toBe(CODEX_CLAUDE_FALLBACK_SUMMARY);
+  });
+
+  it("createCodexWithClaudeFallbackRunner preserves a summary the fallback already set", async () => {
+    const primary: CodeReviewRunner = async () => {
+      throw new Error("rate limit");
+    };
+    const fallback: CodeReviewRunner = async () => ({ rawOutput: "{}", summary: "custom" });
+
+    const result = await createCodexWithClaudeFallbackRunner(primary, fallback)(makeRunnerContext());
+    expect(result.summary).toBe("custom");
+  });
+
+  it("createCodexWithClaudeFallbackRunner rethrows non-provider failures untouched", async () => {
+    const primary: CodeReviewRunner = async () => {
+      throw new Error("Codex review failed: Command timed out after 600000ms");
+    };
+    const fallback = vi.fn(async () => ({ rawOutput: "{}" }));
+
+    await expect(
+      createCodexWithClaudeFallbackRunner(primary, fallback)(makeRunnerContext()),
+    ).rejects.toThrow(/timed out/);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+});
+
+describe("isCodexProviderUnavailableError", () => {
+  it("matches provider-availability signatures only", () => {
+    for (const message of [
+      "Codex review failed: You hit your usage limit, try again at 2:39",
+      "rate limit exceeded",
+      "request failed with status 429",
+      "Transport channel closed",
+      "401 Unauthorized",
+      "Error: authentication failed",
+      "you are not logged in",
+    ]) {
+      expect(isCodexProviderUnavailableError(new Error(message))).toBe(true);
+    }
+
+    for (const message of [
+      "Command timed out after 600000ms",
+      "Unexpected token < in JSON",
+      "boom: internal reviewer crash",
+    ]) {
+      expect(isCodexProviderUnavailableError(new Error(message))).toBe(false);
+    }
+  });
+
+  it("inspects nested cause chains", () => {
+    const inner = new Error("HTTP 429 Too Many Requests");
+    const outer = new Error("Codex review failed: wrapper", { cause: inner });
+    expect(isCodexProviderUnavailableError(outer)).toBe(true);
   });
 });
 

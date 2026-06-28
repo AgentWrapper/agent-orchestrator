@@ -102,7 +102,9 @@ export {
   markOutdatedCodeReviewRunsForSession,
   parseReviewerOutput,
   prepareGitReviewerWorkspace,
+  resolveCodeReviewRunner,
   runCodexCodeReview,
+  runClaudeCodeReview,
   sendCodeReviewFindingsToAgent,
   triggerCodeReviewForSession,
 } from "./code-review-manager.js";
