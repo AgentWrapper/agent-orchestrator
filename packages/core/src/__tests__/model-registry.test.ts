@@ -148,12 +148,18 @@ describe("model-registry: modelAvailability", () => {
     expect(modelAvailability(mimo, { mimo: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
   });
 
-  it("OpenAI requires openai enabled + non-empty apiKey", () => {
+  it("OpenAI is gated on the enabled flag ALONE (key lives in the Keychain, not YAML)", () => {
     const gpt = find("gpt-5.5");
+    // No config / disabled → unavailable.
     expect(modelAvailability(gpt, null).available).toBe(false);
+    expect(modelAvailability(gpt, { openai: { enabled: false } } as never).available).toBe(false);
     expect(modelAvailability(gpt, { openai: { enabled: false, apiKey: "k" } } as never).available).toBe(false);
-    expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "" } } as never).available).toBe(false);
+    // enabled === true is sufficient — NO apiKey in the YAML block is required
+    // (the app writes the key to the Keychain and sets enabled ⇒ key present).
+    expect(modelAvailability(gpt, { openai: { enabled: true } } as never).available).toBe(true);
+    expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "" } } as never).available).toBe(true);
     expect(modelAvailability(gpt, { openai: { enabled: true, apiKey: "k" } } as never).available).toBe(true);
+    expect(modelAvailability(gpt, { openai: { enabled: false } } as never).reason).toMatch(/OpenAI/);
   });
 
   it("gives a human-readable reason when unavailable", () => {

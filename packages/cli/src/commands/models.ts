@@ -14,8 +14,9 @@
  *
  * `auth.configured` and `available` mirror the SAME config → key resolution the
  * runtime-sdk plugin performs today (the zhipu/mimo config blocks, or a pre-set
- * AO_*_API_KEY env override). OpenAI has no config block yet, so it always
- * reports `configured: false`.
+ * AO_*_API_KEY env override). OpenAI's key lives in the macOS Keychain rather than
+ * config.yaml, so its `configured` is derived from the `enabled` flag — see
+ * {@link isProviderConfigured} for why that is sound and Keychain-free.
  */
 
 import type { Command } from "commander";
@@ -92,13 +93,20 @@ function isProviderConfigured(
   const { configKey, envKey } = descriptor.auth;
   if (!configKey) return true;
   const block = (config as Record<string, unknown> | null | undefined)?.[configKey] as
-    | { apiKey?: string }
+    | { apiKey?: string; enabled?: boolean }
     | undefined;
   if (block?.apiKey && block.apiKey.trim().length > 0) return true;
   if (envKey) {
     const fromEnv = env[envKey];
     if (fromEnv && fromEnv.trim().length > 0) return true;
   }
+  // OpenAI's key is stored in the macOS Keychain, not config.yaml. The app
+  // maintains the invariant `openai.enabled === true ⇒ key written to Keychain`,
+  // so `enabled` is a sound, ZERO-COST proxy for "credential present" — we treat
+  // it as configured without a Keychain shell-out. Reading `security` on every
+  // `models list` would be slow and could pop a cross-identity ACL dialog (see
+  // resolveProviderKey in credential-store.ts), so the cheap flag is preferred.
+  if (configKey === "openai" && block?.enabled === true) return true;
   return false;
 }
 

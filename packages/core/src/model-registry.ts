@@ -364,8 +364,9 @@ export interface ModelAvailability {
 /**
  * Whether a model can actually be used given the current global config. Anthropic
  * models are always considered available (auth is ambient). Provider-keyed models
- * (zhipu/mimo/openai) require their config block to be `enabled` with a non-empty
- * `apiKey` — the same gate the app's preset list uses today.
+ * require their config block to be `enabled`; GLM/MiMo additionally require a
+ * non-empty `apiKey` in the block (their keys may still live in YAML for
+ * back-compat). OpenAI is gated on the `enabled` flag ALONE — see below.
  */
 export function modelAvailability(
   descriptor: ModelDescriptor,
@@ -377,6 +378,15 @@ export function modelAvailability(
     | { apiKey?: string; enabled?: boolean }
     | undefined;
   if (!block?.enabled) return { available: false, reason: `${descriptor.section} not enabled` };
+  // OpenAI keeps its key in the macOS Keychain, NOT in config.yaml. The Maestro
+  // app sets `enabled: true` ONLY after writing the key to the Keychain
+  // (enabled ⇒ key present), and the engine resolves it at spawn time via
+  // resolveProviderKey (env → Keychain → YAML). So the `enabled` flag alone is
+  // the availability gate here: an `apiKey` check would always fail (the YAML
+  // block never carries the secret) and would wrongly gate GPT out of the
+  // picker. Listing must also stay Keychain-free — see isProviderConfigured in
+  // cli/commands/models.ts for why we don't shell out to `security` here.
+  if (key === "openai") return { available: true };
   if (!block.apiKey || block.apiKey.trim().length === 0) {
     return { available: false, reason: `${descriptor.section} API key missing` };
   }
