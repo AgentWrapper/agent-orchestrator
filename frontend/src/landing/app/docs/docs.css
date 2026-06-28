@@ -1,5 +1,5 @@
 /*
- * AO Warm Terminal theme for Fumadocs
+ * AO Blue Terminal theme for Fumadocs
  * ====================================
  * CRITICAL: Fumadocs Tailwind utilities use --color-fd-* variables (NOT --fd-*).
  * We must override --color-fd-* to change colors. These are inside layer(fumadocs),
@@ -12,10 +12,10 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-	/* Docs primary accent = AMBER (matches dashboard Orchestrator button + active items) */
-	--docs-accent: var(--color-accent-amber);
-	--docs-accent-dim: var(--color-accent-amber-dim);
-	--docs-accent-border: var(--color-accent-amber-border);
+	/* Docs primary accent = landing blue */
+	--docs-accent: var(--color-accent);
+	--docs-accent-dim: var(--color-accent-dim);
+	--docs-accent-border: var(--color-accent-border);
 
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
@@ -36,9 +36,9 @@
 }
 
 .dark {
-	--docs-accent: var(--color-accent-amber);
-	--docs-accent-dim: var(--color-accent-amber-dim);
-	--docs-accent-border: var(--color-accent-amber-border);
+	--docs-accent: var(--color-accent);
+	--docs-accent-dim: var(--color-accent-dim);
+	--docs-accent-border: var(--color-accent-border);
 
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
@@ -80,19 +80,19 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   1c. SEMANTIC COLORS — override fumadocs info/warning/error colors to amber
+   1c. SEMANTIC COLORS — override fumadocs info/warning/error colors
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
 	--color-fd-info: var(--docs-accent);
-	--color-fd-warning: var(--color-accent-amber);
+	--color-fd-warning: var(--docs-accent);
 	--color-fd-success: #16a34a;
 	--color-fd-error: #dc2626;
 }
 
 .dark {
 	--color-fd-info: var(--docs-accent);
-	--color-fd-warning: var(--color-accent-amber);
+	--color-fd-warning: var(--docs-accent);
 	--color-fd-success: #22c55e;
 	--color-fd-error: #ef4444;
 }
@@ -100,10 +100,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    1c. FORCE WARM LINK COLORS — fumadocs uses text-fd-primary (accent blue)
        on too many elements. Override sidebar, TOC, and breadcrumb links
-       to warm gray. Only prose body links stay accent.
+       to neutral gray. Only prose body links stay accent.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Sidebar links: warm stone gray, not periwinkle (desktop + mobile) */
+/* Sidebar links: neutral gray (desktop + mobile) */
 #nd-sidebar a:not([data-active="true"]),
 #nd-sidebar button,
 #nd-sidebar-mobile a:not([data-active="true"]),
@@ -118,13 +118,13 @@
 	color: var(--color-text-primary) !important;
 }
 
-/* Sidebar active link: amber accent (desktop + mobile) */
+/* Sidebar active link: blue accent (desktop + mobile) */
 #nd-sidebar a[data-active="true"],
 #nd-sidebar-mobile a[data-active="true"] {
 	color: var(--docs-accent) !important;
 }
 
-/* TOC links: warm gray, not blue */
+/* TOC links: neutral gray by default */
 #nd-toc a,
 #nd-tocnav a {
 	color: var(--color-text-secondary) !important;
@@ -140,7 +140,7 @@
 	color: var(--docs-accent) !important;
 }
 
-/* Breadcrumb: warm gray */
+/* Breadcrumb: neutral gray */
 #nd-page nav a,
 #nd-page [aria-label="breadcrumb"] a {
 	color: var(--color-text-secondary) !important;
@@ -161,12 +161,12 @@
 	color: var(--color-text-primary) !important;
 }
 
-/* Step number circles: amber */
+/* Step number circles: blue */
 #nd-docs-layout .fd-step::before {
 	background: var(--docs-accent) !important;
 }
 
-/* Footer prev/next: warm gray, not blue */
+/* Footer prev/next: neutral gray by default */
 #nd-page footer a,
 #nd-page [class*="footer"] a {
 	color: var(--color-text-secondary) !important;
@@ -253,7 +253,7 @@
 	color: inherit;
 }
 
-/* Links — amber accent like dashboard */
+/* Links — blue accent like landing */
 #nd-docs-layout .prose a {
 	color: var(--docs-accent);
 	text-decoration: none;
@@ -374,12 +374,12 @@ pre.shiki code {
 	font-size: 12.5px;
 }
 
-/* Force info callout to amber (fumadocs uses --color-fd-info internally) */
+/* Force info callout to blue (fumadocs uses --color-fd-info internally) */
 #nd-docs-layout [data-callout][data-type="info"] {
 	--callout-color: var(--docs-accent) !important;
 }
 
-/* Edit on GitHub button — force amber colors */
+/* Edit on GitHub button — force blue colors */
 #nd-docs-layout a[href*="github.com"][href*="/blob/"] {
 	color: var(--color-text-secondary) !important;
 }
@@ -456,7 +456,7 @@ pre.shiki code {
 	padding: 0.75rem 1.5rem;
 	border-bottom: 1px solid var(--color-border-subtle);
 	background: var(--color-bg-inset);
-	color: var(--color-accent-amber);
+	color: var(--docs-accent);
 	font-family: var(--font-mono);
 	font-size: 0.6875rem;
 	font-weight: 600;
@@ -515,7 +515,7 @@ pre.shiki code {
 }
 
 #nd-docs-layout .docs-missing-primary {
-	background: var(--color-accent-amber);
+	background: var(--docs-accent);
 	color: #1a1918;
 }
 

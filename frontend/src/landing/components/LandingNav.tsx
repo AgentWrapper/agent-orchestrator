@@ -1,104 +1,170 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 
-function XIcon() {
+const navItems = [
+	{ label: "Features", href: "#features" },
+	{ label: "How it works", href: "#how" },
+	{ label: "Architecture", href: "#architecture" },
+	{ label: "Quickstart", href: "#quickstart" },
+];
+
+function GithubIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.38 7.86 10.9.58.1.79-.25.79-.56v-2.15c-3.2.7-3.88-1.37-3.88-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.3-.52-1.47.11-3.05 0 0 .97-.31 3.18 1.18A10.96 10.96 0 0 1 12 5.99c.98 0 1.97.13 2.9.38 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
 		</svg>
 	);
 }
 
-function DiscordIcon() {
+function ArrowUpRightIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M7 7h10v10" />
+			<path d="M7 17 17 7" />
 		</svg>
 	);
 }
 
-function GithubIcon() {
+function MenuIcon({ className = "" }: { className?: string }) {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-			<path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M4 6h16" />
+			<path d="M4 12h16" />
+			<path d="M4 18h16" />
+		</svg>
+	);
+}
+
+function XIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M18 6 6 18" />
+			<path d="m6 6 12 12" />
+		</svg>
+	);
+}
+
+function SunIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<circle cx="12" cy="12" r="4" />
+			<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+		</svg>
+	);
+}
+
+function MoonIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+			<path d="M20.99 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 20.99 12.79Z" />
 		</svg>
 	);
 }
 
 export function LandingNav() {
+	const [open, setOpen] = useState(false);
+	const [theme, setTheme] = useState("dark");
+	const [mounted, setMounted] = useState(false);
+	const isLight = theme === "light";
+
+	useEffect(() => {
+		const current = document.documentElement.dataset.theme;
+		setTheme(current === "light" ? "light" : "dark");
+		setMounted(true);
+	}, []);
+
+	useEffect(() => {
+		if (!mounted) return;
+		document.documentElement.dataset.theme = theme;
+		document.documentElement.classList.toggle("dark", theme === "dark");
+		document.documentElement.style.colorScheme = theme;
+		window.localStorage.setItem("ao-theme", theme);
+	}, [mounted, theme]);
+
 	return (
-		<nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto bg-[var(--landing-bg)]/90 backdrop-blur-sm">
-			<a
-				href="#"
-				className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
-			>
-				<Image
-					src="/ao-logo.png"
-					alt=""
-					aria-hidden
-					width={28}
-					height={28}
-					className="h-7 w-7 rounded-md object-cover"
-				/>
-				Agent Orchestrator
-			</a>
-			<ul className="hidden md:flex items-center gap-8 list-none">
-				<li>
-					<Link
-						href="/docs"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
-					>
-						Docs
-					</Link>
-				</li>
-				<li>
+		<header
+			data-testid="site-nav"
+			className="sticky top-0 z-40 border-b border-[color:var(--border)] bg-[color:var(--nav-bg)] backdrop-blur-xl"
+		>
+			<div className="container-page flex h-16 items-center justify-between">
+				<a href="#top" data-testid="nav-logo" className="group inline-flex h-10 items-center gap-2.5">
+					<img src="/ao-logo.svg" alt="Agent Orchestrator" className="block h-10 w-10 shrink-0 object-contain" />
+					<span className="font-display text-[15px] font-bold leading-none tracking-tight text-[color:var(--fg)]">
+						Agent Orchestrator
+					</span>
+				</a>
+
+				<nav className="hidden items-center gap-7 md:flex">
+					{navItems.map((item) => (
+						<a
+							key={item.label}
+							href={item.href}
+							className="text-[13px] font-medium text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--fg)]"
+						>
+							{item.label}
+						</a>
+					))}
+				</nav>
+
+				<div className="flex items-center gap-2">
 					<a
-						href="#features"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						data-testid="nav-star-btn"
+						className="hidden items-center gap-1.5 rounded-md border border-[color:var(--border-strong)] px-2.5 py-1.5 text-[12px] font-medium text-[color:var(--fg-muted)] transition-colors hover:border-[color:var(--border-bright)] hover:text-[color:var(--fg)] sm:inline-flex"
 					>
-						Features
+						<GithubIcon className="h-3.5 w-3.5" />
+						<span className="font-mono">7.7k</span>
 					</a>
-				</li>
-				<li>
+					<button
+						type="button"
+						onClick={() => setTheme(isLight ? "dark" : "light")}
+						data-testid="theme-toggle"
+						className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[color:var(--border-strong)] text-[color:var(--fg-muted)] transition-colors hover:border-[color:var(--border-bright)] hover:text-[color:var(--fg)]"
+						aria-label={isLight ? "Switch to dark theme" : "Switch to light theme"}
+						title={isLight ? "Dark theme" : "Light theme"}
+					>
+						{isLight ? <MoonIcon className="h-4 w-4" /> : <SunIcon className="h-4 w-4" />}
+					</button>
 					<a
-						href="#how"
-						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+						href="https://github.com/AgentWrapper/agent-orchestrator"
+						target="_blank"
+						rel="noreferrer"
+						data-testid="nav-cta-btn"
+						className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--accent)] px-3.5 py-1.5 text-[13px] font-semibold text-white transition-all hover:brightness-110"
+						style={{ color: "#fff" }}
 					>
-						How It Works
+						Install
+						<ArrowUpRightIcon className="h-3.5 w-3.5" />
 					</a>
-				</li>
-			</ul>
-			<div className="flex items-center gap-2">
-				<a
-					href="https://x.com/aoagents"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="X (Twitter)"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<XIcon />
-				</a>
-				<a
-					href="https://discord.gg/UZv7JjxbwG"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="Discord"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<DiscordIcon />
-				</a>
-				<a
-					href="https://github.com/ComposioHQ/agent-orchestrator"
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="GitHub"
-					className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-				>
-					<GithubIcon />
-				</a>
+					<button
+						onClick={() => setOpen(!open)}
+						className="rounded-md border border-[color:var(--border-strong)] p-1.5 text-[color:var(--fg)] md:hidden"
+						data-testid="nav-mobile-toggle"
+						aria-label="menu"
+					>
+						{open ? <XIcon className="h-4 w-4" /> : <MenuIcon className="h-4 w-4" />}
+					</button>
+				</div>
 			</div>
-		</nav>
+			{open && (
+				<div className="border-t border-[color:var(--border)] bg-[color:var(--bg-card)] md:hidden">
+					<div className="flex flex-col gap-3.5 px-5 py-4">
+						{navItems.map((item) => (
+							<a
+								key={item.label}
+								href={item.href}
+								onClick={() => setOpen(false)}
+								className="text-sm font-medium text-[color:var(--fg-muted)]"
+							>
+								{item.label}
+							</a>
+						))}
+					</div>
+				</div>
+			)}
+		</header>
 	);
 }
