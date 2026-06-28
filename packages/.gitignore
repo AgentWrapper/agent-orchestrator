@@ -1,0 +1,10 @@
+# Prebuilt Go binaries (~20MB each) produced by build-binaries.sh and shipped
+# in each npm tarball via the package's `files` entry. Never committed.
+#
+# The repo-root .gitignore has a bare `bin/` rule that would otherwise ignore
+# this whole directory tree (including the JS shim). Re-include the dirs and the
+# shim, then ignore only the compiled binaries.
+!*/bin/
+!ao/bin/ao.js
+*/bin/ao
+*/bin/ao.exe

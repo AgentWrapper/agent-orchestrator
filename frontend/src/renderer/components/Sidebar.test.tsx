@@ -6,14 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSummary } from "../types/workspace";
 
-const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+const { navigateMock, mockParams } = vi.hoisted(() => ({
+	navigateMock: vi.fn(),
+	mockParams: { projectId: undefined as string | undefined },
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => mockParams,
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -61,6 +64,7 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 
 beforeEach(() => {
 	navigateMock.mockReset();
+	mockParams.projectId = undefined;
 	vi.spyOn(window, "confirm").mockReturnValue(true);
 	vi.spyOn(window, "alert").mockImplementation(() => undefined);
 });
@@ -133,6 +137,28 @@ describe("Sidebar", () => {
 				orchestratorAgent: "claude-code",
 			}),
 		);
+	});
+
+	it("opens global settings from the footer menu when no project is selected", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getAllByLabelText("Settings")[0]);
+		await user.click(await screen.findByRole("menuitem", { name: "Global settings" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	it("shows both project and global settings in the footer menu when a project is selected", async () => {
+		mockParams.projectId = "proj-1";
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getAllByLabelText("Settings")[0]);
+		expect(await screen.findByRole("menuitem", { name: "Project settings" })).toBeInTheDocument();
+		await user.click(await screen.findByRole("menuitem", { name: "Global settings" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
 	it("always shows action icons and reserves padding for them", () => {

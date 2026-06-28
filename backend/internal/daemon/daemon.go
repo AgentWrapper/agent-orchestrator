@@ -15,11 +15,13 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -126,6 +128,7 @@ func Run() error {
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
+		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
@@ -149,21 +152,30 @@ func Run() error {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
 
+	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
+	const supervisorGrace = 5 * time.Second
+
+	if ln, addr, err := supervisor.Listen(cfg.RunFilePath); err != nil {
+		// Non-fatal: without the link the daemon still works (e.g. headless "ao start"),
+		// it just will not auto-stop when a frontend dies. Do not block startup on it.
+		log.Warn("supervisor: listener unavailable; frontend-death auto-stop disabled", "err", err)
+	} else {
+		log.Info("supervisor: listening", "addr", addr)
+		sup := supervisor.New(supervisorGrace, srv.RequestShutdown, log)
+		go func() {
+			if err := sup.Serve(ctx, ln); err != nil {
+				log.Warn("supervisor: serve stopped with error", "err", err)
+			}
+		}()
+	}
+
 	runErr := srv.Run(ctx)
 
-	// Save and tear down all live sessions before the store closes. Both SIGTERM
-	// and POST /shutdown funnel through srv.Run returning (SIGTERM cancels ctx,
-	// which srv.Run selects on; POST /shutdown closes the shutdownRequested channel,
-	// which srv.Run also selects on), so this single call site covers both paths.
-	//
-	// Use a fresh context with a bounded deadline: the ctx that caused srv.Run
-	// to return is already cancelled, so passing it would abort the save
-	// immediately and leave every session unsaved.
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownSaveTimeout)
-	defer shutdownCancel()
-	if saveErr := sessMgr.SaveAndTeardownAll(shutdownCtx); saveErr != nil {
-		log.Error("save sessions on shutdown failed", "err", saveErr)
-	}
+	// Both graceful shutdown paths (SIGTERM and POST /shutdown) funnel through
+	// srv.Run returning. We deliberately do NOT tear down sessions here: they
+	// survive the daemon exit and the next boot's Reconcile adopts them,
+	// preserving session IDs. The narrowed sessionLifecycle interface makes
+	// teardown-on-shutdown a compile error.
 
 	// Shut the background goroutines down in order: cancel the context FIRST so
 	// their loops exit, then wait for them to drain. Doing this explicitly (not
@@ -177,10 +189,6 @@ func Run() error {
 	}
 	return runErr
 }
-
-// shutdownSaveTimeout bounds the SaveAndTeardownAll call on shutdown so a
-// pathological session cannot stall the process exit indefinitely.
-const shutdownSaveTimeout = 30 * time.Second
 
 // newLogger returns the daemon's slog logger. It writes to stderr so supervisors
 // can capture it separately from any structured stdout protocol added later.

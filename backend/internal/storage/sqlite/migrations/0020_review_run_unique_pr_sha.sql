@@ -1,7 +1,9 @@
 -- Review runs are PR-scoped. Two PRs in one worker session can legitimately
--- share a head SHA, so the idempotency index must include pr_url. Runs created
--- by one trigger also share batch_id so one reviewer CLI submission can notify
--- the worker about multiple PRs at once.
+-- share a head SHA, so the idempotency index must include pr_url. Completed
+-- changes_requested runs are intentionally excluded so the same head can be
+-- reviewed again after the worker addresses feedback without changing commits.
+-- Runs created by one trigger also share batch_id so one reviewer CLI
+-- submission can notify the worker about multiple PRs at once.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -17,6 +19,7 @@ DELETE FROM review_run
 WHERE target_sha != ''
   AND pr_url != ''
   AND status != 'failed'
+  AND verdict != 'changes_requested'
   AND rowid NOT IN (
     SELECT rowid FROM (
       SELECT rowid,
@@ -27,7 +30,7 @@ WHERE target_sha != ''
                         rowid DESC
              ) AS rn
       FROM review_run
-      WHERE target_sha != '' AND pr_url != '' AND status != 'failed'
+      WHERE target_sha != '' AND pr_url != '' AND status != 'failed' AND verdict != 'changes_requested'
     )
     WHERE rn = 1
   );
@@ -36,7 +39,7 @@ WHERE target_sha != ''
 -- +goose StatementBegin
 CREATE UNIQUE INDEX idx_review_run_session_pr_sha
     ON review_run (session_id, pr_url, target_sha)
-    WHERE target_sha != '' AND status != 'failed';
+    WHERE target_sha != '' AND status != 'failed' AND verdict != 'changes_requested';
 -- +goose StatementEnd
 
 -- +goose StatementBegin

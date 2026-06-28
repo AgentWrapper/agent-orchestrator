@@ -67,6 +67,43 @@ func TestInsertReviewRunDuplicatePRSHAMapsToSentinel(t *testing.T) {
 	}
 }
 
+func TestInsertReviewRunAllowsRerunAfterChangesRequested(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerClaudeCode, PRURL: "https://example/pr/1",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert review: %v", err)
+	}
+	run := domain.ReviewRun{
+		ID: "run-1", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerClaudeCode,
+		PRURL: "https://example/pr/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone, CreatedAt: now,
+	}
+	if err := s.InsertReviewRun(ctx, run); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "fix it", "101"); err != nil {
+		t.Fatalf("complete changes-requested: %v", err)
+	} else if !ok {
+		t.Fatal("complete changes-requested updated no rows")
+	}
+
+	rerun := run
+	rerun.ID = "run-2"
+	rerun.CreatedAt = now.Add(time.Second)
+	if err := s.InsertReviewRun(ctx, rerun); err != nil {
+		t.Fatalf("rerun after changes_requested should insert: %v", err)
+	}
+}
+
 func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

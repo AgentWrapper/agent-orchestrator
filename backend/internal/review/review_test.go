@@ -43,6 +43,15 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 		f.runs = append(f.runs, winner)
 		return f.insertErr
 	}
+	for _, existing := range f.runs {
+		if existing.SessionID == r.SessionID &&
+			existing.PRURL == r.PRURL &&
+			existing.TargetSHA == r.TargetSHA &&
+			existing.Status != domain.ReviewRunFailed &&
+			existing.Verdict != domain.VerdictChangesRequested {
+			return domain.ErrDuplicateReviewRun
+		}
+	}
 	f.runs = append(f.runs, r)
 	return nil
 }

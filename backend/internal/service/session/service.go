@@ -88,7 +88,7 @@ type Service struct {
 	telemetry ports.EventSink
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
-	// the no_signal downgrade — a hook-less harness staying silent forever is
+	// the no_signal downgrade: a hook-less harness staying silent forever is
 	// normal, not a broken pipeline. nil means "unknown": never downgrade.
 	signalCapable func(domain.AgentHarness) bool
 }
@@ -166,7 +166,7 @@ func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) (doma
 		return domain.ProjectRecord{}, fmt.Errorf("get project %s: %w", id, err)
 	}
 	if !ok {
-		return domain.ProjectRecord{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project — register it with `ao project add`")
+		return domain.ProjectRecord{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project. Register it with `ao project add`")
 	}
 	return rec, nil
 }
@@ -258,11 +258,12 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
 // true it first tears down any active orchestrator(s) for that project so the new
-// one is the only live coordinator — a business rule that belongs here, not in the
-// HTTP controller.
+// one is the only live coordinator. When clean is false it is idempotent: if an
+// active orchestrator already exists it is returned as-is. A business rule that
+// belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	active := true
 	if clean {
-		active := true
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
 		if err != nil {
 			return domain.Session{}, err
@@ -271,6 +272,15 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			if _, err := s.Kill(ctx, orch.ID); err != nil {
 				return domain.Session{}, err
 			}
+		}
+	} else {
+		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
+		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if len(existing) > 0 {
+			return existing[0], nil
 		}
 	}
 	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
@@ -457,7 +467,7 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_NOT_RESUMABLE",
 			"This session has no saved agent session or prompt to resume from", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
-		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
+		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):

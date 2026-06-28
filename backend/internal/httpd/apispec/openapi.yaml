@@ -51,6 +51,55 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/import:
+    get:
+      operationId: getImportStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check whether a legacy AO install is available to import
+      tags:
+      - import
+    post:
+      operationId: runImport
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportRunResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run the legacy AO project import through the daemon store
+      tags:
+      - import
   /api/v1/notifications:
     get:
       operationId: listNotifications
@@ -1600,6 +1649,40 @@ components:
       required:
       - harness
       type: object
+    ImportReport:
+      properties:
+        dryRun:
+          type: boolean
+        notes:
+          items:
+            type: string
+          type: array
+        projectsImported:
+          type: integer
+        projectsSkipped:
+          type: integer
+      required:
+      - dryRun
+      - projectsImported
+      - projectsSkipped
+      type: object
+    ImportRunResponse:
+      properties:
+        report:
+          $ref: '#/components/schemas/ImportReport'
+      required:
+      - report
+      type: object
+    ImportStatusResponse:
+      properties:
+        available:
+          type: boolean
+        legacyRoot:
+          type: string
+      required:
+      - available
+      - legacyRoot
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -2494,3 +2577,5 @@ tags:
   name: notifications
 - description: Server-sent CDC event stream with durable replay
   name: events
+- description: Legacy AO project import (availability probe and run)
+  name: import

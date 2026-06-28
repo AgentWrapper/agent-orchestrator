@@ -542,19 +542,74 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
+// TestToAPIError_NotResumable asserts that ErrNotResumable (promptless worker
+// with no adapter resume handle) maps to a Conflict with code SESSION_NOT_RESUMABLE.
+func TestToAPIError_NotResumable(t *testing.T) {
+	err := fmt.Errorf("restore mer-1: %w", sessionmanager.ErrNotResumable)
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_RESUMABLE" {
+		t.Fatalf("mapped = %v, want Conflict SESSION_NOT_RESUMABLE", mapped)
+	}
+}
+
+// TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists is the RED test
+// for the idempotency fix: when an active orchestrator already exists and
+// clean=false, SpawnOrchestrator must return that orchestrator without minting
+// a second one. Before the fix this test fails because a duplicate is spawned.
+func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	// Pre-load an active orchestrator.
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false); err != nil {
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
-	if len(fc.killed) != 0 || !fc.spawned {
-		t.Fatalf("clean=false must spawn without kills: killed=%v spawned=%v", fc.killed, fc.spawned)
+	// Must return the existing orchestrator, not a newly minted one.
+	if got.ID != "mer-1" {
+		t.Fatalf("returned id = %q, want existing orchestrator mer-1", got.ID)
+	}
+	// Must NOT have called manager.Spawn (no duplicate created).
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called when an active orchestrator already exists")
+	}
+	// Must NOT have killed anything.
+	if len(fc.killed) != 0 {
+		t.Fatalf("no kills expected with clean=false, got %v", fc.killed)
+	}
+	// Exactly one session in the store (no duplicate).
+	if len(st.sessions) != 1 {
+		t.Fatalf("session count = %d, want 1 (no duplicate)", len(st.sessions))
+	}
+}
+
+// TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists: clean=false spawns a new
+// orchestrator when no active one exists for the project.
+func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	// No active orchestrator present.
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("manager.Spawn must be called when no active orchestrator exists")
+	}
+	if len(fc.killed) != 0 {
+		t.Fatalf("no kills expected with clean=false, got %v", fc.killed)
+	}
+	if got.ID == "" {
+		t.Fatal("returned session must have an id")
 	}
 }
 
@@ -857,18 +912,4 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func TestToAPIError_NotResumable(t *testing.T) {
-	err := toAPIError(fmt.Errorf("restore foo: %w", sessionmanager.ErrNotResumable))
-	var ae *apierr.Error
-	if !errors.As(err, &ae) {
-		t.Fatalf("want *apierr.Error, got %T: %v", err, err)
-	}
-	if ae.Kind != apierr.KindConflict {
-		t.Errorf("kind = %v, want %v", ae.Kind, apierr.KindConflict)
-	}
-	if ae.Code != "SESSION_NOT_RESUMABLE" {
-		t.Errorf("code = %q, want SESSION_NOT_RESUMABLE", ae.Code)
-	}
 }

@@ -381,16 +381,14 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 	}
 }
 
-// fakeSessionLifecycle records calls to Reconcile, RestoreAll, and
-// SaveAndTeardownAll so tests can assert the daemon wiring invokes the correct
-// methods without needing a real runtime or worktree.
+// fakeSessionLifecycle records calls to Reconcile and RestoreAll so tests can
+// assert the daemon wiring invokes the correct methods without needing a real
+// runtime or worktree.
 type fakeSessionLifecycle struct {
-	reconcileCalled       bool
-	restoreAllCalled      bool
-	saveAndTeardownCalled bool
-	reconcileErr          error
-	restoreErr            error
-	saveErr               error
+	reconcileCalled  bool
+	restoreAllCalled bool
+	reconcileErr     error
+	restoreErr       error
 }
 
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
@@ -403,16 +401,10 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	return f.restoreErr
 }
 
-func (f *fakeSessionLifecycle) SaveAndTeardownAll(_ context.Context) error {
-	f.saveAndTeardownCalled = true
-	return f.saveErr
-}
-
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
-// check) and that Reconcile, RestoreAll, and SaveAndTeardownAll dispatch
-// correctly through the interface, matching what daemon.go wires at
-// boot/shutdown.
+// check) and that Reconcile and RestoreAll dispatch correctly through the
+// interface, matching what daemon.go wires at boot.
 func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	// Verify *sessionmanager.Manager satisfies the interface at compile time.
 	var _ sessionLifecycle = (*sessionmanager.Manager)(nil)
@@ -436,12 +428,5 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	}
 	if !fake.restoreAllCalled {
 		t.Fatal("RestoreAll was not called through the interface")
-	}
-
-	if err := sl.SaveAndTeardownAll(ctx); err != nil {
-		t.Fatalf("SaveAndTeardownAll: %v", err)
-	}
-	if !fake.saveAndTeardownCalled {
-		t.Fatal("SaveAndTeardownAll was not called through the interface")
 	}
 }
