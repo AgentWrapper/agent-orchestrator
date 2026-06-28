@@ -7,7 +7,6 @@ import { LandingHowItWorks } from "../../components/LandingHowItWorks";
 import { LandingArchitecture } from "../../components/LandingArchitecture";
 import { LandingLiveDemo } from "../../components/LandingLiveDemo";
 import { LandingSocialProof } from "../../components/LandingSocialProof";
-import { LandingCTA } from "../../components/LandingCTA";
 import { LandingFooter } from "../../components/LandingFooter";
 import { ScrollRevealProvider } from "../../components/ScrollRevealProvider";
 
@@ -24,7 +23,6 @@ export default function LandingPage() {
 				<LandingArchitecture />
 				<LandingLiveDemo />
 				<LandingSocialProof />
-				<LandingCTA />
 				<LandingFooter />
 			</div>
 		</ScrollRevealProvider>
