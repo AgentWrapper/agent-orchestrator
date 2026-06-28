@@ -129,3 +129,18 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 		})
 	}
 }
+
+func TestSubmitRejectsFailedRun(t *testing.T) {
+	st := &fakeStore{ok: true, run: domain.ReviewRun{
+		ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunFailed,
+	}}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", "987"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
+		t.Fatalf("failed run should not update or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
+	}
+}

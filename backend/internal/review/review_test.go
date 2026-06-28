@@ -127,15 +127,19 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 }
 
 type fakeLauncher struct {
-	handle     string
-	alive      bool
-	spawnErr   error
-	notifyErr  error
-	spawned    bool
-	spawnCount int
-	notified   bool
-	gotSpec    LaunchSpec
-	gotHandle  string
+	handle          string
+	alive           bool
+	spawnErr        error
+	notifyErr       error
+	destroyErr      error
+	spawned         bool
+	spawnCount      int
+	notified        bool
+	destroyed       bool
+	destroyCount    int
+	gotSpec         LaunchSpec
+	gotHandle       string
+	destroyedHandle string
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
@@ -152,6 +156,12 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	f.gotHandle = handleID
 	f.gotSpec = spec
 	return f.notifyErr
+}
+func (f *fakeLauncher) Destroy(_ context.Context, handleID string) error {
+	f.destroyed = true
+	f.destroyCount++
+	f.destroyedHandle = handleID
+	return f.destroyErr
 }
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
 	return f.alive || f.spawned, nil
@@ -285,7 +295,7 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	if res.Created || res.Run.ID != "run-1" || res.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("expected reuse of existing run: %+v", res)
 	}
-	if launcher.spawned || launcher.notified {
+	if launcher.spawned || launcher.notified || launcher.destroyed {
 		t.Fatalf("should not launch for an already-reviewed commit: %+v", launcher)
 	}
 	if len(store.runs) != 1 {
@@ -308,7 +318,7 @@ func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 	if res.Created || res.Run.ID != "run-1" {
 		t.Fatalf("expected reuse of the running review for the same commit: %+v", res)
 	}
-	if launcher.spawned || launcher.notified {
+	if launcher.spawned || launcher.notified || launcher.destroyed {
 		t.Fatalf("running same-commit review should not relaunch: %+v", launcher)
 	}
 	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
@@ -331,7 +341,7 @@ func TestTriggerSupersedesNonRunningRowWithNoVerdict(t *testing.T) {
 	if !res.Created {
 		t.Fatalf("expected a fresh pass when prior non-running row has no verdict: %+v", res)
 	}
-	if !launcher.notified || launcher.spawned {
+	if !launcher.notified || launcher.spawned || launcher.destroyed {
 		t.Fatalf("expected notify on live reviewer pane, not spawn: %+v", launcher)
 	}
 	if stale := store.runs[0]; stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
@@ -351,7 +361,7 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !launcher.notified || launcher.spawned {
+	if !launcher.notified || launcher.spawned || launcher.destroyed {
 		t.Fatalf("expected notify on live reviewer: %+v", launcher)
 	}
 	if launcher.gotHandle != "review-mer-1" {
@@ -380,8 +390,62 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
+	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" || !launcher.spawned || launcher.notified {
+		t.Fatalf("expected stale live reviewer pane destroyed and respawned: %+v", launcher)
+	}
+}
+
+func TestTriggerDestroyFailureAfterStaleRunningRunFailsNewRun(t *testing.T) {
+	destroyErr := errors.New("tmux kill failed")
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1", destroyErr: destroyErr}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, destroyErr) {
+		t.Fatalf("err = %v, want destroyErr", err)
+	}
+	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected older running run to be failed, got %+v", old)
+	}
+	if len(store.runs) != 2 {
+		t.Fatalf("expected newly inserted run, got %+v", store.runs)
+	}
+	if newRun := store.runs[1]; newRun.TargetSHA != "sha1" || newRun.Status != domain.ReviewRunFailed || !strings.Contains(newRun.Body, "destroy reviewer") {
+		t.Fatalf("expected new run failed with destroy error, got %+v", newRun)
+	}
+	if !launcher.destroyed || launcher.spawned || launcher.notified {
+		t.Fatalf("expected destroy only, got %+v", launcher)
+	}
+}
+
+func TestTriggerMultipleStaleRunningRunsDestroyAndSpawnOnce(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{
+			{ID: "run-old-1", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunRunning},
+			{ID: "run-old-2", SessionID: "mer-1", TargetSHA: "sha00", Status: domain.ReviewRunRunning},
+		},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.TargetSHA != "sha1" {
+		t.Fatalf("expected new run for new commit, got %+v", res)
+	}
+	for i := 0; i < 2; i++ {
+		if store.runs[i].Status != domain.ReviewRunFailed {
+			t.Fatalf("stale run %d not failed: %+v", i, store.runs[i])
+		}
+	}
+	if launcher.destroyCount != 1 || launcher.spawnCount != 1 || launcher.notified {
+		t.Fatalf("expected one destroy and one spawn, got %+v", launcher)
 	}
 }
 

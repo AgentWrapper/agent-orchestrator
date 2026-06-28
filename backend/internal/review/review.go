@@ -207,7 +207,8 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 			}
 		}
 	}
-	if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, targetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+	staleRunning, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, targetSHA, "superseded by a review trigger for a newer commit")
+	if err != nil {
 		return TriggerResult{}, err
 	}
 
@@ -268,10 +269,16 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 			return TriggerResult{}, failRun(err)
 		}
 		if alive {
-			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
-				return TriggerResult{}, failRun(fmt.Errorf("notify reviewer: %w", err))
+			if staleRunning > 0 {
+				if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+					return TriggerResult{}, failRun(fmt.Errorf("destroy reviewer: %w", err))
+				}
+			} else {
+				if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
+					return TriggerResult{}, failRun(fmt.Errorf("notify reviewer: %w", err))
+				}
+				handleID = review.ReviewerHandleID
 			}
-			handleID = review.ReviewerHandleID
 		}
 	}
 	if handleID == "" {

@@ -48,6 +48,7 @@ type fakeRuntime struct {
 	sentMsg   string
 	sentTo    string
 	alive     bool
+	destroyed string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -56,6 +57,10 @@ func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
+}
+func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	f.destroyed = handle.ID
+	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
 	f.sentTo = handle.ID
@@ -123,6 +128,18 @@ func TestLauncherNotifySendsMessageToHandle(t *testing.T) {
 	}
 	if rt.sentTo != "review-mer-1" || !strings.Contains(rt.sentMsg, "run-1") {
 		t.Fatalf("sent to %q msg %q", rt.sentTo, rt.sentMsg)
+	}
+}
+
+func TestLauncherDestroyTearsDownHandle(t *testing.T) {
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{ok: true}, rt)
+
+	if err := l.Destroy(context.Background(), "review-mer-1"); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("destroyed handle = %q", rt.destroyed)
 	}
 }
 

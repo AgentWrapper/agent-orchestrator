@@ -17,6 +17,8 @@ type Launcher interface {
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
 	// live pane (stable per worker, reused across passes).
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	// Destroy tears down an existing reviewer pane before a hard restart.
+	Destroy(ctx context.Context, handleID string) error
 	// Notify asks an already-running reviewer pane to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
@@ -33,11 +35,12 @@ type LaunchSpec struct {
 	TargetSHA     string
 }
 
-// reviewerRuntime is the runtime surface the launcher needs: create a pane,
-// inject a message into a running pane, and probe liveness. The tmux runtime
-// satisfies it.
+// reviewerRuntime is the runtime surface the launcher needs: create or destroy
+// a pane, inject a message into a running pane, and probe liveness. The tmux
+// runtime satisfies it.
 type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
@@ -138,6 +141,13 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 		return fmt.Errorf("notify reviewer: %w", err)
 	}
 	return nil
+}
+
+func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
+	if handleID == "" {
+		return nil
+	}
+	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 }
 
 func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error) {
