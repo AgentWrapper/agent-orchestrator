@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionHost } from "../host/session-host.js";
@@ -143,14 +143,75 @@ function extractTurnDurationMs(turn: JsonObject | null, fallback: number): numbe
   return numberValue(turn?.["durationMs"]) ?? fallback;
 }
 
-function permissionModeToCodexPolicy(mode: PermissionMode): {
+/**
+ * Rich per-turn sandbox policy for `turn/start` (`TurnStartParams.sandboxPolicy`).
+ * Unlike `ThreadStartParams.sandbox` (a bare mode enum), this carries
+ * `writableRoots` for the workspace-write case — the only knob the codex
+ * app-server exposes to widen writable dirs beyond cwd (+ /tmp). Verified
+ * against `codex app-server generate-json-schema` (v2 `SandboxPolicy`) and a
+ * live app-server drive (a `workspaceWrite` turn with `writableRoots` writes
+ * outside cwd; the same turn without it is blocked).
+ */
+type CodexSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean };
+
+/**
+ * Extra writable roots Codex needs for AO bookkeeping under workspace-write.
+ * The `ao` CLI (acknowledge/report/spawn/send) writes OUTSIDE the session cwd:
+ *   - AO home — `running.lock`/`running.json` + the activity SQLite DB live here
+ *     directly (running-state.ts: `homedir()/.agent-orchestrator`, honoring
+ *     `AO_HOME`). A plain workspace-write sandbox (cwd + /tmp only) blocks these
+ *     with "attempt to write a readonly database" / "Could not acquire running.json
+ *     lock" — the exact orchestrator-spawn failure.
+ *   - The project's `worktrees/` parent — `ao spawn` creates sibling worker
+ *     worktrees next to this session's worktree. Derived from cwd
+ *     (`.../worktrees/<name>` → `.../worktrees`) so it holds even when the project
+ *     lives outside AO home.
+ * This grants exactly these roots, NOT blanket full-access.
+ */
+function resolveCodexWritableRoots(cwd: string): string[] {
+  const roots = new Set<string>();
+  const aoHome = stringValue(process.env.AO_HOME) ?? join(homedir(), ".agent-orchestrator");
+  roots.add(aoHome);
+  const marker = `${sep}worktrees${sep}`;
+  const idx = cwd.indexOf(marker);
+  // Keep the path up to and including the `worktrees` segment (drop the trailing sep).
+  if (idx >= 0) roots.add(cwd.slice(0, idx + marker.length - 1));
+  return [...roots];
+}
+
+function permissionModeToCodexPolicy(
+  mode: PermissionMode,
+  cwd: string,
+): {
   approvalPolicy: "never" | "on-request" | "untrusted";
   sandbox: "danger-full-access" | "workspace-write";
+  sandboxPolicy: CodexSandboxPolicy;
 } {
   if (mode === "bypassPermissions") {
-    return { approvalPolicy: "never", sandbox: "danger-full-access" };
+    // Orchestrator/worker default (permissionless): full access. The orchestrator
+    // legitimately writes beyond any enumerable root set (e.g. the build-fork
+    // checkout, sibling project dirs), so we keep true unsandboxed exec for this
+    // trusted role and set it explicitly per-turn so it can't silently degrade.
+    return {
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      sandboxPolicy: { type: "dangerFullAccess" },
+    };
   }
-  return { approvalPolicy: "on-request", sandbox: "workspace-write" };
+  // Restricted mode: keep cwd-scoped writes but additionally grant the AO home +
+  // worktrees parent so `ao` bookkeeping/spawn still works. networkAccess stays on
+  // (workspace-write defaults it off) so git/network-backed `ao` ops don't regress.
+  return {
+    approvalPolicy: "on-request",
+    sandbox: "workspace-write",
+    sandboxPolicy: {
+      type: "workspaceWrite",
+      writableRoots: resolveCodexWritableRoots(cwd),
+      networkAccess: true,
+    },
+  };
 }
 
 function userTextFromSdkMessage(userMsg: {
@@ -821,7 +882,7 @@ export async function runCodexAppServerMode(
   try {
     await client.connect();
 
-    const permissions = permissionModeToCodexPolicy(opts.permissionMode);
+    const permissions = permissionModeToCodexPolicy(opts.permissionMode, opts.cwd);
     const threadResult = opts.resumeFrom
       ? await client.threadResume(opts.resumeFrom)
       : await client.threadStart({
@@ -869,6 +930,11 @@ export async function runCodexAppServerMode(
           cwd: opts.cwd,
           model: opts.model,
           approvalPolicy: permissions.approvalPolicy,
+          // Per-turn sandbox override (TurnStartParams.sandboxPolicy). This is the
+          // only place the app-server accepts `writableRoots`; thread/start takes
+          // a bare mode enum. Set on every turn so the policy ("for this turn and
+          // subsequent turns") can't drift back to a cwd-only default.
+          sandboxPolicy: permissions.sandboxPolicy,
         });
         const turnId = extractTurnId(result);
         translator.setTurnId(turn, turnId);

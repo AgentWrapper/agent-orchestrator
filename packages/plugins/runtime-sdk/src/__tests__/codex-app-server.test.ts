@@ -150,6 +150,8 @@ describe("Codex app-server provider", () => {
       input: [{ type: "text", text: "Fix the failing test." }],
       model: "gpt-5.5",
       approvalPolicy: "never",
+      // bypassPermissions (orchestrator/worker default) → explicit full access.
+      sandboxPolicy: { type: "dangerFullAccess" },
     });
     respond(proc, turnStart, { turn: { id: "turn_1", status: "inProgress" } });
 
@@ -343,5 +345,64 @@ describe("Codex app-server provider", () => {
     await waitForEvent(events, (event) => event.type === "result");
     host.input.close();
     await done;
+  });
+
+  it("grants AO home + worktrees parent as writable roots under workspace-write", async () => {
+    // Restricted (non-bypass) Codex sessions stay cwd-scoped but must still reach
+    // the AO home (running.lock/json + activity SQLite) and the worktrees parent
+    // (where `ao spawn` creates sibling worktrees) — otherwise `ao` writes fail
+    // with readonly-db / lock-acquire errors. These land as turn/start
+    // sandboxPolicy.writableRoots (the only app-server knob for extra roots).
+    const proc = createFakeProcess();
+    const aoHome = join(tmpdir(), "mae-ao-home-test");
+    const prevAoHome = process.env.AO_HOME;
+    process.env.AO_HOME = aoHome;
+    try {
+      const { host, events } = makeHost({ permissionMode: "default" as PermissionMode });
+      const cwd = "/Users/dev/.agent-orchestrator/projects/proj_x/worktrees/mae-9";
+      const done = runCodexAppServerMode(host, {
+        cwd,
+        permissionMode: "default" as PermissionMode,
+        appendSystemPrompt: null,
+        resumeFrom: null,
+        model: "gpt-5.5",
+        initialPrompt: null,
+      });
+
+      respond(proc, await waitForRequest(proc, "initialize"), {});
+      const threadStart = await waitForRequest(proc, "thread/start");
+      // Restricted mode maps to the workspace-write sandbox at the thread level.
+      expect(threadStart["params"]).toMatchObject({ sandbox: "workspace-write" });
+      respond(proc, threadStart, { thread: { id: "thr_1" }, model: "gpt-5.5" });
+
+      host.submitTurn("Run tests.");
+      const turnStart = await waitForRequest(proc, "turn/start");
+      const policy = (turnStart["params"] as Record<string, unknown>)["sandboxPolicy"] as {
+        type: string;
+        writableRoots: string[];
+        networkAccess: boolean;
+      };
+      expect(policy.type).toBe("workspaceWrite");
+      expect(policy.networkAccess).toBe(true);
+      expect(policy.writableRoots).toContain(aoHome);
+      expect(policy.writableRoots).toContain(
+        "/Users/dev/.agent-orchestrator/projects/proj_x/worktrees",
+      );
+      respond(proc, turnStart, { turn: { id: "turn_1", status: "inProgress" } });
+
+      proc.sendLine({
+        method: "turn/completed",
+        params: {
+          threadId: "thr_1",
+          turn: { id: "turn_1", status: "completed", items: [], durationMs: 1 },
+        },
+      });
+      await waitForEvent(events, (event) => event.type === "result");
+      host.input.close();
+      await done;
+    } finally {
+      if (prevAoHome === undefined) delete process.env.AO_HOME;
+      else process.env.AO_HOME = prevAoHome;
+    }
   });
 });
