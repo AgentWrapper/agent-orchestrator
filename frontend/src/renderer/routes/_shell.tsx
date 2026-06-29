@@ -7,7 +7,7 @@ import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
@@ -71,7 +71,8 @@ function ShellLayout() {
 				},
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-add",
 					operation: "project_add",
@@ -106,6 +107,17 @@ function ShellLayout() {
 		[navigate, queryClient, updateWorkspaces],
 	);
 
+	const initializeProjectRepository = useCallback(async (path: string) => {
+		const { error } = await apiClient.POST("/api/v1/projects/initialize", {
+			body: { path },
+		});
+		if (error) {
+			const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+			failure.code = apiErrorCode(error);
+			throw failure;
+		}
+	}, []);
+
 	const removeProject = useCallback(
 		async (projectId: string) => {
 			void addRendererExceptionStep("Project removal requested", {
@@ -118,7 +130,8 @@ function ShellLayout() {
 				params: { path: { id: projectId } },
 			});
 			if (error) {
-				const failure = new Error(apiErrorMessage(error));
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
 				void captureRendererException(failure, {
 					source: "project-remove",
 					operation: "project_remove",
@@ -187,6 +200,7 @@ function ShellLayout() {
 						daemonStatus={daemonStatus}
 						underTopbar
 						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}

@@ -38,6 +38,7 @@ func gitRepo(t *testing.T) string {
 	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitEmpty(t, dir)
 	return dir
 }
 
@@ -49,6 +50,7 @@ func gitRepoOnBranch(t *testing.T, branch string) string {
 	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
+	commitEmpty(t, dir)
 	return dir
 }
 
@@ -78,6 +80,12 @@ func gitRepoWithOriginHead(t *testing.T, defaultBranch, featureBranch string) st
 	return dir
 }
 
+func commitEmpty(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "--allow-empty", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+}
 func ptr(s string) *string { return &s }
 
 // wantCode asserts err is an *apierr.Error carrying the given machine code.
@@ -431,6 +439,48 @@ func TestManager_ReaddAfterRemove(t *testing.T) {
 	}
 }
 
+func TestManager_InitializeRepositoryRecovery(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+
+	t.Run("plain folder", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("keep me\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		result, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir})
+		if err != nil {
+			t.Fatalf("InitializeRepository: %v", err)
+		}
+		if result.Path != dir {
+			t.Fatalf("Path = %q, want %q", result.Path, dir)
+		}
+		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("expected initial commit: %v", err)
+		}
+		if _, err := m.Add(ctx, project.AddInput{Path: dir, ProjectID: ptr("plain")}); err != nil {
+			t.Fatalf("Add after init: %v", err)
+		}
+	})
+
+	t.Run("unborn git repo", func(t *testing.T) {
+		dir := t.TempDir()
+		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v (%s)", err, out)
+		}
+		if _, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: dir}); err != nil {
+			t.Fatalf("InitializeRepository unborn: %v", err)
+		}
+		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("expected initial commit: %v", err)
+		}
+	})
+
+	t.Run("already committed repo", func(t *testing.T) {
+		_, err := m.InitializeRepository(ctx, project.InitializeRepositoryInput{Path: gitRepo(t)})
+		wantCode(t, err, "PROJECT_ALREADY_INITIALIZED")
+	})
+}
 func TestManager_AddValidationAndConflicts(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -441,6 +491,12 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
 
+	unborn := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "main", unborn).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn: %v (%s)", err, out)
+	}
+	_, err = m.Add(ctx, project.AddInput{Path: unborn})
+	wantCode(t, err, "PROJECT_UNBORN")
 	// An embedded ".." passes the id pattern but would yield an invalid git
 	// branch (ao/a..b-1) at spawn time; reject it up front as a clear 400.
 	_, err = m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("a..b")})

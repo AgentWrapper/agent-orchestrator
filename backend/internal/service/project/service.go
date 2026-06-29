@@ -28,6 +28,9 @@ type Manager interface {
 	// Add registers a new project from a git repository path.
 	Add(ctx context.Context, in AddInput) (Project, error)
 
+	// InitializeRepository prepares a selected folder for project registration.
+	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
+
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
 	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
@@ -207,7 +210,13 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		return p, nil
 	}
 	if !isGitRepo(path) {
-		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
+		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "AO needs a Git repository with an initial commit before it can create agent workspaces.", nil)
+	}
+	if !repoHasCommit(ctx, path) {
+		return Project{}, apierr.Invalid("PROJECT_UNBORN", "AO needs a Git repository with an initial commit before it can create agent workspaces.", map[string]any{
+			"path":         path,
+			"suggestedFix": "Run `git commit --allow-empty -m \"initial commit\"` in this folder, then try again.",
+		})
 	}
 	// Record the repo's actual checked-out branch as the project default so
 	// session worktrees base off a branch that exists. Without this a repo on
@@ -227,6 +236,32 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	return projectFromRow(row), nil
 }
 
+// InitializeRepository prepares a selected folder for project registration by ensuring it has an initial Git commit.
+func (m *Service) InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error) {
+	path, err := normalizePath(in.Path)
+	if err != nil {
+		return InitializeRepositoryResult{}, err
+	}
+	if err := ensureDirectoryPath(path); err != nil {
+		return InitializeRepositoryResult{}, err
+	}
+
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
+
+	if !isGitRepo(path) {
+		if _, err := gitOutput(ctx, path, "init", "-b", domain.DefaultBranchName); err != nil {
+			return InitializeRepositoryResult{}, apierr.Invalid("GIT_INIT_FAILED", "Could not initialize a Git repository in this folder.", map[string]any{"error": err.Error()})
+		}
+	} else if repoHasCommit(ctx, path) {
+		return InitializeRepositoryResult{}, apierr.Conflict("PROJECT_ALREADY_INITIALIZED", "This repository already has commits.", map[string]any{"path": path})
+	}
+
+	if _, err := gitOutput(ctx, path, "-c", "user.name=Agent Orchestrator", "-c", "user.email=ao@example.com", "commit", "--allow-empty", "-m", "initial commit"); err != nil {
+		return InitializeRepositoryResult{}, apierr.Invalid("INITIAL_COMMIT_FAILED", "Could not create the initial commit.", map[string]any{"error": err.Error()})
+	}
+	return InitializeRepositoryResult{Path: path}, nil
+}
 func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
 	projects, err := m.store.ListProjects(ctx)
 	if err != nil {
@@ -411,6 +446,21 @@ func normalizePath(raw string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
+func ensureDirectoryPath(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return apierr.Invalid("INVALID_PATH", "Selected folder could not be read", map[string]any{"path": path})
+	}
+	if !info.IsDir() {
+		return apierr.Invalid("INVALID_PATH", "Selected path must be a folder", map[string]any{"path": path})
+	}
+	return nil
+}
+
+func repoHasCommit(ctx context.Context, path string) bool {
+	_, err := gitOutput(ctx, path, "rev-parse", "--verify", "HEAD")
+	return err == nil
+}
 func isGitRepo(path string) bool {
 	cmd := aoprocess.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()

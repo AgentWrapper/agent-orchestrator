@@ -76,6 +76,7 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -128,6 +129,7 @@ export function Sidebar({
 	workspaceError,
 	workspaces,
 	onCreateProject,
+	onInitializeProject,
 	onRemoveProject,
 }: SidebarProps) {
 	const selection = useSelection();
@@ -212,7 +214,7 @@ export function Sidebar({
 						<SidebarGroupLabel className="h-auto rounded-none p-0 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-passive">
 							Projects
 						</SidebarGroupLabel>
-						<CreateProjectButton onCreateProject={onCreateProject} />
+						<CreateProjectButton onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
 					</div>
 
 					{/* Tree (project-sidebar__tree) */}
@@ -241,7 +243,9 @@ export function Sidebar({
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
-								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
+								{isCollapsed && (
+									<CreateProjectListItem onCreateProject={onCreateProject} onInitializeProject={onInitializeProject} />
+								)}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
@@ -596,9 +600,12 @@ function ProjectItem({
 	);
 }
 
-function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+function CreateProjectButton({
+	onCreateProject,
+	onInitializeProject,
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
 	return (
-		<CreateProjectFlow onCreateProject={onCreateProject}>
+		<CreateProjectFlow onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>
@@ -619,9 +626,12 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 	);
 }
 
-function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+function CreateProjectListItem({
+	onCreateProject,
+	onInitializeProject,
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject">) {
 	return (
-		<CreateProjectFlow onCreateProject={onCreateProject}>
+		<CreateProjectFlow onCreateProject={onCreateProject} onInitializeProject={onInitializeProject}>
 			{({ disabled, choosePath, label }) => (
 				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
 					<Tooltip>
@@ -647,16 +657,20 @@ function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreate
 function CreateProjectFlow({
 	children,
 	onCreateProject,
-}: Pick<SidebarProps, "onCreateProject"> & {
+	onInitializeProject,
+}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & {
 	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
 }) {
 	const [error, setError] = useState<string | null>(null);
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
+	const [isInitializing, setIsInitializing] = useState(false);
+	const [recoveryCode, setRecoveryCode] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 
 	const choosePath = async () => {
 		setError(null);
+		setRecoveryCode(null);
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory();
@@ -671,29 +685,63 @@ function CreateProjectFlow({
 	const createProject = async (selection: CreateProjectAgentSelection) => {
 		if (!selectedPath) return;
 		setError(null);
+		setRecoveryCode(null);
 		setIsCreating(true);
 		try {
 			await onCreateProject({ path: selectedPath, ...selection });
 			setSelectedPath(null);
 		} catch (err) {
+			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
+			setRecoveryCode(code === "NOT_A_GIT_REPO" || code === "PROJECT_UNBORN" ? code : null);
 			setError(err instanceof Error ? err.message : "Could not add project");
 		} finally {
 			setIsCreating(false);
 		}
 	};
 
-	const label = isChoosingPath ? "Opening..." : isCreating ? "Creating..." : "New project";
+	const initializeAndCreate = async (selection: CreateProjectAgentSelection) => {
+		if (!selectedPath) return;
+		setError(null);
+		setIsInitializing(true);
+		try {
+			await onInitializeProject(selectedPath);
+			setRecoveryCode(null);
+			setIsCreating(true);
+			await onCreateProject({ path: selectedPath, ...selection });
+			setSelectedPath(null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Could not initialize repository");
+		} finally {
+			setIsInitializing(false);
+			setIsCreating(false);
+		}
+	};
+	const label = isChoosingPath
+		? "Opening..."
+		: isInitializing
+			? "Initializing..."
+			: isCreating
+				? "Creating..."
+				: "New project";
 
 	return (
 		<>
-			{children({ choosePath: () => void choosePath(), disabled: isChoosingPath || isCreating, label })}
+			{children({
+				choosePath: () => void choosePath(),
+				disabled: isChoosingPath || isCreating || isInitializing,
+				label,
+			})}
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}
+				isInitializing={isInitializing}
+				onInitialize={initializeAndCreate}
+				recoveryCode={recoveryCode}
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);
 						setError(null);
+						setRecoveryCode(null);
 					}
 				}}
 				onSubmit={createProject}
