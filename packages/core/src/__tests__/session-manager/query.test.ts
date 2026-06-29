@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   readFileSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
@@ -696,6 +697,139 @@ describe("list — streaming (SDK) runtime liveness/activity", () => {
     expect(sessions[0].lifecycle.runtime.state).toBe("missing");
     expect(sessions[0].status).toBe("detecting");
     expect(sessions[0].activity).toBe("exited");
+  });
+
+  /** Write an events.ndjson and stamp its mtime to `ageMs` in the past. */
+  function makeEventLog(ageMs: number): string {
+    const eventLogPath = join(tmpDir, "events.ndjson");
+    writeFileSync(eventLogPath, '{"kind":"text"}\n');
+    const when = new Date(Date.now() - ageMs);
+    utimesSync(eventLogPath, when, when);
+    return eventLogPath;
+  }
+
+  // (a) BUG 1: a `spawning` SDK session skips the liveness probe (#1035), so
+  // livenessConfirmedAlive stays null. The old guard (`=== true`) let the
+  // process-probe's FALSE `exited` leak through (mae-266: [spawning] + exited).
+  // A provably-alive host (live hostPid) must close that gap.
+  it("does not surface activity=exited for a spawning SDK host with a live hostPid (mae-266)", async () => {
+    const liveRuntime: Runtime = {
+      ...mockRuntime,
+      // Must never be consulted for a spawning session — assert that below.
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentReportingExited: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "exited" }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "spawning",
+      project: "my-app",
+      runtimeHandle: sdkHandle({ hostPid: process.pid }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(liveRuntime, agentReportingExited) });
+    const sessions = await sm.list("my-app");
+
+    // #1035: spawning sessions skip the liveness probe entirely.
+    expect(liveRuntime.isAlive).not.toHaveBeenCalled();
+    expect(sessions[0].activity).not.toBe("exited");
+    // not_started canon (spawning) + no fresh log ⇒ ready, never killed.
+    expect(sessions[0].activity).toBe("ready");
+    expect(sessions[0].status).not.toBe("killed");
+  });
+
+  // (b) BUG 2 ("Zzz"): an SDK host actively streaming (fresh event log) shows
+  // `active` even when the canon still reads idle — the canon lags the stream.
+  it("surfaces activity=active for an SDK host with a fresh event log even when canon is idle (Zzz)", async () => {
+    const liveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentReportingExited: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "exited" }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "idle", // canon ⇒ idle
+      project: "my-app",
+      runtimeHandle: sdkHandle({ hostPid: process.pid, eventLogPath: makeEventLog(0) }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(liveRuntime, agentReportingExited) });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions[0].activity).toBe("active");
+    expect(sessions[0].lifecycle.runtime.state).toBe("alive");
+  });
+
+  // (c) The freshness signal is bounded: an SDK host that is alive but whose
+  // event log is stale (> SDK_EVENT_LOG_FRESH_MS) falls back to the canon, so it
+  // reads idle/ready rather than being pinned to `active`.
+  it("falls back to canon (idle) for a live SDK host whose event log is stale", async () => {
+    const liveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentReportingExited: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "exited" }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "idle", // canon ⇒ idle
+      project: "my-app",
+      // Alive PID keeps the host alive, but the log is 60s old (> 10s window).
+      runtimeHandle: sdkHandle({ hostPid: process.pid, eventLogPath: makeEventLog(60_000) }),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(liveRuntime, agentReportingExited) });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions[0].activity).not.toBe("active");
+    expect(sessions[0].activity).toBe("idle");
+    expect(sessions[0].lifecycle.runtime.state).toBe("alive");
+  });
+
+  // (d) Regression: a genuinely dead NON-SDK runtime must still be marked
+  // exited/killed. streamingHostConfirmedAlive is always false off-SDK, so the
+  // BUG 1 widening cannot keep a dead tmux/mock runtime alive.
+  it("still surfaces exited/killed for a dead non-SDK runtime", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const agentReportingExited: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "exited" }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      // makeHandle ⇒ runtimeName "mock" (non-SDK).
+      runtimeHandle: makeHandle("rt-1"),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWith(deadRuntime, agentReportingExited) });
+    const sessions = await sm.list("my-app");
+
+    // Runtime lost ⇒ activity exited, runtime missing, canon → detecting
+    // (runtime_lost). The legacy status mirrors the canon, exactly as the dead
+    // SDK host above (#1735) — the BUG 1 widening does not rescue a dead runtime.
+    expect(sessions[0].activity).toBe("exited");
+    expect(sessions[0].lifecycle.runtime.state).toBe("missing");
+    expect(sessions[0].status).toBe("detecting");
   });
 });
 

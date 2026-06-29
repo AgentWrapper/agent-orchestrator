@@ -1351,6 +1351,31 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   /**
+   * True only when a streaming (SDK) host appended to its event log within the
+   * "writing right now" window. This is a STRICTER signal than
+   * streamingHostConfirmedAlive: that one also accepts a live PID with a stale
+   * log (alive-but-idle), whereas this one means the agent is actively producing
+   * output this very moment. We deliberately use SDK_EVENT_LOG_FRESH_MS (10s),
+   * NOT config.readyThresholdMs (default 5min): readyThresholdMs is the
+   * ready→idle demotion window and would keep an idle host pinned to `active`
+   * for minutes after it stopped streaming. For non-SDK runtimes this is always
+   * false, so their activity derivation is untouched.
+   */
+  function streamingHostRecentlyStreamed(handle: RuntimeHandle | null): boolean {
+    if (!handle || handle.runtimeName !== "sdk") return false;
+    const data = handle.data as Record<string, unknown> | undefined;
+    const eventLogPath = data?.["eventLogPath"];
+    if (typeof eventLogPath === "string" && eventLogPath) {
+      try {
+        return Date.now() - statSync(eventLogPath).mtimeMs < SDK_EVENT_LOG_FRESH_MS;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Map the canonical lifecycle to an activity for a confirmed-alive streaming
    * (SDK) host. A live SDK host runs no terminal/CLI process, so the agent's
    * process-based probe reports a FALSE `exited`; for SDK the canon is the only
@@ -1497,15 +1522,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           if (
             session.runtimeHandle?.runtimeName === "sdk" &&
             detected.state === "exited" &&
-            livenessConfirmedAlive === true
+            (livenessConfirmedAlive === true ||
+              streamingHostConfirmedAlive(session.runtimeHandle))
           ) {
             // A live streaming (SDK) host runs no terminal/CLI process, so the
-            // agent's process-based probe returns a FALSE `exited`. Liveness was
-            // positively confirmed above — derive the activity from the canon
-            // instead of letting that false `exited` overwrite it (mae-257). The
-            // bogus `exited` timestamp (now) is dropped so lastActivityAt keeps
-            // the real value carried in metadata.
-            const derived = deriveStreamingActivity(session);
+            // agent's process-based probe returns a FALSE `exited`. A live SDK
+            // host must never inherit that false `exited` (mae-257). We accept
+            // EITHER the positive liveness confirmation from above OR an
+            // independent host-alive check here: for `spawning` sessions the
+            // liveness probe is skipped (#1035), so livenessConfirmedAlive stays
+            // null and the old `=== true` guard let the bogus `exited` leak
+            // through (reproduced on mae-266: [spawning] + activity exited). A
+            // provably-alive host (live hostPid / fresh event-log) closes that
+            // gap. The bogus `exited` timestamp (now) is dropped so
+            // lastActivityAt keeps the real value carried in metadata.
+            //
+            // BUG 2 ("Zzz"): the canon lags an active stream — session.state
+            // only flips to `working` once a transition is recorded, so a host
+            // that is writing right now would otherwise read ready/idle. Prefer
+            // the event-log freshness signal: a host that appended within
+            // SDK_EVENT_LOG_FRESH_MS is actively producing output → `active`.
+            // Otherwise fall back to the canon-derived activity.
+            const derived = streamingHostRecentlyStreamed(session.runtimeHandle)
+              ? "active"
+              : deriveStreamingActivity(session);
             session.activity = derived;
             session.activitySignal = classifyActivitySignal({ state: derived }, "native");
             session.lifecycle.runtime.state = "alive";
