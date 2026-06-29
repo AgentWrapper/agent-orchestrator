@@ -1572,15 +1572,15 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	// Coordination instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"## Orchestrator coordination",
+		"## Orchestrator Coordination",
 		`ao send --session mer-1 --message "<your message>"`,
-		"Only ping the orchestrator for true blockers, cross-session coordination",
+		"Message it only for true blockers, cross-session coordination",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
+	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator Coordination") {
 		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 }
@@ -1633,7 +1633,7 @@ func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "Work on issue 2272. Issue details were not pre-fetched; start by reading the issue, then implement."
+	want := "Work on issue 2272.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix, run focused verification, and open or update a PR if this project uses PRs."
 	if agent.lastLaunch.Prompt != want {
 		t.Fatalf("launch prompt = %q, want %q", agent.lastLaunch.Prompt, want)
 	}
@@ -1664,7 +1664,7 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	for _, want := range []string{"## Worker role", "## Project Rules", "Inline rule.", "File rule."} {
+	for _, want := range []string{"## AO Worker Role", "## Project Rules", "Inline rule.", "File rule."} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
@@ -1717,7 +1717,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 		t.Fatal(err)
 	}
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	if strings.Contains(systemPrompt, "## Orchestrator coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
+	if strings.Contains(systemPrompt, "## Orchestrator Coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
 		t.Fatalf("terminated orchestrator should not be added to system prompt:\n%s", systemPrompt)
 	}
 }
@@ -1739,19 +1739,19 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// Coordinator instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"You are the human-facing coordinator for project mer",
+		"You are the human-facing orchestrator for project mer",
 		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "<clear worker task>"`,
 		"`--agent <name>`",
 		"`ao spawn --help`",
-		"`ao send`",
+		"Use `ao send` for session communication",
 		"`ao --help`",
-		"avoid doing implementation yourself unless it is necessary",
+		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing orchestrator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 
@@ -1777,7 +1777,7 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	if !strings.Contains(systemPrompt, "## Project-specific orchestrator rules") || !strings.Contains(systemPrompt, "Coordinate through workers.") {
+	if !strings.Contains(systemPrompt, "## Project-Specific Orchestrator Rules") || !strings.Contains(systemPrompt, "Coordinate through workers.") {
 		t.Fatalf("orchestrator rules missing from system prompt:\n%s", systemPrompt)
 	}
 	if strings.Contains(systemPrompt, "Worker-only rule.") {
@@ -1918,7 +1918,7 @@ func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing orchestrator for project mer") {
 		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
 	}
 	if !strings.Contains(agent.lastRestore.SystemPrompt, "Use workers for implementation.") {
@@ -1947,7 +1947,7 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing orchestrator for project mer") {
 		t.Fatalf("fallback launch system prompt missing coordinator role:\n%s", agent.lastLaunch.SystemPrompt)
 	}
 	wantPath := filepath.Join(dataDir, "prompts", "mer-1", "system.md")

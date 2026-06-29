@@ -137,6 +137,8 @@ AO splits prompt material into two channels before it reaches an adapter:
 
 Generated system prompts are not stored as canonical session state. On spawn and restore, the session manager re-derives them from hardcoded prompt text, project config, and current project/session state, then passes `SystemPrompt` and/or `SystemPromptFile` through `LaunchConfig` or `RestoreConfig`. Any prompt file under `AO_DATA_DIR/prompts/<session-id>/system.md` is a launch artifact only.
 
+The hardcoded AO role and task prompt templates live in `backend/internal/sessionprompt`; `backend/internal/session_manager` only gathers project/session state and delegates prompt assembly there.
+
 Adapters should map `SystemPrompt`/`SystemPromptFile` to the strongest native system/developer-instruction mechanism they support. Adapter-specific compatibility gaps are handled inside adapters; the session manager owns composition, not per-agent flag details.
 
 #### GetPromptDeliveryStrategy()
