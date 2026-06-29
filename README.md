@@ -1,221 +1,219 @@
-# ReverbCode
+<div align="center">
 
-The orchestration layer for parallel AI coding agents. ReverbCode is a
-Go-backed daemon that supervises many coding-agent sessions at once, each in
-its own `git worktree`, and routes the feedback they need (CI failures, review
-comments, merge conflicts) back to the right agent automatically. It ships with
-an `ao` CLI and an Electron supervisor that both drive the same daemon over
-loopback.
+<p style="text-align: center;"><img src="ao-logo.svg" alt="Agent Orchestrator" width="200" height="200" style="max-width: 100%; height: auto; margin-left: 50px;" /></p>
 
-The Go module and packages remain `agent-orchestrator`; "ReverbCode" is the
-public name.
+# Agent Orchestrator
 
-See [`docs/architecture.md`](docs/architecture.md) for the backend mental model
-and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract. For current
-progress (what's shipped vs. in flight) see [`docs/STATUS.md`](docs/STATUS.md).
+**The orchestration layer for parallel AI coding agents**
 
-## What it does
+[![Stars](https://img.shields.io/github/stars/AgentWrapper/agent-orchestrator)](https://github.com/AgentWrapper/agent-orchestrator/stargazers)
+[![Contributors](https://img.shields.io/github/contributors/AgentWrapper/agent-orchestrator)](https://github.com/AgentWrapper/agent-orchestrator/graphs/contributors)
+[![Twitter](https://img.shields.io/badge/Twitter-1DA1F2?logo=twitter&logoColor=white)](https://x.com/aoagents)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/UZv7JjxbwG)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-- **Agent-agnostic.** A 23-adapter platform under
-  `backend/internal/adapters/agent/` (`claude-code`, `codex`, `cursor`,
-  `opencode`, `aider`, `amp`, `goose`, `copilot`, `grok`, `qwen`, `kimi`,
-  `crush`, `cline`, `droid`, `devin`, `auggie`, `continue`, `kiro`, `kilocode`,
-  and more), registered through a shared registry with common
-  activity-dispatch / hook utilities. Worker and orchestrator defaults are set
-  per project.
-- **Isolated workspaces.** Worker and orchestrator sessions spawn into their own
-  `git worktree` (`backend/internal/adapters/workspace/gitworktree/`), launched
-  inside a `zellij` runtime adapter (`backend/internal/adapters/runtime/`) so
-  every session has its own attachable terminal.
-- **Live PR observation.** The provider-neutral SCM observer
-  (`backend/internal/observe/scm/`) polls each session's PR with ETag guards and
-  semantic diffing, tracking CI/check runs and review threads, and feeds those
-  facts into the lifecycle manager, which sends the owning agent nudges for CI
-  failures, review feedback, and merge conflicts. GitHub is the implemented
-  provider today.
-- **Durable facts, derived status.** The SQLite store
-  (`backend/internal/storage/sqlite/`) persists a small set of session facts
-  plus PR/check/comment rows; display status is computed at read time, never
-  stored. DB triggers append every user-visible change to `change_log`, and a
-  CDC poller/broadcaster (`backend/internal/cdc/`) feeds in-process subscribers
-  and an SSE replay endpoint.
-- **Loopback-only daemon.** The HTTP daemon (`backend/internal/httpd`) controls
-  projects, sessions, orchestrators, and hook callbacks over `127.0.0.1` with no
-  auth, CORS, or TLS by design.
-- **Lifecycle manager + reaper** (`backend/internal/lifecycle/`,
-  `backend/internal/observe/reaper/`) reduce runtime/activity/PR observations
-  into the durable session state and reclaim dead sessions.
+An Agentic IDE that supervises parallel AI coding agents in isolated workspaces, with complete control and automatic feedback loops from CI failures, review comments, and merge conflicts.
 
-## How it works
+![Agent Orchestrator Dashboard](ao-dashboard-preview.png)
 
-1. Register a local git repo as a project (`ao project add`).
-2. Spawn a worker session (`ao spawn`), or an orchestrator that fans work out
-   across sessions. Each session gets its own `git worktree` and a `zellij`
-   pane.
-3. The agent develops, tests, and opens a PR from inside its worktree.
-4. The SCM observer watches that PR and routes feedback back to the agent: a CI
-   failure, a requested change, or a merge conflict becomes a nudge to the agent
-   that owns the PR.
-5. You inspect, attach a terminal, and merge from the CLI or the Electron app;
-   human attention is needed only where the loop can't resolve on its own.
+### Witness AO's Journey on X
 
-## Extensibility
+<table border="1" style="border-collapse: collapse; width: 100%;">
+<tr>
+<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+<a href="https://x.com/agent_wrapper/status/2026329204405723180"><img src="screenshots/first.png" alt="First" width="400"></a><br><br>
+<a href="https://x.com/agent_wrapper/status/2026329204405723180">Visit</a>
+</td>
+<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+<a href="https://x.com/agent_wrapper/status/2025986105485733945"><img src="screenshots/second.png" alt="Second" width="400"></a><br><br>
+<a href="https://x.com/agent_wrapper/status/2025986105485733945">Visit</a>
+</td>
+</tr>
+<tr>
+<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+<a href="https://x.com/agent_wrapper/status/2064157228400341312"><img src="screenshots/third.png" alt="Third" width="400"></a><br><br>
+<a href="https://x.com/agent_wrapper/status/2064157228400341312">Visit</a>
+</td>
+<td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+<a href="https://x.com/agent_wrapper/status/2024885035774738700?s=20"><img src="screenshots/image.png" alt="Fourth" width="400"></a><br><br>
+<a href="https://x.com/agent_wrapper/status/2024885035774738700?s=20">Visit</a>
+</td>
+</tr>
+</table>
 
-The backend is organized around inbound/outbound port contracts
-(`backend/internal/ports/`) with swappable adapters under
-`backend/internal/adapters/`:
+[Features](#features) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Documentation](#documentation) • [Contributing](#contributing)
 
-| Port      | Implemented adapters                          |
-| --------- | --------------------------------------------- |
-| Agent     | 23 harnesses (see above)                      |
-| Runtime   | `zellij`                                      |
-| Workspace | `git worktree`                                |
-| SCM       | GitHub                                        |
-| Tracker   | GitHub (adapter present; no runtime loop yet) |
-| Reviewer  | `claude-code`                                 |
-| Notifier  | port defined; no shipped adapter yet          |
+</div>
 
-See [`docs/STATUS.md`](docs/STATUS.md) for which lanes are live at runtime.
+---
 
-## Quick start
+## Features
 
-Requirements: Go 1.25+, [`zellij`](https://zellij.dev/) on `PATH` for the
-runtime adapter, and `gh` (or `GITHUB_TOKEN`) if you want the SCM observer to
-authenticate against GitHub. The SQLite driver is the pure-Go
-`modernc.org/sqlite` — no system SQLite library is required.
+| Feature                        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :----------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent-Agnostic Platform**    | 23+ agent adapters including [Claude Code](https://code.claude.com/docs/en/overview), [OpenAI Codex](https://openai.com/), [Cursor](https://cursor.com/), [OpenCode](https://opencode.ai/), [Aider](https://aider.chat/), [Amp](https://ampcode.com/manual), [Goose](https://goose-docs.ai/), [GitHub Copilot](https://github.com/features/copilot), [Grok](https://x.ai/grok), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://www.kimi.com/code), [Cline](https://cline.bot/), [Continue](https://www.continue.dev/), [Kiro](https://kiro.dev/), and more |
+| **Isolated Workspaces**        | Each session spawns into its own git worktree with dedicated runtime                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Platform-Native Runtimes**   | tmux on Darwin/Linux, conpty on Windows for optimal performance                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Live PR Observation**        | Provider-neutral SCM observer with automatic feedback routing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Automatic Feedback Routing** | CI failures, review comments, and merge conflicts routed to the owning agent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Durable Facts Storage**      | SQLite persists immutable facts with display status derived at read time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **CDC Broadcasting**           | DB triggers append changes to change_log, broadcasted via SSE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Desktop Experience**         | Native Electron app with React UI and live terminal streaming                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Loopback-Only Daemon**       | HTTP control over 127.0.0.1 with no auth, CORS, or TLS by design                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-```bash
-cd backend
-go build -o /tmp/ao ./cmd/ao
+### Supported Agents
 
-# Start the daemon and wait for /readyz.
-/tmp/ao start
+Works with 23+ CLI-based coding agents including Claude Code, OpenAI Codex, Cursor, OpenCode, Aider, Amp, Goose, GitHub Copilot, Grok, Qwen Code, Kimi Code, Crush, Cline, Droid, Devin, Auggie, Continue, Kiro, and Kilo Code.
 
-# Register a local git repo as a project. The id defaults to the lowercased
-# base of --path; pass --id explicitly when the directory name doesn't match.
-/tmp/ao project add --path /path/to/your/repo --id your-repo --name your-repo \
-  --worker-agent codex --orchestrator-agent codex
+**If it runs in a terminal, it runs on Agent Orchestrator.**
 
-# Spawn a worker session running the project's worker agent.
-/tmp/ao spawn --project your-repo --prompt "Refactor the auth module"
+---
 
-# Inspect what's running.
-/tmp/ao status
-/tmp/ao session ls
-```
+## Quick Start
 
-### Electron app (dev)
+### Prerequisites
 
-The desktop supervisor lives under `frontend/` and is started separately:
+| Requirement | Minimum | Recommended |
+| ----------- | ------- | ----------- |
+| Go          | 1.25+   | Latest      |
+| Node.js     | 20+     | Latest LTS  |
+| Git         | Any     | Latest      |
+| pnpm        | Any     | Latest      |
 
-```bash
-cd frontend
-npm install
-npm run dev   # electron-forge start
-```
+**Optional:**
 
-Heads-up: `npm run dev` does **not** start the daemon for you. Start it first
-(`ao start`, see above) — the renderer attaches to the running daemon over
-loopback (`127.0.0.1:3001` by default, the `AO_PORT` from the table below).
-Without a daemon the app opens but shows its daemon-not-ready state.
+- `tmux` (Darwin/Linux) - For Unix runtime
+- `gh` (GitHub CLI) - For authenticated GitHub API calls
 
-For renderer-only UI work without the Electron shell, use
-`npm run dev:web` (Vite in a regular browser).
+### Installation
 
-## CLI surface
+Download the latest release for your platform:
 
-The CLI is intentionally thin: every product command resolves to a daemon HTTP
-route. Run `ao <command> --help` for the authoritative flag shape; the table
-below groups what's on `main` today.
+| Platform    | Download                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| **Windows** | [Setup.exe](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)                   |
+| **macOS**   | [Agent Orchestrator.dmg](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)      |
+| **Linux**   | [Agent Orchestrator.AppImage](https://github.com/AgentWrapper/agent-orchestrator/releases/latest) |
 
-| Lane         | Command                              | Purpose                                                                            |
-| ------------ | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| Daemon       | `ao start`                           | Start the daemon in the background and wait for `/readyz`.                         |
-| Daemon       | `ao stop`                            | Graceful shutdown via loopback `POST /shutdown`.                                   |
-| Daemon       | `ao status`                          | Report PID/port/health/readiness from `running.json`.                              |
-| Daemon       | `ao daemon`                          | Hidden internal entrypoint used by `ao start`.                                     |
-| Project      | `ao project add`                     | Register a local git repo as a project.                                            |
-| Project      | `ao project ls`                      | List registered projects.                                                          |
-| Project      | `ao project get <id>`                | Fetch one project.                                                                 |
-| Project      | `ao project set-config <id>`         | Update per-project config.                                                         |
-| Project      | `ao project rm <id>`                 | Remove a project.                                                                  |
-| Session      | `ao spawn`                           | Spawn a worker session in a registered project.                                    |
-| Session      | `ao session ls`                      | List sessions (filter by project, include terminated).                             |
-| Session      | `ao session get <id>`                | Fetch one session.                                                                 |
-| Session      | `ao session kill <id>`               | Terminate a session.                                                               |
-| Session      | `ao session rename <id> <name>`      | Rename a session.                                                                  |
-| Session      | `ao session restore <id>`            | Relaunch a terminated session.                                                     |
-| Session      | `ao session cleanup`                 | Reclaim eligible workspaces for terminated sessions.                               |
-| Session      | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session.                                                |
-| Orchestrator | `ao orchestrator ls`                 | List orchestrator sessions.                                                        |
-| Messaging    | `ao send`                            | Send a message to a running agent session.                                         |
-| Preview      | `ao preview [url]`                   | Open a URL (or the workspace `index.html`) in the session's desktop browser panel. |
-| Utility      | `ao doctor`                          | Local health checks (config, data dir, DB, `git`, `zellij`).                       |
-| Utility      | `ao completion <shell>`              | Generate bash/zsh/fish/powershell completions.                                     |
-| Utility      | `ao version`                         | Print build metadata.                                                              |
-| Internal     | `ao hooks <agent> <event>`           | Hidden adapter hook callback.                                                      |
+**Direct Download:** [Latest Release](https://github.com/AgentWrapper/agent-orchestrator/releases/latest)
 
-See [`docs/cli/`](docs/cli/) for the daemon-control intent and command shape.
+---
 
-## Configuration
+## Telemetry
 
-All configuration is env-driven; the daemon takes no config file. The bind
-host is hard-coded to `127.0.0.1` — the daemon has no auth, CORS, or TLS, and
-exposing it beyond loopback would be a security regression.
+Agent Orchestrator collects minimal telemetry for reliability and product understanding. Data is stored locally by default; remote transmission is opt-in via environment variables. [Read the full telemetry policy](docs/telemetry.md).
 
-| Var                   | Default                                           | Purpose                                                                     |
-| --------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
-| `AO_PORT`             | `3001`                                            | Bind port; daemon fails fast if taken.                                      |
-| `AO_REQUEST_TIMEOUT`  | `60s`                                             | Per-request timeout (Go duration).                                          |
-| `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful-shutdown hard cap.                                                 |
-| `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path.                                                  |
-| `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite DB, WAL files, managed state.                                        |
-| `AO_AGENT`            | `claude-code`                                     | Compatibility agent adapter id validated at daemon startup.                 |
-| `AO_SESSION_ID`       | _(unset)_                                         | Set inside spawned sessions; read by `ao send` and `ao hooks`.              |
-| `GITHUB_TOKEN`        | _(unset)_                                         | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
-
-Health check:
-
-```bash
-curl localhost:3001/healthz
-curl localhost:3001/readyz
-```
+---
 
 ## Architecture
 
-The daemon is a long-running supervisor. Adapters observe external facts (PR
-state, agent activity, runtime liveness); the lifecycle manager reduces those
-into a small set of durable session facts (`activity_state`, `is_terminated`,
-PR rows). Display status is _derived_ from those facts at read time — it is
-never stored. SQLite triggers append every user-visible change to `change_log`,
-and the CDC poller broadcasts those events to in-process subscribers and an
-SSE stream.
+Agent Orchestrator is a long-running Go daemon built around **inbound/outbound port contracts** with swappable adapters.
 
-Full mental model and load-bearing rules: [`docs/architecture.md`](docs/architecture.md).
-Package-by-package ownership: [`docs/backend-code-structure.md`](docs/backend-code-structure.md).
+**Core mental model:** OBSERVE external facts → UPDATE durable facts → DERIVE display status / ACT
+
+**Key components:**
+
+- **Frontend** - Electron + React UI with TanStack Router/Query and shadcn/ui
+- **Backend Daemon** - Go-based HTTP server with controllers, services, and adapters
+- **Runtime** - Platform-specific: `tmux` on Darwin/Linux, `conpty` on Windows
+- **Storage** - SQLite with change-data-capture (CDC) for real-time updates
+- **Adapters** - 23+ agent adapters, git worktree workspace, GitHub SCM integration
+
+For detailed architecture diagrams, data flows, and load-bearing rules, see [architecture.md](docs/architecture.md).
+
+---
+
+## Documentation
+
+| Document                                                 | Description                                             |
+| -------------------------------------------------------- | ------------------------------------------------------- |
+| [Architecture](docs/architecture.md)                     | System architecture, data flows, and load-bearing rules |
+| [Backend Code Structure](docs/backend-code-structure.md) | Package-by-package ownership and dependency rules       |
+| [AGENTS.md](AGENTS.md)                                   | Contributor and worker-agent contract                   |
+| [Agent Adapter Contract](docs/agent/README.md)           | Agent adapter interface and hook behavior               |
+
+---
 
 ## Testing
 
-The local gate is the backend Go build and race-enabled test suite:
-
 ```bash
-cd backend && go build ./... && go test -race ./...
+# Backend tests
+cd backend
+go test -race ./...
+
+# Frontend tests
+cd frontend
+pnpm test
+
+# Full CI validation locally
+npx @redwoodjs/agent-ci run --all
 ```
 
-GitHub Actions is the authoritative pre-merge gate; mirror its commands here
-when in doubt. See [`AGENTS.md`](AGENTS.md) for the regen workflow when
-touching the daemon API surface (`npm run sqlc`, `npm run api`).
+---
 
-## Status and roadmap
+## Configuration
 
-Progress tracking lives in [`docs/STATUS.md`](docs/STATUS.md): what is shipped
-on `main` today, what is still in flight, and the linked
-[`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1)
-milestone on GitHub.
+All configuration is environment-driven. The daemon takes no config file.
+
+| Variable              | Default              | Purpose                     |
+| --------------------- | -------------------- | --------------------------- |
+| `AO_PORT`             | `3001`               | HTTP bind port              |
+| `AO_REQUEST_TIMEOUT`  | `60s`                | Per-request timeout         |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap       |
+| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake          |
+| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory       |
+| `AO_AGENT`            | `claude-code`        | Compatibility agent adapter |
+| `GITHUB_TOKEN`        | -                    | GitHub auth token           |
+
+### Health Checks
+
+```bash
+curl localhost:3001/healthz   # Liveness probe
+curl localhost:3001/readyz    # Readiness probe
+```
+
+---
 
 ## Contributing
 
-Repo layout and the worker contract live in [`AGENTS.md`](AGENTS.md). Keep
-changes surgical, follow the package boundaries documented in
-[`docs/backend-code-structure.md`](docs/backend-code-structure.md), and prefer
-adding daemon HTTP routes over leaking storage / runtime into the CLI.
+We love contributions! Join our community on Discord to get started.
+
+### Join us on Discord
+
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white&logoSize=auto)](https://discord.com/invite/UZv7JjxbwG)
+
+**Daily contributor sync:** Every day at **10:00 PM IST**
+
+Get your issues verified by core contributors, ask questions, share progress, and learn from the community. New contributors are always welcome!
+
+**Why join Discord?**
+
+- Get your issues and PRs verified by core contributors before investing time
+- Learn from experienced contributors in daily sync calls
+- Share your progress and get feedback
+- Get help troubleshooting in real-time
+- Stay updated on the latest developments and roadmap
+
+### Quick Start
+
+1. **Join the Discord** - Connect with the community and get guidance
+2. **Read the contributor contract** - See [AGENTS.md](AGENTS.md) for repo layout, daemon/API boundaries, and coding conventions
+3. **Pick a focused problem** - Browse [open issues](https://github.com/AgentWrapper/agent-orchestrator/issues) and choose one small enough for a focused PR
+4. **Open a clear PR** - Keep changes narrow, explain user-visible impact, link issues, include tests
+5. **Iterate with contributors** - Use review feedback to tighten the PR until verified
+
+---
+
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+**[Star us on GitHub](https://github.com/AgentWrapper/agent-orchestrator)** • **[Report Issues](https://github.com/AgentWrapper/agent-orchestrator/issues)** • **[Discussions](https://github.com/AgentWrapper/agent-orchestrator/discussions)**
+
+Made with love by the Agent Orchestrator community
+
+</div>

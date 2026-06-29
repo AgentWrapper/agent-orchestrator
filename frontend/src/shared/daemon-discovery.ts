@@ -66,6 +66,11 @@ export type RunFileInfo = {
 	port: number;
 	/** startedAt in epoch ms; 0 when missing/unparseable. */
 	startedAtMs: number;
+	/**
+	 * Daemon ownership tag. "app" when the desktop app spawned this daemon;
+	 * undefined/empty for a headless `ao start` daemon.
+	 */
+	owner?: string;
 };
 
 /** Parse running.json contents. Returns null for malformed JSON or an invalid port. */
@@ -77,13 +82,19 @@ export function parseRunFile(contents: string): RunFileInfo | null {
 		return null;
 	}
 	if (typeof raw !== "object" || raw === null) return null;
-	const { pid, port, startedAt } = raw as { pid?: unknown; port?: unknown; startedAt?: unknown };
+	const { pid, port, startedAt, owner } = raw as {
+		pid?: unknown;
+		port?: unknown;
+		startedAt?: unknown;
+		owner?: unknown;
+	};
 	if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
 	const startedAtMs = typeof startedAt === "string" ? Date.parse(startedAt) : NaN;
 	return {
 		pid: typeof pid === "number" && Number.isInteger(pid) ? pid : 0,
 		port,
 		startedAtMs: Number.isNaN(startedAtMs) ? 0 : startedAtMs,
+		owner: typeof owner === "string" ? owner : undefined,
 	};
 }
 

@@ -61,18 +61,21 @@ func (l *lifecycleStack) Stop() {
 // sessionLifecycle is the narrow surface of sessionmanager.Manager used for
 // boot/shutdown wiring. A minimal interface keeps the daemon testable without
 // depending on the concrete manager type.
+//
+// SaveAndTeardownAll is deliberately ABSENT from this interface so the daemon
+// cannot tear down live sessions on shutdown. Sessions survive the daemon exit
+// and Reconcile on the next boot adopts them, preserving session IDs. Re-adding
+// the method here is a visible, reviewable interface change.
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
-	SaveAndTeardownAll(ctx context.Context) error
 }
 
 // startSession builds the controller-facing session service: a session manager
 // over the selected runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
-// manager so the caller can wire Reconcile/SaveAndTeardownAll into the
-// boot/shutdown sequence.
+// manager so the caller can wire Reconcile into the boot sequence.
 func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {

@@ -43,6 +43,16 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 		f.runs = append(f.runs, winner)
 		return f.insertErr
 	}
+	for _, existing := range f.runs {
+		if existing.SessionID == r.SessionID &&
+			existing.PRURL == r.PRURL &&
+			existing.TargetSHA == r.TargetSHA &&
+			existing.TargetSHA != "" &&
+			existing.Status != domain.ReviewRunFailed &&
+			existing.Verdict != domain.VerdictChangesRequested {
+			return domain.ErrDuplicateReviewRun
+		}
+	}
 	f.runs = append(f.runs, r)
 	return nil
 }
@@ -93,9 +103,9 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 	}
 	return domain.ReviewRun{}, false, nil
 }
-func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, _ domain.SessionID, prURL, sha string) (domain.ReviewRun, bool, error) {
+func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, sessionID domain.SessionID, prURL, sha string) (domain.ReviewRun, bool, error) {
 	for i := len(f.runs) - 1; i >= 0; i-- {
-		if f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha {
+		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha {
 			return f.runs[i], true, nil
 		}
 	}

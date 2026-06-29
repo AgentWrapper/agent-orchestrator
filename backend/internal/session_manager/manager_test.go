@@ -937,23 +937,67 @@ func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
 	}
 }
 
-// TestRestore_RefusesPromptlessWhenAdapterCannotResume preserves the typed
-// error: a promptless session whose adapter cannot resume (no native session id)
-// has genuinely nothing to relaunch from and must still return ErrNotResumable.
-func TestRestore_RefusesPromptlessWhenAdapterCannotResume(t *testing.T) {
+// TestRestore_PromptlessUnresumableRelaunchesFresh covers the genuine-reboot
+// case: a promptless session whose adapter cannot resume (no native session id,
+// no captured AgentSessionID) must be relaunched fresh via GetLaunchCommand
+// in the SAME id. The orchestrator is the canonical example: after a reboot
+// where tmux is truly gone, RestoreAll must recover it in place rather than
+// abandon it and mint a new one (which caused the id-increment bug).
+func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		// No AgentSessionID, no Prompt: exactly how an orchestrator is persisted.
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
+	// without an agentSessionId, and GetLaunchCommand returns a valid argv.
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("promptless unresumable session must relaunch fresh, got err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1 (fresh launch)", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Error("session must be live after fresh relaunch")
+	}
+}
+
+// TestRestore_PromptlessWorkerNotResumable is the RED test for the promptless-worker
+// fix: a KindWorker session with no prompt and no captured AgentSessionID (so the
+// adapter returns ok=false) must NOT be blank-relaunched. The session had no task
+// to replay and no native id to resume from, so relaunching fresh would silently
+// drop its work. Restore must return ErrNotResumable and leave the session terminated
+// (runtime.Create must NOT be called).
+func TestRestore_PromptlessWorkerNotResumable(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		// No AgentSessionID, no Prompt: promptless worker with no resume handle.
 		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root"},
 		Activity: domain.Activity{State: domain.ActivityExited},
 	}
+	rt := &fakeRuntime{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
-	// without an agentSessionId.
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	// when there is no AgentSessionID. With a KindWorker and empty Prompt, this
+	// must produce ErrNotResumable instead of a blank relaunch.
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrNotResumable) {
-		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("promptless unresumable worker must return ErrNotResumable, got %v", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0 (must not relaunch a promptless worker)", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("session must remain terminated after ErrNotResumable")
 	}
 }
 

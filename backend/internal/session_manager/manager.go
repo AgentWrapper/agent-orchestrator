@@ -26,13 +26,6 @@ var (
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
-	// ErrNotResumable means there is nothing for Restore to relaunch from: the
-	// harness adapter cannot resume the session (no native or derivable session
-	// id) AND no prompt was saved to fresh-launch from. Resumability is decided
-	// by the adapter (e.g. Claude Code pins a deterministic --session-id, so it
-	// resumes with no captured token), not by inspecting metadata fields here.
-	// Distinct from ErrNotRestorable (which is "not terminal yet").
-	ErrNotResumable = errors.New("session: nothing to resume from")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
@@ -43,6 +36,12 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
+	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
+	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
+	// with the system prompt only). Workers without a task and without a native
+	// session id have nothing meaningful to restore.
+	ErrNotResumable = errors.New("session: nothing to resume from")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -487,10 +486,11 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if meta.WorkspacePath == "" || meta.Branch == "" {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
-	// Resumability is NOT decided here: a promptless session can still be fully
-	// resumable when the harness pins a deterministic session id (Claude Code).
-	// restoreArgv asks the adapter and returns ErrNotResumable only when the
-	// adapter cannot resume AND there is no prompt to fresh-launch from.
+	// Resumability is decided inside restoreArgv, not here. A promptless session
+	// can still be fully resumable when the harness pins a deterministic session id
+	// (Claude Code). restoreArgv returns ErrNotResumable only for a promptless,
+	// unresumable non-orchestrator (a worker with no task and no native id to resume).
+	// Orchestrators always relaunch fresh with the system prompt only.
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -521,7 +521,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config))
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -828,7 +828,14 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 
 		// Step 3: relaunch via the existing single-session Restore method.
 		if _, err := m.Restore(ctx, rec.ID); err != nil {
-			m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
+			// A promptless, unresumable worker is intentionally left terminated
+			// (ErrNotResumable): expected, not an operational failure, so log it
+			// quietly rather than as an error.
+			if errors.Is(err, ErrNotResumable) {
+				m.logger.Warn("restore-all: session left terminated (nothing to resume)", "sessionID", rec.ID)
+			} else {
+				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
+			}
 		}
 	}
 	return nil
@@ -1220,7 +1227,11 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig) ([]string, error) {
+// Returns ErrNotResumable only for a promptless, unresumable non-orchestrator:
+// a worker with no prompt and no native session id has nothing to restore from.
+// Orchestrators are promptless by design and always relaunch fresh with the
+// system prompt only.
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig, kind domain.SessionKind) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -1233,12 +1244,13 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, nil
 	}
-	// The adapter reports no session to resume (no native or derivable session
-	// id). A saved prompt lets us relaunch fresh; with neither, there is
-	// genuinely nothing to restore from.
-	if meta.Prompt == "" {
+	// Adapter cannot resume. A saved prompt is replayed fresh. An orchestrator is
+	// promptless by design and relaunches with the system prompt only. A promptless
+	// WORKER has no task and no session id to restore from: do not blank-relaunch it.
+	if meta.Prompt == "" && kind != domain.KindOrchestrator {
 		return nil, ErrNotResumable
 	}
+	// Fall through to GetLaunchCommand (replays meta.Prompt; empty for an orchestrator).
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,

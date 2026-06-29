@@ -208,8 +208,10 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 // TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux exercises
 // Manager.Reconcile against a real sqlite.Store:
 //
-//   - Session A: is_terminated=0 but its runtime is GONE => Reconcile must
-//     mark it terminated in the DB.
+//   - Session A: is_terminated=0 but its runtime is GONE and it is a promptless
+//     KindWorker. reconcileLive marks it terminated. RestoreAll does NOT relaunch it
+//     (ErrNotResumable: no prompt, no session id, not an orchestrator). End state:
+//     is_terminated=true, runtime.Create count stays 0.
 //   - Session B: is_terminated=1 but its runtime is still ALIVE (leaked teardown)
 //     => Reconcile must call Destroy on its handle.
 func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
@@ -274,7 +276,10 @@ func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	// Session A must now be terminated in the store.
+	// Session A is a promptless KindWorker: reconcileLive captured its work and
+	// marked it terminated. RestoreAll skips it (ErrNotResumable: no prompt, no
+	// AgentSessionID, not an orchestrator). End state: is_terminated=true, no fresh
+	// runtime.Create (a blank relaunch would silently lose its task).
 	gotA, ok, err := st.store.GetSession(ctx, recA.ID)
 	if err != nil {
 		t.Fatalf("get session A: %v", err)
@@ -283,7 +288,11 @@ func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
 		t.Fatalf("session A: not found after Reconcile")
 	}
 	if !gotA.IsTerminated {
-		t.Fatalf("session A: want is_terminated=true after Reconcile, got false")
+		t.Fatalf("session A: want terminated (is_terminated=true) after crash recovery of promptless worker, got live")
+	}
+	// No runtime.Create: a promptless worker must not be blank-relaunched.
+	if st.rt.created != 0 {
+		t.Fatalf("want 0 runtime Creates (promptless worker must not relaunch), got %d", st.rt.created)
 	}
 
 	// Session B's leaked runtime must have been destroyed.

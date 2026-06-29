@@ -89,6 +89,7 @@ func (s *Server) Run(ctx context.Context) error {
 		PID:       os.Getpid(),
 		Port:      s.boundPort(),
 		StartedAt: time.Now().UTC(),
+		Owner:     os.Getenv("AO_OWNER"),
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {
 		_ = s.listen.Close()
@@ -148,3 +149,7 @@ func (s *Server) requestShutdown() {
 		close(s.shutdownRequested)
 	})
 }
+
+// RequestShutdown triggers the same clean shutdown as POST /shutdown: it makes
+// Run return so the daemon exits without tearing down sessions. Idempotent.
+func (s *Server) RequestShutdown() { s.requestShutdown() }

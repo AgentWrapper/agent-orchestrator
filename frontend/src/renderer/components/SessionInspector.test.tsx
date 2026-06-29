@@ -94,6 +94,14 @@ const approvedReview = {
 	createdAt: "2026-06-16T10:06:00Z",
 };
 
+const failedReview = {
+	...approvedReview,
+	id: "run-failed",
+	status: "failed",
+	verdict: "",
+	body: "reviewer crashed",
+};
+
 const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 	prUrl: `https://example.com/pr/${n}`,
 	prNumber: n,
@@ -263,6 +271,18 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
+	});
+
+	it("shows failed latest runs as failed and still allows rerun", async () => {
+		mockCommonGets([failedReview], "reviewer-pane", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
 	it("shows the no-PR empty state when the session has no PRs", async () => {

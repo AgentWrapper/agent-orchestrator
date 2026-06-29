@@ -67,6 +67,8 @@ func Build() ([]byte, error) {
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
+		*(&openapi31.Tag{Name: "import"}).WithDescription(
+			"Legacy AO project import (availability probe and run)"),
 	}
 
 	for _, op := range operations() {
@@ -189,6 +191,11 @@ var schemaNames = map[string]string{
 	// domain review entities
 	"DomainReviewRun":     "ReviewRun",
 	"ReviewPRReviewState": "PRReviewState",
+	// httpd/controllers: import wire envelopes
+	"ControllersImportStatusResponse": "ImportStatusResponse",
+	"ControllersImportRunResponse":    "ImportRunResponse",
+	// legacyimport report
+	"LegacyimportReport": "ImportReport",
 	// service/project entities + DTOs
 	"ProjectProject":        "Project",
 	"ProjectSummary":        "ProjectSummary",
@@ -276,7 +283,33 @@ func operations() []operation {
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
+	ops = append(ops, importOperations()...)
 	return ops
+}
+
+// importOperations declares the 2 /import operations. Must stay 1:1 with
+// the routes ImportController.Register mounts (enforced by the parity test).
+func importOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/import", id: "getImportStatus", tag: "import",
+			summary: "Check whether a legacy AO install is available to import",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ImportStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/import", id: "runImport", tag: "import",
+			summary: "Run the legacy AO project import through the daemon store",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ImportRunResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func notificationOperations() []operation {

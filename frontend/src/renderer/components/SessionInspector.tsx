@@ -576,6 +576,9 @@ function sessionReviewVerdict(reviewStates: PRReviewState[]): {
 	if (reviewStates.some((reviewState) => reviewState.status === "running")) {
 		return { label: "Reviewing...", tone: "running" };
 	}
+	if (reviewStates.some((reviewState) => reviewState.latestRun?.status === "failed")) {
+		return { label: "Failed", tone: "danger" };
+	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested")) {
 		return { label: "Changes requested", tone: "danger" };
 	}
@@ -590,6 +593,9 @@ function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
+	if (reviewState.latestRun?.status === "failed") {
+		return { label: "Failed", tone: "danger" };
+	}
 	switch (reviewState.status) {
 		case "running":
 			return { label: "Reviewing...", tone: "running" };

@@ -1,0 +1,215 @@
+# .github/workflows/frontend-nightly.yml
+name: Desktop nightly
+
+# Daily nightly build on main. Computes X.Y.(Z+1)-nightly.<UTC-ts>+<sha> from
+# the latest stable desktop tag, stamps it, builds all platforms, and publishes
+# a prerelease so electron-updater's `nightly` channel can resolve it. Skips when
+# there are no new commits since the last nightly.
+on:
+  schedule:
+    - cron: "30 13 * * *" # 13:30 UTC = 19:00 IST daily
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need tags + history for the no-new-commits check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - id: check
+        shell: bash
+        run: |
+          # Skip if HEAD is already covered by the most recent nightly tag.
+          last_nightly="$(git tag --list 'v*-nightly.*' --sort=-creatordate | head -n1)"
+          if [ -n "$last_nightly" ] && [ "$(git rev-list -n1 "$last_nightly")" = "$(git rev-parse HEAD)" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: version
+        if: steps.check.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          latest_stable="$(git tag --list 'desktop-v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -v nightly | head -n1)"
+          latest_stable="${latest_stable:-desktop-v0.0.0}"
+          short_sha="$(git rev-parse --short HEAD)"
+          version="$(node frontend/scripts/nightly-version.mjs "$latest_stable" "$short_sha")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: guard
+    if: needs.guard.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: npm ci
+      - name: Stamp nightly version
+        shell: bash
+        env:
+          NIGHTLY_VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          node -e "const v=process.env.NIGHTLY_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
+      - name: macOS signing setup
+        if: startsWith(matrix.os, 'macos')
+        uses: ./.github/actions/macos-signing-setup
+        with:
+          csc-link: ${{ secrets.CSC_LINK }}
+          csc-key-password: ${{ secrets.CSC_KEY_PASSWORD }}
+          apple-api-key-base64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          apple-api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      - name: Publish
+        shell: bash
+        run: |
+          # Retry transient macOS sign/notary flakes (Apple notary -1009,
+          # osx-sign keychain races) so the build self-heals instead of failing.
+          for i in 1 2 3; do
+            if npm run publish; then exit 0; fi
+            echo "::warning::publish attempt $i/3 failed (likely a transient macOS sign/notary flake)"
+            [ "$i" -lt 3 ] && sleep 30
+          done
+          echo "::error::publish failed after 3 attempts" >&2
+          exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AO_RELEASE_REPO: ${{ github.repository }}
+          AO_RELEASE_PRERELEASE: "true"
+          # macOS signing + notarization env is exported by the "macOS signing
+          # setup" step above via $GITHUB_ENV; the cert is in the keychain.
+
+  # Dedicated Intel (darwin-x64) nightly build leg. Kept separate from the
+  # release matrix (only a macOS host can build the x64 installer); publish-feed
+  # now waits on it so the x64 entry is present in nightly-mac.yml and Intel
+  # nightly users get auto-updates. Mirrors the release job's macOS steps exactly.
+  # Runner is macos-15-intel (macos-13 deprecated/no capacity; see release wf).
+  release-intel:
+    needs: guard
+    if: needs.guard.outputs.should_build == 'true'
+    runs-on: macos-15-intel
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: npm ci
+      - name: Stamp nightly version
+        shell: bash
+        env:
+          NIGHTLY_VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          node -e "const v=process.env.NIGHTLY_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
+      - name: macOS signing setup
+        uses: ./.github/actions/macos-signing-setup
+        with:
+          csc-link: ${{ secrets.CSC_LINK }}
+          csc-key-password: ${{ secrets.CSC_KEY_PASSWORD }}
+          apple-api-key-base64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          apple-api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
+          apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
+          apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      - name: Publish
+        shell: bash
+        run: |
+          # Retry transient macOS sign/notary flakes (Apple notary -1009,
+          # osx-sign keychain races) so the build self-heals instead of failing.
+          for i in 1 2 3; do
+            if npm run publish; then exit 0; fi
+            echo "::warning::publish attempt $i/3 failed (likely a transient macOS sign/notary flake)"
+            [ "$i" -lt 3 ] && sleep 30
+          done
+          echo "::error::publish failed after 3 attempts" >&2
+          exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AO_RELEASE_REPO: ${{ github.repository }}
+          AO_RELEASE_PRERELEASE: "true"
+      - name: Upload stable asset aliases (macOS)
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64) alias_name="agent-orchestrator-darwin-arm64.zip" ;;
+            x86_64) alias_name="agent-orchestrator-darwin-x64.zip" ;;
+            *) echo "unsupported macOS arch: $arch" >&2; exit 1 ;;
+          esac
+          src="$(ls out/make/zip/darwin/*/*.zip | head -n1)"
+          if [ -z "$src" ]; then echo "no macOS zip found under out/make/zip/darwin" >&2; exit 1; fi
+          cp "$src" "$alias_name"
+          gh release upload "$tag" "$alias_name" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Generate the nightly electron-updater feed from the versioned prerelease
+  # assets. The nightly version is only stamped in-memory on the build runners,
+  # so derive the tag from the guard job's computed version, not package.json.
+  publish-feed:
+    needs: [guard, release, release-intel]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Generate and upload the nightly feed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIGHTLY_VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          # Forge stamps package.json to VERSION without +build metadata and
+          # publishes to v<that>. Match it.
+          version="${NIGHTLY_VERSION%%+*}"
+          tag="v$version"
+          mkdir -p dist
+          gh release download "$tag" --dir dist --clobber
+          node scripts/feed.mjs dist "$version" nightly
+          shopt -s nullglob
+          assets=(dist/nightly*.yml dist/*.blockmap)
+          if [ ${#assets[@]} -eq 0 ]; then echo "no feed assets generated" >&2; exit 1; fi
+          gh release upload "$tag" "${assets[@]}" --clobber

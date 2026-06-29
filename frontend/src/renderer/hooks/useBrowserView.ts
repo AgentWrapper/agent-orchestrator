@@ -44,6 +44,26 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
+// The native WebContentsView is a window-level overlay, so DOM `overflow:
+// hidden` never clips it — it paints wherever the slot's bounding box lands.
+// Inside the collapsible inspector the slot sits in a `min-w-[280px]` wrapper,
+// so on a narrow panel (small window, or mid-collapse) the slot's box spills
+// past its resizable-panel column. Intersect the slot box with that column so
+// the view can only ever paint inside it, never over the terminal/sidebar.
+function visibleSlotRect(node: HTMLElement): BrowserRect {
+	const rect = node.getBoundingClientRect();
+	let { left, top, right, bottom } = rect;
+	const column = node.closest<HTMLElement>("[data-panel]");
+	if (column) {
+		const bounds = column.getBoundingClientRect();
+		left = Math.max(left, bounds.left);
+		top = Math.max(top, bounds.top);
+		right = Math.min(right, bounds.right);
+		bottom = Math.min(bottom, bounds.bottom);
+	}
+	return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
 export function useBrowserView({
 	sessionId,
 	active,
@@ -57,6 +77,7 @@ export function useBrowserView({
 	const viewIdRef = useRef("");
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
+	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 
@@ -78,15 +99,10 @@ export function useBrowserView({
 			sendHiddenBounds(id);
 			return;
 		}
-		const rect = node.getBoundingClientRect();
+		const rect = visibleSlotRect(node);
 		const payload = {
 			viewId: id,
-			rect: {
-				x: rect.x,
-				y: rect.y,
-				width: rect.width,
-				height: rect.height,
-			},
+			rect,
 			visible: rect.width > 0 && rect.height > 0,
 		};
 		window.ao?.browser.setBounds(payload);
@@ -108,6 +124,23 @@ export function useBrowserView({
 			: window.setTimeout(() => measureAndSend(), 16);
 	}, [measureAndSend]);
 
+	// A ResizeObserver only fires on size changes, so a position-only layout shift
+	// leaves the native overlay at stale bounds: entering/leaving pop-out moves the
+	// slot into a different panel, and opening the inspector (what `ao preview`
+	// does) reflows the slot's x without changing the observed node's box size.
+	// Neither fires the observer, so the view visibly spills over the sidebar/
+	// terminal until an unrelated window resize re-measures it. Re-measure now and
+	// again once the panel transition has settled (~240ms) so the final geometry
+	// always wins.
+	const scheduleSettleMeasure = useCallback(() => {
+		scheduleMeasure();
+		if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+		settleTimerRef.current = window.setTimeout(() => {
+			settleTimerRef.current = null;
+			measureAndSend();
+		}, 280);
+	}, [measureAndSend, scheduleMeasure]);
+
 	const slotRef = useCallback(
 		(node: HTMLDivElement | null) => {
 			observerRef.current?.disconnect();
@@ -115,6 +148,13 @@ export function useBrowserView({
 			if (node) {
 				const observer = new ResizeObserver(scheduleMeasure);
 				observer.observe(node);
+				// Also track the resizable-panel column: while the inspector
+				// collapse/expand animates, the slot's own width stays pinned by
+				// `min-w-[280px]` (so a slot-only observer never fires), but the
+				// column's width changes every frame. Observing it re-measures
+				// through the whole animation so the view never lags behind.
+				const column = node.closest("[data-panel]");
+				if (column) observer.observe(column);
 				observerRef.current = observer;
 			}
 			scheduleMeasure();
@@ -129,7 +169,7 @@ export function useBrowserView({
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
-			scheduleMeasure();
+			scheduleSettleMeasure();
 		});
 		return () => {
 			disposed = true;
@@ -139,7 +179,7 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [scheduleMeasure, sendHiddenBounds, sessionId]);
+	}, [scheduleSettleMeasure, sendHiddenBounds, sessionId]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -150,11 +190,11 @@ export function useBrowserView({
 
 	useEffect(() => {
 		if (active) {
-			scheduleMeasure();
+			scheduleSettleMeasure();
 		} else {
 			sendHiddenBounds();
 		}
-	}, [active, poppedOut, scheduleMeasure, sendHiddenBounds]);
+	}, [active, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
@@ -165,6 +205,7 @@ export function useBrowserView({
 			window.removeEventListener("scroll", handle, true);
 			observerRef.current?.disconnect();
 			cancelScheduledMeasure();
+			if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
 		};
 	}, [cancelScheduledMeasure, scheduleMeasure]);
 

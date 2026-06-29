@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
@@ -483,6 +484,19 @@ type NotificationEnvelope struct {
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
 type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications"`
+}
+
+// ImportStatusResponse is the body of GET /api/v1/import: whether a legacy AO
+// install is available to import, and the root the daemon would read from.
+type ImportStatusResponse struct {
+	Available  bool   `json:"available"`
+	LegacyRoot string `json:"legacyRoot"`
+}
+
+// ImportRunResponse is the body of POST /api/v1/import: the structured outcome
+// of the import run (counts + notes), reused verbatim from the import engine.
+type ImportRunResponse struct {
+	Report legacyimport.Report `json:"report"`
 }
 
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.

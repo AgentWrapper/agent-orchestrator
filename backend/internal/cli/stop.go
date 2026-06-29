@@ -125,11 +125,19 @@ func (c *commandContext) waitForStopped(ctx context.Context, pid int, runFilePat
 			return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
 		}
 		if info == nil {
-			// The daemon removes running.json before the process necessarily exits.
-			// Keep waiting so Windows releases inherited handles such as daemon.log
-			// before tests or callers clean up the data directory.
+			// The run-file is the daemon's own liveness marker; it removes it as
+			// it shuts down, before the OS process has necessarily exited. Once
+			// the marker is gone the daemon has committed to stopping, so treat
+			// that as stopped.
+			//
+			// We still poll for full process exit as a best effort so Windows
+			// releases inherited handles such as daemon.log before callers clean
+			// up the data directory, but exceeding the timeout is NOT an error:
+			// with no desktop client connected the daemon can drain its
+			// background workers slower than the stop timeout, and failing here
+			// made `ao stop` spuriously report failure (issue #2214).
 			if !c.deps.Now().Before(deadline) {
-				return daemonStatus{}, fmt.Errorf("daemon pid %d removed run-file but did not exit within %s", pid, timeout)
+				return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
 			}
 			c.deps.Sleep(100 * time.Millisecond)
 			continue

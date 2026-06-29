@@ -4,8 +4,16 @@ import (
 	"testing"
 	"time"
 
+	yaml "gopkg.in/yaml.v3"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// nonNilNode returns a non-nil *yaml.Node for struct fields that are captured
+// as raw nodes (tracker, scm, etc.), used to trigger the "dropped" note path.
+func nonNilNode() *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Value: "x"}
+}
 
 func TestMapPermission(t *testing.T) {
 	cases := []struct {

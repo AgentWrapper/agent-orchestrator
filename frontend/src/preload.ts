@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
+import type { MigrationState } from "./main/app-state";
+import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 
 export type BrowserBoundsInput = {
 	viewId: string;
@@ -65,6 +67,28 @@ const api = {
 			ipcRenderer.on("notifications:click", wrapped);
 			return () => {
 				ipcRenderer.off("notifications:click", wrapped);
+			};
+		},
+	},
+	appState: {
+		getMigration: () => ipcRenderer.invoke("appState:getMigration") as Promise<MigrationState>,
+		setMigration: (migration: MigrationState) =>
+			ipcRenderer.invoke("appState:setMigration", migration) as Promise<void>,
+	},
+	updateSettings: {
+		get: () => ipcRenderer.invoke("updateSettings:get") as Promise<UpdateSettings>,
+		set: (settings: UpdateSettings) => ipcRenderer.invoke("updateSettings:set", settings) as Promise<void>,
+	},
+	updates: {
+		getStatus: () => ipcRenderer.invoke("updates:getStatus") as Promise<UpdateStatus>,
+		check: () => ipcRenderer.invoke("updates:check") as Promise<void>,
+		download: () => ipcRenderer.invoke("updates:download") as Promise<void>,
+		install: () => ipcRenderer.invoke("updates:install") as Promise<void>,
+		onStatus: (listener: (status: UpdateStatus) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => listener(status);
+			ipcRenderer.on("updates:status", wrapped);
+			return () => {
+				ipcRenderer.off("updates:status", wrapped);
 			};
 		},
 	},
