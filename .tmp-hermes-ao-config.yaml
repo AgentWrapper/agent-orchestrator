@@ -1,0 +1,9 @@
+port: 3999
+defaults:
+  runtime: process
+  agent: hermes
+  workspace: worktree
+projects:
+  ao:
+    path: /home/hermes/agent-orchestrator
+    defaultBranch: main
