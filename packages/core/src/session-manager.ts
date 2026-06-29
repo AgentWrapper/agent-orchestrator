@@ -13,6 +13,7 @@
 
 import { statSync, existsSync, writeFileSync, mkdirSync, utimesSync, unlinkSync, readFileSync } from "node:fs";
 import { recordActivityEvent } from "./activity-events.js";
+import { provisionSkills } from "./skill-provisioning.js";
 import { resolveRuntimeName } from "./runtime-resolution.js";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
@@ -1721,6 +1722,69 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
         if (plugins.workspace.postCreate) {
           await plugins.workspace.postCreate(wsInfo, project);
+        }
+      }
+
+      // Provision the task-scoped skill pool into the worktree's
+      // `.claude/skills/` from the project's `.maestro/skills/` library. Only
+      // the names passed via `ao spawn --skills` are copied; missing, disabled,
+      // or unsafe names are skipped with a warning. Guarded on a real worktree
+      // (workspacePath !== project.path) so we never write skills into the
+      // user's own project root. FAIL-OPEN: never breaks the spawn.
+      if (
+        spawnConfig.skills &&
+        spawnConfig.skills.length > 0 &&
+        workspacePath !== project.path
+      ) {
+        try {
+          const skillResult = provisionSkills({
+            projectRoot: project.path,
+            worktreePath: workspacePath,
+            skills: spawnConfig.skills,
+          });
+          if (skillResult.provisioned.length > 0) {
+            recordActivityEvent({
+              projectId: spawnConfig.projectId,
+              sessionId,
+              source: "session-manager",
+              kind: "session.skills_provisioned",
+              level: "info",
+              summary: `provisioned ${skillResult.provisioned.length} skill(s): ${skillResult.provisioned.join(", ")}`,
+              data: { skills: skillResult.provisioned },
+            });
+          }
+          const skipped = [
+            ...skillResult.missing.map((n) => `${n} (not found)`),
+            ...skillResult.disabled.map((n) => `${n} (disabled)`),
+            ...skillResult.invalid.map((n) => `${n} (invalid name)`),
+          ];
+          if (skipped.length > 0) {
+            recordActivityEvent({
+              projectId: spawnConfig.projectId,
+              sessionId,
+              source: "session-manager",
+              kind: "session.skills_skipped",
+              level: "warn",
+              summary: `skipped ${skipped.length} skill(s): ${skipped.join(", ")}`,
+              data: {
+                missing: skillResult.missing,
+                disabled: skillResult.disabled,
+                invalid: skillResult.invalid,
+              },
+            });
+          }
+        } catch (err) {
+          // Belt-and-suspenders: provisionSkills is already fail-open, but the
+          // spawn must never break on a skill-provisioning regression.
+          recordActivityEvent({
+            projectId: spawnConfig.projectId,
+            sessionId,
+            source: "session-manager",
+            kind: "session.skills_failed",
+            level: "warn",
+            summary: `skill provisioning failed`,
+            data: { reason: err instanceof Error ? err.message : String(err) },
+          });
         }
       }
 

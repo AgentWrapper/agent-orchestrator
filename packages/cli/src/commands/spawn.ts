@@ -311,6 +311,7 @@ async function spawnSession(
   prompt?: string,
   title?: string,
   model?: string,
+  skills?: string[],
 ): Promise<void> {
   const spinner = ora("Creating session").start();
 
@@ -350,6 +351,7 @@ async function spawnSession(
       prompt: sanitizedPrompt,
       title: sanitizedTitle,
       model,
+      skills,
     });
 
     let claimedPrUrl: string | null = null;
@@ -434,6 +436,10 @@ export function registerSpawn(program: Command): void {
       "--title <text>",
       "Short human-readable title (\"what it's working on\"), shown on cards (max 80 chars)",
     )
+    .option(
+      "--skills <list>",
+      "Comma-separated skill names to provision into the worker's .claude/skills/ from the project's .maestro/skills/<name>/SKILL.md library (task-scoped). Unknown or disabled names are skipped with a warning.",
+    )
     .action(
       async (
         issue: string | undefined,
@@ -446,6 +452,7 @@ export function registerSpawn(program: Command): void {
           prompt?: string;
           promptFile?: string;
           title?: string;
+          skills?: string;
         },
         command: Command,
       ) => {
@@ -495,6 +502,16 @@ export function registerSpawn(program: Command): void {
           process.exit(1);
         }
 
+        // Comma-separated skill names → trimmed, de-empty list (undefined when
+        // not passed). Resolution/validation against the library happens in
+        // core at provision time, where the project root is known.
+        const requestedSkills = opts.skills
+          ? opts.skills
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined;
+
         const claimOptions: SpawnClaimOptions = {
           claimPr: opts.claimPr,
           assignOnGithub: opts.assignOnGithub,
@@ -532,6 +549,7 @@ export function registerSpawn(program: Command): void {
             resolvedPrompt,
             opts.title,
             requestedModel,
+            requestedSkills,
           );
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));

@@ -391,6 +391,13 @@ export interface SessionSpawnConfig {
    * worker model. Undefined = fall back to configured defaults.
    */
   model?: string;
+  /**
+   * Task-scoped skill pool: names of skills to provision from the project's
+   * `.maestro/skills/<name>/SKILL.md` library into the new worktree's
+   * `.claude/skills/`. Only the listed skills are copied (bounded scope);
+   * missing/disabled names are skipped, not fatal. Set via `ao spawn --skills`.
+   */
+  skills?: string[];
 }
 
 /** Config for creating an orchestrator session */
