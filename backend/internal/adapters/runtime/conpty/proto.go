@@ -8,7 +8,7 @@ package conpty
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
+	// "math"
 )
 
 // Message type constants. Values must match pty-host.ts MSG_* constants exactly.
@@ -46,16 +46,28 @@ type GetOutputReq struct {
 // EncodeMessage encodes a single frame into the binary protocol format.
 // It allocates a fresh slice of exactly 5+len(payload) bytes.
 // Returns an error if the payload exceeds the 4-byte length field capacity.
+const maxPayloadSize = ^uint32(0)
+
 func EncodeMessage(msgType byte, payload []byte) ([]byte, error) {
 	n := len(payload)
-	if n > math.MaxUint32 {
-		return nil, fmt.Errorf("conpty: payload too large (%d bytes, max %d)", n, math.MaxUint32)
+
+	if uint64(n) > uint64(maxPayloadSize) {
+		return nil, fmt.Errorf(
+			"conpty: payload too large (%d bytes, max %d)",
+			n,
+			uint64(maxPayloadSize),
+		)
 	}
-	payloadLen := uint32(n) // safe: n <= math.MaxUint32 checked above
+
+	payloadLen := uint32(n)
+
 	frame := make([]byte, 5+n)
 	frame[0] = msgType
+
 	binary.BigEndian.PutUint32(frame[1:5], payloadLen)
+
 	copy(frame[5:], payload)
+
 	return frame, nil
 }
 
