@@ -38,6 +38,10 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session launched with (from `ao spawn --model`
+	// or resolved project/role config), persisted so a restart restores the same
+	// model. Empty means fall back to the resolved project/role config on restore.
+	Model string `json:"model,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable

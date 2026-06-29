@@ -146,6 +146,7 @@ type SpawnSessionRequest struct {
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	Model     string              `json:"model,omitempty"`
 }
 
 // SessionResponse is the { session } body shared by session create/get.

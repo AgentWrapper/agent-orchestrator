@@ -2497,6 +2497,8 @@ components:
           - worker
           - orchestrator
           type: string
+        model:
+          type: string
         projectId:
           type: string
         prompt:

@@ -20,6 +20,7 @@ type spawnOptions struct {
 	issue      string
 	claimPR    string
 	noTakeover bool
+	model      string
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -30,6 +31,7 @@ type spawnRequest struct {
 	Harness   string `json:"harness,omitempty"`
 	Branch    string `json:"branch,omitempty"`
 	Prompt    string `json:"prompt,omitempty"`
+	Model     string `json:"model,omitempty"`
 }
 
 type spawnResult struct {
@@ -72,6 +74,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Harness:   opts.harness,
 				Branch:    opts.branch,
 				Prompt:    opts.prompt,
+				Model:     opts.model,
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -125,6 +128,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
+	f.StringVar(&opts.model, "model", "", "Override the model for this session only (per-spawn; overrides project worker.agentConfig.model)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	return cmd

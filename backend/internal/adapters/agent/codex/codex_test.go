@@ -581,3 +581,47 @@ func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestGetLaunchCommandAppliesModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5.5-codex"},
+		Prompt: "do the thing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5.5-codex"}) {
+		t.Fatalf("command %#v missing --model flag", cmd)
+	}
+	// --model must precede the `--` prompt separator, else codex parses it as a
+	// positional prompt arg instead of a flag.
+	modelIdx, dashIdx := -1, -1
+	for i, a := range cmd {
+		if a == "--model" && modelIdx == -1 {
+			modelIdx = i
+		}
+		if a == "--" && dashIdx == -1 {
+			dashIdx = i
+		}
+	}
+	if modelIdx == -1 {
+		t.Fatalf("--model not found in %#v", cmd)
+	}
+	if dashIdx != -1 && modelIdx > dashIdx {
+		t.Fatalf("--model (%d) must precede prompt separator -- (%d): %#v", modelIdx, dashIdx, cmd)
+	}
+}
+
+func TestGetLaunchCommandNoModelByDefault(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range cmd {
+		if a == "--model" {
+			t.Fatalf("unexpected --model in %#v when no model configured", cmd)
+		}
+	}
+}
