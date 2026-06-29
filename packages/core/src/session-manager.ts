@@ -72,7 +72,7 @@ import {
   parseCanonicalLifecycle,
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
-import { seedRlmContext } from "./rlm-seed.js";
+import { seedRlmContext, withRlmContext } from "./rlm-seed.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -1727,8 +1727,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       // Auto-seed rlm context (worker spawns only — this path is always a
       // worker; the orchestrator has its own spawn function). Query
-      // maestro-search for transcripts relevant to this task and prepend the
-      // top snippets to the task prompt. FAIL-OPEN: a missing binary, error,
+      // maestro-search for transcripts relevant to this task and add the top
+      // snippets as guarded reference context. FAIL-OPEN: a missing binary, error,
       // timeout, or empty result leaves the prompt untouched (seedRlmContext
       // returns null), so seeding never breaks the spawn.
       let seededTaskPrompt = taskPrompt;
@@ -1739,7 +1739,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             taskText: spawnConfig.prompt ?? resolvedIssue?.title,
           });
           if (rlmBlock) {
-            seededTaskPrompt = taskPrompt ? `${rlmBlock}\n\n${taskPrompt}` : rlmBlock;
+            seededTaskPrompt = taskPrompt ? withRlmContext(rlmBlock, taskPrompt) : rlmBlock;
           }
         } catch {
           // Belt-and-suspenders: seedRlmContext is already fail-open and never

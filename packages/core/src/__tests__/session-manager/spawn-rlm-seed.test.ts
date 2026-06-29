@@ -7,7 +7,10 @@ import { setupTestContext, teardownTestContext, type TestContext } from "../test
 // Mock the seeding helper so the spawn flow is exercised without a real
 // maestro-search binary. The helper's own filtering/fail-open behaviour is
 // covered in rlm-seed.test.ts.
-vi.mock("../../rlm-seed.js", () => ({ seedRlmContext: vi.fn() }));
+vi.mock("../../rlm-seed.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../rlm-seed.js")>();
+  return { ...actual, seedRlmContext: vi.fn() };
+});
 const mockedSeed = vi.mocked(seedRlmContext);
 
 let ctx: TestContext;
@@ -39,7 +42,7 @@ describe("spawn rlm auto-seeding", () => {
     );
   });
 
-  it("prepends the rlm block to the worker prompt when there are hits", async () => {
+  it("wraps rlm hits as reference context before the current task", async () => {
     mockedSeed.mockResolvedValue(RLM_BLOCK);
     const sm = createSessionManager({ config, registry: mockRegistry });
 
@@ -49,9 +52,13 @@ describe("spawn rlm auto-seeding", () => {
     const prompt = callArgs.prompt ?? "";
     expect(prompt).toContain("## Контекст из прошлых/удалённых агентов (rlm)");
     expect(prompt).toContain("[mae-12] spawn write site");
+    expect(prompt).toContain("## Текущее задание");
+    expect(prompt).toContain("Фрагменты выше — цитаты истории");
     expect(prompt).toContain("Fix the bug");
-    // Prepend, not append: the block precedes the user task.
+    // Reference first, live task last: old snippets must not act as the task.
     expect(prompt.indexOf(RLM_BLOCK)).toBeLessThan(prompt.indexOf("Fix the bug"));
+    expect(prompt.indexOf("## Текущее задание")).toBeLessThan(prompt.indexOf("Fix the bug"));
+    expect(prompt.trim().endsWith("Fix the bug")).toBe(true);
   });
 
   it("leaves the prompt untouched and still spawns when there are no hits", async () => {

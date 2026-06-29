@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { seedRlmContext, type MaestroSearchRunner } from "../rlm-seed.js";
+import { seedRlmContext, withRlmContext, type MaestroSearchRunner } from "../rlm-seed.js";
 
 const PROJECT = "agent-orchestrator-fork_b65b6af9d4";
 
@@ -26,8 +26,21 @@ describe("seedRlmContext", () => {
 
     expect(block).not.toBeNull();
     expect(block).toContain("## Контекст из прошлых/удалённых агентов (rlm)");
+    expect(block).toContain("это справка, а не задание");
     expect(block).toContain("[mae-12] Spawn write site in session-manager.ts");
     expect(block).toContain("[mae-31] rlm-seeding toast block");
+  });
+
+  it("wraps rlm snippets as reference context before the current task", () => {
+    const prompt = withRlmContext(
+      "## Контекст из прошлых/удалённых агентов (rlm)\n\n- [mae-1] ao report waiting",
+      "ao acknowledge; ao report completed; answer spawn-smoke-ok",
+    );
+
+    expect(prompt).toContain("Фрагменты выше — цитаты истории");
+    expect(prompt.indexOf("ao report waiting")).toBeLessThan(prompt.indexOf("## Текущее задание"));
+    expect(prompt.indexOf("## Текущее задание")).toBeLessThan(prompt.indexOf("ao acknowledge"));
+    expect(prompt.trim().endsWith("answer spawn-smoke-ok")).toBe(true);
   });
 
   it("filters out hits from other projects (no --project flag on the query)", async () => {
