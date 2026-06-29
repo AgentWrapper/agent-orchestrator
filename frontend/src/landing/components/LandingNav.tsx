@@ -71,7 +71,7 @@ const socials = [
 
 const navLinks = [
 	{ label: "Demo", href: "#see-it" },
-	{ label: "Agents", href: "#agents" },
+	{ label: "Features", href: "#features" },
 	{ label: "Docs", href: "/docs" },
 ];
 

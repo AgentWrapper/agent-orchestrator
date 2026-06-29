@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 declare global {
 	interface Window {
 		twttr?: {
+			ready?: (callback: () => void) => void;
 			widgets?: {
-				load?: () => void;
+				load?: (element?: HTMLElement) => void;
+				createTweet?: (
+					tweetId: string,
+					element: HTMLElement,
+					options?: { theme?: "dark" | "light"; dnt?: boolean; conversation?: "none"; width?: number },
+				) => Promise<HTMLElement>;
 			};
 		};
 	}
@@ -19,6 +25,8 @@ const posts = [
 		label: "Signal",
 		author: "Teknium",
 		note: "Most important outside validation.",
+		text: "Outside validation that AO is landing with serious agent builders.",
+		meta: "builder signal",
 	},
 	{
 		handle: "facito0",
@@ -26,6 +34,8 @@ const posts = [
 		label: "Mood",
 		author: "FacitoO",
 		note: "A lightweight social proof hit from daily AO usage.",
+		text: "A small but useful signal from someone actually using the workflow.",
+		meta: "daily AO usage",
 	},
 	{
 		handle: "buchireddy",
@@ -33,6 +43,8 @@ const posts = [
 		label: "Builder",
 		author: "Buchi Reddy B",
 		note: "Went all-in early on the AO building blocks.",
+		text: "I really loved the building blocks present in @aoagents, hence we went all-in on that pretty early. Happy to share more details if it helps others.",
+		meta: "3:41 AM - Jun 9, 2026",
 	},
 	{
 		handle: "oxwizzdom",
@@ -40,6 +52,8 @@ const posts = [
 		label: "Code read",
 		author: "oxwizzdom",
 		note: "Weekend codebase teardown and minimal rebuild.",
+		text: "1/ @agent_wrapper & @composio shipped @aoagents a while back. runs 50 coding agents in parallel on the same repo. i spent a weekend reading the codebase. found 5 techniques that make it work.",
+		meta: "repo teardown",
 	},
 	{
 		handle: "addddiiie",
@@ -47,6 +61,8 @@ const posts = [
 		label: "Use case",
 		author: "Adi",
 		note: "Parallel dev agents framed in one clean line.",
+		text: "The core use case explained simply: parallel agents without babysitting.",
+		meta: "parallel workflow",
 	},
 	{
 		handle: "aoagents",
@@ -54,11 +70,17 @@ const posts = [
 		label: "Official",
 		author: "Agent Orchestrator",
 		note: "A short official signal from the AO account.",
+		text: "Best as it gets",
+		meta: "official AO",
 	},
 ];
 
 function postUrl(post: (typeof posts)[number]) {
 	return `https://twitter.com/${post.handle}/status/${post.statusIdParts.join("")}`;
+}
+
+function postId(post: (typeof posts)[number]) {
+	return post.statusIdParts.join("");
 }
 
 function ArrowUpRightIcon({ className = "" }: { className?: string }) {
@@ -78,15 +100,21 @@ function MessageCircleIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function loadTwitterWidgets() {
+function loadTwitterWidgets(target?: HTMLElement | null, onReady?: () => void) {
+	const load = () => {
+		window.twttr?.widgets?.load?.(target ?? undefined);
+		window.twttr?.ready?.(() => onReady?.());
+		onReady?.();
+	};
+
 	if (window.twttr?.widgets) {
-		window.twttr.widgets.load?.();
+		load();
 		return;
 	}
 
 	const existing = document.getElementById("twitter-wjs");
 	if (existing) {
-		existing.addEventListener("load", () => window.twttr?.widgets?.load?.(), { once: true });
+		existing.addEventListener("load", load, { once: true });
 		return;
 	}
 
@@ -95,7 +123,7 @@ function loadTwitterWidgets() {
 	script.src = "https://platform.twitter.com/widgets.js";
 	script.async = true;
 	script.charset = "utf-8";
-	script.onload = () => window.twttr?.widgets?.load?.();
+	script.onload = load;
 	document.body.appendChild(script);
 }
 
@@ -119,9 +147,43 @@ function usePageTheme() {
 
 export function LandingSocialProof() {
 	const theme = usePageTheme();
+	const tweetRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
 	useEffect(() => {
-		loadTwitterWidgets();
+		const target = document.getElementById("testimonials");
+		const renderTweets = () => {
+			for (const post of posts) {
+				const id = postId(post);
+				const node = tweetRefs.current[id];
+				if (!node || node.dataset.tweetRendered === `${id}-${theme}`) continue;
+				if (!window.twttr?.widgets?.createTweet) continue;
+
+				node.dataset.tweetRendered = `${id}-${theme}`;
+				node.innerHTML = "";
+				void window.twttr.widgets
+					.createTweet(id, node, {
+						theme: theme === "light" ? "light" : "dark",
+						dnt: true,
+						conversation: "none",
+						width: 420,
+					})
+					.catch(() => {
+						delete node.dataset.tweetRendered;
+					});
+			}
+		};
+
+	loadTwitterWidgets(target, renderTweets);
+	window.twttr?.ready?.(renderTweets);
+
+	const timers = [350, 1000, 2200, 4200, 7000].map((delay) =>
+		window.setTimeout(() => {
+			window.twttr?.ready?.(renderTweets);
+			renderTweets();
+			}, delay),
+		);
+
+		return () => timers.forEach((timer) => window.clearTimeout(timer));
 	}, [theme]);
 
 	return (
@@ -134,7 +196,7 @@ export function LandingSocialProof() {
 				<div className="mx-auto max-w-[1320px]">
 					<div className="mb-12 grid items-end gap-8 lg:grid-cols-12">
 						<div className="lg:col-span-7">
-							<div className="serial-num mb-3 font-mono text-xs">06 - in the wild</div>
+							<div className="serial-num mb-3 font-mono text-xs">In the wild</div>
 							<h2
 								className="font-display font-bold leading-[1.02] tracking-tight text-[color:var(--fg)]"
 								style={{ fontSize: "clamp(32px, 4.8vw, 60px)" }}
@@ -154,7 +216,14 @@ export function LandingSocialProof() {
 
 					<div className="tweet-masonry">
 						{posts.map((post, index) => (
-							<TweetCard key={`${theme}-${post.handle}-${index}`} post={post} index={index} theme={theme} />
+							<TweetCard
+								key={`${theme}-${post.handle}-${index}`}
+								post={post}
+								index={index}
+								setTweetRef={(node) => {
+									tweetRefs.current[postId(post)] = node;
+								}}
+							/>
 						))}
 					</div>
 				</div>
@@ -163,7 +232,47 @@ export function LandingSocialProof() {
 	);
 }
 
-function TweetCard({ post, index, theme }: { post: (typeof posts)[number]; index: number; theme: string }) {
+function TweetFallback({ post, url }: { post: (typeof posts)[number]; url: string }) {
+	return (
+		<div className="tweet-fallback">
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 items-center gap-3">
+					<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-sm font-bold text-[color:var(--accent)]">
+						{post.author.slice(0, 1)}
+					</div>
+					<div className="min-w-0">
+						<div className="truncate text-[15px] font-semibold text-[color:var(--fg)]">{post.author}</div>
+						<div className="truncate text-[13px] text-[color:var(--fg-dim)]">@{post.handle}</div>
+					</div>
+				</div>
+				<span className="text-lg font-semibold text-[color:var(--fg-muted)]">X</span>
+			</div>
+
+			<p className="mt-4 whitespace-pre-line text-[17px] leading-relaxed text-[color:var(--fg)]">{post.text}</p>
+
+			<div className="mt-5 border-t border-[color:var(--border-strong)] pt-3 text-[13px] text-[color:var(--fg-dim)]">
+				{post.meta}
+			</div>
+			<div className="mt-4 flex items-center gap-5 text-[13px] text-[color:var(--fg-muted)]">
+				<span>Like</span>
+				<span>Reply</span>
+				<a href={url} target="_blank" rel="noreferrer" className="hover:text-[color:var(--accent)]">
+					Read more on X
+				</a>
+			</div>
+		</div>
+	);
+}
+
+function TweetCard({
+	post,
+	index,
+	setTweetRef,
+}: {
+	post: (typeof posts)[number];
+	index: number;
+	setTweetRef: (node: HTMLDivElement | null) => void;
+}) {
 	const url = postUrl(post);
 
 	return (
@@ -195,15 +304,12 @@ function TweetCard({ post, index, theme }: { post: (typeof posts)[number]; index
 			<div className="px-3 pb-4 pt-3">
 				<p className="mb-3 px-1 text-[13px] leading-relaxed text-[color:var(--fg-muted)]">{post.note}</p>
 				<div className="tweet-shell [&_.twitter-tweet]:mx-auto [&_.twitter-tweet]:max-w-full">
-					<blockquote
-						className="twitter-tweet"
-						data-theme={theme === "light" ? "light" : "dark"}
-						data-dnt="true"
-						data-conversation="none"
-						data-width="420"
+					<div
+						ref={setTweetRef}
+						className="min-h-[240px]"
 					>
-						<a href={url}>View post on X</a>
-					</blockquote>
+						<TweetFallback post={post} url={url} />
+					</div>
 				</div>
 			</div>
 		</article>

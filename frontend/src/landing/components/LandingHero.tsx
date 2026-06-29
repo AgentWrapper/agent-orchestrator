@@ -558,15 +558,16 @@ export function LandingHero() {
 				<div className="mx-auto max-w-[1500px] text-center">
 					<h1
 						data-testid="hero-headline"
-						className="mx-auto max-w-[1280px] font-display font-[650] leading-[1.01] text-[#f2f3f5]"
+						className="mx-auto max-w-[1120px] font-sans font-[600] leading-[1.08] text-[#f2f3f5]"
 						style={{
-							fontSize: "clamp(38px, 4.2vw, 76px)",
-							letterSpacing: "-0.035em",
+							fontFamily: '"Instrument Sans", "Inter", "Helvetica Neue", Arial, sans-serif',
+							fontSize: "clamp(34px, 3.55vw, 62px)",
+							letterSpacing: "-0.026em",
 						}}
 					>
 						<span className="block">Stop babysitting coding agents.</span>
-						<span className="mt-2 block">
-							Start merging <span className="text-[#93b4f8]">real work.</span>
+						<span className="mt-2 block italic">
+							Start merging <span className="font-[620] text-[#93b4f8]">real work.</span>
 						</span>
 					</h1>
 					<p className="mx-auto mt-7 max-w-[680px] text-[15px] font-medium leading-[1.75] text-[color:var(--fg-muted)] sm:text-[17px]">

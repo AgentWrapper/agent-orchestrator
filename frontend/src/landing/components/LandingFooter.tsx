@@ -1,4 +1,34 @@
-const LOGO_URL = "/ao-logo.svg";
+const LOGO_URL = "/ao-logo-transparent.png";
+
+const columns = [
+	{
+		title: "Product",
+		links: [
+			{ label: "Features", href: "#features" },
+			{ label: "Agents", href: "#agents" },
+			{ label: "Install", href: "/docs/installation" },
+			{ label: "CLI", href: "/docs/cli" },
+		],
+	},
+	{
+		title: "Docs",
+		links: [
+			{ label: "Overview", href: "/docs" },
+			{ label: "Architecture", href: "/docs/architecture" },
+			{ label: "Plugins", href: "/docs/plugins" },
+			{ label: "Changelog", href: "/docs/changelog" },
+		],
+	},
+	{
+		title: "Community",
+		links: [
+			{ label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
+			{ label: "Issues", href: "https://github.com/AgentWrapper/agent-orchestrator/issues" },
+			{ label: "Pull requests", href: "https://github.com/AgentWrapper/agent-orchestrator/pulls" },
+			{ label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
+		],
+	},
+];
 
 function GithubIcon({ className = "" }: { className?: string }) {
 	return (
@@ -8,86 +38,69 @@ function GithubIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-const productLinks = [
-	{ label: "Features", href: "#features" },
-	{ label: "How it works", href: "#how" },
-	{ label: "Architecture", href: "#architecture" },
-	{ label: "Quickstart", href: "#quickstart" },
-];
-
-const resourceLinks = [
-	{ label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
-	{ label: "Architecture docs", href: "/docs/architecture" },
-	{ label: "CLI reference", href: "/docs/cli" },
-	{ label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
-];
-
-const communityLinks = [
-	{ label: "Contributors", href: "https://github.com/AgentWrapper/agent-orchestrator/graphs/contributors" },
-	{ label: "Issues", href: "https://github.com/AgentWrapper/agent-orchestrator/issues" },
-	{ label: "Pull requests", href: "https://github.com/AgentWrapper/agent-orchestrator/pulls" },
-	{ label: "ao-agents.com", href: "https://ao-agents.com" },
-];
-
 export function LandingFooter() {
 	return (
-		<footer data-testid="footer" className="border-t border-[color:var(--border)] bg-[color:var(--bg-deep)]">
-			<div className="container-page py-16">
-				<div className="grid gap-10 md:grid-cols-12">
-					<div className="md:col-span-5">
-						<div className="mb-4 inline-flex h-10 items-center gap-2.5">
-							<img src={LOGO_URL} alt="Agent Orchestrator" className="block h-10 w-10 shrink-0 object-contain" />
-							<span className="font-display text-lg font-bold leading-none tracking-tight text-[color:var(--fg)]">
-								Agent Orchestrator
+		<footer data-testid="footer" className="border-t border-[color:var(--border)] bg-black">
+			<div className="container-page py-14 sm:py-16">
+				<div className="grid gap-10 lg:grid-cols-[0.95fr_1.05fr]">
+					<div className="max-w-md">
+						<a href="/" className="inline-flex items-center gap-3">
+							<img src={LOGO_URL} alt="Agent Orchestrator" className="h-10 w-10 object-contain" />
+							<span className="text-[16px] font-semibold text-[color:var(--fg)]">Agent Orchestrator</span>
+						</a>
+						<p className="mt-4 max-w-md text-[14px] leading-relaxed text-[color:var(--fg-muted)]">
+							Open-source orchestration for terminal-native coding agents. Local daemon, isolated worktrees, live
+							sessions, and PR feedback routed to the right worker.
+						</p>
+						<div className="mt-5 flex flex-wrap gap-2">
+							<a
+								href="https://github.com/AgentWrapper/agent-orchestrator"
+								target="_blank"
+								rel="noreferrer"
+								className="inline-flex items-center gap-2 rounded-md border border-[color:var(--border)] bg-white/[0.025] px-3 py-2 text-[13px] font-medium text-[color:var(--fg-muted)] transition hover:bg-white/[0.05] hover:text-[color:var(--fg)]"
+							>
+								<GithubIcon className="h-4 w-4" />
+								GitHub
+							</a>
+							<span className="inline-flex items-center rounded-md border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
+								Apache 2.0
+							</span>
+							<span className="inline-flex items-center rounded-md border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
+								127.0.0.1
 							</span>
 						</div>
-						<p className="max-w-sm text-[14px] leading-relaxed text-[color:var(--fg-muted)]">
-							The open-source orchestration layer for parallel AI coding agents. Loopback-only, Apache 2.0 licensed,
-							runs on your laptop.
-						</p>
 					</div>
 
-					<FooterCol title="Product" links={productLinks} />
-					<FooterCol title="Resources" links={resourceLinks} />
-					<FooterCol title="Community" links={communityLinks} />
+					<div className="grid gap-8 sm:grid-cols-3 lg:justify-items-end">
+						{columns.map((column) => (
+							<div key={column.title} className="w-full max-w-[160px]">
+								<h4 className="mb-4 font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--fg-dim)]">
+									{column.title}
+								</h4>
+								<ul className="space-y-2.5">
+									{column.links.map((link) => (
+										<li key={link.label}>
+											<a
+												href={link.href}
+												target={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "_blank"}
+												rel={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "noreferrer"}
+												className="text-[13px] text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--fg)]"
+											>
+												{link.label}
+											</a>
+										</li>
+									))}
+								</ul>
+							</div>
+						))}
+					</div>
 				</div>
 
-				<div className="mt-14 flex flex-col items-start justify-between gap-3 border-t border-[color:var(--border)] pt-6 font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--fg-dim)] sm:flex-row sm:items-center">
-					<div>Built by the open-source community.</div>
-					<a
-						href="https://github.com/AgentWrapper/agent-orchestrator"
-						target="_blank"
-						rel="noreferrer"
-						className="inline-flex items-center gap-1.5 transition-colors hover:text-[color:var(--accent)]"
-						data-testid="footer-github-link"
-					>
-						<GithubIcon className="h-3 w-3" />
-						AgentWrapper/agent-orchestrator
-					</a>
+				<div className="mt-12 flex flex-col justify-between gap-3 border-t border-[color:var(--border)] pt-5 font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)] sm:flex-row">
+					<span>AgentWrapper/agent-orchestrator</span>
+					<span>Runs locally on your laptop.</span>
 				</div>
 			</div>
 		</footer>
-	);
-}
-
-function FooterCol({ title, links }: { title: string; links: Array<{ label: string; href: string }> }) {
-	return (
-		<div className="md:col-span-2 lg:col-span-2">
-			<h4 className="mb-4 font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--fg-dim)]">{title}</h4>
-			<ul className="space-y-2.5">
-				{links.map((link) => (
-					<li key={link.label}>
-						<a
-							href={link.href}
-							target={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "_blank"}
-							rel={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "noreferrer"}
-							className="text-[13.5px] text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--fg)]"
-						>
-							{link.label}
-						</a>
-					</li>
-				))}
-			</ul>
-		</div>
 	);
 }

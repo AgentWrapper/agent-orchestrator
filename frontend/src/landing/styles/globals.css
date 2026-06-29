@@ -239,6 +239,17 @@ body::-webkit-scrollbar,
 	background: var(--bg-deep);
 }
 
+.tweet-fallback {
+	min-height: 240px;
+	border-radius: 14px;
+	border: 1px solid var(--border);
+	background:
+		linear-gradient(180deg, rgba(130, 170, 255, 0.035), transparent 36%),
+		#050607;
+	padding: 18px;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
 .tweet-shell .twitter-tweet,
 .tweet-shell iframe {
 	width: 100% !important;
@@ -556,6 +567,54 @@ body::-webkit-scrollbar,
 
 .landing-sse-pulse {
 	animation: landing-sse-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes landing-adapter-pulse {
+	0% {
+		transform: translateX(-24px);
+		opacity: 0;
+	}
+	18%,
+	72% {
+		opacity: 1;
+	}
+	100% {
+		transform: translateX(24px);
+		opacity: 0;
+	}
+}
+
+.landing-adapter-pulse {
+	animation: landing-adapter-pulse 1.7s cubic-bezier(0.4, 0.8, 0.6, 1) infinite;
+}
+
+.landing-feature-stack-card {
+	will-change: transform;
+}
+
+.landing-feature-stack-cover {
+	isolation: isolate;
+}
+
+.landing-feature-stack-cover::before {
+	content: "";
+	position: absolute;
+	inset: -28px -2px -28px -2px;
+	z-index: -1;
+	border-radius: 24px;
+	background: var(--bg);
+	box-shadow: 0 -80px 0 80px var(--bg);
+}
+
+@media (max-width: 1023px) {
+	.landing-feature-stack-card {
+		position: relative;
+		top: auto;
+	}
+
+	.landing-feature-stack-cover::before {
+		display: none;
+	}
 }
 
 /* Switcher progress bar */

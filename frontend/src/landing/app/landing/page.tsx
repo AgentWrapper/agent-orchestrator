@@ -3,9 +3,6 @@ import { LandingHero } from "../../components/LandingHero";
 import { LandingAgentsBar } from "../../components/LandingAgentsBar";
 import { LandingVideo } from "../../components/LandingVideo";
 import { LandingFeatures } from "../../components/LandingFeatures";
-import { LandingHowItWorks } from "../../components/LandingHowItWorks";
-import { LandingArchitecture } from "../../components/LandingArchitecture";
-import { LandingLiveDemo } from "../../components/LandingLiveDemo";
 import { LandingSocialProof } from "../../components/LandingSocialProof";
 import { LandingFooter } from "../../components/LandingFooter";
 import { ScrollRevealProvider } from "../../components/ScrollRevealProvider";
@@ -19,9 +16,6 @@ export default function LandingPage() {
 				<LandingAgentsBar />
 				<LandingVideo />
 				<LandingFeatures />
-				<LandingHowItWorks />
-				<LandingArchitecture />
-				<LandingLiveDemo />
 				<LandingSocialProof />
 				<LandingFooter />
 			</div>
