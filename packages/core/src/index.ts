@@ -554,6 +554,38 @@ export type {
 export { atomicWriteFileSync } from "./atomic-write.js";
 
 export {
+  loadScheduledTasks,
+  parseScheduledTaskDocument,
+  computeTriggerDue,
+  computeNextCronTime,
+  parseCronExpr,
+  parseDurationMs,
+  parseDateTimeExpr,
+  evaluateScheduledJob,
+  dispatchScheduledAction,
+  DEFAULT_FIRE_GRACE_MS,
+} from "./scheduled-tasks.js";
+export type {
+  ScheduledTask,
+  ScheduledTaskTrigger,
+  ScheduledTaskAction,
+  ScheduledTriggerType,
+  ScheduledActionType,
+  ScheduledJobState,
+  ScheduledActionHandlers,
+  LoadScheduledTasksResult,
+  EvaluateScheduledJobInput,
+  EvaluateScheduledJobResult,
+} from "./scheduled-tasks.js";
+export {
+  loadSchedulerState,
+  saveSchedulerState,
+  getSchedulerStatePath,
+  jobStateKey,
+} from "./scheduler-state.js";
+export type { SchedulerState } from "./scheduler-state.js";
+
+export {
   registerWindowsPtyHost,
   unregisterWindowsPtyHost,
   getWindowsPtyHosts,

@@ -26,6 +26,7 @@ import {
 } from "@aoagents/ao-core";
 import { getSessionManager } from "./create-session-manager.js";
 import { startProjectSupervisor } from "./project-supervisor.js";
+import { startScheduler } from "./scheduler.js";
 import { listLifecycleWorkers } from "./lifecycle-service.js";
 import { runtimePreflight } from "./startup-preflight.js";
 import { installShutdownHandlers } from "./shutdown.js";
@@ -186,6 +187,12 @@ export async function runHeadlessSupervisor(
     spinner.start("Starting project supervisor");
     await startProjectSupervisor({ configPath: config.configPath, keepProcessAlive: true });
     spinner.succeed("Lifecycle project supervisor started");
+
+    // Durable scheduled-tasks ticker: fires cron/interval/datetime jobs from each
+    // project's `.maestro/scheduled-tasks/*.yaml` even with no UI attached.
+    spinner.start("Starting scheduled-tasks scheduler");
+    startScheduler(config);
+    spinner.succeed("Scheduled-tasks scheduler started");
 
     await register({
       pid: process.pid,
