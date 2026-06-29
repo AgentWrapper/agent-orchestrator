@@ -21,6 +21,7 @@ import { registerCompletion } from "./commands/completion.js";
 import { registerEvents } from "./commands/events.js";
 import { registerConfig } from "./commands/config.js";
 import { registerModels } from "./commands/models.js";
+import { registerSkills } from "./commands/skills.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
 
@@ -58,6 +59,7 @@ export function createProgram(): Command {
   registerEvents(program);
   registerConfig(program);
   registerModels(program);
+  registerSkills(program);
 
   program
     .command("config-help")

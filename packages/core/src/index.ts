@@ -585,6 +585,14 @@ export {
 } from "./scheduler-state.js";
 export type { SchedulerState } from "./scheduler-state.js";
 
+// Skill pool — task-scoped skill provisioning + library catalog
+export { provisionSkills, parseSkillFrontmatter, listProjectSkills } from "./skill-provisioning.js";
+export type {
+  SkillProvisionResult,
+  SkillFrontmatter,
+  SkillCatalogEntry,
+} from "./skill-provisioning.js";
+
 export {
   registerWindowsPtyHost,
   unregisterWindowsPtyHost,

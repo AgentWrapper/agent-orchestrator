@@ -13,7 +13,7 @@
  * Provisioning must never break a spawn.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -35,6 +35,21 @@ export interface SkillProvisionResult {
  */
 const SAFE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/** Parsed view of a SKILL.md frontmatter block, with fail-open defaults. */
+export interface SkillFrontmatter {
+  /** Frontmatter `name`, or undefined when absent/blank. */
+  name?: string;
+  /** Frontmatter `description`, or undefined when absent/blank. */
+  description?: string;
+  /**
+   * `false` ONLY when the frontmatter explicitly sets `enabled: false`. The
+   * absence of the key — or any unparseable frontmatter — is treated as
+   * enabled (fail-open: don't drop a skill over a parse hiccup or the Phase-1
+   * `name` + `description`-only convention).
+   */
+  enabled: boolean;
+}
+
 /**
  * Extract the leading YAML frontmatter block (`---\n…\n---`) from a SKILL.md.
  * Returns null when the file has no frontmatter.
@@ -45,21 +60,35 @@ function extractFrontmatter(content: string): string | null {
 }
 
 /**
- * A skill is disabled only when its frontmatter explicitly sets
- * `enabled: false`. An enabled skill is the clean `name` + `description` form
- * with no `enabled` key (Phase-1 convention), so the absence of the key — or
- * any unparseable frontmatter — is treated as enabled (fail-open: don't drop a
- * skill the user explicitly asked for over a parse hiccup).
+ * Parse a SKILL.md's frontmatter into `{ name, description, enabled }`. The
+ * single source of truth for reading skill metadata — both provisioning (which
+ * only needs `enabled`) and the `ao skills list` catalog reuse it. See
+ * {@link SkillFrontmatter} for the fail-open `enabled` contract.
  */
-function isSkillDisabled(content: string): boolean {
+export function parseSkillFrontmatter(content: string): SkillFrontmatter {
   const frontmatter = extractFrontmatter(content);
-  if (!frontmatter) return false;
+  if (!frontmatter) return { enabled: true };
   try {
     const parsed = parseYaml(frontmatter) as Record<string, unknown> | null;
-    return parsed?.enabled === false;
+    const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+    const description =
+      typeof parsed?.description === "string" ? parsed.description.trim() : "";
+    return {
+      name: name || undefined,
+      description: description || undefined,
+      enabled: parsed?.enabled !== false,
+    };
   } catch {
-    return false;
+    return { enabled: true };
   }
+}
+
+/**
+ * A skill is disabled only when its frontmatter explicitly sets
+ * `enabled: false`. See {@link parseSkillFrontmatter}.
+ */
+function isSkillDisabled(content: string): boolean {
+  return !parseSkillFrontmatter(content).enabled;
 }
 
 /**
@@ -116,4 +145,63 @@ export function provisionSkills(opts: {
   }
 
   return result;
+}
+
+/** One skill in the project's library, as surfaced by `ao skills list`. */
+export interface SkillCatalogEntry {
+  /** Folder name (the value `--skills` expects); falls back to frontmatter `name`. */
+  name: string;
+  /** Frontmatter `description`, or "" when absent. */
+  description: string;
+  /** `false` only when the frontmatter sets `enabled: false` (see {@link parseSkillFrontmatter}). */
+  enabled: boolean;
+}
+
+/**
+ * Enumerate the project's skill-pool library
+ * (`<projectRoot>/.maestro/skills/<name>/SKILL.md`) into a sorted catalog of
+ * `{ name, description, enabled }`. The orchestrator consults this (via
+ * `ao skills list`) to pick a relevant subset to provision per task.
+ *
+ * The directory name is the canonical `name` (it is what `--skills` matches and
+ * what {@link provisionSkills} copies); the frontmatter `name` is only a
+ * fallback for display when present. FAIL-OPEN like provisioning: a missing
+ * library, an unreadable entry, or a folder without `SKILL.md` is skipped, not
+ * thrown.
+ */
+export function listProjectSkills(projectRoot: string): SkillCatalogEntry[] {
+  const libDir = join(projectRoot, ".maestro", "skills");
+  if (!existsSync(libDir)) return [];
+
+  let dirents;
+  try {
+    dirents = readdirSync(libDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const skills: SkillCatalogEntry[] = [];
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) continue;
+    const dirName = dirent.name;
+    const skillPath = join(libDir, dirName, "SKILL.md");
+    if (!existsSync(skillPath)) continue;
+
+    let content: string;
+    try {
+      content = readFileSync(skillPath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const fm = parseSkillFrontmatter(content);
+    skills.push({
+      name: dirName || fm.name || "",
+      description: fm.description ?? "",
+      enabled: fm.enabled,
+    });
+  }
+
+  skills.sort((a, b) => a.name.localeCompare(b.name));
+  return skills;
 }

@@ -85,6 +85,7 @@ ao open {{projectId}}{{REPO_CONFIGURED_SECTION_END}}
 - `ao session cleanup [-p project]`: Kill cleanup-eligible sessions (closed work or dead runtimes)
 - `ao send <session> <message>`: Send a message to a running session
 - `ao send --no-wait <session> <message>`: Send without waiting for session to become idle
+- `ao skills list [project] [--json]`: List the project's skill-pool library (`.maestro/skills/`) — names + descriptions to pick from when spawning
 - `ao dashboard`: Start the web dashboard (http://localhost:{{dashboardPort}})
 - `ao open <project>`: Open all project sessions in terminal tabs
 
@@ -104,6 +105,15 @@ A tracker issue is **not required**. Use `--prompt` to spawn freeform sessions:
 
 ```bash
 ao spawn --prompt "Add rate limiting to the /api/upload endpoint"
+```
+
+### Task-Scoped Skills
+
+Before `ao spawn` for a task that could benefit from skills, check the project's skill catalog with `ao skills list` and pass the **relevant, bounded subset** via `ao spawn --skills <name,...>` — scope it to the task, never the whole catalog. Disabled or unknown skills are silently skipped by the engine.
+
+```bash
+ao skills list
+ao spawn --prompt "Cut a release build" --skills release-notes,swift-build-verify
 ```
 
 ### Monitoring Progress
