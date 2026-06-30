@@ -32,16 +32,16 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusTerminated
 	}
 
-	if rec.Activity.State == domain.ActivityWaitingInput {
-		return domain.StatusNeedsInput
-	}
-
 	open := openPRs(prs)
 	if len(open) > 0 {
 		return aggregatePRStatus(open)
 	}
 	if anyMerged(prs) {
 		return domain.StatusMerged
+	}
+
+	if rec.Activity.State == domain.ActivityWaitingInput {
+		return domain.StatusNeedsInput
 	}
 
 	if rec.Activity.State == domain.ActivityActive {
