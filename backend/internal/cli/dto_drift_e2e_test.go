@@ -184,6 +184,7 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--branch", "feat/x",
 			"--prompt", "hi",
 			"--issue", "ISS-1",
+			"--name", "my worker",
 		})
 		if err := root.Execute(); err != nil {
 			t.Fatalf("spawn execute: %v\noutput: %s", err, out.String())
@@ -204,6 +205,9 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.IssueID != "ISS-1" {
 			t.Errorf("IssueID = %q, want %q", got.IssueID, "ISS-1")
+		}
+		if got.DisplayName != "my worker" {
+			t.Errorf("DisplayName = %q, want %q (CLI json:\"displayName\" vs SpawnSessionRequest)", got.DisplayName, "my worker")
 		}
 		if !bytes.Contains(out.Bytes(), []byte("spawned session")) {
 			t.Errorf("output missing %q; got: %s", "spawned session", out.String())

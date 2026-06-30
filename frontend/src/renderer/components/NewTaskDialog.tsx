@@ -1,11 +1,15 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { RequiredAgentField } from "./CreateProjectAgentSheet";
+import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import type { AgentProvider } from "../types/workspace";
+
+type Project = components["schemas"]["Project"];
 
 type NewTaskDialogProps = {
 	open: boolean;
@@ -14,34 +18,50 @@ type NewTaskDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-const AGENTS: Array<{ value: AgentProvider; label: string }> = [
-	{ value: "codex", label: "Codex" },
-	{ value: "claude-code", label: "Claude Code" },
-	{ value: "opencode", label: "OpenCode" },
-	{ value: "aider", label: "Aider" },
-];
-
 export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewTaskDialogProps) {
 	const titleId = useId();
 	const promptId = useId();
 	const branchId = useId();
+	const agentId = useId();
 	const [title, setTitle] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [branch, setBranch] = useState("");
-	const [agent, setAgent] = useState<AgentProvider>("codex");
+	const [agent, setAgent] = useState("");
+	const [agentTouched, setAgentTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
+
+	const projectQuery = useQuery({
+		queryKey: ["project", projectId],
+		enabled: open && Boolean(projectId),
+		queryFn: async () => {
+			const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
+				params: { path: { id: projectId as string } },
+			});
+			if (apiError) throw new Error(apiErrorMessage(apiError));
+			if (data?.status !== "ok") throw new Error("Project config is unavailable.");
+			return data.project as Project;
+		},
+	});
+	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
 
 	useEffect(() => {
 		if (!open) {
 			setTitle("");
 			setPrompt("");
 			setBranch("");
-			setAgent("codex");
+			setAgent("");
+			setAgentTouched(false);
 			setError(undefined);
 			setIsSubmitting(false);
 		}
 	}, [open]);
+
+	useEffect(() => {
+		if (open && !agentTouched) {
+			setAgent(defaultWorkerAgent);
+		}
+	}, [open, agentTouched, defaultWorkerAgent]);
 
 	const submit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -62,7 +82,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 				body: {
 					projectId,
 					kind: "worker",
-					harness: agent,
+					harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
 					issueId: cleanTitle,
 					prompt: cleanPrompt,
 					branch: cleanBranch || undefined,
@@ -130,21 +150,16 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 						</div>
 
 						<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-							<div className="space-y-1.5">
-								<label className="text-[12px] font-medium text-muted-foreground">Agent</label>
-								<Select value={agent} onValueChange={(value) => setAgent(value as AgentProvider)}>
-									<SelectTrigger className="h-8 w-full text-[13px]">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{AGENTS.map((entry) => (
-											<SelectItem key={entry.value} value={entry.value}>
-												{entry.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
+							<RequiredAgentField
+								id={agentId}
+								label="Agent"
+								placeholder="Project default"
+								value={agent}
+								onChange={(value) => {
+									setAgent(value);
+									setAgentTouched(true);
+								}}
+							/>
 							<div className="space-y-1.5">
 								<label className="text-[12px] font-medium text-muted-foreground" htmlFor={branchId}>
 									Branch

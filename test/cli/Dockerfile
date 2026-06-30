@@ -4,10 +4,9 @@
 #   docker build -f test/cli/Dockerfile -t ao-cli-smoke .
 #   docker run --rm --init ao-cli-smoke
 #
-# Run with --init so the real daemon spawned during the `start` test (it detaches
-# via setsid) is reaped promptly after `stop` instead of lingering as a zombie.
-# The suite does NOT depend on it — the stale-daemon case uses a fabricated dead
-# PID — but --init keeps process accounting clean.
+# `ao start` is now the desktop-app launcher (it no longer runs a daemon); the
+# fresh-box check just proves the binary is sane and start reaches the fetch
+# path. --init keeps process accounting clean for any short-lived child.
 
 # ---- stage 1: build the binary (the "release" a user would download) ----
 FROM golang:1.25-bookworm AS build
@@ -19,7 +18,13 @@ RUN cd backend && go mod download
 
 COPY backend ./backend
 # Pure-Go SQLite (modernc) builds fine with CGO disabled -> a static binary.
-RUN cd backend && CGO_ENABLED=0 go build -trimpath -o /out/ao ./cmd/ao
+# Build against a release repo with NO published assets so `ao start` reaches the
+# fetch path and fails cleanly (404) on a fresh box. The real AgentWrapper repo
+# now publishes a linux-x64 AppImage, so an unpinned binary would download it and
+# exit 0, defeating the fresh-install assertion below. See install-check.sh.
+RUN cd backend && CGO_ENABLED=0 go build -trimpath \
+      -ldflags "-X github.com/aoagents/agent-orchestrator/backend/internal/cli.releaseRepo=AgentWrapper/ao-fresh-install-fixture" \
+      -o /out/ao ./cmd/ao
 
 # ---- stage 2: a clean machine with NO Go toolchain, just like an end user ----
 FROM debian:bookworm-slim AS run

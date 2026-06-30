@@ -3,6 +3,7 @@ module github.com/aoagents/agent-orchestrator/backend
 go 1.25.7
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24

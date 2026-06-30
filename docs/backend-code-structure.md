@@ -1,392 +1,977 @@
 # Backend Code Structure
 
-This document describes package ownership for the Go backend. It is about where
-code belongs. See [architecture.md](architecture.md) for lifecycle behavior,
-status derivation, persistence, CDC, and invariants.
+This document describes package ownership for the Go backend. It defines where code belongs, how packages interact, and the architectural boundaries that keep the system maintainable.
 
-## Goal
+## Table of Contents
 
-The backend is a local daemon that supervises coding-agent sessions. The code
-needs clear homes for product workflows, protocol surfaces, persistence, and
-replaceable external systems without turning any single package into a catch-all.
+- [Overview](#overview)
+- [Architecture Layers](#architecture-layers)
+- [Package-by-Package Ownership](#package-by-package-ownership)
+- [Interface Placement Rules](#interface-placement-rules)
+- [Import Graph](#import-graph)
+- [Adding New Code](#adding-new-code)
+- [Examples](#examples)
 
-The current structure is a layered hybrid:
+---
 
-- `domain` holds shared product vocabulary and durable fact records.
-- `service/*` owns controller-facing product use cases and read models.
-- `session_manager` owns internal session mutations and resource orchestration.
-- `lifecycle` owns the durable session fact reducer.
-- `ports` defines narrow capability interfaces consumed by core code.
-- `adapters/*` implements those capabilities with real external systems.
-- `storage/sqlite` and `cdc` own persistence and change delivery.
-- `httpd` and `cli` own protocol concerns.
-- `daemon` wires the production graph together.
+## Overview
 
-## Package Roles
+The backend is a **layered hybrid** architecture with clear separation between core business logic and external concerns:
+
+```mermaid
+graph TB
+    subgraph CLI["CLI Layer"]
+        CLI[internal/cli]
+    end
+
+    subgraph HTTP["HTTP Layer"]
+        HTTPD[internal/httpd]
+    end
+
+    subgraph Services["Service Layer"]
+        Project[internal/service/project]
+        Session[internal/service/session]
+        PR[internal/service/pr]
+        Review[internal/service/review]
+    end
+
+    subgraph Core["Core Layer"]
+        SessionMgr[internal/session_manager]
+        Lifecycle[internal/lifecycle]
+        Observe[internal/observe/*]
+    end
+
+    subgraph Data["Data Layer"]
+        Domain[internal/domain]
+        Ports[internal/ports]
+        Storage[internal/storage/sqlite]
+        CDC[internal/cdc]
+    end
+
+    subgraph Infra["Infrastructure Layer"]
+        Terminal[internal/terminal]
+        Adapters[internal/adapters/*]
+        Daemon[internal/daemon]
+        Config[internal/config]
+    end
+
+    CLI -->|calls| HTTPD
+    HTTPD -->|calls| Services
+    Services -->|calls| Core
+    Services -->|uses| Data
+    Core -->|uses| Data
+    Core -->|uses| Infra
+    HTTPD -->|uses| Data
+
+```
+
+### Key Architectural Principles
+
+1. **Domain stays pure** — No infrastructure dependencies
+2. **Ports define contracts** — Interfaces consumed by core, implemented by adapters
+3. **Services orchestrate** — Controller-facing use cases over core and data
+4. **Adapters are leaves** — Implement ports, don't import core
+5. **CLI/HTTP stay thin** — Just protocol handling, all logic in daemon
+
+---
+
+## Architecture Layers
+
+### Layer Interactions
+
+```mermaid
+flowchart LR
+    Protocol[Protocol Layer<br/>CLI + HTTP] -->|uses| Services[Service Layer<br/>Use Cases]
+    Services -->|commands| Core[Core Layer<br/>Session Manager + Lifecycle]
+    Services -->|queries| Data[Data Layer<br/>Domain + Ports + Storage]
+    Core -->|reads/writes| Data
+    Core -->|invokes| Infra[Infrastructure<br/>Adapters + Terminal]
+    Infra -->|implements| Ports
+
+```
+
+### Dependency Rules
+
+```mermaid
+graph TD
+    Direction[Dependency Direction]
+    Direction --> Down["Top-down only"]
+    Direction --> No["No upward dependencies"]
+
+    CLI[CLI] -->|OK| HTTP[HTTP]
+    HTTP -->|OK| Services[Services]
+    Services -->|OK| Core[Core]
+    Services -->|OK| Storage[Storage]
+    Core -->|OK| Adapters[Adapters]
+
+    Bad1[Adapters] -.->|FORBIDDEN| Services
+    Bad2[Storage] -.->|FORBIDDEN| HTTP
+    Bad3[Core] -.->|FORBIDDEN| CLI
+
+```
+
+---
+
+## Package-by-Package Ownership
 
 ### `internal/domain`
 
-`domain` is AO's shared product language. Keep it stable and free of
-infrastructure imports.
+**Purpose:** Shared product vocabulary and durable fact records. The single source of truth for domain concepts.
 
-Belongs here:
+```mermaid
+graph TD
+    Domain[internal/domain] --> Contains[Contains]
+    Contains --> IDs[Shared IDs<br/>ProjectID, SessionID, IssueID]
+    Contains --> Enums[Status Enums<br/>SessionStatus, ActivityState]
+    Contains --> Records[Durable Records<br/>SessionRecord, PRRecord]
+    Contains --> Vocab[Product Vocabulary<br/>PR, Project, Review concepts]
 
-- shared IDs such as `ProjectID`, `SessionID`, and `IssueID`;
-- shared enums and status vocabulary;
-- durable fact records that multiple packages must agree on;
-- PR, tracker, project, and session vocabulary that is not transport-specific.
+    DoesNot[Does NOT Contain] --> HTTP[HTTP DTOs]
+    DoesNot --> CLI[CLI Output]
+    DoesNot --> Generated[sqlc Generated Rows]
+    DoesNot --> External[External Payloads<br/>GitHub, Claude, etc.]
 
-Does not belong here:
-
-- HTTP request/response DTOs;
-- CLI output shapes;
-- OpenAPI wrapper/envelope types;
-- sqlc generated rows;
-- GitHub, tmux, Claude, Codex, or OpenCode payloads;
-- one-resource controller helper types.
-
-Rule of thumb: if AO would still use the concept after replacing HTTP, the CLI,
-SQLite, GitHub, the tmux/conpty runtime, and every agent adapter, and more than one package needs
-the exact vocabulary, it may belong in `domain`.
-
-### `internal/service/*`
-
-`service` packages are the controller-facing application boundary.
-
-Current examples:
-
-```txt
-internal/service/project
-internal/service/session
-internal/service/pr
-internal/service/review
 ```
 
-Belongs here:
+**Belongs here:**
 
-- resource use cases called by HTTP controllers and CLI-backed API flows;
-- resource read models and command/result types;
-- display-model assembly, such as session status derived from session and PR
-  facts;
-- resource-specific validation and user-facing errors;
-- small store interfaces consumed by the service.
+- Shared IDs: `ProjectID`, `SessionID`, `IssueID`
+- Enums and status vocabulary
+- Durable fact records used across packages
+- PR, tracker, project, session vocabulary
 
-Does not belong here:
+**Does NOT belong here:**
 
-- low-level runtime/workspace/agent process control;
-- raw sqlc generated rows as public service results;
-- HTTP routing, path parsing, status-code decisions, or OpenAPI generation;
-- concrete external adapter details.
+- HTTP request/response DTOs
+- CLI output shapes
+- OpenAPI wrapper types
+- sqlc generated rows
+- External system payloads (GitHub, tmux, agent-specific)
 
-For example, project API concepts live in `internal/service/project`, not in
-`domain` and not in a top-level `internal/project` package.
+**Rule of thumb:** If AO would still use the concept after replacing HTTP, CLI, SQLite, GitHub, tmux, and every agent adapter, it belongs in domain.
 
-### `internal/session_manager`
-
-`session_manager` owns internal session commands: spawn, restore, kill, cleanup,
-and send-related orchestration over runtime, workspace, agent, storage,
-messenger, and lifecycle dependencies.
-
-Belongs here:
-
-- multi-step session mutations;
-- rollback/cleanup sequencing when spawn partially succeeds;
-- resource teardown safety;
-- internal errors such as not found, terminated, or not restorable.
-
-Does not belong here:
-
-- HTTP request decoding;
-- CLI formatting;
-- controller-facing list/get read-model assembly;
-- terminal WebSocket framing.
-
-The split is intentional: `service/session` is the product/API boundary;
-`session_manager` is the internal command engine.
-
-### `internal/lifecycle`
-
-`lifecycle` is the canonical write path for durable session lifecycle facts. It
-reduces runtime observations, activity signals, spawn completion, termination,
-and PR observations into small persisted facts.
-
-Belongs here:
-
-- updates to lifecycle-owned session facts;
-- guardrails around runtime/activity observations;
-- lifecycle-triggered agent nudges for actionable PR facts.
-
-Does not belong here:
-
-- display status persistence;
-- HTTP/CLI DTOs;
-- direct adapter implementation details;
-- PR row persistence.
-
-The UI status is derived at read time by service code. Do not store display
-status in lifecycle or SQLite.
+---
 
 ### `internal/ports`
 
-`ports` contains narrow capability interfaces and shared adapter-facing structs.
-It connects core code to replaceable systems.
+**Purpose:** Narrow capability interfaces that connect core code to replaceable external systems.
 
-Current capability examples:
+```mermaid
+graph LR
+    Core[Core Code] -->|consumes| Ports[Ports Interfaces]
+    Adapters[Adapters] -->|implement| Ports
 
-- `Runtime`
-- `Workspace`
-- `Agent`
-- `AgentResolver`
-- `AgentMessenger`
-- `PRWriter`
+    Ports --> Examples[Examples]
+    Examples --> Runtime[Runtime<br/>Create, Destroy, IsAlive, Attach]
+    Examples --> Workspace[Workspace<br/>Create, Destroy, ValidatePath]
+    Examples --> Agent[Agent<br/>GetLaunchCommand, GetAgentHooks]
+    Examples --> SCM[SCM<br/>ListPRs, FetchPR, FetchChecks]
+    Examples --> PR[PR<br/>WriteSCMObservation]
 
-Belongs here:
-
-- interfaces consumed by core packages and implemented by adapters;
-- capability structs such as `RuntimeConfig`, `WorkspaceConfig`, and
-  `SpawnConfig`;
-- vocabulary needed at the boundary between core orchestration and adapters.
-
-Does not belong here:
-
-- resource read models like project/session API responses;
-- HTTP request/response DTOs;
-- sqlc rows;
-- concrete adapter options;
-- one-off interfaces that only a single package needs internally.
-
-Keep `ports` capability-oriented. It should not become the dumping ground for
-every manager, DTO, and resource contract.
-
-### `internal/adapters/*`
-
-Adapters are concrete implementations of external systems.
-
-Current examples:
-
-```txt
-internal/adapters/agent/claudecode
-internal/adapters/agent/codex
-internal/adapters/agent/opencode
-internal/adapters/runtime/tmux
-internal/adapters/runtime/conpty
-internal/adapters/runtime/runtimeselect
-internal/adapters/runtime/ptyexec
-internal/adapters/workspace/gitworktree
-internal/adapters/scm/github
-internal/adapters/tracker/github
 ```
 
-Adapters should be leaves in the import graph. They translate external behavior
-into AO ports and domain concepts; they should not own product workflows.
+**Belongs here:**
 
-Good:
+- Interfaces consumed by core packages, implemented by adapters
+- Capability structs: `RuntimeConfig`, `WorkspaceConfig`, `SpawnConfig`
+- Vocabulary at the boundary between core and adapters
 
-```txt
-session_manager -> ports.Runtime
-adapters/runtime/tmux -> ports + domain
-adapters/workspace/gitworktree -> ports + domain
-daemon -> adapters + services + storage
+**Does NOT belong here:**
+
+- Resource read models (belongs in `service/*`)
+- HTTP request/response DTOs (belongs in `httpd`)
+- sqlc rows (belongs in `storage/sqlite`)
+- One-off internal interfaces
+
+**Key Port Interfaces:**
+
+| Port             | Purpose                 | Implementations         |
+| ---------------- | ----------------------- | ----------------------- |
+| `Runtime`        | Process isolation       | `tmux`, `conpty`        |
+| `Workspace`      | Git worktree management | `gitworktree`           |
+| `Agent`          | Agent launching         | 23+ agent adapters      |
+| `SCM`            | PR/CI observation       | `github`                |
+| `Tracker`        | Issue tracking          | `github` (adapter only) |
+| `AgentMessenger` | Agent communication     | Agent hooks             |
+| `PRWriter`       | PR persistence          | `pr.Manager`            |
+
+---
+
+### `internal/service/*`
+
+**Purpose:** Controller-facing application boundary. Owns product use cases and read-model assembly.
+
+```mermaid
+graph TD
+    subgraph Services
+        Project[project]
+        Session[session]
+        PR[pr]
+        Review[review]
+    end
+
+    subgraph Responsibilities
+        UseCases[Use Cases]
+        ReadModels[Read Models]
+        Validation[Validation]
+        Errors[User-Facing Errors]
+    end
+
+    Project --> Responsibilities
+    Session --> Responsibilities
+    PR --> Responsibilities
+    Review --> Responsibilities
+
+    subgraph NotHere
+        LowLevel[Low-level runtime control]
+        RawSQL[Raw sqlc rows]
+        HTTP[HTTP routing]
+    end
+
 ```
 
-Avoid:
+**Current service packages:**
 
-```txt
-domain -> adapters
-service/session -> adapters/runtime/tmux
-httpd/controllers -> storage/sqlite/store
-adapters/* -> httpd
+```mermaid
+graph LR
+    Controllers[HTTP Controllers] -->|call| Services
+
+    Services --> Project[internal/service/project<br/>Project CRUD]
+    Services --> Session[internal/service/session<br/>Session read-model assembly]
+    Services --> PR[internal/service/pr<br/>PR observation/actions]
+    Services --> Review[internal/service/review<br/>Code review]
+
+    Services -->|delegate to| SessionMgr[session_manager]
+    Services -->|query| Store[storage stores]
+
 ```
+
+**Belongs here:**
+
+- Resource use cases called by HTTP controllers and CLI
+- Resource read models and command/result types
+- Display-model assembly (e.g., session status derivation)
+- Resource-specific validation and user-facing errors
+- Small store interfaces consumed by the service
+
+**Does NOT belong here:**
+
+- Low-level runtime/workspace/agent process control
+- Raw sqlc generated rows as public results
+- HTTP routing, path parsing, status-code decisions
+- Concrete external adapter details
+
+**Example:** Project concepts live in `internal/service/project`, not in `domain` and not in `internal/project`.
+
+---
+
+### `internal/session_manager`
+
+**Purpose:** Internal session command engine. Owns multi-step session mutations and resource orchestration.
+
+```mermaid
+graph TD
+    Service[service/session] -->|commands| Mgr[session_manager]
+    Mgr -->|orchestrates| Resources[Resources]
+
+    Resources --> Workspace[Workspace Adapter]
+    Resources --> Runtime[Runtime Adapter]
+    Resources --> Agent[Agent Adapter]
+    Resources --> Storage[Storage Store]
+    Resources --> Lifecycle[Lifecycle Manager]
+    Resources --> Messenger[Agent Messenger]
+
+    Mgr -->|owns| Operations[Operations]
+    Operations --> Spawn[Spawn<br/>Create all resources]
+    Operations --> Kill[Kill<br/>Teardown all resources]
+    Operations --> Restore[Restore<br/>Relaunch terminated session]
+    Operations --> Send[Send<br/>Message to agent]
+
+```
+
+**Belongs here:**
+
+- Multi-step session mutations with rollback
+- Resource sequencing (workspace → runtime → agent)
+- Resource teardown safety and cleanup
+- Internal errors: not found, terminated, not restorable
+
+**Does NOT belong here:**
+
+- HTTP request decoding
+- CLI formatting
+- Controller-facing list/get read-model assembly
+- Terminal WebSocket framing
+
+**Intentional split:** `service/session` is the product/API boundary; `session_manager` is the internal command engine.
+
+---
+
+### `internal/lifecycle`
+
+**Purpose:** Canonical write path for durable session lifecycle facts. Reduces observations into minimal persisted state.
+
+```mermaid
+graph LR
+    subgraph Inputs
+        RuntimeObs[Runtime Observations<br/>from Reaper]
+        ActivitySignals[Activity Signals<br/>from Agent Hooks]
+        SCMObs[SCM Observations<br/>from SCM Observer]
+    end
+
+    subgraph Lifecycle
+        LCM[Lifecycle Manager]
+        Reducer[Fact Reducer]
+        StateMachine[State Machine]
+        Nudge[Agent Nudge Engine]
+    end
+
+    subgraph Outputs
+        ActivityState[activity_state]
+        IsTerminated[is_terminated]
+        PRFacts[PR Facts]
+        Nudges[Agent Nudges]
+    end
+
+    RuntimeObs --> LCM
+    ActivitySignals --> LCM
+    SCMObs --> LCM
+
+    LCM --> Reducer
+    Reducer --> StateMachine
+    StateMachine --> ActivityState
+    StateMachine --> IsTerminated
+
+    SCMObs --> Nudge
+    Nudge --> Nudges
+
+```
+
+**Belongs here:**
+
+- Updates to lifecycle-owned session facts
+- Guardrails around runtime/activity observations
+- Lifecycle-triggered agent nudges for actionable PR facts
+
+**Does NOT belong here:**
+
+- Display status persistence (use service layer instead)
+- HTTP/CLI DTOs
+- Direct adapter implementation details
+- PR row persistence (use `pr.Manager`)
+
+**Key invariant:** The UI status is derived at read time by service code. Do not store display status in lifecycle or SQLite.
+
+---
+
+### `internal/observe/*`
+
+**Purpose:** Observation loops that poll external state and report facts to lifecycle.
+
+```mermaid
+graph TD
+    subgraph Observe
+        SCM[observe/scm<br/>SCM Observer]
+        Reaper[observe/reaper<br/>Runtime Reaper]
+    end
+
+    subgraph External
+        GitHub[GitHub API]
+        Runtimes[tmux/conpty]
+    end
+
+    subgraph Internal
+        LCM[Lifecycle Manager]
+        Store[SQLite Store]
+    end
+
+    SCM -->|polls| GitHub
+    SCM -->|writes| Store
+    SCM -->|notifies| LCM
+
+    Reaper -->|probes| Runtimes
+    Reaper -->|reports to| LCM
+
+```
+
+**Current observation packages:**
+
+- `internal/observe/scm` — SCM (GitHub) observer loop
+- `internal/observe/reaper` — Runtime liveness observation loop
+
+**Belongs here:**
+
+- Polling loops and observation logic
+- External state transformation into domain facts
+- Observation error handling and retry logic
+
+**Does NOT belong here:**
+
+- Product workflow decisions (belongs in service layer)
+- Direct storage writes (use lifecycle instead)
+
+---
 
 ### `internal/storage/sqlite`
 
-`storage/sqlite` owns SQLite setup, migrations, sqlc generated code, and store
-implementations.
+**Purpose:** SQLite setup, migrations, queries, and store implementations.
 
-Belongs here:
+```mermaid
+graph TD
+    Storage[storage/sqlite] --> Components[Components]
 
-- connection setup and PRAGMAs;
-- goose migrations;
-- sqlc queries and generated code;
-- table-specific store methods;
-- transactions and CDC-triggered persistence behavior.
+    Components --> Setup[Connection Setup<br/>PRAGMAs]
+    Components --> Migrations[Goose Migrations]
+    Components --> SQLC[sqlc Queries + Generated Code]
+    Components --> Stores[Table-specific Stores]
+    Components --> Trans[Transactions + CDC]
 
-Does not belong here:
+    Components -->|NOT| HTTP[HTTP Response Types]
+    Components -->|NOT| CLI[CLI Formatting]
+    Components -->|NOT| Product[Product Display Status Rules]
 
-- HTTP response types;
-- CLI output formatting;
-- product display status rules;
-- external adapter logic.
+```
 
-Generated sqlc types should stay behind store methods. Services and lifecycle
-code should work with domain records or service read models, not generated rows.
+**Belongs here:**
+
+- Connection setup and PRAGMAs
+- Goose migrations
+- sqlc queries and generated code
+- Table-specific store methods
+- Transactions and CDC-triggered persistence behavior
+
+**Does NOT belong here:**
+
+- HTTP response types
+- CLI output formatting
+- Product display status rules
+- External adapter logic
+
+**Rule:** Generated sqlc types should stay behind store methods. Services should work with domain records or service read models, not generated rows.
+
+---
 
 ### `internal/cdc`
 
-`cdc` owns `change_log` polling and event broadcasting. SQLite triggers append
-durable events to `change_log`; the poller tails that table and fans events out
-to subscribers.
+**Purpose:** Change-log polling and event broadcasting.
 
-Belongs here:
+```mermaid
+graph LR
+    SQLite[(SQLite)] -->|triggers| ChangeLog[change_log]
+    ChangeLog -->|tail| Poller[CDC Poller]
+    Poller -->|Event| Broadcaster[Broadcaster]
+    Broadcaster -->|fan-out| Subs[Subscribers]
 
-- event type definitions for the CDC stream;
-- poller and broadcaster logic;
-- subscriber fan-out behavior.
+    Subs --> SSE[SSE Writer]
+    Subs --> Term[Terminal Fanout]
+    Subs --> Cache[Cache Invalidation]
 
-Does not belong here:
+```
 
-- terminal byte streams;
-- product workflow decisions;
-- database schema ownership.
+**Belongs here:**
+
+- Event type definitions for the CDC stream
+- Poller and broadcaster logic
+- Subscriber fan-out behavior
+
+**Does NOT belong here:**
+
+- Terminal byte streams (belongs in `internal/terminal`)
+- Product workflow decisions (belongs in service layer)
+- Database schema ownership (belongs in `storage/sqlite`)
+
+---
 
 ### `internal/terminal`
 
-`terminal` owns the terminal session protocol and PTY attach management used by
-the HTTP mux. The runtime is selected by `runtimeselect`: tmux on Darwin/Linux,
-conpty on Windows. Every client that opens a pane gets its own attach Stream. On
-unix, tmux spawns `tmux attach` on a local PTY via ptyexec; on Windows, conpty
-dials the session's loopback pty-host directly. Either way the runtime owns
-screen state and scrollback and replays its init handshake plus a full repaint
-per attach, so there is no shared per-pane buffer.
+**Purpose:** Terminal session protocol and PTY attach management used by the HTTP terminal mux.
 
-Belongs here:
+```mermaid
+graph TD
+    HTTP[httpd] -->|WebSocket| Terminal[terminal]
+    Terminal -->|creates| Attach[Attach Streams]
+    Attach -->|wraps| PTY[PTY Sessions]
 
-- per-client attachment lifecycle (liveness gating, re-attach backoff);
-- input/output framing independent of HTTP;
-- PTY-backed attach handling and terminal protocol tests.
+    PTY --> Unix[Unix: tmux attach<br/>via ptyexec]
+    PTY --> Windows[Windows: conpty<br/>loopback dial]
 
-`httpd` adapts WebSocket connections to terminal interfaces; `terminal` should
-not import `httpd`.
+    Terminal -->|manages| State[Session States]
+    State --> Liveness[Liveness gating]
+    State --> Backoff[Re-attach backoff]
+
+```
+
+**Belongs here:**
+
+- Per-client attachment lifecycle
+- Input/output framing independent of HTTP
+- PTY-backed attach handling and terminal protocol tests
+
+**Does NOT belong here:**
+
+- HTTP-specific concerns (belongs in `httpd`)
+- HTTP routing or WebSocket upgrade logic
+
+**Note:** `httpd` adapts WebSocket connections to terminal interfaces. `terminal` should not import `httpd`.
+
+---
 
 ### `internal/httpd`
 
-`httpd` is the HTTP protocol adapter.
+**Purpose:** HTTP protocol adapter. Handles routing, middleware, and request/response encoding.
 
-Belongs here:
+```mermaid
+graph TD
+    HTTPD[httpd] --> Components[Components]
 
-- routing and middleware;
-- HTTP request decoding and response encoding;
-- path/query parameter handling;
-- status-code mapping;
-- API error envelopes;
-- OpenAPI generation and serving;
-- WebSocket upgrade handling for terminal mux.
+    Components --> Routing[Routing + Middleware]
+    Components --> Decode[Request Decoding]
+    Components --> Encode[Response Encoding]
+    Components --> Errors[API Error Envelopes]
+    Components --> OpenAPI[OpenAPI Generation]
+    Components --> WS[WebSocket for Terminal]
 
-Controllers call service managers and translate service results/errors into HTTP
-responses. Controllers should not reach directly into concrete adapters or the
-SQLite store.
+    Components -->|calls| Services[service/*]
 
-HTTP-only request/response wrappers belong in `httpd` or
-`httpd/controllers`. Application read models shared by controller and CLI flows
-belong in the owning `service/*` package.
+    Services -->|NOT| Adapters[Direct Adapter Access]
+    Services -->|NOT| Storage[Direct SQLite Access]
+
+```
+
+**Belongs here:**
+
+- Routing and middleware
+- HTTP request decoding and response encoding
+- Path/query parameter handling
+- Status-code mapping
+- API error envelopes
+- OpenAPI generation and serving
+- WebSocket upgrade handling for terminal mux
+
+**Does NOT belong here:**
+
+- Direct adapter or SQLite store access
+- Application read models shared with CLI (belongs in `service/*`)
+
+**Rule:** Controllers call service managers and translate service results/errors into HTTP responses.
+
+---
 
 ### `internal/cli`
 
-`cli` owns the user-facing `ao` command. It should stay thin:
+**Purpose:** User-facing `ao` command. Thin client over the daemon HTTP API.
 
-- discover the local daemon;
-- call the daemon's loopback HTTP API;
-- format command output;
-- start/stop/status/doctor process control.
+```mermaid
+graph LR
+    CLI[cli] --> Operations[Operations]
 
-The CLI should not duplicate daemon business logic. If a command needs product
-behavior, put the behavior in the daemon service/API path and have the CLI call
-that path.
+    Operations --> Discover[Discover Daemon]
+    Operations --> Call[Call HTTP API]
+    Operations --> Format[Format Output]
+    Operations --> Control[Process Control<br/>start/stop/status/doctor]
+
+    Operations -->|NOT| Direct[Direct Storage/DB Access]
+    Operations -->|NOT| Runtime[Direct Runtime Control]
+    Operations -->|NOT| Adapters[Direct Adapter Calls]
+
+```
+
+**Belongs here:**
+
+- Daemon discovery
+- HTTP API calls
+- Command output formatting
+- Process control: start/stop/status/doctor
+
+**Does NOT belong here:**
+
+- Duplicate daemon business logic (put in daemon service/API)
+- Direct storage, runtime, or adapter access
+
+**Rule:** If a command needs product behavior, put it in the daemon and have the CLI call that API path.
+
+---
+
+### `internal/adapters/*`
+
+**Purpose:** Concrete implementations of ports interfaces. Wraps external systems.
+
+```mermaid
+graph TD
+    Ports[Ports Interfaces] -->|implemented by| Adapters[Adapters]
+
+    Adapters --> Agent[agent/*<br/>23+ harnesses]
+    Adapters --> Runtime[runtime/*<br/>tmux, conpty]
+    Adapters --> Workspace[workspace/*<br/>gitworktree]
+    Adapters --> SCM[scm/*<br/>github]
+    Adapters --> Tracker[tracker/*<br/>github]
+
+    Agent --> Codex[codex]
+    Agent --> Claude[claude-code]
+    Agent --> Cursor[cursor]
+    Agent --> Aider[aider]
+    Agent -->|... 20+| More[more agents]
+
+```
+
+**Adapter principles:**
+
+- Adapters are leaves in the import graph
+- Adapters translate external behavior into AO ports/domain concepts
+- Adapters should not own product workflows
+- All adapter-written files must be gitignored
+
+**Good dependencies:**
+
+```
+session_manager → ports.Runtime
+adapters/runtime/tmux → ports + domain
+adapters/workspace/gitworktree → ports + domain
+daemon → adapters + services + storage
+```
+
+**Avoid:**
+
+```
+domain → adapters
+service/session → adapters/runtime/tmux
+httpd/controllers → storage/sqlite/store
+adapters/* → httpd
+```
+
+---
 
 ### `internal/daemon`
 
-`daemon` is the production composition root. It wires config, logging, SQLite,
-CDC, lifecycle, reaper, runtime, terminal manager, services, HTTP, and shutdown.
+**Purpose:** Production composition root. Wires all dependencies together.
 
-Belongs here:
+```mermaid
+graph TD
+    Daemon[daemon] --> Responsibilities[Responsibilities]
 
-- production dependency construction;
-- adapter registration;
-- startup/shutdown sequencing;
-- cross-component wiring.
+    Responsibilities --> Wire[Dependency Construction]
+    Responsibilities --> Register[Adapter Registration]
+    Responsibilities --> Startup[Startup Sequencing]
+    Responsibilities --> Shutdown[Shutdown Sequencing]
+    Responsibilities --> Cross[Cross-component Wiring]
 
-Does not belong here:
+    Responsibilities -->|NOT| Business[Business Logic<br/>(put in service/lifecycle)]
+    Responsibilities -->|NOT| Adapter[Adapter Implementation<br/>(put in adapters/*)]
 
-- business logic that should be testable in service, lifecycle, or manager
-  packages;
-- adapter implementation details.
-
-## Interface Placement
-
-Prefer interfaces near their consumers, except for shared capabilities.
-
-- If only one package consumes an abstraction, define the smallest interface in
-  that package.
-- If multiple core packages consume a replaceable capability, define it in
-  `ports`.
-- If HTTP controllers need a resource service, use the owning `service/*`
-  manager interface.
-- Return concrete types from constructors unless callers genuinely need an
-  interface.
-
-## Current Tree
-
-The current main-line shape is:
-
-```txt
-backend/
-  cmd/ao/                       # CLI entrypoint
-  main.go                       # daemon entrypoint compatibility
-  sqlc.yaml
-
-  internal/domain/              # shared product vocabulary and durable facts
-  internal/ports/               # capability interfaces
-  internal/service/
-    project/                    # project API/use-case boundary
-    session/                    # session API/use-case boundary
-    pr/                         # PR observation/action service
-    review/                     # code-review API/use-case boundary
-  internal/session_manager/     # internal session command engine
-  internal/lifecycle/           # durable lifecycle fact reducer
-  internal/observe/scm/         # SCM (GitHub) observer loop
-  internal/observe/reaper/      # runtime liveness observation loop
-  internal/storage/sqlite/      # DB, migrations, queries, generated sqlc, stores
-  internal/cdc/                 # change_log poller and broadcaster
-  internal/terminal/            # terminal session protocol and PTY handling
-  internal/httpd/               # HTTP API, controllers, OpenAPI, terminal mux
-  internal/cli/                 # user-facing ao command
-  internal/daemon/              # production wiring and shutdown
-  internal/config/              # daemon env/default config
-  internal/adapters/            # concrete agent/runtime/workspace/SCM/tracker adapters
 ```
+
+**Belongs here:**
+
+- Production dependency construction
+- Adapter registration
+- Startup/shutdown sequencing
+- Cross-component wiring
+
+**Does NOT belong here:**
+
+- Business logic (belongs in service, lifecycle, or manager packages)
+- Adapter implementation details (belongs in adapters/\*)
+
+---
+
+### `internal/config`
+
+**Purpose:** Environment-based daemon configuration.
+
+```mermaid
+graph LR
+    Config[config] --> Sources[Sources]
+
+    Sources --> Env[Environment Variables]
+    Sources --> Defaults[Built-in Defaults]
+    Sources --> Validate[Validation]
+
+    Config -->|provides| Settings[Settings]
+
+    Settings --> Port[AO_PORT]
+    Settings --> Timeout[AO_REQUEST_TIMEOUT]
+    Settings --> DataDir[AO_DATA_DIR]
+    Settings --> RunFile[AO_RUN_FILE]
+    Settings --> Agent[AO_AGENT]
+
+```
+
+**Key environment variables:**
+
+- `AO_PORT` — HTTP bind port (default: 3001)
+- `AO_REQUEST_TIMEOUT` — Per-request timeout (default: 60s)
+- `AO_SHUTDOWN_TIMEOUT` — Graceful shutdown cap (default: 10s)
+- `AO_RUN_FILE` — PID/port handshake (default: ~/.ao/running.json)
+- `AO_DATA_DIR` — SQLite data directory (default: ~/.ao/data)
+- `AO_AGENT` — Compatibility agent adapter (default: claude-code)
+- `GITHUB_TOKEN` — GitHub authentication
+
+---
+
+## Interface Placement Rules
+
+```mermaid
+graph TD
+    Question{Where to define<br/>interface?}
+
+    Question --> Single{Only one package<br/>consumes it?}
+    Single -->|Yes| InPackage[Define in consuming<br/>package]
+    Single -->|No| Multiple{Multiple core packages<br/>need it?}
+
+    Multiple -->|Yes| Ports[Define in ports]
+    Multiple -->|No| HTTP{HTTP controllers<br/>need it?}
+
+    HTTP -->|Yes| Service[Define in service/*]
+    HTTP -->|No| Concrete[Return concrete type<br/>from constructor]
+
+```
+
+**Rules:**
+
+1. **Single consumer** → Define in the consuming package (smallest interface)
+2. **Multiple core consumers** → Define in `ports` (shared capability)
+3. **HTTP controllers need resource** → Use `service/*` manager interface
+4. **Return from constructor** → Return concrete type unless genuinely needed
+
+**Examples:**
+
+```go
+// Good: Interface near single consumer
+type sessionGetter interface {
+    GetSession(ctx context.Context, id SessionID) (SessionRecord, bool, error)
+}
+
+// Good: Shared capability in ports
+type Runtime interface {
+    Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
+    Destroy(ctx context.Context, handle RuntimeHandle) error
+    IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
+}
+
+// Good: Service interface for controllers
+type Manager interface {
+    List(ctx context.Context) ([]Project, error)
+    Add(ctx context.Context, cfg Config) (Project, error)
+    Remove(ctx context.Context, id string) error
+}
+```
+
+---
+
+## Import Graph
+
+```mermaid
+graph TD
+    CLI[cli] --> HTTPD[httpd]
+    HTTPD --> Services[service/*]
+    HTTPD --> Terminal[terminal]
+
+    Services --> SessionMgr[session_manager]
+    Services --> Lifecycle[lifecycle]
+    Services --> Storage[storage/sqlite]
+    Services --> Domain[domain]
+    Services --> Ports[ports]
+
+    SessionMgr --> Ports
+    SessionMgr --> Adapters[adapters/*]
+    SessionMgr --> Lifecycle
+
+    Lifecycle --> Ports
+    Lifecycle --> Storage
+    Lifecycle --> Domain
+
+    Observe[observe/*] --> Ports
+    Observe --> Storage
+    Observe --> Lifecycle
+
+    Storage --> Domain
+    Storage --> Ports
+
+    Adapters --> Ports
+    Adapters --> Domain
+
+    CDC[cdc] --> Storage
+    Terminal --> Ports
+
+    Daemon[daemon] --> All[All packages]
+
+```
+
+**Key patterns:**
+
+- All arrows point downward (no cycles)
+- Adapters and domain are leaves
+- CLI and HTTPD don't touch storage directly
+- Everything depends on ports and domain
+
+---
 
 ## Adding New Code
 
-Use these defaults:
+### New HTTP Route
 
-- New HTTP route: add controller/API code in `httpd`, call a `service/*`
-  package, and update OpenAPI generation/spec tests.
-- New product resource: put shared IDs/vocabulary in `domain`, use cases and
-  read models in `service/<resource>`, storage in `storage/sqlite`, and external
-  system seams in `ports`.
-- New adapter: implement a `ports` interface under `adapters/<capability>/<impl>`
-  and wire it in `daemon`.
-- New persisted fact: add a migration, sqlc query, store method, domain record or
-  event vocabulary, and CDC behavior when the UI/API must observe it.
-- New CLI command: keep command parsing/formatting in `cli`; call the daemon API
-  rather than reimplementing daemon behavior.
+```mermaid
+flowchart LR
+    AddRoute[Add HTTP Route] --> Route[Register in httpd]
+    Route --> Call[Call service/*]
+    Call --> Update[Update OpenAPI]
+    Update --> Test[Add tests]
 
-## Project Routes Example
+```
 
-Project-owned concepts live in `internal/service/project`:
+**Steps:**
 
-- project read models;
-- project add/remove command types;
-- project validation and user-facing errors;
-- the `Manager` contract consumed by HTTP controllers.
+1. Add controller in `httpd/controllers/`
+2. Call a `service/*` package
+3. Update OpenAPI generation
+4. Add spec tests
 
-`internal/httpd/controllers` remains responsible for:
+### New Product Resource
 
-- route registration;
-- JSON decoding/encoding;
-- HTTP status codes and error envelopes;
-- mapping service errors to responses.
+```mermaid
+flowchart TD
+    NewResource[New Resource] --> Domain[Add IDs/vocab to domain]
+    Domain --> Service[Create service/resource]
+    Service --> Storage[Add storage queries]
+    Storage --> Ports[Add ports if needed]
+    Ports --> Adapter[Implement adapter if needed]
 
-When a type is ambiguous, ask whether it is a product use-case/read model or an
-HTTP wire wrapper. Product use-case/read models belong in `service/project`;
-HTTP wire wrappers belong in `httpd`.
+```
+
+**Steps:**
+
+1. Add shared IDs/vocabulary to `domain`
+2. Create use cases in `service/<resource>`
+3. Add storage in `storage/sqlite`
+4. Add ports if external system needed
+5. Implement adapter in `adapters/<capability>/<impl>`
+6. Wire in `daemon`
+
+### New Adapter
+
+```mermaid
+flowchart LR
+    NewAdapter[New Adapter] --> Port[Implement port interface]
+    Port --> Hooks[Implement hooks if agent]
+    Hooks --> Gitignore[Add .gitignore entries]
+    Gitignore --> Wire[Wire in daemon]
+    Wire --> Test[Add conformance tests]
+
+```
+
+**Steps:**
+
+1. Implement a `ports` interface under `adapters/<capability>/<impl>`
+2. For agents: implement hooks with gitignored files
+3. Wire in `daemon`
+4. Add conformance tests
+
+---
+
+## Examples
+
+### Example: Adding a Session Command
+
+```go
+// In internal/service/session/service.go
+func (s *Service) MyNewCommand(ctx context.Context, id SessionID) (Result, error) {
+    // 1. Validate input
+    // 2. Call session_manager
+    // 3. Enrich result
+    // 4. Return read model
+}
+
+// In internal/httpd/controllers/sessions.go
+func (c *SessionsController) myNewCommand(w http.ResponseWriter, r *http.Request) {
+    // 1. Decode request
+    // 2. Call service
+    // 3. Encode response
+}
+```
+
+### Example: Adding a Port Interface
+
+```go
+// In internal/ports/myfeature.go
+package ports
+
+type MyFeature interface {
+    DoSomething(ctx context.Context, cfg Config) (Result, error)
+}
+
+// In internal/adapters/myfeature/impl.go
+package impl
+
+import "github.com/aoagents/agent-orchestrator/backend/internal/ports"
+
+type Impl struct { ... }
+
+func (i *Impl) DoSomething(ctx context.Context, cfg ports.Config) (ports.Result, error) {
+    // Implementation
+}
+```
+
+### Example: Service Layer Pattern
+
+```go
+// In internal/service/myresource/service.go
+package service
+
+// Service is the controller-facing boundary
+type Service struct {
+    manager *manager.Manager  // Internal command engine
+    store   Store             // Storage interface
+}
+
+// New constructs the service
+func New(mgr *manager.Manager, store Store) *Service {
+    return &Service{manager: mgr, store: store}
+}
+
+// List returns enriched read models
+func (s *Service) List(ctx context.Context) ([]MyResource, error) {
+    records, err := s.store.List(ctx)
+    if err != nil {
+        return nil, err
+    }
+    return s.enrich(records), nil
+}
+
+// Create performs a use case
+func (s *Service) Create(ctx context.Context, cfg Config) (MyResource, error) {
+    // Business logic
+    result, err := s.manager.Create(ctx, cfg)
+    if err != nil {
+        return MyResource{}, err
+    }
+    return s.enrichOne(result), nil
+}
+```
+
+---
+
+## Summary
+
+**Key takeaways:**
+
+1. **Domain** stays pure — shared vocabulary only
+2. **Ports** define contracts — interfaces for external systems
+3. **Services** orchestrate — controller-facing use cases
+4. **Adapters** are leaves — implement ports, no core imports
+5. **CLI/HTTP** stay thin — protocol handling only
+6. **Daemon** wires it all — composition root
+
+**Always ask:**
+
+- Does this belong in domain (shared concept)?
+- Does this belong in ports (shared capability)?
+- Does this belong in service (use case)?
+- Does this belong in adapters (external system)?
+
+**Never:**
+
+- Put HTTP types in domain
+- Put display status in storage
+- Put business logic in CLI
+- Import core from adapters
+- Import adapters from services

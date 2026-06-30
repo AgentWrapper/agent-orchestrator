@@ -29,11 +29,15 @@ type Review struct {
 
 // ReviewRun is one review pass against a worker's PR.
 type ReviewRun struct {
-	ID        string          `json:"id"`
-	ReviewID  string          `json:"reviewId"`
-	SessionID SessionID       `json:"sessionId"`
-	Harness   ReviewerHarness `json:"harness"`
-	PRURL     string          `json:"prUrl"`
+	ID        string    `json:"id"`
+	ReviewID  string    `json:"reviewId"`
+	SessionID SessionID `json:"sessionId"`
+	// BatchID groups review runs created by one trigger so worker feedback can
+	// be delivered once after the whole trigger batch is terminal. Empty marks
+	// legacy/single-run delivery.
+	BatchID string          `json:"batchId"`
+	Harness ReviewerHarness `json:"harness"`
+	PRURL   string          `json:"prUrl"`
 	// TargetSHA is the PR head commit this pass reviewed.
 	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`

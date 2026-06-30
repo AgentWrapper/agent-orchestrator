@@ -307,7 +307,7 @@ func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
 func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
 	path, err := c.deps.LookPath("tmux")
 	if err != nil || path == "" {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH"}
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH; required on macOS/Linux to start sessions"}
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()

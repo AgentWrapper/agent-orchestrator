@@ -25,6 +25,7 @@ type fakeStore struct {
 	pr       map[domain.SessionID]domain.PRFacts
 	projects map[string]domain.ProjectRecord
 	checks   map[string][]domain.PullRequestCheck
+	reviews  map[string][]domain.PullRequestReview
 	threads  map[string][]domain.PullRequestReviewThread
 	comments map[string][]domain.PullRequestComment
 	num      int
@@ -36,6 +37,7 @@ func newFakeStore() *fakeStore {
 		pr:       map[domain.SessionID]domain.PRFacts{},
 		projects: map[string]domain.ProjectRecord{},
 		checks:   map[string][]domain.PullRequestCheck{},
+		reviews:  map[string][]domain.PullRequestReview{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
 		comments: map[string][]domain.PullRequestComment{},
 	}
@@ -116,6 +118,10 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
 func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
@@ -528,6 +534,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
+		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 	}
@@ -542,19 +549,74 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
+// TestToAPIError_NotResumable asserts that ErrNotResumable (promptless worker
+// with no adapter resume handle) maps to a Conflict with code SESSION_NOT_RESUMABLE.
+func TestToAPIError_NotResumable(t *testing.T) {
+	err := fmt.Errorf("restore mer-1: %w", sessionmanager.ErrNotResumable)
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_RESUMABLE" {
+		t.Fatalf("mapped = %v, want Conflict SESSION_NOT_RESUMABLE", mapped)
+	}
+}
+
+// TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists is the RED test
+// for the idempotency fix: when an active orchestrator already exists and
+// clean=false, SpawnOrchestrator must return that orchestrator without minting
+// a second one. Before the fix this test fails because a duplicate is spawned.
+func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	// Pre-load an active orchestrator.
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false); err != nil {
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
-	if len(fc.killed) != 0 || !fc.spawned {
-		t.Fatalf("clean=false must spawn without kills: killed=%v spawned=%v", fc.killed, fc.spawned)
+	// Must return the existing orchestrator, not a newly minted one.
+	if got.ID != "mer-1" {
+		t.Fatalf("returned id = %q, want existing orchestrator mer-1", got.ID)
+	}
+	// Must NOT have called manager.Spawn (no duplicate created).
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called when an active orchestrator already exists")
+	}
+	// Must NOT have killed anything.
+	if len(fc.killed) != 0 {
+		t.Fatalf("no kills expected with clean=false, got %v", fc.killed)
+	}
+	// Exactly one session in the store (no duplicate).
+	if len(st.sessions) != 1 {
+		t.Fatalf("session count = %d, want 1 (no duplicate)", len(st.sessions))
+	}
+}
+
+// TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists: clean=false spawns a new
+// orchestrator when no active one exists for the project.
+func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	// No active orchestrator present.
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("manager.Spawn must be called when no active orchestrator exists")
+	}
+	if len(fc.killed) != 0 {
+		t.Fatalf("no kills expected with clean=false, got %v", fc.killed)
+	}
+	if got.ID == "" {
+		t.Fatal("returned session must have an id")
 	}
 }
 
@@ -567,7 +629,7 @@ type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -685,6 +747,9 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 		{Name: "unit", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://github.com/acme/repo/actions/runs/1", LogTail: "panic: secret"},
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
+	stList.reviews[prURL] = []domain.PullRequestReview{
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", SubmittedAt: now.Add(-30 * time.Second)},
+	}
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
@@ -710,6 +775,8 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 	if reviewer := pr.Review.UnresolvedBy[0]; reviewer.ReviewerID != "reviewer-a" || reviewer.Count != 2 || len(reviewer.Links) != 2 {
 		t.Fatalf("reviewer = %+v", reviewer)
+	} else if reviewer.ReviewURL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		t.Fatalf("review url = %q", reviewer.ReviewURL)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
@@ -857,18 +924,4 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func TestToAPIError_NotResumable(t *testing.T) {
-	err := toAPIError(fmt.Errorf("restore foo: %w", sessionmanager.ErrNotResumable))
-	var ae *apierr.Error
-	if !errors.As(err, &ae) {
-		t.Fatalf("want *apierr.Error, got %T: %v", err, err)
-	}
-	if ae.Kind != apierr.KindConflict {
-		t.Errorf("kind = %v, want %v", ae.Kind, apierr.KindConflict)
-	}
-	if ae.Code != "SESSION_NOT_RESUMABLE" {
-		t.Errorf("code = %q, want SESSION_NOT_RESUMABLE", ae.Code)
-	}
 }

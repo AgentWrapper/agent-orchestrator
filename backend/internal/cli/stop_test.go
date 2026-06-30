@@ -118,3 +118,28 @@ func TestWaitForStoppedWaitsAfterRunFileRemovedUntilProcessExits(t *testing.T) {
 		t.Fatalf("process checks = %d, want at least 3", aliveChecks)
 	}
 }
+
+// TestWaitForStoppedReportsStoppedWhenRunFileGoneButProcessLingers covers
+// issue #2214: once the daemon has removed its run-file (its liveness marker)
+// the stop is committed, so if the process is still draining background workers
+// past the timeout, waitForStopped must report stopped rather than erroring.
+func TestWaitForStoppedReportsStoppedWhenRunFileGoneButProcessLingers(t *testing.T) {
+	dir := t.TempDir()
+	runFile := filepath.Join(dir, "running.json") // never written: run-file already gone
+
+	const stoppedPID = 1111
+	now := time.Unix(200, 0).UTC()
+	c := &commandContext{deps: Deps{
+		ProcessAlive: func(int) bool { return true }, // process never exits
+		Now:          func() time.Time { return now },
+		Sleep:        func(d time.Duration) { now = now.Add(d) },
+	}.withDefaults()}
+
+	st, err := c.waitForStopped(context.Background(), stoppedPID, runFile, dir, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st.State != stateStopped {
+		t.Fatalf("state = %q, want stopped", st.State)
+	}
+}

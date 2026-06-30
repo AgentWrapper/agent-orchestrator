@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prDiffSummary, prStatusRows } from "./pr-display";
+import { prAttentionItems, prBrowserUrl, prDiffSummary, prStatusRows } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -56,6 +56,19 @@ describe("prDiffSummary", () => {
 	});
 });
 
+describe("prBrowserUrl", () => {
+	it("normalizes issue-shaped GitHub PR URLs to the pull request page", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					url: "https://github.com/acme/repo/issues/7",
+					htmlUrl: "https://github.com/acme/repo/issues/7",
+				}),
+			),
+		).toBe("https://github.com/acme/repo/pull/7");
+	});
+});
+
 describe("prAttentionItems", () => {
 	it("returns no attention for clean open PRs", () => {
 		expect(prAttentionItems(summary())).toEqual([]);
@@ -97,6 +110,150 @@ describe("prAttentionItems", () => {
 		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
 			label: "alice +5",
 			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+		});
+	});
+
+	it("links failing CI checks to their provider URLs", () => {
+		const items = prAttentionItems(
+			summary({
+				ci: {
+					state: "failing",
+					failingChecks: [
+						{ name: "unit", status: "failed", conclusion: "failure", url: "https://checks.example/unit" },
+						{ name: "lint", status: "failed", conclusion: "failure", url: "https://checks.example/lint" },
+						{ name: "build", status: "failed", conclusion: "failure", url: "https://checks.example/build" },
+						{ name: "types", status: "failed", conclusion: "failure", url: "https://checks.example/types" },
+					],
+				},
+			}),
+		);
+
+		const ciItem = items.find((item) => item.kind === "ci_failing");
+		expect(ciItem?.links).toEqual([
+			{ label: "unit", href: "https://checks.example/unit", title: "failure" },
+			{ label: "lint", href: "https://checks.example/lint", title: "failure" },
+			{ label: "build", href: "https://checks.example/build", title: "failure" },
+		]);
+		expect(ciItem?.overflowLabel).toBe("+1 check");
+	});
+
+	it("prefers the submitted review summary over inline comments", () => {
+		const items = prAttentionItems(
+			summary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [
+						{
+							reviewerId: "alice",
+							count: 2,
+							reviewUrl: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
+							links: [
+								{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 },
+								{ url: "https://github.com/acme/repo/pull/7#discussion_r2", file: "test.go", line: 20 },
+							],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "alice +1",
+			href: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
+			title: "Open requested-changes review from alice",
+		});
+	});
+
+	it("falls back to the first inline comment when no review summary exists", () => {
+		const items = prAttentionItems(
+			summary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [
+						{
+							reviewerId: "alice",
+							count: 2,
+							links: [
+								{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 },
+								{ url: "https://github.com/acme/repo/pull/7#discussion_r2", file: "test.go", line: 20 },
+							],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "alice +1",
+			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+			title: "2 unresolved comments from alice",
+		});
+	});
+
+	it("falls back to the PR page when review summary and inline comment URLs are missing", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [{ reviewerId: "alice", count: 1, links: [] }],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "alice",
+			href: "https://github.com/acme/repo/pull/7",
+			title: "Open pull request for alice",
+		});
+	});
+
+	it("shows bot reviewers with a bot label", () => {
+		const items = prAttentionItems(
+			summary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: false,
+					unresolvedBy: [
+						{
+							reviewerId: "copilot",
+							count: 0,
+							reviewUrl: "https://github.com/acme/repo/pull/7#pullrequestreview-2",
+							isBot: true,
+							links: [],
+						},
+					],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "copilot bot",
+			href: "https://github.com/acme/repo/pull/7#pullrequestreview-2",
+			title: "Open requested-changes review from copilot bot",
+		});
+	});
+
+	it("links merge conflicts to GitHub's conflict resolution page", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				mergeability: {
+					state: "conflicting",
+					reasons: [],
+					prUrl: "https://github.com/acme/repo/issues/7",
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "merge_conflict")?.links[0]).toMatchObject({
+			label: "conflicts",
+			href: "https://github.com/acme/repo/pull/7/conflicts",
 		});
 	});
 

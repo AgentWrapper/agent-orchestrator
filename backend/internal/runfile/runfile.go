@@ -24,6 +24,11 @@ type Info struct {
 	Port int `json:"port"`
 	// StartedAt is when the daemon came up (RFC 3339).
 	StartedAt time.Time `json:"startedAt"`
+	// Owner is "app" when the desktop Electron app spawned this daemon; empty
+	// for a headless `ao start` daemon. Used by the app to decide whether to
+	// hold a supervisor link on attach (app-owned: re-link; headless: skip so
+	// the daemon stays persistent across app quit).
+	Owner string `json:"owner,omitempty"`
 }
 
 // Write atomically writes running.json at path, creating parent directories

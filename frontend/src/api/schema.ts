@@ -21,6 +21,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check whether a legacy AO install is available to import */
+        get: operations["getImportStatus"];
+        put?: never;
+        /** Run the legacy AO project import through the daemon store */
+        post: operations["runImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications": {
         parameters: {
             query?: never;
@@ -551,6 +569,19 @@ export interface components {
         DomainReviewerConfig: {
             harness: string;
         };
+        ImportReport: {
+            dryRun: boolean;
+            notes?: string[];
+            projectsImported: number;
+            projectsSkipped: number;
+        };
+        ImportRunResponse: {
+            report: components["schemas"]["ImportReport"];
+        };
+        ImportStatusResponse: {
+            available: boolean;
+            legacyRoot: string;
+        };
         KillSessionResponse: {
             freed?: boolean;
             ok: boolean;
@@ -564,7 +595,7 @@ export interface components {
         };
         ListReviewsResponse: {
             reviewerHandleId: string;
-            reviews: components["schemas"]["ReviewRun"][];
+            reviews: components["schemas"]["PRReviewState"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRSummary"][];
@@ -616,6 +647,15 @@ export interface components {
             id: string;
             projectId: string;
             projectName?: string;
+        };
+        PRReviewState: {
+            latestRun?: components["schemas"]["ReviewRun"];
+            prNumber: number;
+            prUrl: string;
+            /** @enum {string} */
+            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+            targetSha: string;
+            title: string;
         };
         Project: {
             agent?: string;
@@ -680,6 +720,7 @@ export interface components {
             sessionId: string;
         };
         ReviewRun: {
+            batchId: string;
             body: string;
             /** Format: date-time */
             createdAt: string;
@@ -698,6 +739,7 @@ export interface components {
         ReviewRunResponse: {
             review: components["schemas"]["ReviewRun"];
             reviewerHandleId: string;
+            reviews: components["schemas"]["ReviewRun"][];
         };
         RoleOverride: {
             agent?: string;
@@ -797,7 +839,9 @@ export interface components {
         };
         SessionPRUnresolvedReviewer: {
             count: number;
+            isBot?: boolean;
             links: components["schemas"]["SessionPRReviewCommentLink"][];
+            reviewUrl?: string;
             reviewerId: string;
         };
         SessionPreviewResponse: {
@@ -836,6 +880,7 @@ export interface components {
         };
         SpawnSessionRequest: {
             branch?: string;
+            displayName?: string;
             /** @enum {string} */
             harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
@@ -846,13 +891,29 @@ export interface components {
         };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
-            body: string;
+            body?: string;
             /** @description Id of the GitHub PR review the reviewer posted, if any. */
-            githubReviewId: string;
+            githubReviewId?: string;
+            /** @description Batched review results recorded by one reviewer CLI command. */
+            reviews?: components["schemas"]["SubmitReviewItem"][];
+            /** @description Review run id being completed. */
+            runId?: string;
+            /** @description Review verdict: approved or changes_requested. */
+            verdict?: string;
+        };
+        SubmitReviewItem: {
+            /** @description Review body recorded by AO. Required for changes_requested. */
+            body?: string;
+            /** @description Id of the GitHub PR review the reviewer posted, if any. */
+            githubReviewId?: string;
             /** @description Review run id being completed. */
             runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
+        };
+        TriggerReviewResponse: {
+            reviewerHandleId: string;
+            reviews: components["schemas"]["PRReviewState"][];
         };
         WorkspaceRepo: {
             name: string;
@@ -896,6 +957,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getImportStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    runImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportRunResponse"];
                 };
             };
             /** @description Internal Server Error */
@@ -2425,7 +2562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewRunResponse"];
+                    "application/json": components["schemas"]["TriggerReviewResponse"];
                 };
             };
             /** @description Created */
@@ -2434,7 +2571,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReviewRunResponse"];
+                    "application/json": components["schemas"]["TriggerReviewResponse"];
                 };
             };
             /** @description Not Found */

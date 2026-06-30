@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	winpty "github.com/aymanbagabas/go-pty"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // detachGrace mirrors the Unix value: how long Close waits for the attach

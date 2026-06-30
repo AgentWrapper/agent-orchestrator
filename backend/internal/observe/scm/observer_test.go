@@ -41,6 +41,7 @@ type fakeStore struct {
 type fakeWrite struct {
 	pr         domain.PullRequest
 	checks     []domain.PullRequestCheck
+	reviews    []domain.PullRequestReview
 	comments   []domain.PullRequestComment
 	reviewMode ports.ReviewWriteMode
 }
@@ -94,13 +95,13 @@ func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 	return append([]domain.PullRequestCheck(nil), s.checks[prURL]...), nil
 }
 
-func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
+func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
+	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), reviews: append([]domain.PullRequestReview(nil), reviews...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
 	return nil
 }
 
@@ -229,7 +230,7 @@ func testObs(num int) ports.SCMObservation {
 
 func knownPR(num int) domain.PullRequest {
 	obs := testObs(num)
-	pr, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
+	pr, _, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
 	return pr
 }
 
@@ -731,7 +732,11 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	local.ReviewHash = "old"
 	local.Review = domain.ReviewChangesRequest
 	store.prs["p-1"] = []domain.PullRequest{local}
-	review := ports.SCMReviewObservation{Decision: string(domain.ReviewChangesRequest), Threads: []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix this"}}}}}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewChangesRequest),
+		Reviews:  []ports.SCMReviewSummaryObservation{{ID: "review-1", Author: "ann", State: string(domain.ReviewChangesRequest), URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: time.Unix(199, 0).UTC()}},
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix this"}}}},
+	}
 	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}}, observations: map[string]ports.SCMObservation{}, reviews: map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review}}
 	lc := &fakeLifecycle{}
 	obs := newTestObserver(store, provider, lc, time.Unix(200, 0).UTC())
@@ -741,6 +746,9 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	}
 	if len(store.writes) == 0 || len(store.writes[0].comments) != 1 {
 		t.Fatalf("review change not persisted: %#v", store.writes)
+	}
+	if len(store.writes[0].reviews) != 1 || store.writes[0].reviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+		t.Fatalf("review summaries not persisted: %#v", store.writes[0].reviews)
 	}
 	if len(store.writes) != 2 {
 		t.Fatalf("review change with lifecycle should write held-back facts then acknowledgement, got %d writes", len(store.writes))

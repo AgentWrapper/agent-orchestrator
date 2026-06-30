@@ -62,6 +62,8 @@ type PRUnresolvedReviewer struct {
 	ReviewerID string
 	Count      int
 	Links      []PRReviewCommentLink
+	ReviewURL  string
+	IsBot      bool
 }
 
 // PRReviewCommentLink points to one unresolved review comment.
@@ -107,17 +109,21 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 		if err != nil {
 			return nil, err
 		}
+		reviews, err := s.store.ListPRReviews(ctx, pr.URL)
+		if err != nil {
+			return nil, err
+		}
 		comments, err := s.store.ListPRComments(ctx, pr.URL)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, summarizePR(pr, checks, threads, comments))
+		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
 	}
 	sortPRSummaries(out)
 	return out, nil
 }
 
-func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
+func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
 	return PRSummary{
 		URL:              pr.URL,
 		HTMLURL:          firstNonEmpty(pr.HTMLURL, pr.URL),
@@ -134,7 +140,7 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, thread
 		Deletions:        pr.Deletions,
 		ChangedFiles:     pr.ChangedFiles,
 		CI:               summarizeCI(pr, checks),
-		Review:           summarizeReview(pr, comments),
+		Review:           summarizeReview(pr, comments, reviews),
 		Mergeability:     summarizeMergeability(pr, threads),
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
@@ -166,7 +172,7 @@ func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISu
 	return out
 }
 
-func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment) PRReviewSummary {
+func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment, reviews []domain.PullRequestReview) PRReviewSummary {
 	out := PRReviewSummary{Decision: reviewOrNone(pr.Review)}
 	if pr.Merged || pr.Closed {
 		return out
@@ -174,6 +180,7 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 	byReviewer := map[string]int{}
 	order := []string{}
 	links := map[string][]PRReviewCommentLink{}
+	isBot := map[string]bool{}
 	for _, c := range comments {
 		if c.Resolved || c.IsBot {
 			continue
@@ -186,11 +193,20 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			order = append(order, reviewer)
 		}
 		byReviewer[reviewer]++
+		isBot[reviewer] = c.IsBot
 		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
 			URL:  c.URL,
 			File: c.File,
 			Line: c.Line,
 		})
+	}
+	reviewURLByAuthor := map[string]string{}
+	for reviewer, review := range latestChangesRequestedReviews(reviews) {
+		if _, ok := byReviewer[reviewer]; !ok {
+			order = append(order, reviewer)
+		}
+		reviewURLByAuthor[reviewer] = review.URL
+		isBot[reviewer] = review.IsBot
 	}
 	sort.Strings(order)
 	for _, reviewer := range order {
@@ -198,10 +214,51 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			ReviewerID: reviewer,
 			Count:      byReviewer[reviewer],
 			Links:      links[reviewer],
+			ReviewURL:  reviewURLByAuthor[reviewer],
+			IsBot:      isBot[reviewer],
 		})
 	}
-	out.HasUnresolvedHumanComments = len(out.UnresolvedBy) > 0
+	for _, reviewer := range out.UnresolvedBy {
+		if reviewer.Count > 0 && !reviewer.IsBot {
+			out.HasUnresolvedHumanComments = true
+			break
+		}
+	}
 	return out
+}
+
+func latestChangesRequestedReviews(reviews []domain.PullRequestReview) map[string]domain.PullRequestReview {
+	latestByReviewer := map[string]domain.PullRequestReview{}
+	for _, review := range reviews {
+		if review.State != domain.ReviewChangesRequest && review.State != domain.ReviewApproved {
+			continue
+		}
+		reviewer := strings.TrimSpace(review.Author)
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		current, ok := latestByReviewer[reviewer]
+		if !ok || reviewAfter(review, current) {
+			latestByReviewer[reviewer] = review
+		}
+	}
+	out := map[string]domain.PullRequestReview{}
+	for reviewer, review := range latestByReviewer {
+		if review.State == domain.ReviewChangesRequest {
+			out[reviewer] = review
+		}
+	}
+	return out
+}
+
+func reviewAfter(a, b domain.PullRequestReview) bool {
+	if a.SubmittedAt.IsZero() || b.SubmittedAt.IsZero() {
+		return a.SubmittedAt.IsZero() == b.SubmittedAt.IsZero() && a.ID > b.ID
+	}
+	if a.SubmittedAt.Equal(b.SubmittedAt) {
+		return a.ID > b.ID
+	}
+	return a.SubmittedAt.After(b.SubmittedAt)
 }
 
 func summarizeMergeability(pr domain.PullRequest, _ []domain.PullRequestReviewThread) PRMergeabilitySummary {

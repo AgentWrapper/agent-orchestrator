@@ -66,7 +66,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--claim-pr", "142", "--no-takeover")
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--name", "worker", "--claim-pr", "142", "--no-takeover")
 	if err != nil {
 		t.Fatalf("spawn claim-pr failed: %v stderr=%s", err, errOut)
 	}
@@ -108,7 +108,7 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 	t.Cleanup(srv.Close)
 	writeRunFileFor(t, cfg, srv)
 
-	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--claim-pr", "142")
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--name", "worker", "--claim-pr", "142")
 	if err == nil {
 		t.Fatal("expected spawn claim failure")
 	}
@@ -126,8 +126,26 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 }
 
 func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
-	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--no-takeover")
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", "worker", "--no-takeover")
 	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--no-takeover requires --claim-pr") {
 		t.Fatalf("err=%v exit=%d", err, ExitCode(err))
+	}
+}
+
+// TestSpawnCommand_RequiresName asserts `ao spawn` rejects a missing --name
+// before touching the network, mirroring the --project guard.
+func TestSpawnCommand_RequiresName(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--name is required") {
+		t.Fatalf("err=%v exit=%d, want --name is required", err, ExitCode(err))
+	}
+}
+
+// TestSpawnCommand_RejectsOverlongName asserts `ao spawn` rejects a --name
+// longer than 20 characters without contacting the daemon.
+func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", strings.Repeat("x", 21))
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "20 characters or fewer") {
+		t.Fatalf("err=%v exit=%d, want 20 characters or fewer", err, ExitCode(err))
 	}
 }

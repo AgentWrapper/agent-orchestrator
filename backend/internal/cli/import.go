@@ -27,12 +27,11 @@ func newImportCommand(ctx *commandContext) *cobra.Command {
 	var opts importOptions
 	cmd := &cobra.Command{
 		Use:   "import",
-		Short: "Import projects and orchestrator sessions from a legacy AO install",
+		Short: "Import projects from a legacy AO install",
 		Long: "Import reads the legacy Agent Orchestrator flat-file store " +
-			"(~/.agent-orchestrator) read-only and ports its projects, per-project " +
-			"settings, and each project's live orchestrator session into the rewrite " +
-			"database. Legacy files are never modified, and a re-run skips rows that " +
-			"already exist, so it is safe to run more than once.\n\n" +
+			"(~/.agent-orchestrator) read-only and ports its projects and per-project " +
+			"settings into the rewrite database. Legacy files are never modified, and " +
+			"a re-run skips rows that already exist, so it is safe to run more than once.\n\n" +
 			"The daemon must be stopped: it is the sole writer of the database.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,7 +70,7 @@ func (c *commandContext) runImport(cmd *cobra.Command, opts importOptions) error
 
 	if !opts.dryRun && !opts.yes {
 		ok, err := confirm(c.deps.In, cmd.OutOrStdout(),
-			fmt.Sprintf("Import projects and orchestrator sessions from %s?", root), true)
+			fmt.Sprintf("Import projects from %s?", root), true)
 		if err != nil {
 			return err
 		}
@@ -82,9 +81,8 @@ func (c *commandContext) runImport(cmd *cobra.Command, opts importOptions) error
 	}
 
 	rep, err := c.executeImport(cmd.Context(), cfg, legacyimport.Options{
-		Root:    root,
-		DataDir: cfg.DataDir,
-		DryRun:  opts.dryRun,
+		Root:   root,
+		DryRun: opts.dryRun,
 	})
 	if err != nil {
 		return err
@@ -112,11 +110,9 @@ func (c *commandContext) executeImport(ctx context.Context, cfg config.Config, o
 func writeImportSummary(w io.Writer, rep legacyimport.Report) error {
 	var b strings.Builder
 	if rep.DryRun {
-		b.WriteString("Dry run — no changes written.\n")
+		b.WriteString("Dry run -- no changes written.\n")
 	}
-	fmt.Fprintf(&b, "Projects:       %d imported, %d already present\n", rep.ProjectsImported, rep.ProjectsSkipped)
-	fmt.Fprintf(&b, "Orchestrators:  %d imported, %d skipped, %d absent\n", rep.OrchestratorsImported, rep.OrchestratorsSkipped, rep.OrchestratorsAbsent)
-	fmt.Fprintf(&b, "Transcripts:    %d relocated\n", rep.TranscriptsRelocated)
+	fmt.Fprintf(&b, "Projects:  %d imported, %d already present\n", rep.ProjectsImported, rep.ProjectsSkipped)
 	if len(rep.Notes) > 0 {
 		b.WriteString("\nNotes:\n")
 		for _, n := range rep.Notes {

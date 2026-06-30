@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -465,8 +466,8 @@ func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	if ws.destroyed != 1 {
 		t.Fatal("workspace should roll back")
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("orphaned spawn should be terminated")
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
 	}
 }
 
@@ -937,23 +938,67 @@ func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
 	}
 }
 
-// TestRestore_RefusesPromptlessWhenAdapterCannotResume preserves the typed
-// error: a promptless session whose adapter cannot resume (no native session id)
-// has genuinely nothing to relaunch from and must still return ErrNotResumable.
-func TestRestore_RefusesPromptlessWhenAdapterCannotResume(t *testing.T) {
+// TestRestore_PromptlessUnresumableRelaunchesFresh covers the genuine-reboot
+// case: a promptless session whose adapter cannot resume (no native session id,
+// no captured AgentSessionID) must be relaunched fresh via GetLaunchCommand
+// in the SAME id. The orchestrator is the canonical example: after a reboot
+// where tmux is truly gone, RestoreAll must recover it in place rather than
+// abandon it and mint a new one (which caused the id-increment bug).
+func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		// No AgentSessionID, no Prompt: exactly how an orchestrator is persisted.
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
+	// without an agentSessionId, and GetLaunchCommand returns a valid argv.
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("promptless unresumable session must relaunch fresh, got err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1 (fresh launch)", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Error("session must be live after fresh relaunch")
+	}
+}
+
+// TestRestore_PromptlessWorkerNotResumable is the RED test for the promptless-worker
+// fix: a KindWorker session with no prompt and no captured AgentSessionID (so the
+// adapter returns ok=false) must NOT be blank-relaunched. The session had no task
+// to replay and no native id to resume from, so relaunching fresh would silently
+// drop its work. Restore must return ErrNotResumable and leave the session terminated
+// (runtime.Create must NOT be called).
+func TestRestore_PromptlessWorkerNotResumable(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		// No AgentSessionID, no Prompt: promptless worker with no resume handle.
 		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root"},
 		Activity: domain.Activity{State: domain.ActivityExited},
 	}
+	rt := &fakeRuntime{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
-	// without an agentSessionId.
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	// when there is no AgentSessionID. With a KindWorker and empty Prompt, this
+	// must produce ErrNotResumable instead of a blank relaunch.
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrNotResumable) {
-		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	_, err := m.Restore(ctx, "mer-1")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("promptless unresumable worker must return ErrNotResumable, got %v", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create = %d, want 0 (must not relaunch a promptless worker)", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("session must remain terminated after ErrNotResumable")
 	}
 }
 
@@ -1054,6 +1099,9 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	notFound := func(name string) (string, error) {
+		if name == "tmux" {
+			return "/bin/tmux", nil
+		}
 		return "", fmt.Errorf("exec: %q: not found", name)
 	}
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: notFound})
@@ -1068,8 +1116,39 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	if ws.destroyed != 1 {
 		t.Fatal("workspace must be torn down when the pre-launch binary check fails")
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("the orphan row should be marked terminated after the failed spawn")
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
+	}
+}
+
+func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses ConPTY, not tmux")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(name string) (string, error) {
+		if name == "tmux" {
+			return "", fmt.Errorf("exec: %q: not found", name)
+		}
+		return "/bin/true", nil
+	}
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrRuntimePrerequisite) || !strings.Contains(err.Error(), "tmux required") {
+		t.Fatalf("err = %v, want missing tmux prerequisite", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("no session row should be created before runtime prerequisites pass, got %d", len(st.sessions))
+	}
+	if ws.lastCfg.SessionID != "" || ws.destroyed != 0 {
+		t.Fatal("workspace must not be created when tmux is missing")
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime must not be created when tmux is missing")
 	}
 }
 

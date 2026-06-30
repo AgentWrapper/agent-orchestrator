@@ -104,6 +104,32 @@ func TestReviewSubmitAcceptsUnderscoreFlags(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitBatchReadsReviewsFromStdin(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"reviews":[{"id":"run-1","verdict":"changes_requested"},{"id":"run-2","verdict":"approved"}]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader(`{"reviews":[{"runId":"run-1","verdict":"changes_requested","body":"fix auth","githubReviewId":"101"},{"runId":"run-2","verdict":"approved","body":"looks good"}]}`)
+	out, errOut, err := executeCLI(t, deps, "review", "submit", "mer-1", "--reviews", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "recorded 2 review(s) for mer-1") {
+		t.Fatalf("stdout = %q", out)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(req.Reviews) != 2 || req.Reviews[0].RunID != "run-1" || req.Reviews[0].GithubReviewID != "101" || req.Reviews[1].Verdict != "approved" {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.RunID != "" || req.Verdict != "" {
+		t.Fatalf("batch request should not also set legacy fields: %+v", req)
+	}
+}
+
 func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)

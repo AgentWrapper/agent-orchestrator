@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ const (
 // review_run row.
 type ReviewResult struct {
 	RunID          string
+	BatchID        string
 	WorkerID       domain.SessionID
 	PRURL          string
 	TargetSHA      string
@@ -40,6 +42,56 @@ type ReviewResult struct {
 	Body           string
 	GithubReviewID string
 	DeliveredAt    *time.Time
+}
+
+// ApplyReviewBatch reacts to one reviewer CLI submission after the review
+// service has decided which current-head changes-requested results are
+// deliverable.
+func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []ReviewResult) (ReviewDeliveryOutcome, error) {
+	if batchID == "" || len(results) == 0 {
+		return ReviewDeliveryNoop, nil
+	}
+	rec, ok, err := m.store.GetSession(ctx, workerID)
+	if err != nil || !ok {
+		return ReviewDeliveryNoop, err
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+		return ReviewDeliveryNoop, nil
+	}
+	if m.messenger == nil {
+		return ReviewDeliveryNoop, nil
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].PRURL != results[j].PRURL {
+			return results[i].PRURL < results[j].PRURL
+		}
+		return results[i].RunID < results[j].RunID
+	})
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "[AO reviewer] AO's internal code reviewer submitted %d review(s) requesting changes.\n", len(results))
+	var sigParts []string
+	for i, r := range results {
+		fmt.Fprintf(&msg, "\nReview %d\nPR: %s\nVerdict: %s", i+1, domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
+		if r.TargetSHA != "" {
+			fmt.Fprintf(&msg, "\nHead commit: %s", domain.SanitizeControlChars(r.TargetSHA))
+		}
+		if r.GithubReviewID != "" {
+			safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
+			fmt.Fprintf(&msg, "\nGitHub review: %s", safeReviewID)
+			fmt.Fprintf(&msg, "\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
+		}
+		if r.Body != "" {
+			fmt.Fprintf(&msg, "\n\nReview body:\n%s\n", domain.SanitizeControlChars(r.Body))
+		}
+		sigParts = append(sigParts, strings.Join([]string{r.RunID, r.PRURL, r.TargetSHA, r.GithubReviewID, r.Body}, "\x00"))
+	}
+	anchorPR := results[0].PRURL
+	key := "review-batch:" + anchorPR + ":" + batchID
+	sig := strings.Join(sigParts, "\x01")
+	if err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge); err != nil {
+		return ReviewDeliveryNoop, err
+	}
+	return ReviewDeliverySent, nil
 }
 
 type reactionState struct {
@@ -154,13 +206,14 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if m.messenger == nil {
 		return ReviewDeliveryNoop, nil
 	}
-	msg := "[AO reviewer] AO's internal code reviewer requested changes on your PR. Review the feedback below and address it."
+	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
 	if r.GithubReviewID != "" {
 		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
-		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
+		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
+		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
 	}
 	if r.Body != "" {
-		msg += "\n\n" + domain.SanitizeControlChars(r.Body)
+		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")

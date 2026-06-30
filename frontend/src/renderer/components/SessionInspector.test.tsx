@@ -56,7 +56,7 @@ function renderWithQuery(children: ReactNode) {
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
-function mockCommonGets(reviews: unknown[] = [], reviewerHandleId = "") {
+function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
@@ -93,6 +93,24 @@ const approvedReview = {
 	targetSha: "abc123",
 	createdAt: "2026-06-16T10:06:00Z",
 };
+
+const failedReview = {
+	...approvedReview,
+	id: "run-failed",
+	status: "failed",
+	verdict: "",
+	body: "reviewer crashed",
+};
+
+const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
+	prUrl: `https://example.com/pr/${n}`,
+	prNumber: n,
+	title: `Reviewable change ${n}`,
+	targetSha,
+	status,
+	latestRun:
+		status === "up_to_date" ? { ...approvedReview, prUrl: `https://example.com/pr/${n}`, targetSha } : undefined,
+});
 
 beforeEach(() => {
 	getMock.mockReset();
@@ -155,12 +173,13 @@ describe("SessionInspector reviews tab", () => {
 	const openReviewsTab = async () => userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
 
 	it("triggers a review and opens the returned reviewer terminal", async () => {
-		mockCommonGets();
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
 		postMock.mockResolvedValue({
 			response: { status: 201 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				review: { ...approvedReview, status: "running", verdict: "", body: "" },
+				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
 			},
 		});
 		const onOpenReviewerTerminal = vi.fn();
@@ -180,11 +199,34 @@ describe("SessionInspector reviews tab", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows an up-to-date notice instead of opening the terminal when the backend reuses a run", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane");
+	it("shows eligible and up-to-date PR review rows", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [
+			reviewState(3, "needs_review", "abc123"),
+			reviewState(4, "up_to_date", "def456"),
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
+		expect(screen.getByText("#3")).toBeInTheDocument();
+		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
+		expect(screen.getByText("#4")).toBeInTheDocument();
+		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
+		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
+	});
+
+	it("shows a no-needed-reviews notice instead of opening the terminal when the backend reuses runs", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
 		postMock.mockResolvedValue({
 			response: { status: 200 },
-			data: { reviewerHandleId: "reviewer-pane", review: approvedReview },
+			data: {
+				reviewerHandleId: "reviewer-pane",
+				reviews: [],
+			},
 		});
 		const onOpenReviewerTerminal = vi.fn();
 
@@ -195,12 +237,15 @@ describe("SessionInspector reviews tab", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-		expect(await screen.findByText("Review is already up to date for this commit.")).toBeInTheDocument();
+		expect(await screen.findByText("No needed reviews were started.")).toBeInTheDocument();
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows an approved review and opens its terminal", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane");
+	it("shows one shared terminal action", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [
+			reviewState(3, "running", "abc123"),
+			reviewState(4, "up_to_date", "def456"),
+		]);
 		const onOpenReviewerTerminal = vi.fn();
 
 		renderWithQuery(
@@ -208,10 +253,36 @@ describe("SessionInspector reviews tab", () => {
 		);
 		await openReviewsTab();
 
-		await waitFor(() => expect(screen.getAllByText("Approved").length).toBeGreaterThan(0));
+		await waitFor(() => expect(screen.getAllByText("Open terminal")).toHaveLength(1));
+		expect(screen.getAllByRole("button", { name: /review/i })).toHaveLength(1);
 		await userEvent.click(screen.getByRole("button", { name: /open terminal/i }));
 
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+	});
+
+	it("shows the reviewer identity and aggregate verdict", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("codex")).toBeInTheDocument();
+		expect(screen.getByText("reviewer")).toBeInTheDocument();
+		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
+		expect(screen.queryByText("review session")).not.toBeInTheDocument();
+		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
+	});
+
+	it("shows failed latest runs as failed and still allows rerun", async () => {
+		mockCommonGets([failedReview], "reviewer-pane", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsTab();
+
+		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
+		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
 	it("shows the no-PR empty state when the session has no PRs", async () => {

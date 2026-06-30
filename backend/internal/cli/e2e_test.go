@@ -135,14 +135,32 @@ func asExit(err error, target **exec.ExitError) bool {
 	return false
 }
 
-// startDaemon brings the daemon up and registers a stop on cleanup.
+// startDaemon brings the daemon up and registers a stop on cleanup. `ao start`
+// no longer spawns the daemon (the desktop app owns it now), so the e2e suite
+// drives the hidden `ao daemon` command directly and polls for readiness.
 func (e env) startDaemon(t *testing.T) {
 	t.Helper()
-	out, code := e.run(t, "start")
-	if code != 0 {
-		t.Fatalf("start failed (exit %d): %s", code, out)
+	cmd := exec.Command(aoBin, "daemon")
+	cmd.Env = e.environ("")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn ao daemon: %v", err)
 	}
-	t.Cleanup(func() { e.run(t, "stop") })
+	t.Cleanup(func() {
+		e.run(t, "stop")
+		_, _ = cmd.Process.Wait()
+	})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out, _ := e.run(t, "status", "--json")
+		if strings.Contains(out, `"state": "ready"`) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("daemon did not become ready within 10s; last status:\n%s", out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func mustContain(t *testing.T, out, want string) {
@@ -224,12 +242,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	mustContain(t, out, `"state": "ready"`)
 	mustContain(t, out, fmt.Sprintf(`"port": %d`, e.port))
 
-	// idempotent
-	if out, code := e.run(t, "start"); code != 0 || !strings.Contains(out, "ready") {
-		t.Fatalf("idempotent start: exit %d, out %s", code, out)
-	}
-
-	// now the daemon (not the CLI) has created + migrated the store
+	// the daemon (not the CLI) has created + migrated the store
 	if _, err := os.Stat(filepath.Join(e.dataDir, "ao.db")); err != nil {
 		t.Fatalf("daemon should have created ao.db: %v", err)
 	}
