@@ -375,8 +375,7 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
-// reviewer wins, otherwise the worker's own harness is reused (falling back to
-// claude-code), per domain.ResolveReviewerHarness.
+// reviewer wins, otherwise claude-code is used, per domain.ResolveReviewerHarness.
 func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
 	var cfg domain.ProjectConfig
 	if e.projects != nil {

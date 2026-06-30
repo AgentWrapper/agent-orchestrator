@@ -49,6 +49,11 @@ const session = (prs: PullRequestFacts[]): WorkspaceSession => ({
 	prs,
 });
 
+const sessionWithProvider = (prs: PullRequestFacts[], provider: WorkspaceSession["provider"]): WorkspaceSession => ({
+	...session(prs),
+	provider,
+});
+
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -197,6 +202,36 @@ describe("SessionInspector reviews tab", () => {
 			}),
 		);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+	});
+
+	it("shows claude-code as the default reviewer before a run exists", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: {},
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
+		await openReviewsTab();
+
+		expect(await screen.findByText("claude-code")).toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date PR review rows", async () => {

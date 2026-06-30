@@ -483,7 +483,7 @@ function ReviewPanel({
 	}
 
 	const latest = reviewStates.find((review) => review.latestRun)?.latestRun;
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
+	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const aggregateVerdict = sessionReviewVerdict(reviewStates);
 	const runAction = reviewSessionRunAction(reviewStates, isTriggering);
