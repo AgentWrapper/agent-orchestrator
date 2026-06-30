@@ -275,7 +275,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+	launchCfg := ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
@@ -283,7 +283,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		IssueID:       string(cfg.IssueID),
 		Config:        agentConfig,
 		Permissions:   agentConfig.Permissions,
-	})
+	}
+	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
+	if err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
+	}
+	if delivery == ports.PromptDeliveryAfterStart {
+		launchCfg.Prompt = ""
+	}
+	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -316,6 +326,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
+	}
+	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
+		if err := m.messenger.Send(ctx, id, prompt); err != nil {
+			_ = m.runtime.Destroy(ctx, handle)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+		}
 	}
 	return m.getRecord(ctx, id)
 }

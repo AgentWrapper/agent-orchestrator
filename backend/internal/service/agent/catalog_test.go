@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
@@ -12,20 +13,29 @@ import (
 )
 
 type fakeAgent struct {
-	err error
+	err   error
+	delay time.Duration
 }
 
 type fakeAuthAgent struct {
 	fakeAgent
-	status  ports.AgentAuthStatus
-	authErr error
+	status    ports.AgentAuthStatus
+	authErr   error
+	authDelay time.Duration
 }
 
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
 
-func (f fakeAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+func (f fakeAgent) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) ([]string, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -48,7 +58,14 @@ func (f fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.Session
 	return ports.SessionInfo{}, false, nil
 }
 
-func (f fakeAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	if f.authDelay > 0 {
+		select {
+		case <-time.After(f.authDelay):
+		case <-ctx.Done():
+			return ports.AgentAuthStatusUnknown, ctx.Err()
+		}
+	}
 	return f.status, f.authErr
 }
 
@@ -105,6 +122,73 @@ func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
 	}
 	if byID["broken-auth"].AuthStatus != ports.AgentAuthStatusUnknown {
 		t.Fatalf("broken-auth authStatus = %q", byID["broken-auth"].AuthStatus)
+	}
+}
+
+func TestListDoesNotWaitForSlowAgentProbe(t *testing.T) {
+	previous := agentInstallProbeTimeout
+	agentInstallProbeTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { agentInstallProbeTimeout = previous })
+
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("codex", "Codex", nil),
+		{
+			Harness: domain.AgentHarness("slow"),
+			Manifest: adapters.Manifest{
+				ID:   "slow",
+				Name: "Slow",
+			},
+			Agent: fakeAgent{delay: time.Minute},
+		},
+	})
+
+	start := time.Now()
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("List took %s, want bounded by slow probe timeout", elapsed)
+	}
+	if len(got.Supported) != 2 {
+		t.Fatalf("supported = %#v, want both agents", got.Supported)
+	}
+	if len(got.Installed) != 1 || got.Installed[0].ID != "codex" {
+		t.Fatalf("installed = %#v, want only codex", got.Installed)
+	}
+}
+
+func TestListUsesSeparateTimeoutForAuthProbe(t *testing.T) {
+	previousInstall := agentInstallProbeTimeout
+	previousAuth := agentAuthProbeTimeout
+	agentInstallProbeTimeout = 20 * time.Millisecond
+	agentAuthProbeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() {
+		agentInstallProbeTimeout = previousInstall
+		agentAuthProbeTimeout = previousAuth
+	})
+
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.AgentHarness("claude-code"),
+			Manifest: adapters.Manifest{
+				ID:   "claude-code",
+				Name: "Claude Code",
+			},
+			Agent: fakeAuthAgent{
+				fakeAgent: fakeAgent{},
+				status:    ports.AgentAuthStatusAuthorized,
+				authDelay: 75 * time.Millisecond,
+			},
+		},
+	})
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got.Authorized) != 1 || got.Authorized[0].ID != "claude-code" {
+		t.Fatalf("authorized = %#v, want claude-code", got.Authorized)
 	}
 }
 

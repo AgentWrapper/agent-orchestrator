@@ -224,6 +224,7 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 // session manager resolved and forwarded a project's agent config.
 type recordingAgent struct {
 	fakeAgent
+	delivery    ports.PromptDeliveryStrategy
 	lastConfig  ports.AgentConfig
 	lastLaunch  ports.LaunchConfig
 	lastRestore ports.RestoreConfig
@@ -233,6 +234,13 @@ func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCon
 	a.lastConfig = cfg.Config
 	a.lastLaunch = cfg
 	return []string{"launch"}, nil
+}
+
+func (a *recordingAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if a.delivery != "" {
+		return a.delivery, nil
+	}
+	return ports.PromptDeliveryInCommand, nil
 }
 
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
@@ -885,6 +893,35 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
 		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnWorker_DeliversPromptAfterStartWhenAdapterRequestsIt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{delivery: ports.PromptDeliveryAfterStart}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	msg := &fakeMessenger{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: msg, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.lastLaunch.Prompt != "" {
+		t.Fatalf("launch prompt = %q, want empty for after-start delivery", agent.lastLaunch.Prompt)
+	}
+	if got := st.sessions[s.ID].Metadata.Prompt; got != "do it" {
+		t.Fatalf("metadata prompt = %q, want preserved prompt", got)
+	}
+	if len(msg.msgs) != 1 || msg.msgs[0] != "do it" {
+		t.Fatalf("sent messages = %#v, want prompt delivered once after start", msg.msgs)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed = %d, want 0", rt.destroyed)
 	}
 }
 

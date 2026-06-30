@@ -4,10 +4,23 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
+	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+var (
+	agentInstallProbeTimeout = 2 * time.Second
+	agentAuthProbeTimeout    = 5 * time.Second
+)
+
+type probeResult struct {
+	info       Info
+	installed  bool
+	authorized bool
+}
 
 // Info is the user-facing identity for an agent adapter.
 type Info struct {
@@ -44,29 +57,33 @@ func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
 // resolved on this machine. Detector errors are intentionally isolated to the
 // affected agent; one broken adapter should not hide the rest of the catalog.
 func (s *Service) List(ctx context.Context) (Inventory, error) {
-	supported := make([]Info, 0, len(s.agents))
-	installed := make([]Info, 0, len(s.agents))
-	authorized := make([]Info, 0, len(s.agents))
+	results := make(chan probeResult, len(s.agents))
+	var wg sync.WaitGroup
 	for _, item := range s.agents {
 		if err := ctx.Err(); err != nil {
 			return Inventory{}, err
 		}
-		info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
-		if info.Label == "" {
-			info.Label = info.ID
+		wg.Add(1)
+		go func(item agentregistry.HarnessAgent) {
+			defer wg.Done()
+			results <- probeAgent(ctx, item)
+		}(item)
+	}
+	wg.Wait()
+	close(results)
+
+	supported := make([]Info, 0, len(s.agents))
+	installed := make([]Info, 0, len(s.agents))
+	authorized := make([]Info, 0, len(s.agents))
+	for res := range results {
+		supported = append(supported, res.info)
+		if res.installed {
+			installed = append(installed, res.info)
 		}
-		supported = append(supported, info)
-		if _, err := item.Agent.GetLaunchCommand(ctx, ports.LaunchConfig{}); err == nil {
-			info.AuthStatus = authStatus(ctx, item.Agent)
-			installed = append(installed, info)
-			if info.AuthStatus == ports.AgentAuthStatusAuthorized {
-				authorized = append(authorized, info)
-			}
-		} else {
-			continue
+		if res.authorized {
+			authorized = append(authorized, res.info)
 		}
 	}
-
 	sortInfos(supported)
 	sortInfos(installed)
 	sortInfos(authorized)
@@ -75,6 +92,22 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 		Installed:  installed,
 		Authorized: authorized,
 	}, nil
+}
+
+func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {
+	info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
+	if info.Label == "" {
+		info.Label = info.ID
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, agentInstallProbeTimeout)
+	defer cancel()
+	if _, err := item.Agent.GetLaunchCommand(probeCtx, ports.LaunchConfig{}); err != nil {
+		return probeResult{info: info}
+	}
+	authCtx, authCancel := context.WithTimeout(ctx, agentAuthProbeTimeout)
+	defer authCancel()
+	info.AuthStatus = authStatus(authCtx, item.Agent)
+	return probeResult{info: info, installed: true, authorized: info.AuthStatus == ports.AgentAuthStatusAuthorized}
 }
 
 func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {

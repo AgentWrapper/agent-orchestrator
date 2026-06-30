@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -33,7 +34,7 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"copilot", "--allow-all", "-p", "-fix this"}
+	want := []string{"copilot", "--allow-all"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -123,7 +124,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.PromptDeliveryInCommand {
+	if got != ports.PromptDeliveryAfterStart {
 		t.Fatalf("unexpected strategy: %q", got)
 	}
 }
@@ -137,6 +138,115 @@ func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
 	}
 	if len(spec.Fields) != 0 {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestCopilotNativeBinaryForNpmLoader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("npm loader native binary naming is covered on Unix-like platforms")
+	}
+	dir := t.TempDir()
+	packageDir := filepath.Join(dir, "lib", "node_modules", "@github", "copilot")
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(filepath.Join(packageDir, "node_modules", ".bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := filepath.Join(packageDir, "npm-loader.js")
+	if err := os.WriteFile(loader, []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	native := filepath.Join(packageDir, "node_modules", ".bin", "copilot-"+runtime.GOOS+"-"+runtime.GOARCH)
+	if err := os.WriteFile(native, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(binDir, "copilot")
+	if err := os.Symlink(loader, link); err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := filepath.EvalSymlinks(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := filepath.EvalSymlinks(copilotNativeBinaryForLoader(link))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("native binary = %q, want %q", got, want)
+	}
+}
+
+func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
+	clearCopilotAuthEnv(t)
+	t.Setenv("GH_TOKEN", "github_pat_test")
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	got, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestCopilotConfigAuthStatusAuthorizedWithPlainTextToken(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"authToken":"token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := copilotConfigAuthStatus(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestCopilotConfigAuthStatusUnauthorizedWithEmptyConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := copilotConfigAuthStatus(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func TestCopilotSessionStateAuthStatusAuthorizedWithModelEvent(t *testing.T) {
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "session-1")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(`{"type":"tool.execution_complete","data":{"model":"claude-sonnet-4.5"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := copilotSessionStateAuthStatus(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func clearCopilotAuthEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range copilotTokenEnvVars {
+		t.Setenv(name, "")
 	}
 }
 
