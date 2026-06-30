@@ -3,8 +3,13 @@ package domain
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
-// TrackerProviderGitHub is the only supported issue-tracker provider.
-const TrackerProviderGitHub TrackerProvider = "github"
+// Supported issue-tracker providers. Each value maps 1:1 to a backend adapter
+// under backend/internal/adapters/tracker/<provider>.
+const (
+	TrackerProviderGitHub TrackerProvider = "github"
+	TrackerProviderLinear TrackerProvider = "linear"
+	TrackerProviderJira   TrackerProvider = "jira"
+)
 
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub) and is parsed by the adapter.
@@ -39,12 +44,21 @@ type Issue struct {
 	Assignees []string             `json:"assignees,omitempty"`
 }
 
-// TrackerRepo identifies a repository for cross-issue queries like Tracker.List.
-// Native is the provider's canonical owner/project form, e.g. "owner/repo" for
-// GitHub.
+// TrackerRepo identifies a repository (or its provider analogue) for
+// cross-issue queries like Tracker.List. Native is the provider's canonical
+// scope key:
+//   - GitHub: "owner/repo"
+//   - Linear: team key, e.g. "ENG"
+//   - Jira: project key, e.g. "ENG"
+//
+// BaseURL is provider-specific metadata. Only Jira uses it (the Cloud site URL,
+// e.g. "https://acme.atlassian.net") because Jira issues are addressed against
+// a tenant's own site rather than a global API host. GitHub and Linear leave it
+// empty.
 type TrackerRepo struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
+	BaseURL  string          `json:"baseURL,omitempty"`
 }
 
 // ListStateFilter narrows Tracker.List results by the provider's coarse

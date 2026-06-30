@@ -50,13 +50,24 @@ type ProjectConfig struct {
 // TrackerIntakeConfig controls the first issue-intake slice for a project.
 // Enabled requires at least one explicit eligibility rule so turning intake on
 // cannot accidentally drain an entire issue backlog.
+//
+// Scope fields are provider-specific: only the field set that matches Provider
+// is used; the others must be empty. Validate enforces this so a stale field
+// from a prior provider does not silently survive a provider switch.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true.
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
-	// Repo is the provider-native repository key ("owner/repo" for GitHub). When
-	// empty, the intake loop derives it from the project's repo origin URL.
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,linear,jira"`
+	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
+	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
+	// Team is the Linear team key (e.g. "ENG"). Linear only.
+	Team string `json:"team,omitempty"`
+	// BaseURL is the Jira Cloud site URL (e.g. "acme.atlassian.net" or a full
+	// https URL). Jira only.
+	BaseURL string `json:"baseURL,omitempty"`
+	// ProjectKey is the Jira project key (e.g. "ENG"). Jira only.
+	ProjectKey string `json:"projectKey,omitempty"`
 	// Labels narrows eligible issues. All labels are forwarded to the provider's
 	// list filter; providers decide whether the match is all-of or provider-native.
 	Labels []string `json:"labels,omitempty"`
@@ -169,21 +180,62 @@ func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
 	return c
 }
 
-// Validate rejects accidental broad intake and unknown providers.
+// Validate rejects accidental broad intake, unknown providers, and
+// cross-provider field bleed (e.g. a Linear "team" left set after switching to
+// GitHub).
 func (c TrackerIntakeConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
 	c = c.WithDefaults()
-	if c.Provider != TrackerProviderGitHub {
+	switch c.Provider {
+	case TrackerProviderGitHub:
+		if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.team", c.Team, "linear"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.baseURL", c.BaseURL, "jira"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.projectKey", c.ProjectKey, "jira"); err != nil {
+			return err
+		}
+	case TrackerProviderLinear:
+		team := strings.TrimSpace(c.Team)
+		if team == "" || team != c.Team {
+			return fmt.Errorf("trackerIntake.team: must be a non-empty Linear team key without surrounding whitespace")
+		}
+		if err := mustBeEmpty("trackerIntake.repo", c.Repo, "github"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.baseURL", c.BaseURL, "jira"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.projectKey", c.ProjectKey, "jira"); err != nil {
+			return err
+		}
+	case TrackerProviderJira:
+		base := strings.TrimSpace(c.BaseURL)
+		if base == "" || base != c.BaseURL {
+			return fmt.Errorf("trackerIntake.baseURL: must be a non-empty Jira site URL without surrounding whitespace")
+		}
+		if strings.HasSuffix(c.BaseURL, "/") {
+			return fmt.Errorf("trackerIntake.baseURL: must not have a trailing slash")
+		}
+		projectKey := strings.TrimSpace(c.ProjectKey)
+		if projectKey == "" || projectKey != c.ProjectKey {
+			return fmt.Errorf("trackerIntake.projectKey: must be a non-empty Jira project key without surrounding whitespace")
+		}
+		if err := mustBeEmpty("trackerIntake.repo", c.Repo, "github"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.team", c.Team, "linear"); err != nil {
+			return err
+		}
+	default:
 		return fmt.Errorf("trackerIntake.provider: unknown provider %q", c.Provider)
-	}
-	repo := strings.TrimSpace(c.Repo)
-	if repo != c.Repo {
-		return fmt.Errorf("trackerIntake.repo: must be provider-native without surrounding whitespace")
-	}
-	if repo != "" && strings.ContainsAny(repo, " \t\r\n") {
-		return fmt.Errorf("trackerIntake.repo: must be provider-native without whitespace")
 	}
 	hasLabel := false
 	for i, label := range c.Labels {
@@ -205,6 +257,23 @@ func (c TrackerIntakeConfig) Validate() error {
 	}
 	if c.Limit < 0 {
 		return fmt.Errorf("trackerIntake.limit: must be non-negative")
+	}
+	return nil
+}
+
+func mustBeEmpty(field, value, owningProvider string) error {
+	if strings.TrimSpace(value) != "" {
+		return fmt.Errorf("%s: only valid for provider %q", field, owningProvider)
+	}
+	return nil
+}
+
+func validateNoWhitespaceField(field, value string) error {
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s: must not contain surrounding whitespace", field)
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return fmt.Errorf("%s: must not contain whitespace", field)
 	}
 	return nil
 }

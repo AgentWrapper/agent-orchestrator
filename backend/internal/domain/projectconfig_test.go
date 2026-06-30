@@ -36,6 +36,23 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Labels: []string{"agent-ready"}}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
 		{"tracker intake negative limit", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}, Limit: -1}}, true},
+
+		// Linear provider — team scope required and cross-provider fields rejected.
+		{"linear intake ok", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Team: "ENG", Labels: []string{"ready"}}}, false},
+		{"linear intake missing team", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Labels: []string{"ready"}}}, true},
+		{"linear intake team whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Team: " ENG", Labels: []string{"ready"}}}, true},
+		{"linear intake leaks repo", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Team: "ENG", Repo: "acme/demo", Labels: []string{"ready"}}}, true},
+		{"linear intake leaks jira fields", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Team: "ENG", BaseURL: "acme.atlassian.net", Labels: []string{"ready"}}}, true},
+		{"linear intake no rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderLinear, Team: "ENG"}}, true},
+
+		// Jira provider — base URL + project key required and cross-provider fields rejected.
+		{"jira intake ok", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "https://acme.atlassian.net", ProjectKey: "ENG", Labels: []string{"ready"}}}, false},
+		{"jira intake host ok", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "acme.atlassian.net", ProjectKey: "ENG", Labels: []string{"ready"}}}, false},
+		{"jira intake missing base URL", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, ProjectKey: "ENG", Labels: []string{"ready"}}}, true},
+		{"jira intake trailing slash", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "acme.atlassian.net/", ProjectKey: "ENG", Labels: []string{"ready"}}}, true},
+		{"jira intake missing project key", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "acme.atlassian.net", Labels: []string{"ready"}}}, true},
+		{"jira intake leaks repo", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "acme.atlassian.net", ProjectKey: "ENG", Repo: "acme/demo", Labels: []string{"ready"}}}, true},
+		{"jira intake leaks linear team", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderJira, BaseURL: "acme.atlassian.net", ProjectKey: "ENG", Team: "ENG", Labels: []string{"ready"}}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
