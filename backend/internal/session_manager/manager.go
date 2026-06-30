@@ -517,7 +517,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
 	} else if ok {
-		cleaned, err := m.destroyWorkspaceProjectRows(ctx, rows)
+		cleaned, err := m.destroyWorkspaceProjectRows(ctx, rows, false)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				return false, nil
@@ -986,7 +986,12 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	for _, row := range rows {
 		repoPath := repoPaths[row.RepoName]
 		if repoPath == "" {
-			return nil, fmt.Errorf("repo %q is not registered for workspace project %s", row.RepoName, project.ID)
+			m.logger.WarnContext(ctx, "session worktree row references unregistered workspace repo",
+				"sessionID", rec.ID,
+				"projectID", project.ID,
+				"repo", row.RepoName,
+			)
+			continue
 		}
 		out = append(out, ports.WorkspaceRepoInfo{
 			RepoName:     row.RepoName,
@@ -1041,7 +1046,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	return nil
 }
 
-func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (bool, error) {
+func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo, preserveDirty bool) (bool, error) {
 	adapter, ok := m.workspace.(ports.WorkspaceProject)
 	if !ok {
 		return false, errors.New("workspace project lifecycle is not supported by workspace adapter")
@@ -1055,6 +1060,9 @@ func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.
 		if err := adapter.DestroyWorkspaceProjectWorktree(ctx, rows[i]); err != nil {
 			preservedRef := ""
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				if !preserveDirty {
+					return cleaned, err
+				}
 				ref, preserveErr := adapter.StashWorkspaceProjectWorktree(ctx, rows[i])
 				if preserveErr == nil {
 					preservedRef = ref
@@ -1200,7 +1208,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
 			continue
 		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if _, err := m.destroyWorkspaceProjectRows(ctx, rows, true); err != nil {
 				if !errors.Is(err, ports.ErrWorkspaceDirty) {
 					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 				}
