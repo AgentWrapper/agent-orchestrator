@@ -42,6 +42,33 @@ type Spawner interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
 }
 
+// TrackerResolver picks the right tracker adapter for a project's configured
+// provider. The daemon wires a concrete resolver that holds a lazy adapter per
+// provider; tests use SingleTrackerResolver.
+type TrackerResolver interface {
+	Tracker(provider domain.TrackerProvider) (ports.Tracker, error)
+}
+
+// SingleTrackerResolver returns the same tracker for one specific provider and
+// refuses every other provider. It exists so tests (and single-provider
+// deployments) don't need to construct a map.
+type SingleTrackerResolver struct {
+	Provider domain.TrackerProvider
+	Adapter  ports.Tracker
+}
+
+// Tracker returns the wrapped adapter when the requested provider matches, or
+// when the resolver was constructed without a provider pin.
+func (s SingleTrackerResolver) Tracker(provider domain.TrackerProvider) (ports.Tracker, error) {
+	if s.Adapter == nil {
+		return nil, fmt.Errorf("tracker intake: no adapter for provider %q", provider)
+	}
+	if s.Provider == "" || provider == "" || provider == s.Provider {
+		return s.Adapter, nil
+	}
+	return nil, fmt.Errorf("tracker intake: no adapter for provider %q", provider)
+}
+
 // Config holds optional observer knobs. Zero values use production defaults.
 type Config struct {
 	Tick           time.Duration
@@ -52,7 +79,7 @@ type Config struct {
 
 // Observer polls configured projects and starts sessions for eligible issues.
 type Observer struct {
-	tracker        ports.Tracker
+	resolver       TrackerResolver
 	store          Store
 	spawner        Spawner
 	tick           time.Duration
@@ -63,8 +90,8 @@ type Observer struct {
 }
 
 // New constructs an Observer with safe defaults.
-func New(tracker ports.Tracker, store Store, spawner Spawner, cfg Config) *Observer {
-	o := &Observer{tracker: tracker, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}}
+func New(resolver TrackerResolver, store Store, spawner Spawner, cfg Config) *Observer {
+	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -94,7 +121,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if o.tracker == nil || o.store == nil || o.spawner == nil {
+	if o.resolver == nil || o.store == nil || o.spawner == nil {
 		return nil
 	}
 	now := o.clock().UTC()
@@ -146,10 +173,15 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	}
 	repo, ok := trackerRepo(project, cfg)
 	if !ok {
-		o.logger.Warn("tracker intake: skipping project without tracker repo", "project", project.ID, "origin", project.RepoOriginURL)
+		o.logger.Warn("tracker intake: skipping project without tracker scope", "project", project.ID, "provider", cfg.Provider, "origin", project.RepoOriginURL)
 		return true
 	}
-	issues, err := o.tracker.List(ctx, repo, domain.ListFilter{
+	tracker, err := o.resolver.Tracker(cfg.Provider)
+	if err != nil {
+		o.logger.Warn("tracker intake: no adapter for provider", "project", project.ID, "provider", cfg.Provider, "err", err)
+		return true
+	}
+	issues, err := tracker.List(ctx, repo, domain.ListFilter{
 		State:    domain.ListOpen,
 		Labels:   cfg.Labels,
 		Assignee: cfg.Assignee,
@@ -171,7 +203,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		issueID := CanonicalIssueID(issue.ID)
-		if issueID == "" || seen[issueID] || seen[domain.IssueID(issue.ID.Native)] {
+		if issueID == "" || seen[issueID] {
 			continue
 		}
 		if _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
@@ -185,9 +217,6 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		seen[issueID] = true
-		if issue.ID.Native != "" {
-			seen[domain.IssueID(issue.ID.Native)] = true
-		}
 	}
 	return spawnFailed
 }
@@ -303,14 +332,32 @@ func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (
 	if provider == "" {
 		provider = domain.TrackerProviderGitHub
 	}
-	native := strings.TrimSpace(cfg.Repo)
-	if native == "" {
-		native = parseGitHubRepoNative(project.RepoOriginURL)
-	}
-	if provider != domain.TrackerProviderGitHub || native == "" {
+	switch provider {
+	case domain.TrackerProviderGitHub:
+		native := strings.TrimSpace(cfg.Repo)
+		if native == "" {
+			native = parseGitHubRepoNative(project.RepoOriginURL)
+		}
+		if native == "" {
+			return domain.TrackerRepo{}, false
+		}
+		return domain.TrackerRepo{Provider: provider, Native: native}, true
+	case domain.TrackerProviderLinear:
+		team := strings.TrimSpace(cfg.Team)
+		if team == "" {
+			return domain.TrackerRepo{}, false
+		}
+		return domain.TrackerRepo{Provider: provider, Native: team}, true
+	case domain.TrackerProviderJira:
+		projectKey := strings.TrimSpace(cfg.ProjectKey)
+		base := strings.TrimSpace(cfg.BaseURL)
+		if projectKey == "" || base == "" {
+			return domain.TrackerRepo{}, false
+		}
+		return domain.TrackerRepo{Provider: provider, Native: projectKey, BaseURL: base}, true
+	default:
 		return domain.TrackerRepo{}, false
 	}
-	return domain.TrackerRepo{Provider: provider, Native: native}, true
 }
 
 func parseGitHubRepoNative(remote string) string {

@@ -36,7 +36,7 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}}}
 	spawner := &fakeSpawner{}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(ctx); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(ctx); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 1 {
@@ -76,7 +76,7 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 	}}}
 	spawner := &fakeSpawner{}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 0 {
@@ -90,7 +90,7 @@ func TestPollSkipsSessionScanWhenIntakeDisabled(t *testing.T) {
 		sessionsErr: errors.New("session scan should not run"),
 	}
 
-	if err := New(&fakeTracker{}, store, &fakeSpawner{}, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(&fakeTracker{}), store, &fakeSpawner{}, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v, want nil", err)
 	}
 }
@@ -110,7 +110,7 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 	}}}
 	spawner := &fakeSpawner{}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(tracker.repos) != 0 {
@@ -145,7 +145,7 @@ func TestPollContinuesAfterTrackerAndSpawnFailures(t *testing.T) {
 	}
 	spawner := &fakeSpawner{failIssue: domain.IssueID("github:acme/good#1")}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 2 {
@@ -164,7 +164,7 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}},
 	}}}
 	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": errors.New("rate limited")}}
-	observer := New(tracker, store, &fakeSpawner{}, Config{
+	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
 		Clock:          func() time.Time { return now },
 		FailureBackoff: time.Minute,
 		Logger:         discardLogger(),
@@ -205,7 +205,7 @@ func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	}}
 	spawner := &fakeSpawner{}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#2" {
@@ -226,7 +226,7 @@ func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
 	}}
 	spawner := &fakeSpawner{}
 
-	if err := New(tracker, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
 		t.Fatalf("Poll() error = %v", err)
 	}
 	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#3" {
@@ -270,6 +270,71 @@ func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 	if !strings.HasSuffix(prompt, intakePromptFooter) {
 		t.Fatalf("prompt missing footer:\n%s", prompt)
 	}
+}
+
+func singleResolver(tracker ports.Tracker) TrackerResolver {
+	return SingleTrackerResolver{Adapter: tracker}
+}
+
+func TestPollRoutesPerProvider(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{
+		{
+			ID:            "gh",
+			RepoOriginURL: "https://github.com/acme/gh.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Provider: domain.TrackerProviderGitHub, Labels: []string{"ready"}}},
+		},
+		{
+			ID:     "ln",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Provider: domain.TrackerProviderLinear, Team: "ENG", Labels: []string{"ready"}}},
+		},
+		{
+			ID:     "jr",
+			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Provider: domain.TrackerProviderJira, BaseURL: "https://acme.atlassian.net", ProjectKey: "ENG", Labels: []string{"ready"}}},
+		},
+	}}
+	gh := &fakeTracker{issues: []domain.Issue{{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/gh#1"}, Title: "g", State: domain.IssueOpen, Labels: []string{"ready"}}}}
+	ln := &fakeTracker{issues: []domain.Issue{{ID: domain.TrackerID{Provider: domain.TrackerProviderLinear, Native: "ENG-1"}, Title: "l", State: domain.IssueOpen, Labels: []string{"ready"}}}}
+	jr := &fakeTracker{issues: []domain.Issue{{ID: domain.TrackerID{Provider: domain.TrackerProviderJira, Native: "ENG-1"}, Title: "j", State: domain.IssueOpen, Labels: []string{"ready"}}}}
+	resolver := mapResolver{
+		domain.TrackerProviderGitHub: gh,
+		domain.TrackerProviderLinear: ln,
+		domain.TrackerProviderJira:   jr,
+	}
+	spawner := &fakeSpawner{}
+
+	if err := New(resolver, store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 3 {
+		t.Fatalf("spawn calls = %d, want 3", len(spawner.calls))
+	}
+	if got := gh.repos[0]; got.Native != "acme/gh" {
+		t.Fatalf("github repo = %+v", got)
+	}
+	if got := ln.repos[0]; got.Native != "ENG" {
+		t.Fatalf("linear repo = %+v", got)
+	}
+	if got := jr.repos[0]; got.Native != "ENG" || got.BaseURL != "https://acme.atlassian.net" {
+		t.Fatalf("jira repo = %+v", got)
+	}
+	want := map[string]bool{"github:acme/gh#1": false, "linear:ENG-1": false, "jira:ENG-1": false}
+	for _, call := range spawner.calls {
+		want[string(call.IssueID)] = true
+	}
+	for id, got := range want {
+		if !got {
+			t.Fatalf("spawn missing issue %q (calls=%+v)", id, spawner.calls)
+		}
+	}
+}
+
+type mapResolver map[domain.TrackerProvider]ports.Tracker
+
+func (m mapResolver) Tracker(p domain.TrackerProvider) (ports.Tracker, error) {
+	if t, ok := m[p]; ok {
+		return t, nil
+	}
+	return nil, errors.New("no tracker for provider " + string(p))
 }
 
 func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
