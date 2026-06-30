@@ -44,15 +44,20 @@ type Report struct {
 
 // HasLegacyData reports whether root holds an importable legacy store: a
 // config.yaml with at least one project. Used for the first-boot opt-in check.
-func HasLegacyData(root string) bool {
+//
+// A missing store is (false, nil); a store that exists but fails to parse
+// returns the parse error so callers can distinguish "nothing to import" from
+// "the store is there but unreadable" instead of silently reporting the latter
+// as the former (issue #2186).
+func HasLegacyData(root string) (bool, error) {
 	if root == "" {
-		return false
+		return false, nil
 	}
 	cfg, err := loadLegacyConfig(root)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return len(cfg.Projects) > 0
+	return len(cfg.Projects) > 0, nil
 }
 
 // rewriteProjectID gates the rewrite project-id charset (validateProjectID,

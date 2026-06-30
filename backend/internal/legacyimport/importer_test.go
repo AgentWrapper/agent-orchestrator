@@ -119,11 +119,74 @@ func TestRun_NoLegacyData(t *testing.T) {
 
 func TestHasLegacyData(t *testing.T) {
 	root := writeLegacyRoot(t)
-	if !HasLegacyData(root) {
+	has, err := HasLegacyData(root)
+	if err != nil {
+		t.Fatalf("HasLegacyData: %v", err)
+	}
+	if !has {
 		t.Fatal("HasLegacyData = false, want true")
 	}
-	if HasLegacyData(filepath.Join(t.TempDir(), "nope")) {
+
+	missing, err := HasLegacyData(filepath.Join(t.TempDir(), "nope"))
+	if err != nil {
+		t.Fatalf("HasLegacyData(missing) errored: %v", err)
+	}
+	if missing {
 		t.Fatal("HasLegacyData = true for missing root")
+	}
+}
+
+// TestHasLegacyData_ParseErrorSurfaced guards #2186 bug 2: a legacy store that
+// exists but fails to parse must return the error, not a silent (false, nil)
+// that the CLI would render as "No legacy AO projects found".
+func TestHasLegacyData_ParseErrorSurfaced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent-orchestrator")
+	mustMkdir(t, root)
+	// An unterminated quote is a YAML syntax error (not a tolerated TypeError).
+	mustWrite(t, filepath.Join(root, "config.yaml"), `projects:
+  alpha:
+    path: "/repos/alpha
+`)
+	has, err := HasLegacyData(root)
+	if err == nil {
+		t.Fatal("HasLegacyData on a malformed config returned nil error; want the parse error surfaced")
+	}
+	if has {
+		t.Fatal("HasLegacyData = true for an unparseable config")
+	}
+}
+
+// TestRun_ObjectFormRepo guards #2186 bug 1: a legacy config.yaml whose `repo:`
+// is a mapping (the shape `ao project add` writes) must still decode and import.
+// When `repo` was typed as a string, yaml.Unmarshal failed and the whole store
+// silently imported zero projects.
+func TestRun_ObjectFormRepo(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent-orchestrator")
+	mustMkdir(t, filepath.Join(root, "projects", "tg_content_factory", "sessions"))
+	mustWrite(t, filepath.Join(root, "config.yaml"), `projects:
+  tg_content_factory:
+    projectId: tg_content_factory
+    path: /repos/tg_content_factory
+    repo:
+      owner: axisrow
+      name: tg_content_factory
+      platform: github
+      originUrl: https://github.com/axisrow/tg_content_factory
+    defaultBranch: develop
+    source: ao-project-add
+`)
+	store := newFakeStore()
+	rep, err := Run(context.Background(), store, runOpts(root))
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if rep.ProjectsImported != 1 {
+		t.Fatalf("projectsImported = %d, want 1 (object-form repo must decode)", rep.ProjectsImported)
+	}
+	// A non-default branch is carried into the rewrite config, proving sibling
+	// fields decode correctly alongside the object-form repo mapping.
+	if got := store.projects["tg_content_factory"].Config.DefaultBranch; got != "develop" {
+		t.Fatalf("defaultBranch = %q, want develop", got)
 	}
 }
 

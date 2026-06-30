@@ -63,7 +63,11 @@ func (c *commandContext) runImport(cmd *cobra.Command, opts importOptions) error
 	if root == "" {
 		root = legacyimport.DefaultLegacyRootDir()
 	}
-	if !legacyimport.HasLegacyData(root) {
+	has, err := legacyimport.HasLegacyData(root)
+	if err != nil {
+		return fmt.Errorf("read legacy store at %s: %w", root, err)
+	}
+	if !has {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "No legacy AO projects found at %s. Nothing to import.\n", root)
 		return err
 	}
