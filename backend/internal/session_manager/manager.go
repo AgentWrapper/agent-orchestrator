@@ -1021,6 +1021,10 @@ Spawn worker sessions for implementation with:
 Message workers with `+"`ao send`"+`, for example:
 `+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
 
+Check on workers with `+"`ao session ls`"+` and `+"`ao session get <worker-session-id>`"+`.
+
+If you're unsure which command to use, run `+"`ao --help`"+` before guessing.
+
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }
 
