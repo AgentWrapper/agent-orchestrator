@@ -3,6 +3,9 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -40,7 +43,21 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	return ports.ReviewCommandSpec{Argv: insertBeforePrompt(argv, "--sandbox", "read-only")}, nil
+	extra := []string{"--sandbox", "read-only"}
+	// Shell commands inherit only Codex's core environment by default. Preserve
+	// the AO location overrides the reviewer needs to submit to this daemon.
+	for _, name := range []string{"AO_PORT", "AO_DATA_DIR", "AO_RUN_FILE"} {
+		value := os.Getenv(name)
+		if value == "" {
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return ports.ReviewCommandSpec{}, fmt.Errorf("encode %s: %w", name, err)
+		}
+		extra = append(extra, "-c", "shell_environment_policy.set."+name+"="+string(encoded))
+	}
+	return ports.ReviewCommandSpec{Argv: insertBeforePrompt(argv, extra...)}, nil
 }
 
 // ReviewMessage returns the centrally-authored task for an existing pane.

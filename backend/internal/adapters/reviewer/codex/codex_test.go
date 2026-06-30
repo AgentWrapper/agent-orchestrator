@@ -31,6 +31,9 @@ func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.Ses
 }
 
 func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
+	t.Setenv("AO_PORT", "3103")
+	t.Setenv("AO_DATA_DIR", "/tmp/ao data")
+	t.Setenv("AO_RUN_FILE", "/tmp/ao data/running.json")
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
@@ -44,7 +47,14 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
-	want := []string{"agent", "--sandbox", "read-only", "--", "review it"}
+	want := []string{
+		"agent",
+		"--sandbox", "read-only",
+		"-c", `shell_environment_policy.set.AO_PORT="3103"`,
+		"-c", `shell_environment_policy.set.AO_DATA_DIR="/tmp/ao data"`,
+		"-c", `shell_environment_policy.set.AO_RUN_FILE="/tmp/ao data/running.json"`,
+		"--", "review it",
+	}
 	if !slices.Equal(got.Argv, want) {
 		t.Fatalf("argv = %#v, want %#v", got.Argv, want)
 	}
