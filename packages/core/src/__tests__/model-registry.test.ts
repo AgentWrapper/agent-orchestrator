@@ -13,7 +13,7 @@ describe("model-registry: resolveModel", () => {
   it("resolves known Claude aliases (case-insensitive)", () => {
     expect(resolveModel("opus")?.provider).toBe("anthropic");
     expect(resolveModel("OPUS")?.id).toBe("opus");
-    expect(resolveModel("sonnet")?.label).toBe("Claude Sonnet");
+    expect(resolveModel("sonnet")?.label).toBe("Claude Sonnet 5");
     expect(resolveModel("haiku")?.provider).toBe("anthropic");
   });
 

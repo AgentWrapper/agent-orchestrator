@@ -35,6 +35,18 @@ import {
 
 export { resetPsCache, resolveWorkspaceForClaude, toClaudeProjectPath } from "./activity-detection.js";
 
+const CLAUDE_SONNET_DEFAULT_MODEL = "claude-sonnet-5";
+
+function resolveClaudeLaunchModel(model: string): string {
+  return model === "sonnet" ? CLAUDE_SONNET_DEFAULT_MODEL : model;
+}
+
+function applyClaudeModelDefaults(env: Record<string, string>, model: string): void {
+  if (model === "sonnet") {
+    env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = CLAUDE_SONNET_DEFAULT_MODEL;
+  }
+}
+
 // =============================================================================
 // Metadata Updater Hook Script
 // =============================================================================
@@ -1431,7 +1443,7 @@ function createClaudeCodeAgent(): Agent {
       }
 
       if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+        parts.push("--model", shellEscape(resolveClaudeLaunchModel(config.model)));
       }
 
       if (config.systemPromptFile) {
@@ -1503,6 +1515,7 @@ function createClaudeCodeAgent(): Agent {
       }
       if (config.model) {
         env["AO_SDK_MODEL"] = config.model;
+        applyClaudeModelDefaults(env, config.model);
         // Resolve the provider through the central ModelRegistry (registry-first,
         // prefix-fallback) instead of ad-hoc `startsWith` checks, and hand the
         // result to the sdk-host as AO_SDK_PROVIDER so the host dispatches the
@@ -1631,7 +1644,7 @@ function createClaudeCodeAgent(): Agent {
       }
 
       if (project.agentConfig?.model) {
-        parts.push("--model", shellEscape(project.agentConfig.model as string));
+        parts.push("--model", shellEscape(resolveClaudeLaunchModel(project.agentConfig.model as string)));
       }
 
       return parts.join(" ");

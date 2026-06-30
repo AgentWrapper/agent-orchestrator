@@ -278,6 +278,11 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-opus-4-6'");
   });
 
+  it("launches the sonnet alias as Claude Sonnet 5", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "sonnet" }));
+    expect(cmd).toContain("--model 'claude-sonnet-5'");
+  });
+
   it("includes prompt as positional argument with -- separator (not -p flag)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
     expect(cmd).not.toContain("-p");

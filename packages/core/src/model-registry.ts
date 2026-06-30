@@ -144,9 +144,10 @@ const OPENAI_CODEX_CAPS: ModelCapabilities = {
  * Built-in model descriptors. Order is display order within each section.
  *
  * Claude ids are the SDK aliases (`opus`/`sonnet`/`haiku`) ON PURPOSE: the
- * Agent SDK resolves them to the concrete dated model itself (via
- * ANTHROPIC_DEFAULT_*_MODEL), so we pass them through unchanged. Rewriting them
- * to a pinned id here would fight that resolution.
+ * launcher/Agent SDK resolves them to the concrete model (for Sonnet, AO pins
+ * `ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-5` so workers do not drift to
+ * Claude Code's account/default Sonnet 4.x choice). Rewriting the registry ids
+ * to pinned values would break the stable config surface.
  */
 export const MODEL_REGISTRY: ModelDescriptor[] = [
   // --- Claude (anthropic → claude-agent-sdk) ---
@@ -165,7 +166,7 @@ export const MODEL_REGISTRY: ModelDescriptor[] = [
     id: "sonnet",
     provider: "anthropic",
     runtimeDriver: "claude-agent-sdk",
-    label: "Claude Sonnet",
+    label: "Claude Sonnet 5",
     section: "Claude",
     aliases: [],
     capabilities: FULL_AGENT_CAPS,

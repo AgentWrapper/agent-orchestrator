@@ -23,10 +23,17 @@ describe("claude-code getEnvironment — model routing", () => {
     expect(env["AO_SDK_MODEL"]).toBe("sonnet");
   });
 
+  it("pins the sonnet alias to Claude Sonnet 5 for the Claude SDK", () => {
+    const agent = create();
+    const env = agent.getEnvironment(makeLaunchConfig({ model: "sonnet" }));
+    expect(env["ANTHROPIC_DEFAULT_SONNET_MODEL"]).toBe("claude-sonnet-5");
+  });
+
   it("passes an arbitrary full model id through unchanged (extensible)", () => {
     const agent = create();
     const env = agent.getEnvironment(makeLaunchConfig({ model: "claude-sonnet-4-5" }));
     expect(env["AO_SDK_MODEL"]).toBe("claude-sonnet-4-5");
+    expect(env["ANTHROPIC_DEFAULT_SONNET_MODEL"]).toBeUndefined();
   });
 
   it("omits AO_SDK_MODEL when no model is set (account default)", () => {
