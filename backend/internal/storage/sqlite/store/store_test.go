@@ -412,10 +412,11 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: now}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
 
-	if err := s.WriteSCMObservation(ctx, pr, checks, threads, comments, ports.ReviewWriteReplace); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, checks, reviews, threads, comments, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := s.GetPR(ctx, pr.URL)
@@ -432,6 +433,10 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	gotThreads, _ := s.ListPRReviewThreads(ctx, pr.URL)
 	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "th" {
 		t.Fatalf("threads not persisted: %+v", gotThreads)
+	}
+	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" {
+		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)
 	if len(gotComments) != 1 || gotComments[0].ThreadID != "t1" || gotComments[0].URL != "comment" {
@@ -455,7 +460,7 @@ func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
 		{ThreadID: "older", ID: "older-c1", Author: "ann", Body: "old", CreatedAt: now},
 		{ThreadID: "latest", ID: "latest-c1", Author: "bob", Body: "before", CreatedAt: now},
 	}
-	if err := s.WriteSCMObservation(ctx, pr, nil, initialThreads, initialComments, ports.ReviewWriteReplace); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, initialThreads, initialComments, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,7 +472,7 @@ func TestWriteSCMObservationMergeUpdatesFetchedReviewWindow(t *testing.T) {
 		{ThreadID: "latest", ID: "latest-c2", Author: "bob", Body: "after", CreatedAt: now.Add(time.Second)},
 		{ThreadID: "new", ID: "new-c1", Author: "cat", Body: "new", CreatedAt: now.Add(time.Second)},
 	}
-	if err := s.WriteSCMObservation(ctx, pr, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
 		t.Fatal(err)
 	}
 
@@ -524,7 +529,7 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "thread-v1", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", Body: "scm", URL: "https://example/comment/c1", CreatedAt: now}}
 
-	if err := s.WriteSCMObservation(ctx, pr, nil, threads, comments, ports.ReviewWriteReplace); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, threads, comments, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
 	legacyComments := []domain.PullRequestComment{
@@ -575,7 +580,7 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 
 	mergedThreads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 8, Resolved: true, SemanticHash: "thread-v2", UpdatedAt: now.Add(2 * time.Second)}}
 	mergedComments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c2", Author: "reviewer", Body: "updated", URL: "https://example/comment/c2", CreatedAt: now.Add(2 * time.Second)}}
-	if err := s.WriteSCMObservation(ctx, pr, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, mergedThreads, mergedComments, ports.ReviewWriteMerge); err != nil {
 		t.Fatal(err)
 	}
 	gotComments, err = s.ListPRComments(ctx, pr.URL)

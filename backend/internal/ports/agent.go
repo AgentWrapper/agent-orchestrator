@@ -100,11 +100,19 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config           AgentConfig
-	IssueID          string
-	Permissions      PermissionMode
-	Prompt           string
-	SessionID        string
+	Config      AgentConfig
+	IssueID     string
+	Permissions PermissionMode
+	Prompt      string
+	SessionID   string
+	// AllowedTools and DisallowedTools scope the agent to a tool allowlist when
+	// it runs in a non-bypass permission mode (allow rules auto-approve, deny
+	// rules auto-reject). They are the enforced read-only guarantee the reviewer
+	// relies on: bypassPermissions ignores both lists, so a restricted launch
+	// must leave Permissions off bypass. Empty means no restriction, so worker
+	// sessions are unaffected.
+	AllowedTools     []string
+	DisallowedTools  []string
 	SystemPrompt     string
 	SystemPromptFile string
 	WorkspacePath    string

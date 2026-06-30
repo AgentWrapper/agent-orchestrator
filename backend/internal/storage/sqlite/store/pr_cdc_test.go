@@ -64,17 +64,17 @@ func TestPRReviewThreadsCDC_EmitsOnInsertAndResolvedTransition(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	pr := domain.PullRequest{URL: "https://example/pr/9", SessionID: rec.ID, Number: 9, UpdatedAt: now}
 
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{{
 		ThreadID: "t1", Path: "main.go", Line: 7, IsBot: true, SemanticHash: "v1", UpdatedAt: now,
 	}}, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{{
 		ThreadID: "t1", Path: "main.go", Line: 8, Resolved: true, IsBot: true, SemanticHash: "v2", UpdatedAt: now.Add(time.Second),
 	}}, nil, ports.ReviewWriteMerge); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{{
 		ThreadID: "t1", Path: "main.go", Line: 9, Resolved: true, IsBot: true, SemanticHash: "v3", UpdatedAt: now.Add(2 * time.Second),
 	}}, nil, ports.ReviewWriteMerge); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestPRReviewThreadsCDC_EmitsResolvedOnReplacePoll(t *testing.T) {
 
 	// First poll: seed via Replace (no Partial pagination). Same shape as the
 	// real GitHub provider path when the review-thread listing fits in one page.
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{{
 		ThreadID: "t1", Path: "main.go", Line: 7, IsBot: true, SemanticHash: "v1", UpdatedAt: now,
 	}}, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestPRReviewThreadsCDC_EmitsResolvedOnReplacePoll(t *testing.T) {
 	// On the buggy code this fired the INSERT trigger again (because the
 	// DELETE-all removed the row first) and the UPDATE trigger never saw the
 	// resolved transition.
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{{
 		ThreadID: "t1", Path: "main.go", Line: 7, Resolved: true, IsBot: true, SemanticHash: "v2", UpdatedAt: now.Add(time.Second),
 	}}, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
@@ -197,13 +197,13 @@ func TestPRReviewThreadsReplace_PrunesOrphansWithoutReinserting(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	pr := domain.PullRequest{URL: "https://example/pr/56", SessionID: rec.ID, Number: 56, UpdatedAt: now}
 
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{
 		{ThreadID: "keep", Path: "a.go", Line: 1, IsBot: true, SemanticHash: "k1", UpdatedAt: now},
 		{ThreadID: "drop", Path: "b.go", Line: 2, IsBot: true, SemanticHash: "d1", UpdatedAt: now},
 	}, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{
+	if err := s.WriteSCMObservation(ctx, pr, nil, nil, []domain.PullRequestReviewThread{
 		{ThreadID: "keep", Path: "a.go", Line: 1, Resolved: true, IsBot: true, SemanticHash: "k2", UpdatedAt: now.Add(time.Second)},
 	}, nil, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestClaimPR_CreatesMovesAndGuardsActiveOwner(t *testing.T) {
 	url := "https://github.com/acme/repo/pull/42"
 	pr := domain.PullRequest{URL: url, SessionID: first.ID, Number: 42, CI: domain.CIPassing, Mergeability: domain.MergeMergeable, UpdatedAt: time.Now().UTC()}
 
-	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true)
+	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, true)
 	if err != nil {
 		t.Fatalf("initial claim: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestClaimPR_CreatesMovesAndGuardsActiveOwner(t *testing.T) {
 	}
 
 	pr.SessionID = second.ID
-	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, false); !errors.Is(err, ports.ErrPRClaimedByActiveSession) {
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, false); !errors.Is(err, ports.ErrPRClaimedByActiveSession) {
 		t.Fatalf("no-takeover err = %v, want ErrPRClaimedByActiveSession", err)
 	}
 	got, _, _ = s.GetPR(ctx, url)
@@ -304,7 +304,7 @@ func TestClaimPR_CreatesMovesAndGuardsActiveOwner(t *testing.T) {
 		t.Fatalf("active-owner refusal moved row to %s", got.SessionID)
 	}
 
-	out, err = s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true)
+	out, err = s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, true)
 	if err != nil {
 		t.Fatalf("takeover: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestClaimPRCreatedCDCUsesClaimReviewDecision(t *testing.T) {
 		Review:    domain.ReviewChangesRequest,
 		UpdatedAt: time.Now().UTC(),
 	}
-	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -361,7 +361,7 @@ func TestClaimPR_TakesOverTerminatedOwnerAndEmitsSessionChangedCDC(t *testing.T)
 	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	url := "https://github.com/acme/repo/pull/99"
 	pr := domain.PullRequest{URL: url, SessionID: first.ID, Number: 99, CI: domain.CIPassing, UpdatedAt: time.Now().UTC()}
-	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
 		t.Fatal(err)
 	}
 	first.IsTerminated = true
@@ -371,7 +371,7 @@ func TestClaimPR_TakesOverTerminatedOwnerAndEmitsSessionChangedCDC(t *testing.T)
 	}
 
 	pr.SessionID = second.ID
-	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, false)
+	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve, false)
 	if err != nil {
 		t.Fatalf("terminated takeover: %v", err)
 	}

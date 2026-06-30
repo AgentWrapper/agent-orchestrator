@@ -295,6 +295,8 @@ type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
 	Links      []SessionPRReviewCommentLink `json:"links"`
+	ReviewURL  string                       `json:"reviewUrl,omitempty"`
+	IsBot      bool                         `json:"isBot,omitempty"`
 }
 
 // SessionPRReviewCommentLink points to one unresolved review comment.
@@ -366,7 +368,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 		for _, link := range reviewer.Links {
 			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line})
 		}
-		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links})
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}
 	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers}
 }

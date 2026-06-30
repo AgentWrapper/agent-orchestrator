@@ -46,6 +46,10 @@ export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSumma
 	return prStateRank[a.state] - prStateRank[b.state] || a.number - b.number;
 }
 
+export function prBrowserUrl(pr: SessionPRSummary): string {
+	return prBaseUrl(pr) ?? pr.htmlUrl ?? pr.url;
+}
+
 export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
@@ -175,11 +179,10 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 	}
 	if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
 		const reviewers = pr.review.unresolvedBy.slice(0, 3);
-		const links = reviewers.map((reviewer) => ({
-			label: reviewerLabel(reviewer),
-			href: reviewer.links.find((link) => link.url)?.url || undefined,
-			title: `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)}`,
-		}));
+		const links = reviewers.map((reviewer) => reviewAttentionLink(pr, reviewer));
+		if (links.length === 0 && pr.review.decision === "changes_requested") {
+			links.push({ label: "PR", href: prBrowserUrl(pr), title: "Open pull request" });
+		}
 		items.push({
 			kind: "review_changes_requested",
 			title: "Address requested changes",
@@ -331,18 +334,23 @@ function mergeAttention(
 	fallback: string,
 	tone: PRDisplayTone,
 ): PRAttentionItem {
+	const href =
+		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
-		href: file.url || pr.mergeability.prUrl || undefined,
+		href: file.url || href,
+		title: kind === "merge_conflict" ? "Open merge conflicts" : undefined,
 	}));
 	const reasonLinks =
-		fileLinks.length > 0
+		fileLinks.length > 0 || kind === "merge_conflict"
 			? []
 			: pr.mergeability.reasons.slice(0, 3).map((reason) => ({
 					label: mergeReasonLabel(reason),
-					href: pr.mergeability.prUrl || undefined,
+					href,
 				}));
-	const links = fileLinks.length > 0 ? fileLinks : reasonLinks;
+	const fallbackLink =
+		kind === "merge_conflict" && href ? [{ label: "conflicts", href, title: "Open merge conflicts" }] : [];
+	const links = fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
 	return {
 		kind,
 		title,
@@ -356,11 +364,78 @@ function mergeAttention(
 	};
 }
 
-function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
-	if (reviewer.count <= 1) {
-		return reviewer.reviewerId;
+function mergeConflictUrl(pr: SessionPRSummary): string | undefined {
+	return prSubpageUrl(pr, "conflicts") ?? pr.mergeability.prUrl ?? prBrowserUrl(pr);
+}
+
+function prBaseUrl(pr: SessionPRSummary): string | undefined {
+	return prURL(pr);
+}
+
+function prSubpageUrl(pr: SessionPRSummary, subpage: "conflicts"): string | undefined {
+	const base = prURL(pr);
+	return base ? `${base}/${subpage}` : undefined;
+}
+
+function prURL(pr: SessionPRSummary): string | undefined {
+	const raw = pr.htmlUrl || pr.mergeability.prUrl || pr.url;
+	if (!raw) {
+		return undefined;
 	}
-	return `${reviewer.reviewerId} +${reviewer.count - 1}`;
+	try {
+		const url = new URL(raw);
+		const match = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
+		if (!match) {
+			return undefined;
+		}
+		url.pathname = `${match[1]}/pull/${match[2]}`;
+		url.search = "";
+		url.hash = "";
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function reviewerLabel(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
+	const name = reviewerDisplayName(reviewer);
+	if (reviewer.count <= 1) {
+		return name;
+	}
+	return `${name} +${reviewer.count - 1}`;
+}
+
+function reviewerDisplayName(reviewer: SessionPRSummary["review"]["unresolvedBy"][number]): string {
+	return reviewer.isBot ? `${reviewer.reviewerId} bot` : reviewer.reviewerId;
+}
+
+function reviewAttentionLink(
+	pr: SessionPRSummary,
+	reviewer: SessionPRSummary["review"]["unresolvedBy"][number],
+): PRAttentionLink {
+	const inlineURL = reviewer.links.find((link) => link.url)?.url;
+	if (reviewer.reviewUrl) {
+		return {
+			label: reviewerLabel(reviewer),
+			href: reviewer.reviewUrl,
+			title: `Open requested-changes review from ${reviewerDisplayName(reviewer)}`,
+		};
+	}
+	if (inlineURL) {
+		return {
+			label: reviewerLabel(reviewer),
+			href: inlineURL,
+			title:
+				reviewer.count > 0
+					? `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)} from ${reviewerDisplayName(reviewer)}`
+					: `Open review comments from ${reviewerDisplayName(reviewer)}`,
+		};
+	}
+	return {
+		label: reviewerLabel(reviewer),
+		href: prBrowserUrl(pr),
+		title: `Open pull request for ${reviewerDisplayName(reviewer)}`,
+	};
 }
 
 function mergeReasonLabel(reason: string): string {

@@ -85,7 +85,17 @@ jobs:
           apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
           apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       - name: Publish
-        run: npm run publish
+        shell: bash
+        run: |
+          # Retry transient macOS sign/notary flakes (Apple notary -1009,
+          # osx-sign keychain races) so the build self-heals instead of failing.
+          for i in 1 2 3; do
+            if npm run publish; then exit 0; fi
+            echo "::warning::publish attempt $i/3 failed (likely a transient macOS sign/notary flake)"
+            [ "$i" -lt 3 ] && sleep 30
+          done
+          echo "::error::publish failed after 3 attempts" >&2
+          exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AO_RELEASE_REPO: ${{ github.repository }}
@@ -93,15 +103,15 @@ jobs:
           # macOS signing + notarization env is exported by the "macOS signing
           # setup" step above via $GITHUB_ENV; the cert is in the keychain.
 
-  # Dedicated Intel (darwin-x64) nightly build leg, decoupled from the release
-  # matrix so the scarce macos-13 runner does not block publish-feed. Mirrors
-  # the release job's macOS steps exactly. publish-feed stays needs: release
-  # only (three fast legs); the x64 feed entry appears if this job finishes
-  # first, but the feed is not gated on it.
+  # Dedicated Intel (darwin-x64) nightly build leg. Kept separate from the
+  # release matrix (only a macOS host can build the x64 installer); publish-feed
+  # now waits on it so the x64 entry is present in nightly-mac.yml and Intel
+  # nightly users get auto-updates. Mirrors the release job's macOS steps exactly.
+  # Runner is macos-15-intel (macos-13 deprecated/no capacity; see release wf).
   release-intel:
     needs: guard
     if: needs.guard.outputs.should_build == 'true'
-    runs-on: macos-13
+    runs-on: macos-15-intel
     permissions:
       contents: write
     defaults:
@@ -135,7 +145,17 @@ jobs:
           apple-api-issuer: ${{ secrets.APPLE_API_ISSUER }}
           apple-signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       - name: Publish
-        run: npm run publish
+        shell: bash
+        run: |
+          # Retry transient macOS sign/notary flakes (Apple notary -1009,
+          # osx-sign keychain races) so the build self-heals instead of failing.
+          for i in 1 2 3; do
+            if npm run publish; then exit 0; fi
+            echo "::warning::publish attempt $i/3 failed (likely a transient macOS sign/notary flake)"
+            [ "$i" -lt 3 ] && sleep 30
+          done
+          echo "::error::publish failed after 3 attempts" >&2
+          exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AO_RELEASE_REPO: ${{ github.repository }}
@@ -161,7 +181,7 @@ jobs:
   # assets. The nightly version is only stamped in-memory on the build runners,
   # so derive the tag from the guard job's computed version, not package.json.
   publish-feed:
-    needs: [guard, release]
+    needs: [guard, release, release-intel]
     runs-on: ubuntu-latest
     permissions:
       contents: write

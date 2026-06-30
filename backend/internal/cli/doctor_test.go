@@ -247,12 +247,18 @@ func TestDoctorJSONOutputIsDecodable(t *testing.T) {
 	clearDoctorGitHubEnv(t)
 	out, errOut, err := executeCLI(t, Deps{
 		LookPath: func(name string) (string, error) {
-			if name == "git" {
+			switch name {
+			case "git":
 				return "/bin/git", nil
+			case "tmux":
+				return "/bin/tmux", nil
 			}
 			return "", errors.New("missing")
 		},
-		CommandOutput: func(context.Context, string, ...string) ([]byte, error) {
+		CommandOutput: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+			if name == "/bin/tmux" {
+				return []byte("tmux 3.3a\n"), nil
+			}
 			return []byte("git version 2.43.0\n"), nil
 		},
 		ProcessAlive: func(int) bool { return false },
@@ -277,12 +283,18 @@ func TestDoctorTextOutputIsGrouped(t *testing.T) {
 	clearDoctorGitHubEnv(t)
 	out, errOut, err := executeCLI(t, Deps{
 		LookPath: func(name string) (string, error) {
-			if name == "git" {
+			switch name {
+			case "git":
 				return "/bin/git", nil
+			case "tmux":
+				return "/bin/tmux", nil
 			}
 			return "", errors.New("missing")
 		},
-		CommandOutput: func(context.Context, string, ...string) ([]byte, error) {
+		CommandOutput: func(_ context.Context, name string, _ ...string) ([]byte, error) {
+			if name == "/bin/tmux" {
+				return []byte("tmux 3.3a\n"), nil
+			}
 			return []byte("git version 2.43.0\n"), nil
 		},
 		ProcessAlive: func(int) bool { return false },

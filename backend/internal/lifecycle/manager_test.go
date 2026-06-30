@@ -543,8 +543,10 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
 	}
 	got := msg.msgs[0]
-	if !strings.Contains(got, "[AO reviewer]") || !strings.Contains(got, "fix the bug") || !strings.Contains(got, "98[2J765") {
-		t.Fatalf("AO review nudge missing label/body/review id: %q", got)
+	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("AO review nudge missing %q: %q", want, got)
+		}
 	}
 	if strings.Contains(got, "\x1b") {
 		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
@@ -569,6 +571,65 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 	}
 	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
 		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+	results := []ReviewResult{
+		{RunID: "run-2", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2", Verdict: domain.VerdictChangesRequested, Body: "fix tests", GithubReviewID: "102"},
+		{RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix auth", GithubReviewID: "101"},
+	}
+
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", results)
+	if err != nil {
+		t.Fatalf("ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{
+		"submitted 2 review(s) requesting changes",
+		"PR: https://github.com/o/r/pull/1",
+		"GitHub review: 101",
+		"Review body:\nfix auth",
+		"PR: https://github.com/o/r/pull/2",
+		"GitHub review: 102",
+		"Review body:\nfix tests",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("batch nudge missing %q: %q", want, got)
+		}
+	}
+	if st.signatures["https://github.com/o/r/pull/1"] == "" {
+		t.Fatal("batch nudge did not persist signature on anchor PR")
+	}
+
+	outcome, err = m.ApplyReviewBatch(ctx, "mer-1", "batch-1", results)
+	if err != nil {
+		t.Fatalf("repeat ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("repeat should suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", nil)
+	if err != nil {
+		t.Fatalf("ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+		t.Fatalf("empty batch should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 	}
 }
 

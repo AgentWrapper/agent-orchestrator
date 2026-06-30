@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrInvalid and ErrNotFound let the transport layer map failures to 422/404.
@@ -34,9 +35,9 @@ type Store interface {
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
-	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error)
+	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
 	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
-	GetReviewRunBySessionAndSHA(ctx stdctx.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionPRAndSHA(ctx stdctx.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
@@ -134,6 +135,8 @@ type TriggerResult struct {
 	Run              domain.ReviewRun
 	ReviewerHandleID string
 	Created          bool
+	Reviews          []PRReviewState
+	CreatedRuns      []domain.ReviewRun
 }
 
 // SessionReviews is a worker's review state: the live reviewer handle plus its
@@ -141,14 +144,12 @@ type TriggerResult struct {
 type SessionReviews struct {
 	ReviewerHandleID string
 	Runs             []domain.ReviewRun
+	Reviews          []PRReviewState
 }
 
-// Trigger starts (or reuses) a review of a worker's PR at its current head:
-//   - if a non-failed run already exists for this commit, it is returned unchanged;
-//   - otherwise, if a live reviewer pane exists, it is messaged to review the
-//     new commit; if not, a fresh reviewer is spawned;
-//   - the run is recorded before launch so startup failures leave a visible
-//     failed pass instead of an empty gap.
+// Trigger starts reviews for every PR on the worker session that needs review.
+// It reuses running/up-to-date runs, retries failed/current changes-requested
+// heads, and uses one reviewer pane for every new run in the batch.
 func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
@@ -175,39 +176,21 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q has no workspace to review", ErrInvalid, workerID)
 	}
 
-	pr, err := e.workerPR(ctx, workerID)
+	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err
 	}
-	targetSHA := pr.HeadSHA
-
-	review, hasReview, err := e.store.GetReviewBySession(ctx, workerID)
+	if len(prs) == 0 {
+		return TriggerResult{}, fmt.Errorf("%w: worker %q has no PR to review", ErrInvalid, workerID)
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err
 	}
+	reviews := Plan(prs, runs)
 
-	// Idempotency: a pass for this commit is reusable while it is still running
-	// or once it carries a verdict. The fallback branch below is defensive for
-	// any non-running, non-failed row that somehow lacks a verdict; normal
-	// Submit paths complete a run only with a valid verdict (#342).
-	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
-		return TriggerResult{}, err
-	} else if ok && (existing.Status == domain.ReviewRunRunning || existing.Verdict != domain.VerdictNone) {
-		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
-	} else if ok && existing.Status != domain.ReviewRunFailed {
-		superseded, err := e.store.SupersedeReviewRun(ctx, existing.ID, "superseded by a new review trigger")
-		if err != nil {
-			return TriggerResult{}, err
-		}
-		if !superseded {
-			if latest, ok, err := e.store.GetReviewRun(ctx, existing.ID); err != nil {
-				return TriggerResult{}, err
-			} else if ok {
-				return TriggerResult{Run: latest, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
-			}
-		}
-	}
-	if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, targetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+	reviewRow, hasReview, err := e.store.GetReviewBySession(ctx, workerID)
+	if err != nil {
 		return TriggerResult{}, err
 	}
 
@@ -217,78 +200,156 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 
 	now := e.clock()
-	runID := e.newID()
-	spec := LaunchSpec{
-		RunID:         runID,
-		WorkerID:      workerID,
-		Harness:       harness,
-		WorkspacePath: worker.Metadata.WorkspacePath,
-		PRURL:         pr.URL,
-		TargetSHA:     targetSHA,
-	}
-
-	review, err = e.upsertReview(ctx, worker, harness, pr.URL, review.ReviewerHandleID, now)
+	reviewRow, err = e.upsertReview(ctx, worker, harness, reviewRow.ReviewerHandleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
-	run := domain.ReviewRun{
-		ID:        runID,
-		ReviewID:  review.ID,
-		SessionID: workerID,
-		Harness:   harness,
-		PRURL:     pr.URL,
-		TargetSHA: targetSHA,
-		Status:    domain.ReviewRunRunning,
-		Verdict:   domain.VerdictNone,
-		CreatedAt: now,
-	}
-	if err := e.store.InsertReviewRun(ctx, run); err != nil {
-		if errors.Is(err, domain.ErrDuplicateReviewRun) {
-			if existing, ok, getErr := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); getErr != nil {
-				return TriggerResult{}, getErr
-			} else if ok {
-				return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+
+	var created []domain.ReviewRun
+	batchID := ""
+	for _, reviewState := range reviews {
+		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
+			continue
+		}
+		if reviewState.LatestRun != nil && reviewState.LatestRun.Status != domain.ReviewRunFailed && reviewState.LatestRun.Status != domain.ReviewRunRunning && reviewState.LatestRun.Verdict == domain.VerdictNone {
+			superseded, err := e.store.SupersedeReviewRun(ctx, reviewState.LatestRun.ID, "superseded by a new review trigger")
+			if err != nil {
+				return TriggerResult{}, err
+			}
+			if !superseded {
+				if latest, ok, err := e.store.GetReviewRun(ctx, reviewState.LatestRun.ID); err != nil {
+					return TriggerResult{}, err
+				} else if ok {
+					reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, latest)
+					continue
+				}
 			}
 		}
-		return TriggerResult{}, err
+		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+			return TriggerResult{}, err
+		}
+		if batchID == "" {
+			batchID = e.newID()
+		}
+		run := domain.ReviewRun{
+			ID:        e.newID(),
+			ReviewID:  reviewRow.ID,
+			SessionID: workerID,
+			BatchID:   batchID,
+			Harness:   harness,
+			PRURL:     reviewState.PRURL,
+			TargetSHA: reviewState.TargetSHA,
+			Status:    domain.ReviewRunRunning,
+			Verdict:   domain.VerdictNone,
+			CreatedAt: now,
+		}
+		if err := e.store.InsertReviewRun(ctx, run); err != nil {
+			if errors.Is(err, domain.ErrDuplicateReviewRun) {
+				if existing, ok, getErr := e.store.GetReviewRunBySessionPRAndSHA(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA); getErr != nil {
+					return TriggerResult{}, getErr
+				} else if ok {
+					reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, existing)
+					continue
+				}
+			}
+			return TriggerResult{}, err
+		}
+		created = append(created, run)
+		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
+	}
+	if len(created) == 0 {
+		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews}, nil
 	}
 
-	failRun := func(err error) error {
-		if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error(), ""); updateErr != nil {
-			return updateErr
+	failRuns := func(start int, err error) error {
+		for _, run := range created[start:] {
+			if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error(), ""); updateErr != nil {
+				return updateErr
+			}
 		}
 		return err
 	}
 
-	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
 	handleID := ""
-	if hasReview && review.ReviewerHandleID != "" {
-		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
+	queue := reviewQueue(created)
+	if hasReview && reviewRow.ReviewerHandleID != "" {
+		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
-			return TriggerResult{}, failRun(err)
+			return TriggerResult{}, failRuns(0, err)
 		}
 		if alive {
-			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
-				return TriggerResult{}, failRun(fmt.Errorf("notify reviewer: %w", err))
-			}
-			handleID = review.ReviewerHandleID
+			handleID = reviewRow.ReviewerHandleID
 		}
 	}
 	if handleID == "" {
-		h, err := e.launcher.Spawn(ctx, spec)
+		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
 		if err != nil {
-			return TriggerResult{}, failRun(fmt.Errorf("launch reviewer: %w", err))
+			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
 		handleID = h
+	} else {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0)); err != nil {
+			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
+		}
 	}
-
-	// The reviewer is running; now record the pass.
-	review, err = e.upsertReview(ctx, worker, harness, pr.URL, handleID, now)
+	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
-	run.ReviewID = review.ID
-	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil
+	for i := range created {
+		created[i].ReviewID = reviewRow.ID
+	}
+	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
+}
+
+func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
+	return LaunchSpec{
+		RunID:         run.ID,
+		WorkerID:      worker.ID,
+		Harness:       harness,
+		WorkspacePath: worker.Metadata.WorkspacePath,
+		PRURL:         run.PRURL,
+		TargetSHA:     run.TargetSHA,
+		ReviewQueue:   queue,
+		ReviewIndex:   index,
+	}
+}
+
+func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
+	queue := make([]ports.ReviewTask, 0, len(runs))
+	for _, run := range runs {
+		queue = append(queue, ports.ReviewTask{
+			RunID:     run.ID,
+			PRURL:     run.PRURL,
+			TargetSHA: run.TargetSHA,
+		})
+	}
+	return queue
+}
+
+func replaceReviewLatestRun(reviews []PRReviewState, prURL, targetSHA string, run domain.ReviewRun) []PRReviewState {
+	for i := range reviews {
+		if reviews[i].PRURL == prURL && reviews[i].TargetSHA == targetSHA {
+			reviews[i].LatestRun = &run
+			if run.Status == domain.ReviewRunRunning {
+				reviews[i].Status = ReviewStateRunning
+			}
+			break
+		}
+	}
+	return reviews
+}
+
+func firstReusableRun(reviews []PRReviewState) domain.ReviewRun {
+	// Legacy compatibility only: in the multi-PR model the authoritative state
+	// is Reviews. When no run is created, this field is just a best-effort
+	// non-empty run for older clients.
+	for _, review := range reviews {
+		if review.LatestRun != nil {
+			return *review.LatestRun
+		}
+	}
+	return domain.ReviewRun{}
 }
 
 // List returns a worker's review state: the live reviewer handle and its passes.
@@ -306,18 +367,11 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	} else if ok {
 		handle = review.ReviewerHandleID
 	}
-	return SessionReviews{ReviewerHandleID: handle, Runs: runs}, nil
-}
-
-func (e *Engine) workerPR(ctx stdctx.Context, workerID domain.SessionID) (domain.PullRequest, error) {
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
-		return domain.PullRequest{}, err
+		return SessionReviews{}, err
 	}
-	if len(prs) == 0 {
-		return domain.PullRequest{}, fmt.Errorf("%w: worker %q has no PR to review", ErrInvalid, workerID)
-	}
-	return prs[0], nil
+	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
@@ -335,7 +389,7 @@ func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord
 	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
-func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL, handleID string, now time.Time) (domain.Review, error) {
+func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, handleID string, now time.Time) (domain.Review, error) {
 	existing, ok, err := e.store.GetReviewBySession(ctx, worker.ID)
 	if err != nil {
 		return domain.Review{}, err
@@ -345,7 +399,7 @@ func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, h
 		SessionID:        worker.ID,
 		ProjectID:        worker.ProjectID,
 		Harness:          harness,
-		PRURL:            prURL,
+		PRURL:            "",
 		ReviewerHandleID: handleID,
 		CreatedAt:        now,
 		UpdatedAt:        now,

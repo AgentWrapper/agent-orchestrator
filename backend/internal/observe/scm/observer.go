@@ -53,7 +53,7 @@ type Store interface {
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
-	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
 // Lifecycle is the provider-neutral lifecycle notification sink.
@@ -344,8 +344,8 @@ func (o *Observer) Poll(ctx context.Context) error {
 			prRefreshOK[key] = true
 			continue
 		}
-		finalPR, finalChecks, finalThreads, finalComments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
-		pr, checks, threads, comments := finalPR, finalChecks, finalThreads, finalComments
+		finalPR, finalChecks, finalReviews, finalThreads, finalComments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
+		pr, checks, reviews, threads, comments := finalPR, finalChecks, finalReviews, finalThreads, finalComments
 		// Lifecycle is allowed to run only after the observed facts are durable,
 		// but semantic hashes are the observer's acknowledgement cursor. Keep
 		// changed hashes at their local values until lifecycle succeeds; if the
@@ -362,9 +362,9 @@ func (o *Observer) Poll(ctx context.Context) error {
 			if prepared.Changed.Review {
 				pendingOpts.preserveLocalReviewHash = true
 			}
-			pr, checks, threads, comments = domainFromObservation(subj.session.ID, prepared, local, pendingOpts, now)
+			pr, checks, reviews, threads, comments = domainFromObservation(subj.session.ID, prepared, local, pendingOpts, now)
 		}
-		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewMode); err != nil {
+		if err := o.store.WriteSCMObservation(ctx, pr, checks, reviews, threads, comments, reviewMode); err != nil {
 			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
 			markRepoRefreshFailed(subj.repo)
 			continue
@@ -375,7 +375,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
-			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, ports.ReviewWritePreserve); err != nil {
+			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue
@@ -586,7 +586,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			// reads every PR of the session from the store. Without this write, an
 			// open sibling/child discovered in the same poll would not yet be
 			// durable, and the session could terminate while that PR is still open.
-			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", known.URL, "err", err)
 				if markRepoFailed != nil {
 					markRepoFailed(repo)
@@ -793,6 +793,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		if review.Decision != "" {
 			obs.Review.Decision = review.Decision
 		}
+		obs.Review.Reviews = review.Reviews
 		obs.Review.Threads = review.Threads
 		obs.Review.Partial = review.Partial
 		obs.ObservedAt = now
@@ -850,7 +851,7 @@ func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.
 	return obs
 }
 
-func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
+func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	metadataHash := metadataSemanticHash(obs)
 	if opts.preserveLocalMetadataHash {
 		metadataHash = local.MetadataHash
@@ -924,6 +925,17 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 	for _, ch := range obs.CI.Checks {
 		checks = append(checks, domain.PullRequestCheck{Name: ch.Name, CommitHash: obs.CI.HeadSHA, Status: domain.PRCheckStatus(ch.Status), Conclusion: ch.Conclusion, URL: ch.URL, Details: ch.ProviderID, LogTail: ch.LogTail, CreatedAt: now})
 	}
+	reviews := make([]domain.PullRequestReview, 0, len(obs.Review.Reviews))
+	for _, review := range obs.Review.Reviews {
+		reviews = append(reviews, domain.PullRequestReview{
+			ID:          review.ID,
+			Author:      review.Author,
+			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
+			URL:         review.URL,
+			IsBot:       review.IsBot,
+			SubmittedAt: firstTime(review.SubmittedAt, now),
+		})
+	}
 	threads := make([]domain.PullRequestReviewThread, 0, len(obs.Review.Threads))
 	commentCount := 0
 	for _, th := range obs.Review.Threads {
@@ -936,7 +948,7 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now})
 		}
 	}
-	return pr, checks, threads, comments
+	return pr, checks, reviews, threads, comments
 }
 
 func observationFromLocal(repo ports.SCMRepo, pr domain.PullRequest, checks []domain.PullRequestCheck) ports.SCMObservation {
@@ -1119,10 +1131,11 @@ func ciSemanticHash(ci ports.SCMCIObservation) string {
 func reviewSemanticHash(review ports.SCMReviewObservation) string {
 	type reviewHashPayload struct {
 		Decision string
+		Reviews  []ports.SCMReviewSummaryObservation
 		Threads  []ports.SCMReviewThreadObservation
 		Partial  bool `json:",omitempty"`
 	}
-	return stableHash(reviewHashPayload{Decision: review.Decision, Threads: review.Threads, Partial: review.Partial})
+	return stableHash(reviewHashPayload{Decision: review.Decision, Reviews: review.Reviews, Threads: review.Threads, Partial: review.Partial})
 }
 
 func threadSemanticHash(th ports.SCMReviewThreadObservation) string {

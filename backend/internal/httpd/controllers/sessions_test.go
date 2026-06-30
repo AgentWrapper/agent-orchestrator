@@ -192,6 +192,7 @@ func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.Sessio
 			UnresolvedBy: []sessionsvc.PRUnresolvedReviewer{{
 				ReviewerID: "reviewer-a",
 				Count:      1,
+				ReviewURL:  "https://github.com/aoagents/agent-orchestrator/pull/142#pullrequestreview-1",
 				Links:      []sessionsvc.PRReviewCommentLink{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142#discussion_r1", File: "main.go", Line: 12}},
 			}},
 		},
@@ -844,6 +845,7 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 				UnresolvedBy []struct {
 					ReviewerID string `json:"reviewerId"`
 					Count      int    `json:"count"`
+					ReviewURL  string `json:"reviewUrl"`
 					Links      []struct {
 						URL  string `json:"url"`
 						File string `json:"file"`
@@ -869,7 +871,7 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	if checks := listed.PRs[0].CI.FailingChecks; len(checks) != 1 || checks[0].Name != "unit" || checks[0].LogTail != "" {
 		t.Fatalf("failing checks = %#v", checks)
 	}
-	if reviewers := listed.PRs[0].Review.UnresolvedBy; len(reviewers) != 1 || reviewers[0].ReviewerID != "reviewer-a" || reviewers[0].Links[0].Body != "" {
+	if reviewers := listed.PRs[0].Review.UnresolvedBy; len(reviewers) != 1 || reviewers[0].ReviewerID != "reviewer-a" || reviewers[0].ReviewURL == "" || reviewers[0].Links[0].Body != "" {
 		t.Fatalf("reviewers = %#v", reviewers)
 	}
 	if merge := listed.PRs[0].Mergeability; merge.State != "conflicting" || len(merge.ConflictFiles) != 0 || merge.PRURL == "" {
