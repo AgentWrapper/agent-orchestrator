@@ -5,6 +5,7 @@ import { RootProvider } from "fumadocs-ui/provider";
 import type { LinkItemType } from "fumadocs-ui/layouts/shared";
 import { source } from "@/lib/source";
 import { DocsClipboardFix } from "@/components/docs/DocsClipboardFix";
+import { DocsHardNav } from "@/components/docs/DocsHardNav";
 import "./docs.css";
 
 function GithubIcon({ size = 16 }: { size?: number } = {}) {
@@ -116,6 +117,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 				}}
 			>
 				<DocsClipboardFix />
+				<DocsHardNav />
 				{children}
 			</DocsLayout>
 		</RootProvider>

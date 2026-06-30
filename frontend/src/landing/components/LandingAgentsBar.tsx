@@ -33,11 +33,11 @@ export function LandingAgentsBar() {
 			data-testid="agents-marquee"
 			className="landing-reveal relative overflow-hidden border-y border-[color:var(--border)] bg-[color:var(--bg-deep)]"
 		>
-			<div className="container-page pt-10 pb-8">
+			<div className="container-page pt-12 pb-10">
 				<div className="mx-auto flex max-w-[1120px] flex-wrap items-baseline justify-between gap-8">
 					<div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
 						<span className="landing-eyebrow">Coverage</span>
-						<h2 className="text-[24px] font-bold leading-tight text-[color:var(--fg)] sm:text-[32px]">
+						<h2 className="text-[24px] font-semibold leading-tight text-[color:var(--fg)] sm:text-[32px]">
 							One Daemon. <span className="text-[color:var(--fg-muted)]">23 Agent Harnesses.</span>
 						</h2>
 					</div>
@@ -47,7 +47,7 @@ export function LandingAgentsBar() {
 				</div>
 			</div>
 
-			<div className="container-page pb-10">
+			<div className="container-page pb-12">
 				<div className="relative mx-auto max-w-3xl overflow-hidden">
 					<div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-20 bg-gradient-to-r from-[color:var(--bg-deep)] to-transparent" />
 					<div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-20 bg-gradient-to-l from-[color:var(--bg-deep)] to-transparent" />

@@ -41,7 +41,7 @@ function GithubIcon({ className = "" }: { className?: string }) {
 export function LandingFooter() {
 	return (
 		<footer data-testid="footer" className="landing-reveal border-t border-[color:var(--border)] bg-black">
-			<div className="container-page py-20">
+			<div className="container-page py-24">
 				<div className="grid gap-10 lg:grid-cols-[0.95fr_1.05fr]">
 					<div className="max-w-md">
 						<a href="/" className="inline-flex items-center gap-3">
@@ -57,15 +57,15 @@ export function LandingFooter() {
 								href="https://github.com/AgentWrapper/agent-orchestrator"
 								target="_blank"
 								rel="noreferrer"
-								className="inline-flex items-center gap-2 rounded-md border border-[color:var(--border)] bg-white/[0.025] px-3 py-2 text-[13px] font-medium text-[color:var(--fg-muted)] transition hover:bg-white/[0.05] hover:text-[color:var(--fg)]"
+								className="fluid-press group/ghf inline-flex items-center gap-2 rounded-sm border border-[color:var(--border)] bg-white/[0.025] px-3 py-2 text-[13px] font-medium text-[color:var(--fg-muted)] hover:border-[color:var(--accent-glow)] hover:bg-[color:var(--bg-card-hover)] hover:text-[color:var(--fg)]"
 							>
-								<GithubIcon className="h-4 w-4" />
+								<GithubIcon className="h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/ghf:scale-110" />
 								GitHub
 							</a>
-							<span className="inline-flex items-center rounded-md border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
+							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
 								Apache 2.0
 							</span>
-							<span className="inline-flex items-center rounded-md border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
+							<span className="inline-flex items-center rounded-sm border border-[color:var(--border)] bg-white/[0.015] px-3 py-2 font-mono text-[12px] text-[color:var(--fg-dim)]">
 								127.0.0.1
 							</span>
 						</div>
@@ -84,9 +84,10 @@ export function LandingFooter() {
 												href={link.href}
 												target={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "_blank"}
 												rel={link.href.startsWith("#") || link.href.startsWith("/") ? undefined : "noreferrer"}
-												className="text-[13px] text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--fg)]"
+												className="group/footlink relative inline-block text-[13px] text-[color:var(--fg-muted)] transition-colors duration-200 hover:text-[color:var(--fg)]"
 											>
 												{link.label}
+												<span className="absolute -bottom-0.5 left-0 h-px w-full origin-left scale-x-0 bg-[color:var(--accent)] transition-transform duration-300 ease-out group-hover/footlink:scale-x-100" />
 											</a>
 										</li>
 									))}
@@ -96,7 +97,7 @@ export function LandingFooter() {
 					</div>
 				</div>
 
-				<div className="mt-12 flex flex-col justify-between gap-3 border-t border-[color:var(--border)] pt-5 font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)] sm:flex-row">
+				<div className="mt-20 flex flex-col justify-between gap-3 border-t border-[color:var(--border)] pt-5 font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)] sm:flex-row">
 					<span>AgentWrapper/agent-orchestrator</span>
 					<span>Runs locally on your laptop.</span>
 				</div>

@@ -1,6 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { ScaledMockup } from "./ScaledMockup";
+
+if (typeof window !== "undefined") {
+	gsap.registerPlugin(useGSAP);
+}
 
 function GithubIcon({ className = "" }: { className?: string }) {
 	return (
@@ -25,6 +32,14 @@ function DownloadIcon({ className = "" }: { className?: string }) {
 			<path d="M12 3v12" />
 			<path d="m7 10 5 5 5-5" />
 			<path d="M5 21h14" />
+		</svg>
+	);
+}
+
+function StarIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.55l-5.91 3.11 1.13-6.57L2.45 9.44l6.6-.96L12 2.5z" />
 		</svg>
 	);
 }
@@ -249,8 +264,8 @@ function HeroDashboardMockup() {
 	}
 
 	return (
-		<div className="relative mx-auto mt-6 max-w-[1600px]" data-testid="hero-dashboard-interactive">
-			<div className="relative overflow-hidden rounded-[18px] border border-[rgba(255,255,255,0.08)] bg-[#0a0b0d] shadow-[0_34px_120px_-76px_rgba(0,0,0,1)]">
+		<div className="relative mx-auto mt-6 w-full max-w-[1600px]" data-testid="hero-dashboard-interactive">
+			<div className="relative overflow-hidden rounded-[6px] border border-[rgba(255,255,255,0.08)] bg-[#0a0b0d] shadow-[0_34px_120px_-76px_rgba(0,0,0,1)]">
 				<div
 					className="grid min-h-[640px] text-left text-[#f4f5f7] transition-[grid-template-columns] duration-200"
 					style={{
@@ -448,7 +463,7 @@ function HeroDashboardMockup() {
 									>
 										<div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
 											<span
-												className="h-[7px] w-[7px] rounded-full"
+												className={`h-[7px] w-[7px] rounded-full ${column.level === "pending" ? "" : "pulse-dot"}`}
 												style={{
 													background: column.color,
 													boxShadow:
@@ -485,7 +500,7 @@ function HeroDashboardMockup() {
 																className="inline-flex items-center gap-1.5 text-[11px] font-medium"
 																style={{ color: card.status === "CI failed" ? "#ef6b6b" : column.color }}
 															>
-																<span className="h-[7px] w-[7px] rounded-full bg-current" />
+																<span className="pulse-dot h-[7px] w-[7px] rounded-full bg-current" />
 																{card.status}
 															</span>
 															<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-[#646a73]">
@@ -538,68 +553,105 @@ function SessionDot({ zone }: { zone: string }) {
 }
 
 export function LandingHero() {
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	useGSAP(() => {
+		const ctx = gsap.context(() => {
+			const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
+			
+			// Initial state
+			gsap.set(".gsap-reveal", { y: 40, opacity: 0 });
+			gsap.set(".gsap-scale", { scale: 0.95, opacity: 0 });
+
+			tl.to(".gsap-reveal", {
+				y: 0,
+				opacity: 1,
+				duration: 1.2,
+				stagger: 0.15,
+			})
+			.to(".gsap-scale", {
+				scale: 1,
+				opacity: 1,
+				duration: 1.2,
+				ease: "elastic.out(1, 0.75)"
+			}, "-=0.8");
+		}, containerRef);
+
+		return () => ctx.revert();
+	}, { scope: containerRef });
+
 	return (
 		<section
+			ref={containerRef}
 			data-testid="hero-section"
 			id="top"
-			className="landing-hero-section relative overflow-hidden border-b border-[color:var(--border)]"
+			className="landing-hero-section relative overflow-hidden border-b border-[color:var(--border)] pt-24"
 		>
 			<div
-				className="pointer-events-none absolute inset-0 opacity-[0.24]"
+				className="pointer-events-none absolute inset-0 opacity-[0.12]"
 				style={{
 					backgroundImage:
 						"linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)",
-					backgroundSize: "44px 44px",
+					backgroundSize: "56px 56px",
 					maskImage: "radial-gradient(ellipse at 52% 42%, black 0%, transparent 68%)",
 					WebkitMaskImage: "radial-gradient(ellipse at 52% 42%, black 0%, transparent 68%)",
 				}}
 			/>
 			<div className="relative z-10 mx-auto w-full max-w-[1200px] px-5 sm:px-8 lg:px-12 xl:px-16">
 				<div className="mx-auto text-center">
-					<h1 data-testid="hero-headline" className="landing-hero-heading mx-auto font-sans">
+					<h1 data-testid="hero-headline" className="gsap-reveal landing-hero-heading mx-auto font-sans">
 						<span className="block">Stop babysitting coding agents.</span>
-						<span className="mt-2 block italic">
-							Start merging <span className="font-[620] text-[#93b4f8]">real work.</span>
+						<span className="mt-2 block">
+							Start merging <span className="text-[#93b4f8]">real work.</span>
 						</span>
 					</h1>
-					<p className="landing-body mx-auto mt-7">
+					<p className="gsap-reveal landing-body mx-auto mt-10">
 						Free, Apache 2.0 licensed, and runs on your laptop. Fork it, inspect it, and ship your first parallel agent
 						workflow in minutes.
 					</p>
-					<div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+					<div className="gsap-reveal mt-10 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
 						<a
 							href="/docs/installation"
-							className="hero-pressable group inline-flex items-center gap-2 rounded-lg bg-[color:var(--accent)] px-7 py-3.5 text-[15px] font-bold hover:brightness-110"
-							style={{ color: "#081225" }}
+							className="hero-pressable group inline-flex h-12 w-full items-center justify-center gap-2 bg-[color:var(--accent)] px-6 text-[15px] font-semibold shadow-[0_12px_32px_-18px_var(--accent-glow)] hover:brightness-[1.07] hover:shadow-[0_18px_44px_-16px_var(--accent-glow)] sm:w-auto"
+							style={{ color: "#000000" }}
 						>
 							<DownloadIcon className="h-4 w-4" />
 							Install Agent Orchestrator
-							<ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+							<ArrowRightIcon className="h-4 w-4 transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1" />
 						</a>
 						<a
 							href="https://github.com/AgentWrapper/agent-orchestrator"
 							target="_blank"
 							rel="noreferrer"
-							className="hero-pressable inline-flex items-center gap-2 rounded-lg border border-[color:var(--border-strong)] bg-transparent px-5 py-3.5 text-[15px] font-semibold text-[color:var(--fg)] hover:bg-[color:var(--bg-card-hover)]"
+							className="hero-pressable gh-star-btn group relative inline-flex h-12 w-full items-center justify-center gap-2 overflow-visible border border-[color:var(--border-strong)] bg-transparent px-5 text-[15px] font-medium text-[color:var(--fg)] hover:border-[color:var(--accent-glow)] hover:bg-[color:var(--bg-card-hover)] sm:w-auto"
 						>
 							<GithubIcon className="h-4 w-4" />
 							<span>Star on GitHub</span>
-							<span className="rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[12px] leading-none text-[color:var(--fg-muted)]">
+							<span className="relative inline-flex items-center">
+								<StarIcon className="gh-star h-4 w-4 text-[color:var(--fg-muted)]" />
+								<span className="gh-sparkle absolute -right-1 -top-1 h-1 w-1 rounded-full bg-[#ffd35c]" style={{ ["--sx" as string]: "7px", ["--sy" as string]: "-7px" }} />
+								<span className="gh-sparkle gh-sparkle-2 absolute -bottom-1 left-0 h-1 w-1 rounded-full bg-[color:var(--accent)]" style={{ ["--sx" as string]: "-6px", ["--sy" as string]: "6px" }} />
+							</span>
+							<span className="gh-star-count rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[12px] leading-none text-[color:var(--fg-muted)]">
 								7.7k
 							</span>
 						</a>
 					</div>
 				</div>
 
-				<div className="mx-auto mt-16 flex max-w-[1200px] items-center gap-4 px-1 text-left">
+				<div className="gsap-reveal mx-auto mt-20 flex max-w-[1200px] items-center gap-4 px-1 text-left">
 					<div className="h-px flex-1 bg-gradient-to-r from-transparent via-[color:var(--border-strong)] to-[color:var(--border-strong)]" />
 					<div className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--fg-dim)]">
 						Live board preview
 					</div>
 					<div className="h-px flex-1 bg-gradient-to-r from-[color:var(--border-strong)] via-[color:var(--border-strong)] to-transparent" />
 				</div>
-
-				<HeroDashboardMockup />
+				
+				<div className="gsap-scale mt-12">
+					<ScaledMockup designWidth={1080}>
+						<HeroDashboardMockup />
+					</ScaledMockup>
+				</div>
 			</div>
 		</section>
 	);

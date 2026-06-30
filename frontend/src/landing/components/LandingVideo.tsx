@@ -22,10 +22,10 @@ export function LandingVideo() {
 				</div>
 
 				<div className="relative mx-auto w-full max-w-[1180px]">
-					<div className="pointer-events-none absolute -inset-3 rounded-3xl bg-[color:var(--accent)] opacity-[0.045] blur-2xl" />
+					<div className="pointer-events-none absolute -inset-3 rounded-lg bg-[color:var(--accent)] opacity-[0.025] blur-2xl" />
 					<div
 						data-testid="video-frame"
-						className="glow-accent relative aspect-video overflow-hidden rounded-2xl border border-[color:var(--border-strong)] bg-black"
+						className="relative aspect-video overflow-hidden rounded-md border border-[color:var(--border-strong)] bg-black"
 					>
 						{muxPlaybackId && isPlaying ? (
 							<iframe

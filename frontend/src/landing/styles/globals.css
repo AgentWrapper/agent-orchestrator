@@ -39,8 +39,8 @@
 	--color-bg-sidebar: #030304;
 
 	--color-text-primary: #f5f5f4;
-	--color-text-secondary: #8b8b89;
-	--color-text-tertiary: #5b5b58;
+	--color-text-secondary: #9b9b98;
+	--color-text-tertiary: #79796f;
 
 	--color-border-default: rgba(255, 255, 255, 0.12);
 	--color-border-subtle: rgba(255, 255, 255, 0.06);
@@ -130,7 +130,9 @@ body::-webkit-scrollbar,
 	min-height: 100vh;
 	background: var(--bg);
 	color: var(--fg);
-	font-family: var(--font-sans, -apple-system, "SF Pro Text", system-ui, sans-serif);
+	font-family: var(--font-inter), -apple-system, system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 .dark .landing-page {
@@ -159,7 +161,7 @@ body::-webkit-scrollbar,
 
 .container-page {
 	width: 100%;
-	max-width: 1200px;
+	max-width: 1280px;
 	margin-left: auto;
 	margin-right: auto;
 	padding-left: clamp(1.25rem, 3.8vw, 4rem);
@@ -167,13 +169,13 @@ body::-webkit-scrollbar,
 }
 
 .landing-hero-section {
-	padding-top: clamp(128px, 13vw, 176px);
-	padding-bottom: clamp(80px, 9vw, 128px);
+	padding-top: clamp(160px, 16vw, 220px);
+	padding-bottom: clamp(100px, 12vw, 160px);
 }
 
 .landing-section {
-	padding-top: clamp(80px, 10vw, 144px);
-	padding-bottom: clamp(80px, 10vw, 144px);
+	padding-top: clamp(100px, 12vw, 180px);
+	padding-bottom: clamp(100px, 12vw, 180px);
 }
 
 .landing-section-compact {
@@ -182,7 +184,7 @@ body::-webkit-scrollbar,
 }
 
 .landing-section-header {
-	margin-bottom: clamp(48px, 6vw, 80px);
+	margin-bottom: clamp(64px, 8vw, 100px);
 }
 
 .landing-section-stack {
@@ -192,12 +194,12 @@ body::-webkit-scrollbar,
 
 .landing-eyebrow {
 	font-family: var(--font-mono);
-	font-size: 12px;
-	font-weight: 650;
+	font-size: 11px;
+	font-weight: 600;
 	line-height: 1;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.14em;
 	text-transform: uppercase;
-	color: var(--fg-dim);
+	color: var(--fg-muted);
 }
 
 .landing-eyebrow-accent {
@@ -206,10 +208,10 @@ body::-webkit-scrollbar,
 
 .landing-heading {
 	max-width: 760px;
-	font-size: clamp(32px, 4vw, 48px);
-	font-weight: 700;
+	font-size: clamp(36px, 4.5vw, 56px);
+	font-weight: 600;
 	line-height: 1.08;
-	letter-spacing: 0;
+	letter-spacing: -0.02em;
 	color: var(--fg);
 }
 
@@ -217,12 +219,31 @@ body::-webkit-scrollbar,
 	color: var(--fg-muted);
 }
 
+/* Feature-step headings: smaller than section headings so the title and its
+   muted continuation each fit on a single line in the narrower copy column. */
+.feature-heading {
+	font-size: clamp(28px, 2.7vw, 40px);
+	line-height: 1.12;
+	letter-spacing: -0.02em;
+}
+
+/* Pinned feature swap layers — GSAP owns visibility once mounted; this is just
+   the pre-JS / first-paint state so only the first feature shows (no stacking). */
+.fp-panel,
+.fp-mock {
+	opacity: 0;
+}
+.fp-panel:first-child,
+.fp-mock:first-child {
+	opacity: 1;
+}
+
 .landing-hero-heading {
 	max-width: 980px;
-	font-size: clamp(48px, 6vw, 64px);
-	font-weight: 700;
-	line-height: 1.05;
-	letter-spacing: 0;
+	font-size: clamp(48px, 7vw, 80px);
+	font-weight: 600;
+	line-height: 1.02;
+	letter-spacing: -0.03em;
 	color: var(--fg);
 }
 
@@ -230,8 +251,8 @@ body::-webkit-scrollbar,
 	max-width: 65ch;
 	font-size: clamp(16px, 1.4vw, 18px);
 	font-weight: 400;
-	line-height: 1.6;
-	letter-spacing: 0;
+	line-height: 1.7;
+	letter-spacing: 0.005em;
 	color: var(--fg-muted);
 }
 
@@ -254,21 +275,121 @@ body::-webkit-scrollbar,
 	letter-spacing: 0;
 }
 
+/* Fluid, non-jittery hover. No scale/translate on the button itself — scaling
+   text rasterises it and looks blurry — so hover is expressed purely through
+   brightness + shadow. Only a brief press uses a tiny transform. */
 .hero-pressable {
 	transition:
-		transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
-		filter 160ms ease,
-		background-color 160ms ease,
-		border-color 160ms ease,
-		color 160ms ease;
+		filter 240ms cubic-bezier(0.16, 1, 0.3, 1),
+		box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1),
+		background-color 240ms ease,
+		border-color 240ms ease,
+		color 200ms ease,
+		transform 120ms ease;
 }
 
 .hero-pressable:active {
-	transform: scale(0.975);
+	transform: scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.hero-pressable:active {
+		transform: none;
+	}
+}
+
+/* Shared smooth interaction primitive for nav / footer controls. */
+.fluid-press {
+	transition:
+		transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+		filter 260ms cubic-bezier(0.16, 1, 0.3, 1),
+		box-shadow 260ms cubic-bezier(0.16, 1, 0.3, 1),
+		color 200ms ease,
+		background-color 200ms ease,
+		border-color 200ms ease;
+}
+
+.fluid-press:active {
+	transform: scale(0.96);
+	transition-duration: 90ms;
+}
+
+/* GitHub "star" celebration — the count badge lights up and the star pops
+   with a couple of sparkles when the button is hovered. */
+.gh-star-btn .gh-star {
+	transition:
+		transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		color 320ms ease;
+}
+
+.gh-star-btn:hover .gh-star {
+	animation: gh-star-pop 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+	color: #ffd35c;
+}
+
+.gh-star-btn .gh-star-count {
+	transition:
+		color 260ms ease,
+		background-color 260ms ease,
+		border-color 260ms ease;
+}
+
+.gh-star-btn:hover .gh-star-count {
+	color: var(--accent);
+	background: var(--accent-soft);
+	border-color: var(--accent-glow);
+}
+
+.gh-star-btn .gh-sparkle {
+	opacity: 0;
+}
+
+.gh-star-btn:hover .gh-sparkle {
+	animation: gh-sparkle 0.62s ease-out;
+}
+
+.gh-star-btn:hover .gh-sparkle-2 {
+	animation-delay: 0.08s;
+}
+
+@keyframes gh-star-pop {
+	0% {
+		transform: scale(1) rotate(0deg);
+	}
+	35% {
+		transform: scale(1.45) rotate(-14deg);
+	}
+	65% {
+		transform: scale(0.92) rotate(10deg);
+	}
+	100% {
+		transform: scale(1) rotate(0deg);
+	}
+}
+
+@keyframes gh-sparkle {
+	0% {
+		opacity: 0;
+		transform: scale(0.2) translate(0, 0);
+	}
+	40% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: scale(1) translate(var(--sx, 6px), var(--sy, -6px));
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.gh-star-btn:hover .gh-star,
+	.gh-star-btn:hover .gh-sparkle {
+		animation: none;
+	}
 }
 
 .agents-marquee-track {
-	animation: agents-marquee 38s linear infinite;
+	animation: agents-marquee 50s linear infinite;
 }
 
 .agents-marquee-track:hover {
@@ -282,7 +403,7 @@ body::-webkit-scrollbar,
 	width: 40px;
 	height: 40px;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 4px;
 	background: rgba(255, 255, 255, 0.025);
 }
 
@@ -291,7 +412,7 @@ body::-webkit-scrollbar,
 	align-items: center;
 	justify-content: center;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 4px;
 	background: rgba(255, 255, 255, 0.025);
 }
 
@@ -343,7 +464,7 @@ body::-webkit-scrollbar,
 .surface {
 	background: #050506;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 4px;
 	box-shadow: none;
 	transition:
 		border-color 0.16s ease,
@@ -360,39 +481,9 @@ body::-webkit-scrollbar,
 	border-bottom: 1px solid var(--border);
 }
 
-.tweet-shell {
-	width: 100%;
-	min-width: 0;
-	overflow: hidden;
-	border-radius: 14px;
-	background: var(--bg-deep);
-}
-
-.tweet-fallback {
-	min-height: 240px;
-	border-radius: 14px;
-	border: 1px solid var(--border);
-	background: linear-gradient(180deg, rgba(130, 170, 255, 0.035), transparent 36%), #050607;
-	padding: 18px;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-.tweet-shell .twitter-tweet,
-.tweet-shell iframe {
-	width: 100% !important;
-	max-width: 100% !important;
-	min-width: 0 !important;
-	margin-left: auto !important;
-	margin-right: auto !important;
-	overflow: hidden !important;
-	border-radius: 14px !important;
-	background: var(--bg-deep) !important;
-	color-scheme: dark;
-}
-
 .tweet-masonry {
 	column-count: 1;
-	column-gap: 1.25rem;
+	column-gap: 2rem;
 }
 
 @media (min-width: 768px) {
@@ -410,7 +501,7 @@ body::-webkit-scrollbar,
 .surface-elev {
 	background: #050506;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 4px;
 }
 
 .lift {
@@ -446,12 +537,9 @@ body::-webkit-scrollbar,
 .terminal-window {
 	overflow: hidden;
 	border: 1px solid var(--border);
-	border-radius: 10px;
+	border-radius: 4px;
 	background: var(--code-bg);
-	box-shadow:
-		0 0 0 1px rgba(255, 255, 255, 0.02) inset,
-		0 12px 40px -16px rgba(0, 0, 0, 0.8),
-		0 18px 56px -34px var(--accent-glow);
+	box-shadow: none;
 }
 
 .terminal-header {
@@ -534,12 +622,12 @@ body::-webkit-scrollbar,
 }
 
 .landing-card:hover {
-	border-color: var(--landing-border-default);
+	border-color: var(--landing-border-subtle);
 }
 
 .landing-hero-grid {
-	background-image: radial-gradient(rgba(255, 240, 220, 0.04) 1px, transparent 1px);
-	background-size: 24px 24px;
+	background-image: radial-gradient(rgba(255, 240, 220, 0.03) 1px, transparent 1px);
+	background-size: 32px 32px;
 	mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
 	-webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
 }
@@ -547,7 +635,7 @@ body::-webkit-scrollbar,
 @keyframes landing-fade-rise {
 	from {
 		opacity: 0;
-		transform: translateY(24px);
+		transform: translateY(32px);
 	}
 
 	to {
@@ -568,23 +656,23 @@ body::-webkit-scrollbar,
 }
 
 .landing-fade-rise {
-	animation: landing-fade-rise 0.8s ease-out both;
+	animation: landing-fade-rise 0.9s cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 .landing-fade-rise-d1 {
-	animation: landing-fade-rise 0.8s ease-out 0.2s both;
+	animation: landing-fade-rise 0.9s cubic-bezier(0.23, 1, 0.32, 1) 0.15s both;
 }
 
 .landing-fade-rise-d2 {
-	animation: landing-fade-rise 0.8s ease-out 0.4s both;
+	animation: landing-fade-rise 0.9s cubic-bezier(0.23, 1, 0.32, 1) 0.3s both;
 }
 
 .landing-reveal {
 	opacity: 0;
-	transform: translateY(24px);
+	transform: translateY(32px);
 	transition:
-		opacity 460ms ease-out,
-		transform 460ms ease-out;
+		opacity 600ms cubic-bezier(0.23, 1, 0.32, 1),
+		transform 600ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .landing-reveal.visible {
@@ -892,311 +980,3 @@ body::-webkit-scrollbar,
 	animation: landing-graph-pulse 1.5s ease-out infinite;
 }
 
-/* ── Landing page spacing protection ─────────────────────────────────────────
-   Fumadocs bundles its own Tailwind inside @layer fumadocs. Because that sheet
-   loads after the root layout, @layer fumadocs has higher cascade priority than
-   root-level @layer utilities. Its universal preflight reset (* { margin:0;
-   padding:0 }) zeros any spacing utility not present in fumadocs' own bundle.
-   These unlayered rules (outside any @layer) beat ALL named layers and restore
-   the correct values for every margin/padding class used in the landing page. */
-
-.landing-page .mt-1 {
-	margin-top: calc(var(--spacing) * 1);
-}
-.landing-page .mt-6 {
-	margin-top: calc(var(--spacing) * 6);
-}
-.landing-page .mt-8 {
-	margin-top: calc(var(--spacing) * 8);
-}
-.landing-page .mt-10 {
-	margin-top: calc(var(--spacing) * 10);
-}
-.landing-page .mt-12 {
-	margin-top: calc(var(--spacing) * 12);
-}
-.landing-page .mt-16 {
-	margin-top: calc(var(--spacing) * 16);
-}
-.landing-page .mt-20 {
-	margin-top: calc(var(--spacing) * 20);
-}
-
-.landing-page .mb-1 {
-	margin-bottom: calc(var(--spacing) * 1);
-}
-.landing-page .mb-2 {
-	margin-bottom: calc(var(--spacing) * 2);
-}
-.landing-page .mb-3 {
-	margin-bottom: calc(var(--spacing) * 3);
-}
-.landing-page .mb-4 {
-	margin-bottom: calc(var(--spacing) * 4);
-}
-.landing-page .mb-5 {
-	margin-bottom: calc(var(--spacing) * 5);
-}
-.landing-page .mb-6 {
-	margin-bottom: calc(var(--spacing) * 6);
-}
-.landing-page .mb-8 {
-	margin-bottom: calc(var(--spacing) * 8);
-}
-.landing-page .mb-10 {
-	margin-bottom: calc(var(--spacing) * 10);
-}
-.landing-page .mb-12 {
-	margin-bottom: calc(var(--spacing) * 12);
-}
-.landing-page .mb-16 {
-	margin-bottom: calc(var(--spacing) * 16);
-}
-.landing-page .mb-1\.5 {
-	margin-bottom: calc(var(--spacing) * 1.5);
-}
-
-.landing-page .ml-1 {
-	margin-left: calc(var(--spacing) * 1);
-}
-.landing-page .ml-2 {
-	margin-left: calc(var(--spacing) * 2);
-}
-.landing-page .ml-1\.5 {
-	margin-left: calc(var(--spacing) * 1.5);
-}
-
-.landing-page .mr-1 {
-	margin-right: calc(var(--spacing) * 1);
-}
-.landing-page .mr-1\.5 {
-	margin-right: calc(var(--spacing) * 1.5);
-}
-
-.landing-page .p-2 {
-	padding: calc(var(--spacing) * 2);
-}
-.landing-page .p-3 {
-	padding: calc(var(--spacing) * 3);
-}
-.landing-page .p-6 {
-	padding: calc(var(--spacing) * 6);
-}
-.landing-page .p-7 {
-	padding: calc(var(--spacing) * 7);
-}
-.landing-page .p-8 {
-	padding: calc(var(--spacing) * 8);
-}
-.landing-page .p-2\.5 {
-	padding: calc(var(--spacing) * 2.5);
-}
-
-.landing-page .pt-10 {
-	padding-top: calc(var(--spacing) * 10);
-}
-.landing-page .pt-32 {
-	padding-top: calc(var(--spacing) * 32);
-}
-
-.landing-page .pb-20 {
-	padding-bottom: calc(var(--spacing) * 20);
-}
-.landing-page .pb-8 {
-	padding-bottom: calc(var(--spacing) * 8);
-}
-.landing-page .pb-10 {
-	padding-bottom: calc(var(--spacing) * 10);
-}
-
-.landing-page .px-2 {
-	padding-left: calc(var(--spacing) * 2);
-	padding-right: calc(var(--spacing) * 2);
-}
-.landing-page .px-3 {
-	padding-left: calc(var(--spacing) * 3);
-	padding-right: calc(var(--spacing) * 3);
-}
-.landing-page .px-4 {
-	padding-left: calc(var(--spacing) * 4);
-	padding-right: calc(var(--spacing) * 4);
-}
-.landing-page .px-5 {
-	padding-left: calc(var(--spacing) * 5);
-	padding-right: calc(var(--spacing) * 5);
-}
-.landing-page .px-6 {
-	padding-left: calc(var(--spacing) * 6);
-	padding-right: calc(var(--spacing) * 6);
-}
-.landing-page .px-8 {
-	padding-left: calc(var(--spacing) * 8);
-	padding-right: calc(var(--spacing) * 8);
-}
-.landing-page .px-3\.5 {
-	padding-left: calc(var(--spacing) * 3.5);
-	padding-right: calc(var(--spacing) * 3.5);
-}
-
-.landing-page .py-1 {
-	padding-top: calc(var(--spacing) * 1);
-	padding-bottom: calc(var(--spacing) * 1);
-}
-.landing-page .py-2 {
-	padding-top: calc(var(--spacing) * 2);
-	padding-bottom: calc(var(--spacing) * 2);
-}
-.landing-page .py-3 {
-	padding-top: calc(var(--spacing) * 3);
-	padding-bottom: calc(var(--spacing) * 3);
-}
-.landing-page .py-4 {
-	padding-top: calc(var(--spacing) * 4);
-	padding-bottom: calc(var(--spacing) * 4);
-}
-.landing-page .py-6 {
-	padding-top: calc(var(--spacing) * 6);
-	padding-bottom: calc(var(--spacing) * 6);
-}
-.landing-page .py-8 {
-	padding-top: calc(var(--spacing) * 8);
-	padding-bottom: calc(var(--spacing) * 8);
-}
-.landing-page .py-20 {
-	padding-top: calc(var(--spacing) * 20);
-	padding-bottom: calc(var(--spacing) * 20);
-}
-.landing-page .py-40 {
-	padding-top: calc(var(--spacing) * 40);
-	padding-bottom: calc(var(--spacing) * 40);
-}
-.landing-page .py-1\.5 {
-	padding-top: calc(var(--spacing) * 1.5);
-	padding-bottom: calc(var(--spacing) * 1.5);
-}
-.landing-page .py-2\.5 {
-	padding-top: calc(var(--spacing) * 2.5);
-	padding-bottom: calc(var(--spacing) * 2.5);
-}
-.landing-page .py-3\.5 {
-	padding-top: calc(var(--spacing) * 3.5);
-	padding-bottom: calc(var(--spacing) * 3.5);
-}
-
-/* Arbitrary padding values */
-.landing-page .py-\[100px\] {
-	padding-top: 100px;
-	padding-bottom: 100px;
-}
-.landing-page .py-\[120px\] {
-	padding-top: 120px;
-	padding-bottom: 120px;
-}
-.landing-page .pt-\[60px\] {
-	padding-top: 60px;
-}
-.landing-page .pb-\[120px\] {
-	padding-bottom: 120px;
-}
-
-/* Border colors — fumadocs * { border-color: var(--color-fd-border) } persists from docs
-   navigation. In light mode --color-fd-border = #d6d3d1 which looks bright on the dark
-   landing background, overriding explicit border-[var(--landing-border-*)] utilities. */
-.landing-page .border-\[var\(--landing-border-subtle\)\] {
-	border-color: var(--landing-border-subtle);
-}
-.landing-page .border-\[var\(--landing-border-default\)\] {
-	border-color: var(--landing-border-default);
-}
-.landing-page .border-\[var\(--landing-border-strong\)\] {
-	border-color: var(--landing-border-strong);
-}
-
-/* Font weight — fumadocs heading reset zeroes h1-h6 { font-weight: inherit } */
-.landing-page .font-\[680\] {
-	font-weight: 680;
-}
-
-/* Font size (clamp values) — fumadocs heading reset zeroes h1-h6 { font-size: inherit } */
-.landing-page .text-\[clamp\(1\.75rem\,4vw\,2\.75rem\)\] {
-	font-size: clamp(1.75rem, 4vw, 2.75rem);
-}
-.landing-page .text-\[clamp\(1\.375rem\,3vw\,2rem\)\] {
-	font-size: clamp(1.375rem, 3vw, 2rem);
-}
-.landing-page .text-\[clamp\(2rem\,4vw\,3rem\)\] {
-	font-size: clamp(2rem, 4vw, 3rem);
-}
-.landing-page .text-\[clamp\(2rem\,5vw\,3\.5rem\)\] {
-	font-size: clamp(2rem, 5vw, 3.5rem);
-}
-.landing-page .text-\[24px\] {
-	font-size: 24px;
-}
-
-@media (min-width: 640px) {
-	.landing-page .sm\:text-\[32px\] {
-		font-size: 32px;
-	}
-}
-
-/* Responsive md: utilities — fumadocs bundles .hidden but not all md: variants,
-   so its higher-priority layer keeps elements hidden / wrong grid at desktop widths. */
-@media (min-width: 768px) {
-	.landing-page .md\:flex {
-		display: flex;
-	}
-	.landing-page .md\:block {
-		display: block;
-	}
-	.landing-page .md\:hidden {
-		display: none;
-	}
-
-	.landing-page .md\:flex-row {
-		flex-direction: row;
-	}
-
-	.landing-page .md\:grid-cols-2 {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-	.landing-page .md\:grid-cols-3 {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
-	.landing-page .md\:grid-cols-4 {
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-	}
-	.landing-page .md\:grid-cols-6 {
-		grid-template-columns: repeat(6, minmax(0, 1fr));
-	}
-	.landing-page .md\:grid-cols-\[1fr_auto_1fr_1fr\] {
-		grid-template-columns: 1fr auto 1fr 1fr;
-	}
-
-	.landing-page .md\:gap-0 {
-		gap: 0;
-	}
-	.landing-page .md\:gap-6 {
-		gap: calc(var(--spacing) * 6);
-	}
-	.landing-page .md\:gap-12 {
-		gap: calc(var(--spacing) * 12);
-	}
-
-	.landing-page .md\:items-center {
-		align-items: center;
-	}
-	.landing-page .md\:items-baseline {
-		align-items: baseline;
-	}
-	.landing-page .md\:items-start {
-		align-items: flex-start;
-	}
-
-	.landing-page .md\:order-1 {
-		order: 1;
-	}
-	.landing-page .md\:order-2 {
-		order: 2;
-	}
-}

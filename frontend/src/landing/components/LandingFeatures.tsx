@@ -1,6 +1,14 @@
 "use client";
 
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState, useRef } from "react";
+import gsap from "gsap";
+import ScrollTrigger from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
+import { ScaledMockup } from "./ScaledMockup";
+
+if (typeof window !== "undefined") {
+	gsap.registerPlugin(ScrollTrigger, useGSAP);
+}
 
 type AgentHarness = {
 	id: string;
@@ -170,11 +178,23 @@ const daemonChecks = [
 	{ label: "runtime", value: "tmux detected", state: "ok" },
 ];
 
+const FEATURE_META = [
+	{ eyebrow: "Feature 01", title: "Bring your own agent.", accent: "AO gives it a workflow." },
+	{ eyebrow: "Feature 02", title: "Every task gets its own checkout.", accent: "Your main repo stays clean." },
+	{ eyebrow: "Feature 03", title: "Reviews route back to the owner.", accent: "Not to a random terminal." },
+	{ eyebrow: "Feature 04", title: "Desktop and CLI share one brain.", accent: "A local daemon owns the loop." },
+];
+
 export function LandingFeatures() {
 	const [workerId, setWorkerId] = useState("codex");
 	const [orchestratorId, setOrchestratorId] = useState("claude-code");
 	const [workspaceId, setWorkspaceId] = useState("int-8");
 	const [feedbackId, setFeedbackId] = useState("pr-184");
+	const [active, setActive] = useState(0);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const pinRef = useRef<HTMLDivElement>(null);
+	const activeRef = useRef(0);
+	const prevActiveRef = useRef(-1);
 
 	const worker = useMemo(() => primaryAgents.find((agent) => agent.id === workerId) ?? primaryAgents[0], [workerId]);
 	const orchestrator = useMemo(
@@ -190,9 +210,123 @@ export function LandingFeatures() {
 		[feedbackId],
 	);
 
+	useGSAP(() => {
+		// Desktop: pin the section so the viewport locks onto it, then advance
+		// through the four features (text + mockup crossfade) as you scroll, with a
+		// snap to each one. The pin owns a defined scroll region, so the layout and
+		// every trigger below stays stable. Mobile renders the features stacked.
+		const mm = gsap.matchMedia();
+
+		mm.add("(min-width: 1024px)", () => {
+			const st = ScrollTrigger.create({
+				trigger: pinRef.current,
+				pin: true,
+				start: "top top",
+				// Short, snappy travel between features (~0.6 viewport each) instead
+				// of a full screen of scrolling per switch.
+				end: () => "+=" + window.innerHeight * 1.8,
+				anticipatePin: 1,
+				invalidateOnRefresh: true,
+				snap: {
+					snapTo: [0, 1 / 3, 2 / 3, 1],
+					duration: { min: 0.25, max: 0.5 },
+					delay: 0.05,
+					ease: "power2.inOut",
+				},
+				onUpdate: (self) => {
+					const idx = Math.min(3, Math.round(self.progress * 3));
+					if (idx !== activeRef.current) {
+						activeRef.current = idx;
+						setActive(idx);
+					}
+				},
+			});
+
+			return () => st.kill();
+		});
+
+		return () => mm.revert();
+	}, { scope: containerRef });
+
+	// Fluid swap between features: outgoing fades out while the incoming text
+	// rises line-by-line and the mockup settles in with a soft scale. Runs on
+	// active change; the first run just reveals feature 1 without animating.
+	useEffect(() => {
+		const root = pinRef.current;
+		if (!root) return;
+
+		const panels = Array.from(root.querySelectorAll<HTMLElement>(".fp-panel"));
+		const mocks = Array.from(root.querySelectorAll<HTMLElement>(".fp-mock"));
+		const prev = prevActiveRef.current;
+		const first = prev === -1;
+		prevActiveRef.current = active;
+
+		panels.forEach((panel, i) => {
+			const items = panel.querySelectorAll<HTMLElement>(".swap-item");
+			if (i === active) {
+				gsap.set(panel, { opacity: 1, pointerEvents: "auto", zIndex: 2 });
+				if (first) {
+					gsap.set(items, { y: 0, opacity: 1 });
+				} else {
+					gsap.fromTo(
+						items,
+						{ y: 34, opacity: 0 },
+						{ y: 0, opacity: 1, duration: 0.8, stagger: 0.09, ease: "power4.out", overwrite: true },
+					);
+				}
+			} else {
+				gsap.set(panel, { pointerEvents: "none", zIndex: 1 });
+				if (i === prev) gsap.to(panel, { opacity: 0, duration: 0.35, ease: "power2.in", overwrite: true });
+				else gsap.set(panel, { opacity: 0 });
+			}
+		});
+
+		mocks.forEach((mock, i) => {
+			if (i === active) {
+				gsap.set(mock, { pointerEvents: "auto", zIndex: 2 });
+				if (first) {
+					gsap.set(mock, { opacity: 1, scale: 1, y: 0 });
+				} else {
+					gsap.fromTo(
+						mock,
+						{ opacity: 0, scale: 1.05, y: 22 },
+						{ opacity: 1, scale: 1, y: 0, duration: 0.85, ease: "power3.out", overwrite: true },
+					);
+				}
+			} else {
+				gsap.set(mock, { pointerEvents: "none", zIndex: 1 });
+				if (i === prev) gsap.to(mock, { opacity: 0, scale: 0.97, duration: 0.4, ease: "power2.in", overwrite: true });
+				else gsap.set(mock, { opacity: 0, scale: 1 });
+			}
+		});
+	}, [active]);
+
+	// Each mockup is described once and rendered in both layouts (desktop pinned
+	// crossfade + mobile stacked). React makes an independent instance per slot.
+	const mockups = [
+		<AgentHarnessDemo
+			key="harness"
+			worker={worker}
+			orchestrator={orchestrator}
+			workerId={workerId}
+			orchestratorId={orchestratorId}
+			onWorkerChange={setWorkerId}
+			onOrchestratorChange={setOrchestratorId}
+		/>,
+		<WorkspaceIsolationDemo key="workspace" activeId={workspaceId} onSelect={setWorkspaceId} workspace={workspace} />,
+		<FeedbackRoutingDemo key="feedback" activeId={feedbackId} onSelect={setFeedbackId} feedback={feedback} />,
+		<DaemonControlDemo key="daemon" />,
+	];
+	const panels = [
+		<FeatureNarrative key="harness" worker={worker} orchestrator={orchestrator} />,
+		<WorkspaceNarrative key="workspace" workspace={workspace} />,
+		<FeedbackNarrative key="feedback" feedback={feedback} />,
+		<DaemonNarrative key="daemon" />,
+	];
+
 	return (
-		<section id="features" data-testid="features-grid" className="landing-reveal landing-section relative">
-			<div className="container-page">
+		<section ref={containerRef} id="features" data-testid="features-grid" className="relative">
+			<div className="container-page pt-[clamp(80px,12vw,160px)]">
 				<div className="landing-section-header grid items-end gap-8 lg:grid-cols-12">
 					<div className="lg:col-span-7">
 						<div className="landing-eyebrow mb-4">What&apos;s inside</div>
@@ -203,42 +337,75 @@ export function LandingFeatures() {
 					</div>
 					<div className="lg:col-span-5">
 						<p className="landing-body-compact">
-							Claude Code, Codex, Cursor, OpenCode, Aider, Goose, Droid, Kilo and the rest stay native terminal tools.
-							AO standardizes launch, restore, hooks, activity and PR ownership through one adapter contract.
+							Your agents stay native terminal tools. AO standardizes launch, restore, hooks, and PR ownership through one
+							adapter contract.
 						</p>
 					</div>
 				</div>
+			</div>
 
-				<div className="landing-section-stack relative pb-4">
-					<div className="landing-feature-stack-card grid lg:grid-cols-[0.78fr_1.22fr]">
-						<FeatureNarrative worker={worker} orchestrator={orchestrator} />
-						<AgentHarnessDemo
-							worker={worker}
-							orchestrator={orchestrator}
-							workerId={workerId}
-							orchestratorId={orchestratorId}
-							onWorkerChange={setWorkerId}
-							onOrchestratorChange={setOrchestratorId}
-						/>
+			{/* Desktop: pinned, snapping viewport — text + mockup crossfade per feature. */}
+			<div ref={pinRef} className="relative hidden h-screen items-center overflow-hidden lg:flex">
+				<div className="container-page w-full">
+					<div className="flex items-center gap-16 xl:gap-24">
+						<div className="relative min-h-[460px] w-[44%]">
+							{panels.map((panel, i) => (
+								<div
+									key={i}
+									aria-hidden={i !== active}
+									className="fp-panel absolute inset-0 flex flex-col justify-center will-change-[opacity,transform]"
+								>
+									{panel}
+								</div>
+							))}
+						</div>
+						<div className="relative h-[600px] w-[56%]">
+							{mockups.map((mockup, i) => (
+								<div
+									key={i}
+									aria-hidden={i !== active}
+									className="fp-mock absolute inset-0 flex items-center will-change-[opacity,transform]"
+								>
+									{mockup}
+								</div>
+							))}
+						</div>
 					</div>
 
-					<div className="landing-feature-stack-card grid lg:grid-cols-[1.18fr_0.82fr]">
-						<WorkspaceIsolationDemo activeId={workspaceId} onSelect={setWorkspaceId} workspace={workspace} />
-						<WorkspaceNarrative workspace={workspace} />
-					</div>
-
-					<div className="landing-feature-stack-card grid lg:grid-cols-[0.82fr_1.18fr]">
-						<FeedbackNarrative feedback={feedback} />
-						<FeedbackRoutingDemo activeId={feedbackId} onSelect={setFeedbackId} feedback={feedback} />
-					</div>
-
-					<div className="landing-feature-stack-card grid lg:grid-cols-[1.18fr_0.82fr]">
-						<DaemonControlDemo />
-						<DaemonNarrative />
+					{/* Progress indicator for the four features. */}
+					<div className="mt-10 flex items-center gap-2">
+						{FEATURE_META.map((meta, i) => (
+							<span
+								key={meta.eyebrow}
+								className={`h-1.5 rounded-full transition-all duration-300 ${
+									i === active ? "w-8 bg-[color:var(--accent)]" : "w-1.5 bg-[color:var(--border-strong)]"
+								}`}
+							/>
+						))}
 					</div>
 				</div>
 			</div>
+
+			{/* Mobile / tablet: simple stacked list, each with its own scaled mockup. */}
+			<div className="container-page pb-20 lg:hidden">
+				<div className="mt-12 flex flex-col gap-20">
+					{panels.map((panel, i) => (
+						<div key={i}>
+							{panel}
+							<MobileMockup>{mockups[i]}</MobileMockup>
+						</div>
+					))}
+				</div>
+			</div>
 		</section>
+	);
+}
+
+function MobileMockup({ children }: { children: ReactNode }) {
+	return (
+		<div className="mt-7 lg:hidden">
+			<ScaledMockup designWidth={600}>{children}</ScaledMockup>
+		</div>
 	);
 }
 
@@ -251,14 +418,9 @@ function FeatureNarrative({ worker, orchestrator }: { worker: AgentHarness; orch
 			meta="23 harnesses"
 		>
 			<p>
-				AO does not replace <FeatureStrong>{worker.name}</FeatureStrong>,{" "}
-				<FeatureStrong>{orchestrator.name}</FeatureStrong>, Cursor, Aider, or OpenCode. It launches the same
-				terminal-native tools you already trust, then standardizes the parts around them:{" "}
-				<FeatureStrong>session restore, prompt delivery, hooks, runtime panes, and ownership.</FeatureStrong>
-			</p>
-			<p>
-				Pick one agent to write and another to supervise. AO keeps the contract stable while every CLI keeps its native
-				behavior.
+				Run <FeatureStrong>{worker.name}</FeatureStrong>, <FeatureStrong>{orchestrator.name}</FeatureStrong>, Cursor,
+				or Aider unchanged. AO standardizes the workflow around them — <FeatureStrong>restore, prompts, hooks, and
+				ownership</FeatureStrong> — so you can pick one agent to write and another to supervise.
 			</p>
 		</FeatureCopy>
 	);
@@ -327,7 +489,7 @@ function AgentHarnessDemo({
 									setTargetSlot("orchestrator");
 									onOrchestratorChange(agent.id);
 								}}
-								className={`group relative flex min-h-[70px] cursor-pointer flex-col items-start justify-between overflow-hidden rounded-lg border p-3 text-left transition duration-200 ease-out hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.045] ${
+								className={`group relative flex min-h-[70px] cursor-pointer flex-col items-start justify-between overflow-hidden rounded-md border p-3 text-left transition duration-200 ease-out hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.045] ${
 									workerId === agent.id
 										? "border-white/18 bg-white/[0.055]"
 										: "border-[color:var(--border)] bg-white/[0.025]"
@@ -366,7 +528,7 @@ function AgentHarnessDemo({
 						</div>
 					</div>
 
-					<div className="overflow-hidden rounded-xl border border-[color:var(--border)] bg-[#050507]">
+					<div className="overflow-hidden rounded-md border border-[color:var(--border)] bg-[#050507]">
 						<div className="flex items-center gap-1.5 border-b border-[color:var(--border)] px-3 py-2">
 							<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
 							<span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
@@ -380,6 +542,7 @@ function AgentHarnessDemo({
 							<TerminalLine accent text={`exec          ${worker.command}`} />
 							<TerminalLine success text="workspace     .ao/worktrees/session-ao-204" />
 							<TerminalLine success text="activity      hooks installed, session visible" />
+							<TerminalPrompt />
 						</div>
 					</div>
 				</div>
@@ -403,7 +566,7 @@ function AgentSelectLabel({
 		<button type="button" onClick={onClick} className="block w-full cursor-pointer text-left">
 			<div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[color:var(--fg-dim)]">{label}</div>
 			<div
-				className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition duration-200 ${
+				className={`flex items-center gap-2 rounded-md border px-3 py-2 transition duration-200 ${
 					active ? "border-white/18 bg-white/[0.055]" : "border-[color:var(--border)] bg-white/[0.035]"
 				}`}
 			>
@@ -461,6 +624,16 @@ function TerminalLine({
 	);
 }
 
+/* Idle prompt with a blinking cursor — keeps the terminals feeling live. */
+function TerminalPrompt() {
+	return (
+		<div className="flex items-center text-[color:var(--fg-dim)]">
+			<span>$</span>
+			<span className="caret ml-1" />
+		</div>
+	);
+}
+
 function WorkspaceIsolationDemo({
 	activeId,
 	onSelect,
@@ -492,7 +665,7 @@ function WorkspaceIsolationDemo({
 							<span className="font-mono text-[13px] text-[color:var(--fg-dim)]">+</span>
 						</div>
 
-						<div className="rounded-lg bg-white/[0.045] px-3 py-2">
+						<div className="rounded-md bg-white/[0.045] px-3 py-2">
 							<div className="flex items-center justify-between gap-2">
 								<span className="truncate text-[13px] font-semibold text-[color:var(--fg)]">agent-orchestrator</span>
 								<span className="rounded-md bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--fg-dim)]">
@@ -578,7 +751,7 @@ function WorkspaceIsolationDemo({
 							</div>
 
 							<div className="flex-1 bg-[#020203] p-4">
-								<div className="h-full overflow-hidden rounded-lg border border-[color:var(--border)] bg-black">
+								<div className="h-full overflow-hidden rounded-md border border-[color:var(--border)] bg-black">
 									<div className="flex items-center gap-1.5 border-b border-[color:var(--border)] px-3 py-2">
 										<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
 										<span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
@@ -595,6 +768,7 @@ function WorkspaceIsolationDemo({
 										))}
 										<TerminalLine success text="main checkout untouched; session owns this diff" />
 										<TerminalLine success text={`action        ${actionState}`} />
+										<TerminalPrompt />
 									</div>
 								</div>
 							</div>
@@ -615,13 +789,8 @@ function WorkspaceNarrative({ workspace }: { workspace: (typeof workspaceSession
 			meta={workspace.id}
 		>
 			<p>
-				Each AO session runs in a separate <FeatureStrong>git worktree</FeatureStrong> with its own branch, terminal
-				pane, changed files, and owner. The selected session here belongs to{" "}
-				<FeatureStrong>{workspace.agent}</FeatureStrong> on <FeatureStrong>{workspace.branch}</FeatureStrong>.
-			</p>
-			<p>
-				That means one agent can fail CI, another can keep shipping, and cleanup is just removing the session worktree.
-				No stash juggling. No branch collisions.
+				Each session runs in its own <FeatureStrong>git worktree</FeatureStrong> — separate branch, terminal, and diff.
+				One agent can fail CI while another keeps shipping, and cleanup is just removing the worktree.
 			</p>
 		</FeatureCopy>
 	);
@@ -629,7 +798,7 @@ function WorkspaceNarrative({ workspace }: { workspace: (typeof workspaceSession
 
 function InspectorFact({ label, value }: { label: string; value: string }) {
 	return (
-		<div className="rounded-lg border border-[color:var(--border)] bg-black/25 px-3 py-2.5">
+		<div className="rounded-md border border-[color:var(--border)] bg-black/25 px-3 py-2.5">
 			<div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[color:var(--fg-dim)]">{label}</div>
 			<div className="mt-1 truncate font-mono text-[11px] text-[color:var(--fg-muted)]">{value}</div>
 		</div>
@@ -645,11 +814,9 @@ function FeedbackNarrative({ feedback }: { feedback: (typeof feedbackSessions)[n
 			meta={feedback.number}
 		>
 			<p>
-				AO watches <FeatureStrong>checks, reviews, comments, mergeability, and PR state</FeatureStrong>, then resolves
-				the session that owns the branch. For this PR, feedback goes back to{" "}
-				<FeatureStrong>{feedback.agent}</FeatureStrong> in <FeatureStrong>{feedback.session}</FeatureStrong>.
+				AO watches <FeatureStrong>CI, reviews, and PR state</FeatureStrong>, then routes each result to the session that
+				owns the branch — so the agent gets actionable context, not a vague “CI failed” ping you have to trace yourself.
 			</p>
-			<p>The agent gets the actionable context, not a vague “CI failed” notification you have to manually trace.</p>
 		</FeatureCopy>
 	);
 }
@@ -690,7 +857,7 @@ function FeedbackRoutingDemo({
 								key={item.id}
 								type="button"
 								onClick={() => onSelect(item.id)}
-								className={`relative w-full cursor-pointer rounded-lg border px-3 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.045] ${
+								className={`relative w-full cursor-pointer rounded-md border px-3 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.045] ${
 									activeId === item.id
 										? "border-white/18 bg-white/[0.055] shadow-[inset_0_0_0_1px_rgba(147,180,248,0.14)]"
 										: "border-[color:var(--border)] bg-white/[0.02]"
@@ -742,7 +909,7 @@ function FeedbackRoutingDemo({
 					</div>
 
 					<div>
-						<div className="overflow-hidden rounded-xl border border-[color:var(--border)] bg-black">
+						<div className="overflow-hidden rounded-md border border-[color:var(--border)] bg-black">
 							<div className="flex items-center justify-between border-b border-[color:var(--border)] px-3 py-2">
 								<div className="flex items-center gap-1.5">
 									<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
@@ -764,6 +931,7 @@ function FeedbackRoutingDemo({
 											: "ready to route feedback"
 									}
 								/>
+								<TerminalPrompt />
 							</div>
 						</div>
 					</div>
@@ -790,7 +958,7 @@ function DaemonControlDemo() {
 
 			<div className="grid min-h-[424px] grid-cols-[1fr_300px]">
 				<div className="border-r border-[color:var(--border)] p-5">
-					<div className="overflow-hidden rounded-xl border border-[color:var(--border)] bg-black">
+					<div className="overflow-hidden rounded-md border border-[color:var(--border)] bg-black">
 						<div className="flex items-center justify-between border-b border-[color:var(--border)] px-3 py-2">
 							<div className="flex items-center gap-1.5">
 								<span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
@@ -808,6 +976,7 @@ function DaemonControlDemo() {
 							{daemonChecks.map((check) => (
 								<TerminalLine key={check.label} success text={`✓ ${check.label.padEnd(9)} ${check.value}`} />
 							))}
+							<TerminalPrompt />
 						</div>
 					</div>
 				</div>
@@ -828,7 +997,7 @@ function DaemonControlDemo() {
 						<InspectorFact label="store" value="SQLite + change_log" />
 					</div>
 
-					<div className="mt-5 rounded-lg border border-[color:var(--border)] bg-white/[0.025] p-3">
+					<div className="mt-5 rounded-md border border-[color:var(--border)] bg-white/[0.025] p-3">
 						<div className="mb-2 flex items-center gap-2">
 							<span className="landing-sse-pulse h-1.5 w-1.5 rounded-full bg-[color:var(--status-ok)]" />
 							<span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[color:var(--fg-muted)]">
@@ -854,12 +1023,9 @@ function DaemonNarrative() {
 			meta="127.0.0.1"
 		>
 			<p>
-				The Electron app and <FeatureStrong>ao</FeatureStrong> CLI are clients of the same loopback daemon. It owns{" "}
-				<FeatureStrong>sessions, worktrees, terminals, durable facts, and live events</FeatureStrong>.
-			</p>
-			<p>
-				Start work from the CLI, inspect it in the desktop app, and route feedback back through the same local control
-				plane.
+				The desktop app and <FeatureStrong>ao</FeatureStrong> CLI are clients of one local daemon that owns{" "}
+				<FeatureStrong>sessions, worktrees, and live events</FeatureStrong>. Start in the terminal, inspect in the app —
+				same control plane.
 			</p>
 		</FeatureCopy>
 	);
@@ -879,21 +1045,21 @@ function FeatureCopy({
 	meta?: string;
 }) {
 	return (
-		<article className="relative flex min-h-[420px] flex-col justify-center overflow-hidden py-6 lg:min-h-[520px]">
-			<div className="max-w-[32rem]">
-				<div className="mb-5 flex items-center gap-3">
+		<article className="feature-copy relative flex flex-col justify-center py-6">
+			<div className="max-w-[40rem]">
+				<div className="swap-item mb-7 flex items-center gap-4">
 					<div className="landing-eyebrow landing-eyebrow-accent">{eyebrow}</div>
 					{meta ? (
-						<div className="rounded-full border border-[color:var(--border)] bg-black/35 px-2.5 py-1 font-mono text-[10px] text-[color:var(--fg-dim)]">
+						<div className="inline-flex items-center rounded-full border border-[color:var(--accent-glow)] bg-[color:var(--accent-soft)] px-3 py-1.5 font-mono text-[12px] font-medium tracking-wide text-[color:var(--accent)]">
 							{meta}
 						</div>
 					) : null}
 				</div>
-				<h3 className="landing-heading max-w-[620px]">
+				<h3 className="swap-item landing-heading feature-heading max-w-[640px]">
 					{title}
 					<span className="landing-heading-muted block">{accent}</span>
 				</h3>
-				<div className="landing-body mt-7 space-y-4">{children}</div>
+				<div className="swap-item landing-body mt-9 space-y-5">{children}</div>
 			</div>
 		</article>
 	);

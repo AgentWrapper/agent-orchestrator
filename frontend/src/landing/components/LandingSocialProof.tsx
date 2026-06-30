@@ -1,32 +1,37 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import gsap from "gsap";
+import ScrollTrigger from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 
-declare global {
-	interface Window {
-		twttr?: {
-			ready?: (callback: () => void) => void;
-			widgets?: {
-				load?: (element?: HTMLElement) => void;
-				createTweet?: (
-					tweetId: string,
-					element: HTMLElement,
-					options?: { theme?: "dark" | "light"; dnt?: boolean; conversation?: "none"; width?: number },
-				) => Promise<HTMLElement>;
-			};
-		};
-	}
+if (typeof window !== "undefined") {
+	gsap.registerPlugin(ScrollTrigger, useGSAP);
 }
 
-const posts = [
+type Post = {
+	handle: string;
+	statusIdParts: string[];
+	label: string;
+	author: string;
+	verified?: boolean;
+	note: string;
+	text: string;
+	date: string;
+	likes?: number;
+};
+
+const posts: Post[] = [
 	{
 		handle: "Teknium",
 		statusIdParts: ["204231", "894145", "7170790"],
 		label: "Signal",
 		author: "Teknium",
+		verified: true,
 		note: "Most important outside validation.",
-		text: "Outside validation that AO is landing with serious agent builders.",
-		meta: "builder signal",
+		text: "It can orchestrate agents but this looks a bit more advanced.",
+		date: "Apr 10, 2026",
+		likes: 4,
 	},
 	{
 		handle: "facito0",
@@ -34,26 +39,29 @@ const posts = [
 		label: "Mood",
 		author: "FacitoO",
 		note: "A lightweight social proof hit from daily AO usage.",
-		text: "A small but useful signal from someone actually using the workflow.",
-		meta: "daily AO usage",
+		text: "Me with @aoagents lately!",
+		date: "May 2, 2026",
 	},
 	{
 		handle: "buchireddy",
 		statusIdParts: ["206410", "814460", "7760628"],
 		label: "Builder",
 		author: "Buchi Reddy B",
+		verified: true,
 		note: "Went all-in early on the AO building blocks.",
 		text: "I really loved the building blocks present in @aoagents, hence we went all-in on that pretty early. Happy to share more details if it helps others.",
-		meta: "3:41 AM - Jun 9, 2026",
+		date: "Jun 9, 2026",
+		likes: 3,
 	},
 	{
 		handle: "oxwizzdom",
 		statusIdParts: ["204349", "124837", "6336484"],
 		label: "Code read",
 		author: "oxwizzdom",
+		verified: true,
 		note: "Weekend codebase teardown and minimal rebuild.",
 		text: "1/ @agent_wrapper & @composio shipped @aoagents a while back. runs 50 coding agents in parallel on the same repo. i spent a weekend reading the codebase. found 5 techniques that make it work.",
-		meta: "repo teardown",
+		date: "Apr 14, 2026",
 	},
 	{
 		handle: "addddiiie",
@@ -61,26 +69,24 @@ const posts = [
 		label: "Use case",
 		author: "Adi",
 		note: "Parallel dev agents framed in one clean line.",
-		text: "The core use case explained simply: parallel agents without babysitting.",
-		meta: "parallel workflow",
+		text: "I just hired a few software devs to work for free cc - @aoagents",
+		date: "Mar 26, 2026",
+		likes: 9,
 	},
 	{
 		handle: "aoagents",
 		statusIdParts: ["205420", "723754", "8302804"],
 		label: "Official",
 		author: "Agent Orchestrator",
+		verified: true,
 		note: "A short official signal from the AO account.",
-		text: "Best as it gets",
-		meta: "official AO",
+		text: "Best as it gets.",
+		date: "May 18, 2026",
 	},
 ];
 
-function postUrl(post: (typeof posts)[number]) {
+function postUrl(post: Post) {
 	return `https://twitter.com/${post.handle}/status/${post.statusIdParts.join("")}`;
-}
-
-function postId(post: (typeof posts)[number]) {
-	return post.statusIdParts.join("");
 }
 
 function ArrowUpRightIcon({ className = "" }: { className?: string }) {
@@ -100,97 +106,59 @@ function MessageCircleIcon({ className = "" }: { className?: string }) {
 	);
 }
 
-function loadTwitterWidgets(target?: HTMLElement | null, onReady?: () => void) {
-	const load = () => {
-		window.twttr?.widgets?.load?.(target ?? undefined);
-		window.twttr?.ready?.(() => onReady?.());
-		onReady?.();
-	};
-
-	if (window.twttr?.widgets) {
-		load();
-		return;
-	}
-
-	const existing = document.getElementById("twitter-wjs");
-	if (existing) {
-		existing.addEventListener("load", load, { once: true });
-		return;
-	}
-
-	const script = document.createElement("script");
-	script.id = "twitter-wjs";
-	script.src = "https://platform.twitter.com/widgets.js";
-	script.async = true;
-	script.charset = "utf-8";
-	script.onload = load;
-	document.body.appendChild(script);
+function XSocialIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M18.9 2.25h3.24l-7.08 8.09 8.33 11.41h-6.52l-5.11-6.91-5.84 6.91H2.66l7.57-8.67L2.25 2.25h6.69l4.62 6.3 5.34-6.3Zm-1.14 17.5h1.8L7.96 4.14H6.03l11.73 15.61Z" />
+		</svg>
+	);
 }
 
-function usePageTheme() {
-	const [theme, setTheme] = useState("dark");
-
-	useEffect(() => {
-		setTheme(document.documentElement.dataset.theme || "dark");
-		const observer = new MutationObserver(() => {
-			setTheme(document.documentElement.dataset.theme || "dark");
-		});
-		observer.observe(document.documentElement, {
-			attributes: true,
-			attributeFilter: ["data-theme"],
-		});
-		return () => observer.disconnect();
-	}, []);
-
-	return theme;
+function VerifiedIcon({ className = "" }: { className?: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.33 2.19c-1.4-.46-2.91-.2-3.92.81s-1.26 2.52-.8 3.91c-1.31.67-2.2 1.91-2.2 3.34s.89 2.67 2.2 3.34c-.46 1.39-.21 2.9.8 3.91s2.52 1.26 3.91.81c.67 1.31 1.91 2.19 3.34 2.19s2.68-.88 3.34-2.19c1.39.45 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34Zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77Z" />
+		</svg>
+	);
 }
 
 export function LandingSocialProof() {
-	const theme = usePageTheme();
-	const tweetRefs = useRef<Record<string, HTMLDivElement | null>>({});
+	const containerRef = useRef<HTMLElement>(null);
 
-	useEffect(() => {
-		const target = document.getElementById("testimonials");
-		const renderTweets = () => {
-			for (const post of posts) {
-				const id = postId(post);
-				const node = tweetRefs.current[id];
-				if (!node || node.dataset.tweetRendered === `${id}-${theme}`) continue;
-				if (!window.twttr?.widgets?.createTweet) continue;
+	useGSAP(() => {
+		const cards = gsap.utils.toArray<HTMLElement>(".gsap-tweet-card");
 
-				node.dataset.tweetRendered = `${id}-${theme}`;
-				node.innerHTML = "";
-				void window.twttr.widgets
-					.createTweet(id, node, {
-						theme: theme === "light" ? "light" : "dark",
-						dnt: true,
-						conversation: "none",
-						width: 420,
-					})
-					.catch(() => {
-						delete node.dataset.tweetRendered;
-					});
-			}
-		};
+		gsap.set(cards, { opacity: 0, y: 30 });
 
-		loadTwitterWidgets(target, renderTweets);
-		window.twttr?.ready?.(renderTweets);
+		// Reveal each card as it enters the viewport. On mobile the masonry is a
+		// single tall column, so a single section-top trigger left the lower cards
+		// invisible until far past the heading; batching reveals them in step with
+		// the scroll on every layout.
+		const batch = ScrollTrigger.batch(cards, {
+			start: "top 90%",
+			once: true,
+			onEnter: (els: Element[]) => {
+				gsap.to(els, {
+					opacity: 1,
+					y: 0,
+					duration: 0.7,
+					stagger: 0.08,
+					ease: "power3.out",
+				});
+			},
+		});
 
-		const timers = [350, 1000, 2200, 4200, 7000].map((delay) =>
-			window.setTimeout(() => {
-				window.twttr?.ready?.(renderTweets);
-				renderTweets();
-			}, delay),
-		);
+		ScrollTrigger.refresh();
 
-		return () => timers.forEach((timer) => window.clearTimeout(timer));
-	}, [theme]);
+		return () => batch.forEach((t) => t.kill());
+	}, { scope: containerRef });
 
 	return (
 		<section
+			ref={containerRef}
 			id="testimonials"
 			data-testid="social-proof"
-			className="landing-reveal landing-section relative overflow-hidden border-t border-[color:var(--border)]"
+			className="landing-section relative overflow-hidden border-t border-[color:var(--border)]"
 		>
 			<div className="container-page">
 				<div className="mx-auto max-w-[1320px]">
@@ -203,21 +171,14 @@ export function LandingSocialProof() {
 						</div>
 						<div className="lg:col-span-5">
 							<p className="landing-body-compact">
-								Real posts from builders, researchers, and early users, embedded directly from X.
+								Real posts from builders, researchers, and early users — pulled straight from X.
 							</p>
 						</div>
 					</div>
 
 					<div className="tweet-masonry">
 						{posts.map((post, index) => (
-							<TweetCard
-								key={`${theme}-${post.handle}-${index}`}
-								post={post}
-								index={index}
-								setTweetRef={(node) => {
-									tweetRefs.current[postId(post)] = node;
-								}}
-							/>
+							<TweetCard key={`${post.handle}-${index}`} post={post} index={index} />
 						))}
 					</div>
 				</div>
@@ -226,83 +187,98 @@ export function LandingSocialProof() {
 	);
 }
 
-function TweetFallback({ post, url }: { post: (typeof posts)[number]; url: string }) {
+function Avatar({ post }: { post: Post }) {
+	const [failed, setFailed] = useState(false);
+
+	if (failed) {
+		return (
+			<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-sm font-bold text-[color:var(--accent)]">
+				{post.author.slice(0, 1)}
+			</div>
+		);
+	}
+
 	return (
-		<div className="tweet-fallback">
-			<div className="flex items-start justify-between gap-3">
-				<div className="flex min-w-0 items-center gap-3">
-					<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-sm font-bold text-[color:var(--accent)]">
-						{post.author.slice(0, 1)}
-					</div>
-					<div className="min-w-0">
-						<div className="truncate text-[15px] font-semibold text-[color:var(--fg)]">{post.author}</div>
-						<div className="truncate text-[13px] text-[color:var(--fg-dim)]">@{post.handle}</div>
-					</div>
-				</div>
-				<span className="text-lg font-semibold text-[color:var(--fg-muted)]">X</span>
-			</div>
-
-			<p className="mt-4 whitespace-pre-line text-[17px] leading-relaxed text-[color:var(--fg)]">{post.text}</p>
-
-			<div className="mt-5 border-t border-[color:var(--border-strong)] pt-3 text-[13px] text-[color:var(--fg-dim)]">
-				{post.meta}
-			</div>
-			<div className="mt-4 flex items-center gap-5 text-[13px] text-[color:var(--fg-muted)]">
-				<span>Like</span>
-				<span>Reply</span>
-				<a href={url} target="_blank" rel="noreferrer" className="hover:text-[color:var(--accent)]">
-					Read more on X
-				</a>
-			</div>
-		</div>
+		<img
+			src={`https://unavatar.io/x/${post.handle}`}
+			alt={`${post.author} avatar`}
+			loading="lazy"
+			referrerPolicy="no-referrer"
+			onError={() => setFailed(true)}
+			className="h-10 w-10 shrink-0 rounded-full border border-[color:var(--border)] object-cover"
+		/>
 	);
 }
 
-function TweetCard({
-	post,
-	index,
-	setTweetRef,
-}: {
-	post: (typeof posts)[number];
-	index: number;
-	setTweetRef: (node: HTMLDivElement | null) => void;
-}) {
+function TweetCard({ post, index }: { post: Post; index: number }) {
 	const url = postUrl(post);
 
 	return (
-		<article
+		<a
+			href={url}
+			target="_blank"
+			rel="noreferrer"
 			data-testid={`tweet-card-${index}`}
-			className="surface mb-5 inline-block w-full break-inside-avoid overflow-hidden"
+			aria-label={`Read ${post.author}'s post on X`}
+			className="gsap-tweet-card lift surface group mb-8 inline-block w-full break-inside-avoid overflow-hidden"
 		>
 			<div className="landing-card-header flex items-center justify-between gap-3 px-4 py-3">
 				<div className="flex min-w-0 items-center gap-2">
 					<MessageCircleIcon className="h-4 w-4 shrink-0 text-[color:var(--accent)]" />
 					<div className="min-w-0">
-						<div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-dim)]">
+						<div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[color:var(--fg-muted)]">
 							{post.label}
 						</div>
 						<div className="truncate text-[13px] font-semibold text-[color:var(--fg)]">{post.author}</div>
 					</div>
 				</div>
-				<a
-					href={url}
-					target="_blank"
-					rel="noreferrer"
-					aria-label={`Open ${post.author} post`}
-					className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[color:var(--border-strong)] text-[color:var(--fg-muted)] transition-colors hover:text-[color:var(--accent)]"
-				>
+				<span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--accent)]">
 					<ArrowUpRightIcon className="h-4 w-4" />
-				</a>
+				</span>
 			</div>
 
-			<div className="px-3 pb-4 pt-3">
-				<p className="mb-3 px-1 text-[13px] leading-relaxed text-[color:var(--fg-muted)]">{post.note}</p>
-				<div className="tweet-shell [&_.twitter-tweet]:mx-auto [&_.twitter-tweet]:max-w-full">
-					<div ref={setTweetRef} className="min-h-[240px]">
-						<TweetFallback post={post} url={url} />
+			<div className="px-5 pb-5 pt-4">
+				<p className="mb-5 text-[13px] leading-relaxed text-[color:var(--fg-muted)]">{post.note}</p>
+
+				<div className="rounded-[10px] border border-[color:var(--border)] bg-[color:var(--bg-deep)] p-4">
+					<div className="flex items-start justify-between gap-3">
+						<div className="flex min-w-0 items-center gap-3">
+							<Avatar post={post} />
+							<div className="min-w-0">
+								<div className="flex items-center gap-1">
+									<span className="truncate text-[14px] font-semibold leading-tight text-[color:var(--fg)]">
+										{post.author}
+									</span>
+									{post.verified ? (
+										<VerifiedIcon className="h-3.5 w-3.5 shrink-0 text-[color:var(--accent)]" />
+									) : null}
+								</div>
+								<span className="truncate text-[12px] leading-tight text-[color:var(--fg-dim)]">@{post.handle}</span>
+							</div>
+						</div>
+						<XSocialIcon className="h-4 w-4 shrink-0 text-[color:var(--fg-muted)]" />
+					</div>
+
+					<p className="mt-4 whitespace-pre-line text-[15px] leading-relaxed text-[color:var(--fg)]">{post.text}</p>
+
+					<div className="mt-4 flex items-center justify-between border-t border-[color:var(--border)] pt-3">
+						<span className="text-[12px] text-[color:var(--fg-dim)]">{post.date}</span>
+						<span className="inline-flex items-center gap-3 text-[12px] text-[color:var(--fg-dim)]">
+							{typeof post.likes === "number" ? (
+								<span className="inline-flex items-center gap-1">
+									<svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+										<path d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2 5 5.2 5c1.9 0 3.2 1 3.8 2.2H11C11.6 6 12.9 5 14.8 5 18 5 19.6 8.4 22 11.7 19.5 16.4 12 21 12 21Z" />
+									</svg>
+									{post.likes}
+								</span>
+							) : null}
+							<span className="font-medium text-[color:var(--fg-muted)] transition-colors group-hover:text-[color:var(--accent)]">
+								View on X
+							</span>
+						</span>
 					</div>
 				</div>
 			</div>
-		</article>
+		</a>
 	);
 }

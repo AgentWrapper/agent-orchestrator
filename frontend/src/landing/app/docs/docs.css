@@ -17,6 +17,11 @@
 	--docs-accent-dim: var(--color-accent-dim);
 	--docs-accent-border: var(--color-accent-border);
 
+	/* Code surfaces — must read clearly above the page background. */
+	--docs-code-bg: #eef1f7;
+	--docs-code-border: rgba(28, 28, 31, 0.14);
+	--docs-inline-bg: #eef1f7;
+
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
 	--color-fd-muted: var(--color-bg-elevated);
@@ -25,7 +30,7 @@
 	--color-fd-popover-foreground: var(--color-text-primary);
 	--color-fd-card: var(--color-bg-surface);
 	--color-fd-card-foreground: var(--color-text-primary);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-primary: var(--docs-accent);
 	--color-fd-primary-foreground: #ffffff;
 	--color-fd-secondary: var(--color-bg-elevated);
@@ -40,6 +45,11 @@
 	--docs-accent-dim: var(--color-accent-dim);
 	--docs-accent-border: var(--color-accent-border);
 
+	/* Lift code well above the pure-black docs background so snippets stand out. */
+	--docs-code-bg: #101216;
+	--docs-code-border: rgba(255, 255, 255, 0.1);
+	--docs-inline-bg: rgba(255, 255, 255, 0.06);
+
 	--color-fd-background: var(--color-bg-base);
 	--color-fd-foreground: var(--color-text-primary);
 	--color-fd-muted: var(--color-bg-surface);
@@ -48,7 +58,7 @@
 	--color-fd-popover-foreground: var(--color-text-primary);
 	--color-fd-card: var(--color-bg-surface);
 	--color-fd-card-foreground: var(--color-text-primary);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-primary: var(--docs-accent);
 	--color-fd-primary-foreground: var(--color-bg-base);
 	--color-fd-secondary: var(--color-bg-elevated);
@@ -192,7 +202,7 @@
 
 #nd-docs-layout {
 	font-family:
-		var(--font-geist-sans),
+		var(--font-inter),
 		ui-sans-serif,
 		system-ui,
 		-apple-system,
@@ -335,10 +345,10 @@
 /* Inline code */
 #nd-docs-layout :not(pre) > code {
 	font-size: 0.84em;
-	padding: 0.16em 0.42em;
-	border-radius: 5px;
-	background-color: var(--color-bg-subtle);
-	border: 1px solid var(--color-border-subtle);
+	padding: 0.18em 0.45em;
+	border-radius: 6px;
+	background-color: var(--docs-inline-bg);
+	border: 1px solid var(--docs-code-border);
 	color: var(--docs-accent);
 	font-weight: 520;
 }
@@ -371,20 +381,21 @@
 #nd-docs-layout pre,
 pre.shiki,
 pre.shiki code {
-	background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
+	background-color: var(--docs-code-bg) !important;
 }
 
 #nd-docs-layout pre {
-	font-size: 12px;
-	line-height: 1.7;
+	font-size: 13px;
+	line-height: 1.75;
 	overflow-x: auto;
 	tab-size: 2;
 }
 
 #nd-docs-layout pre:not(figure *) {
-	border-radius: 8px;
-	border: 1px solid var(--color-border-subtle);
-	padding: 1rem 1.125rem;
+	border-radius: 10px;
+	border: 1px solid var(--docs-code-border);
+	padding: 1.25rem 1.4rem;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 #nd-docs-layout figure pre {
@@ -394,9 +405,15 @@ pre.shiki code {
 }
 
 #nd-docs-layout figure.shiki {
-	background-color: var(--color-bg-inset, var(--color-bg-surface)) !important;
-	border-color: var(--color-border-subtle) !important;
-	border-radius: 8px;
+	background-color: var(--docs-code-bg) !important;
+	border: 1px solid var(--docs-code-border) !important;
+	border-radius: 10px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.dark #nd-docs-layout pre:not(figure *),
+.dark #nd-docs-layout figure.shiki {
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 
 /* Copy button fade on hover */
@@ -506,7 +523,7 @@ pre.shiki code {
 
 [data-search-dialog] {
 	--color-fd-background: var(--color-bg-elevated);
-	--color-fd-border: var(--color-border-default);
+	--color-fd-border: var(--color-border-subtle);
 	--color-fd-card: var(--color-bg-surface);
 }
 
@@ -515,17 +532,104 @@ pre.shiki code {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #nd-docs-layout .prose > * + * {
-	margin-top: 1.15em;
+	margin-top: 1.35em;
 }
 
+/* Whitespace-driven section breaks (Notion/Framer style) — no dividing strokes. */
 #nd-docs-layout .prose > h2 {
-	margin-top: 2.75em;
-	margin-bottom: 0.75em;
+	margin-top: 3.25em;
+	margin-bottom: 0.85em;
 }
 
 #nd-docs-layout .prose > h3 {
-	margin-top: 2em;
-	margin-bottom: 0.5em;
+	margin-top: 2.4em;
+	margin-bottom: 0.6em;
+}
+
+/* Generous, even breathing room around code blocks and callouts. */
+#nd-docs-layout .prose > figure,
+#nd-docs-layout .prose > pre,
+#nd-docs-layout .prose > [data-callout] {
+	margin-top: 1.75em;
+	margin-bottom: 1.75em;
+}
+
+/* Roomier page gutters so the docs read premium and uncramped. */
+#nd-docs-layout #nd-page {
+	padding-top: 1rem;
+}
+
+#nd-docs-layout #nd-page article {
+	padding-block: 1.5rem 4rem;
+}
+
+/* Titled code-block caption — quiet chrome that matches the snippet surface.
+   The outer figure already supplies the border, so the caption only needs a
+   divider beneath it. */
+#nd-docs-layout figure[data-rehype-pretty-code-figure] figcaption {
+	padding: 0.6rem 1.1rem;
+	border-bottom: 1px solid var(--docs-code-border);
+	background: color-mix(in srgb, var(--docs-code-bg) 70%, var(--color-bg-base));
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8b. CLEAN AESTHETIC — Notion / Framer feel: soft surfaces, calm interactions
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Link cards (Where To Go Next, etc.) — soft surface with a quiet hover lift. */
+#nd-docs-layout a[data-card] {
+	border: 1px solid var(--color-border-subtle);
+	border-radius: 12px;
+	background: var(--color-fd-card);
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease,
+		transform 0.18s ease,
+		box-shadow 0.18s ease;
+}
+
+#nd-docs-layout a[data-card]:hover {
+	border-color: var(--docs-accent-border);
+	background: color-mix(in srgb, var(--color-fd-card) 88%, var(--docs-accent));
+	transform: translateY(-2px);
+	box-shadow: 0 12px 32px -22px rgba(0, 0, 0, 0.55);
+}
+
+/* Inline prose links — animated underline rather than a static one. */
+#nd-docs-layout .prose a:not([data-card]) {
+	transition: color 0.16s ease;
+}
+
+/* Sidebar + TOC items — smooth, calm hover transitions. */
+#nd-sidebar a,
+#nd-sidebar button,
+#nd-sidebar-mobile a,
+#nd-toc a,
+#nd-tocnav a,
+#nd-page footer a {
+	transition:
+		color 0.16s ease,
+		background-color 0.16s ease !important;
+}
+
+/* Sidebar resting items get a faint hover surface (Notion-like). */
+#nd-sidebar a:not([data-active="true"]):hover,
+#nd-sidebar-mobile a:not([data-active="true"]):hover {
+	background-color: var(--color-bg-subtle) !important;
+	border-radius: 6px;
+}
+
+/* Remove the stray horizontal dividers in the sidebar chrome (the footer
+   "stroke" above the social row, etc.) — keep it clean and whitespace-separated. */
+#nd-sidebar [class*="border-t"],
+#nd-sidebar [class*="border-b"],
+#nd-sidebar hr {
+	border-top-width: 0 !important;
+	border-bottom-width: 0 !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

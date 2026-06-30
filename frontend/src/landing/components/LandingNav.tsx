@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import gsap from "gsap";
+import ScrollTrigger from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
+
+if (typeof window !== "undefined") {
+	gsap.registerPlugin(ScrollTrigger, useGSAP);
+}
 
 function DownloadIcon({ className = "" }: { className?: string }) {
 	return (
@@ -79,101 +86,90 @@ function getPlatformLabel() {
 export function LandingNav() {
 	const [open, setOpen] = useState(false);
 	const [installLabel, setInstallLabel] = useState(getPlatformLabel);
+	const navRef = useRef<HTMLDivElement>(null);
+	const innerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		setInstallLabel(getPlatformLabel());
 	}, []);
 
-	useEffect(() => {
-		document.documentElement.dataset.theme = "dark";
-		document.documentElement.classList.add("dark");
-		document.documentElement.style.colorScheme = "dark";
+	useGSAP(() => {
+		// Shrink + hide-on-scroll only on desktop (>=768px). On mobile/tablet the
+		// nav stays in its normal, full-size state.
+		const mm = gsap.matchMedia();
+		mm.add("(min-width: 768px)", () => {
+			const trigger = ScrollTrigger.create({
+				start: "top -50",
+				end: 99999,
+				toggleClass: { className: "nav-scrolled", targets: navRef.current },
+				onUpdate: (self) => {
+					if (self.direction === 1) {
+						gsap.to(innerRef.current, {
+							yPercent: -100,
+							opacity: 0,
+							duration: 0.4,
+							ease: "power3.inOut",
+						});
+					} else {
+						gsap.to(innerRef.current, {
+							yPercent: 0,
+							opacity: 1,
+							duration: 0.4,
+							ease: "power3.out",
+						});
+					}
+				},
+			});
+
+			return () => {
+				trigger.kill();
+				// Clear any inline transform/class left from desktop state.
+				navRef.current?.classList.remove("nav-scrolled");
+				if (innerRef.current) gsap.set(innerRef.current, { clearProps: "transform,opacity" });
+			};
+		});
+		return () => mm.revert();
 	}, []);
 
 	return (
-		<header data-testid="site-nav" className="pointer-events-none fixed inset-x-0 top-4 z-40 flex justify-center px-4">
-			<div className="pointer-events-auto grid h-14 w-full max-w-[1040px] grid-cols-[1fr_auto] items-center gap-4 rounded-2xl bg-black/[0.58] px-4 shadow-[0_20px_70px_-52px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(255,255,255,0.055)] backdrop-blur-2xl sm:px-5 md:grid-cols-[1fr_auto_1fr]">
+		<header data-testid="site-nav" ref={navRef} className="pointer-events-auto fixed inset-x-0 top-0 z-40 pt-4 px-4 transition-all duration-500 ease-out flex justify-center [&.nav-scrolled]:pt-2">
+			<div 
+				ref={innerRef}
+				className="w-full max-w-6xl mx-auto flex h-14 items-center justify-between gap-6 rounded-full border border-[color:var(--border)] bg-[color:var(--bg)]/70 px-6 backdrop-blur-xl shadow-lg transition-all duration-500 ease-out [.nav-scrolled_&]:h-12 [.nav-scrolled_&]:max-w-4xl [.nav-scrolled_&]:bg-[color:var(--bg)]/90"
+			>
 				<a
 					href="/"
 					data-testid="nav-logo"
-					className="group inline-flex h-10 shrink-0 items-center gap-3 justify-self-start"
+					className="group inline-flex h-10 shrink-0 items-center gap-3"
 				>
 					<img
 						src="/ao-logo.svg"
 						alt="Agent Orchestrator"
-						className="block h-9 w-9 shrink-0 -translate-y-1 object-contain"
+						className="block h-7 w-7 shrink-0 object-contain transition-transform duration-300 group-hover:scale-105"
 					/>
-					<span className="font-display text-[15px] font-bold leading-[1.1] tracking-tight text-[color:var(--fg)]">
+					<span className="hidden text-[15px] font-semibold leading-[1.1] tracking-tight text-[color:var(--fg)] sm:block">
 						Agent Orchestrator
 					</span>
 				</a>
 
 				<nav
-					className="hidden items-center justify-center gap-1 rounded-xl bg-white/[0.035] p-1 justify-self-center md:flex"
+					className="hidden items-center gap-8 md:flex"
 					aria-label="Primary"
 				>
 					{navLinks.map((item) => (
 						<a
 							key={item.label}
 							href={item.href}
-							className="rounded-lg px-4 py-2 text-[14px] font-semibold text-[color:var(--fg-muted)] transition-[background-color,color,transform] duration-160 ease-out hover:bg-white/[0.08] hover:text-[color:var(--fg)] active:scale-95"
+							className="group/navlink relative text-[13px] font-medium tracking-wide text-[color:var(--fg-muted)] transition-colors duration-200 hover:text-[color:var(--fg)]"
 						>
 							{item.label}
+							<span className="absolute -bottom-1.5 left-0 h-px w-full origin-left scale-x-0 bg-[color:var(--accent)] transition-transform duration-300 ease-out group-hover/navlink:scale-x-100" />
 						</a>
 					))}
 				</nav>
 
-				<div className="hidden items-center justify-end gap-2 justify-self-end md:flex">
-					{socials.map((item) => {
-						const Icon = item.icon;
-						return (
-							<a
-								key={item.label}
-								href={item.href}
-								target="_blank"
-								rel="noreferrer"
-								aria-label={item.label}
-								title={item.label}
-								className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-white/[0.035] text-[color:var(--fg-muted)] transition-[background-color,color,transform,filter] duration-160 ease-out hover:scale-105 hover:bg-white/[0.075] hover:text-[color:var(--fg)] active:scale-95"
-							>
-								<Icon className="h-5 w-5" />
-							</a>
-						);
-					})}
-					<a
-						href="/docs/installation"
-						data-testid="nav-cta-btn"
-						className="group ml-1 inline-flex h-9 items-center gap-2 rounded-md bg-[color:var(--accent)] px-4 text-[13px] font-semibold shadow-[0_0_0_1px_rgba(255,255,255,0.08)_inset] transition-all hover:brightness-110"
-						style={{ color: "#081225" }}
-					>
-						<DownloadIcon className="h-4 w-4" />
-						<span>{installLabel}</span>
-					</a>
-				</div>
-
-				<div className="flex items-center gap-2 md:hidden">
-					<a
-						href="/docs/installation"
-						data-testid="nav-mobile-cta-btn"
-						className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[color:var(--accent)] px-3 text-[12px] font-semibold"
-						style={{ color: "#081225" }}
-					>
-						<DownloadIcon className="h-3.5 w-3.5" />
-						Install
-					</a>
-					<button
-						onClick={() => setOpen(!open)}
-						className="rounded-md border border-[color:var(--border-strong)] p-2 text-[color:var(--fg)]"
-						data-testid="nav-mobile-toggle"
-						aria-label="menu"
-					>
-						{open ? <CloseIcon className="h-4 w-4" /> : <MenuIcon className="h-4 w-4" />}
-					</button>
-				</div>
-			</div>
-			{open && (
-				<div className="pointer-events-auto mt-2 w-[calc(100%-2rem)] max-w-[980px] rounded-2xl bg-black/[0.72] p-3 shadow-[0_20px_70px_-52px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(255,255,255,0.055)] backdrop-blur-2xl md:hidden">
-					<div className="flex flex-col gap-3">
+				<div className="flex items-center gap-3">
+					<div className="hidden items-center gap-3 lg:flex">
 						{socials.map((item) => {
 							const Icon = item.icon;
 							return (
@@ -182,23 +178,73 @@ export function LandingNav() {
 									href={item.href}
 									target="_blank"
 									rel="noreferrer"
-									onClick={() => setOpen(false)}
-									className="inline-flex items-center gap-2 rounded-md border border-[color:var(--border)] px-3 py-2 text-sm font-medium text-[color:var(--fg-muted)]"
+									aria-label={item.label}
+									title={item.label}
+									className="group/social inline-flex h-8 w-8 items-center justify-center rounded-full text-[color:var(--fg-dim)] transition-[color,background-color] duration-300 ease-out hover:bg-[color:var(--bg-elevated)] hover:text-[color:var(--fg)]"
 								>
-									<Icon className="h-4 w-4" />
-									{item.label}
+									<Icon className="h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/social:scale-110 group-active/social:scale-90" />
 								</a>
 							);
 						})}
+					</div>
+					<div className="mx-1 hidden h-4 w-px bg-[color:var(--border)] lg:block" />
+					<a
+						href="/docs/installation"
+						data-testid="nav-cta-btn"
+						style={{ color: "#000000" }}
+						className="fluid-press group/cta inline-flex h-9 items-center gap-2 rounded-full bg-[color:var(--accent)] px-5 text-[13px] font-semibold shadow-[0_8px_24px_-14px_var(--accent-glow)] hover:shadow-[0_14px_34px_-12px_var(--accent-glow)] hover:brightness-[1.07] max-[365px]:hidden [.nav-scrolled_&]:h-8 [.nav-scrolled_&]:px-4 [.nav-scrolled_&]:text-[12px]"
+					>
+						<DownloadIcon className="h-3.5 w-3.5 transition-transform duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/cta:translate-y-0.5" />
+						<span>{installLabel}</span>
+					</a>
+
+					<button
+						type="button"
+						className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)] md:hidden"
+						onClick={() => setOpen(!open)}
+					>
+						{open ? <CloseIcon className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
+					</button>
+				</div>
+			</div>
+
+			{open && (
+				<div className="absolute inset-x-0 top-full mt-4 flex flex-col gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg)]/95 p-4 mx-4 backdrop-blur-xl shadow-2xl md:hidden">
+					<a
+						href="/docs/installation"
+						onClick={() => setOpen(false)}
+						style={{ color: "#000000" }}
+						className="mb-1 hidden items-center justify-center gap-2 rounded-lg bg-[color:var(--accent)] px-4 py-3 text-[15px] font-semibold max-[365px]:flex"
+					>
+						<DownloadIcon className="h-4 w-4" />
+						<span>{installLabel}</span>
+					</a>
+					{navLinks.map((item) => (
 						<a
-							href="/docs/installation"
+							key={item.label}
+							href={item.href}
 							onClick={() => setOpen(false)}
-							className="inline-flex items-center justify-center gap-2 rounded-md bg-[color:var(--accent)] px-3 py-2.5 text-sm font-semibold"
-							style={{ color: "#081225" }}
+							className="flex items-center rounded-lg px-4 py-3 text-[15px] font-medium text-[color:var(--fg)] transition-colors hover:bg-[color:var(--bg-elevated)]"
 						>
-							<DownloadIcon className="h-4 w-4" />
-							{installLabel}
+							{item.label}
 						</a>
+					))}
+					<div className="my-2 h-px bg-[color:var(--border)]" />
+					<div className="flex justify-center gap-6 py-2">
+						{socials.map((item) => {
+							const Icon = item.icon;
+							return (
+								<a
+									key={item.label}
+									href={item.href}
+									target="_blank"
+									rel="noreferrer"
+									className="text-[color:var(--fg-muted)] hover:text-[color:var(--fg)]"
+								>
+									<Icon className="h-5 w-5" />
+								</a>
+							);
+						})}
 					</div>
 				</div>
 			)}
