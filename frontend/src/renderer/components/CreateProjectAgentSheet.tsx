@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, type AgentCatalog } from "../hooks/useAgentsQuery";
+import { AGENT_OPTIONS } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -153,15 +154,15 @@ export function CreateProjectAgentSheet({
 }
 
 export function RequiredAgentField({
-	authorized = [],
+	authorized,
 	disabled = false,
 	id,
 	invalid = false,
-	installed = [],
+	installed,
 	label,
 	onChange,
 	placeholder,
-	supported = [],
+	supported,
 	value,
 }: {
 	authorized?: AgentInfo[];
@@ -175,9 +176,13 @@ export function RequiredAgentField({
 	supported?: AgentInfo[];
 	value: string;
 }) {
-	const authorizedIds = new Set(authorized.map((agent) => agent.id));
-	const installedById = new Map(installed.map((agent) => [agent.id, agent]));
-	const options = supported
+	const fallbackAgents = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
+	const supportedAgents = supported ?? fallbackAgents;
+	const installedAgents = installed ?? supportedAgents;
+	const authorizedAgents = authorized ?? supportedAgents;
+	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
+	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
+	const options = supportedAgents
 		.map((agent) => {
 			const installedAgent = installedById.get(agent.id);
 			const isAuthorized = authorizedIds.has(agent.id);
