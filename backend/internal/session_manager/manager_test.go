@@ -842,7 +842,33 @@ func TestKill_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
 	}
 }
 
-func TestKill_WorkspaceProjectDirtyRowsArePreservedAndForceRemoved(t *testing.T) {
+func TestKill_WorkspaceProjectSkipsUnregisteredChildRows(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1"},
+		{SessionID: "mer-1", RepoName: "old-api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/old-api"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v", freed, err)
+	}
+	want := []string{"DestroyWorkspaceProjectWorktree:api", "DestroyWorkspaceProjectWorktree:__root__"}
+	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("destroy calls = %v, want %v", got, want)
+	}
+}
+
+func TestKill_WorkspaceProjectDirtyRowRefusesRemoval(t *testing.T) {
 	m, st, _, ws := newManager()
 	ws.destroyErr = fmt.Errorf("dirty: %w", ports.ErrWorkspaceDirty)
 	ws.stashRef = "refs/ao/preserved/mer-1"
@@ -860,31 +886,23 @@ func TestKill_WorkspaceProjectDirtyRowsArePreservedAndForceRemoved(t *testing.T)
 	}
 
 	freed, err := m.Kill(ctx, "mer-1")
-	if err != nil || !freed {
-		t.Fatalf("freed=%v err=%v, want dirty rows preserved and removed", freed, err)
+	if err != nil {
+		t.Fatalf("kill dirty workspace project err = %v, want nil", err)
 	}
-	want := []string{
-		"DestroyWorkspaceProjectWorktree:api",
-		"StashWorkspaceProjectWorktree:api",
-		"ForceDestroyWorkspaceProjectWorktree:api",
-		"DestroyWorkspaceProjectWorktree:__root__",
-		"StashWorkspaceProjectWorktree:__root__",
-		"ForceDestroyWorkspaceProjectWorktree:__root__",
+	if freed {
+		t.Fatal("freed = true, want false for preserved workspace project")
 	}
+	want := []string{"DestroyWorkspaceProjectWorktree:api"}
 	if got := ws.calls; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
-	refs := map[string]string{}
-	states := map[string]string{}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated")
+	}
 	for _, row := range st.worktrees["mer-1"] {
-		refs[row.RepoName] = row.PreservedRef
-		states[row.RepoName] = row.State
-	}
-	if refs["api"] != "refs/ao/preserved/mer-1/api" || refs[domain.RootWorkspaceRepoName] != "refs/ao/preserved/mer-1/__root__" {
-		t.Fatalf("preserved refs = %v", refs)
-	}
-	if states["api"] != "unavailable" || states[domain.RootWorkspaceRepoName] != "unavailable" {
-		t.Fatalf("states = %v, want unavailable rows so RestoreAll does not resurrect killed session", states)
+		if row.PreservedRef != "" || row.State != "" {
+			t.Fatalf("dirty kill should not mutate worktree row %+v", row)
+		}
 	}
 }
 func TestRestore_ReopensTerminal(t *testing.T) {
