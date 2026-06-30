@@ -113,8 +113,8 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 		return ClaimPRResult{}, err
 	}
 	now := s.clock().UTC()
-	pr, checks, threads, comments := claimRowsFromSCM(id, obs, now)
-	outcome, err := s.prClaimer.ClaimPR(ctx, pr, checks, threads, comments, reviewMode, opts.AllowTakeover)
+	pr, checks, reviews, threads, comments := claimRowsFromSCM(id, obs, now)
+	outcome, err := s.prClaimer.ClaimPR(ctx, pr, checks, reviews, threads, comments, reviewMode, opts.AllowTakeover)
 	if err != nil {
 		return ClaimPRResult{}, err
 	}
@@ -163,6 +163,7 @@ func (s *Service) enrichClaimReviews(ctx context.Context, ref ports.SCMPRRef, ob
 		obs.Review.Decision = review.Decision
 	}
 	obs.Review.Threads = review.Threads
+	obs.Review.Reviews = review.Reviews
 	obs.Review.Partial = review.Partial
 	if review.Partial {
 		return ports.ReviewWriteMerge, nil
@@ -181,7 +182,7 @@ func scmRepoForClaim(provider scmProvider, projectOrigin, prURL string) (ports.S
 	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: name, Repo: owner + "/" + name}, nil
 }
 
-func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
+func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	observedAt := obs.ObservedAt
 	if observedAt.IsZero() {
 		observedAt = now
@@ -226,6 +227,21 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 	for _, ch := range obs.CI.Checks {
 		checks = append(checks, domain.PullRequestCheck{Name: ch.Name, CommitHash: obs.CI.HeadSHA, Status: domain.PRCheckStatus(ch.Status), Conclusion: ch.Conclusion, URL: ch.URL, Details: ch.ProviderID, LogTail: ch.LogTail, CreatedAt: now})
 	}
+	reviews := make([]domain.PullRequestReview, 0, len(obs.Review.Reviews))
+	for _, review := range obs.Review.Reviews {
+		submittedAt := review.SubmittedAt
+		if submittedAt.IsZero() {
+			submittedAt = now
+		}
+		reviews = append(reviews, domain.PullRequestReview{
+			ID:          review.ID,
+			Author:      review.Author,
+			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
+			URL:         review.URL,
+			IsBot:       review.IsBot,
+			SubmittedAt: submittedAt,
+		})
+	}
 	threads := make([]domain.PullRequestReviewThread, 0, len(obs.Review.Threads))
 	commentCount := 0
 	for _, th := range obs.Review.Threads {
@@ -238,7 +254,7 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now})
 		}
 	}
-	return pr, checks, threads, comments
+	return pr, checks, reviews, threads, comments
 }
 
 func sessionmanagerAPIError(code, message string) error {

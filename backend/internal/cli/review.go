@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,29 +16,42 @@ import (
 
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
 type reviewRun struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"sessionId"`
-	Harness   string    `json:"harness"`
-	PRURL     string    `json:"prUrl"`
-	TargetSHA string    `json:"targetSha"`
-	Status    string    `json:"status"`
-	Verdict   string    `json:"verdict"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string     `json:"id"`
+	SessionID      string     `json:"sessionId"`
+	BatchID        string     `json:"batchId"`
+	Harness        string     `json:"harness"`
+	PRURL          string     `json:"prUrl"`
+	TargetSHA      string     `json:"targetSha"`
+	Status         string     `json:"status"`
+	Verdict        string     `json:"verdict"`
+	Body           string     `json:"body"`
+	GithubReviewID string     `json:"githubReviewId"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
 
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
 type reviewRunResponse struct {
-	Review           reviewRun `json:"review"`
-	ReviewerHandleID string    `json:"reviewerHandleId"`
+	Review           reviewRun   `json:"review"`
+	Reviews          []reviewRun `json:"reviews"`
+	ReviewerHandleID string      `json:"reviewerHandleId"`
+}
+
+// submitReviewItem mirrors controllers.SubmitReviewItem.
+type submitReviewItem struct {
+	RunID          string `json:"runId"`
+	Verdict        string `json:"verdict"`
+	Body           string `json:"body,omitempty"`
+	GithubReviewID string `json:"githubReviewId,omitempty"`
 }
 
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
-	RunID          string `json:"runId"`
-	Verdict        string `json:"verdict"`
-	Body           string `json:"body"`
-	GithubReviewID string `json:"githubReviewId"`
+	RunID          string             `json:"runId,omitempty"`
+	Verdict        string             `json:"verdict,omitempty"`
+	Body           string             `json:"body,omitempty"`
+	GithubReviewID string             `json:"githubReviewId,omitempty"`
+	Reviews        []submitReviewItem `json:"reviews,omitempty"`
 }
 
 type reviewSubmitOptions struct {
@@ -46,6 +60,7 @@ type reviewSubmitOptions struct {
 	verdict  string
 	body     string
 	reviewID string
+	reviews  string
 }
 
 func newReviewCommand(ctx *commandContext) *cobra.Command {
@@ -77,6 +92,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
+	cmd.Flags().StringVar(&opts.reviews, "reviews", "", "JSON review results array or object: a path, or - to read from stdin")
 	return cmd
 }
 
@@ -87,6 +103,9 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	if session == "" {
 		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
+	}
+	if strings.TrimSpace(opts.reviews) != "" {
+		return c.submitReviewBatch(cmd, session, opts)
 	}
 	runID := strings.TrimSpace(opts.runID)
 	if runID == "" {
@@ -120,4 +139,50 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)
 	return err
+}
+
+func (c *commandContext) submitReviewBatch(cmd *cobra.Command, session string, opts reviewSubmitOptions) error {
+	if strings.TrimSpace(opts.runID) != "" || strings.TrimSpace(opts.verdict) != "" || strings.TrimSpace(opts.body) != "" || strings.TrimSpace(opts.reviewID) != "" {
+		return usageError{errors.New("usage: --reviews cannot be combined with --run, --verdict, --body, or --review-id")}
+	}
+	reviews, err := readReviewItems(cmd, strings.TrimSpace(opts.reviews))
+	if err != nil {
+		return err
+	}
+	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
+	var res reviewRunResponse
+	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{Reviews: reviews}, &res); err != nil {
+		return err
+	}
+	count := len(res.Reviews)
+	if count == 0 {
+		count = len(reviews)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "recorded %d review(s) for %s\n", count, session)
+	return err
+}
+
+func readReviewItems(cmd *cobra.Command, path string) ([]submitReviewItem, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, usageError{fmt.Errorf("read review results: %w", err)}
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal(raw, &req); err == nil && len(req.Reviews) > 0 {
+		return req.Reviews, nil
+	}
+	var reviews []submitReviewItem
+	if err := json.Unmarshal(raw, &reviews); err != nil {
+		return nil, usageError{fmt.Errorf("decode review results JSON: %w", err)}
+	}
+	if len(reviews) == 0 {
+		return nil, usageError{errors.New("usage: --reviews requires at least one review result")}
+	}
+	return reviews, nil
 }

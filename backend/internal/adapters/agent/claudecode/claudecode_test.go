@@ -580,6 +580,38 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return m
 }
 
+func TestGetLaunchCommandEmitsToolAllowlist(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		AllowedTools:    []string{"Read", "Grep", "Bash(git diff:*)"},
+		DisallowedTools: []string{"Edit", "Write", "Bash(git push:*)"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each list is one comma-joined value so a rule with spaces stays intact.
+	if !containsSubsequence(cmd, []string{"--allowedTools", "Read,Grep,Bash(git diff:*)"}) {
+		t.Fatalf("missing joined --allowedTools value; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--disallowedTools", "Edit,Write,Bash(git push:*)"}) {
+		t.Fatalf("missing joined --disallowedTools value; got %#v", cmd)
+	}
+}
+
+func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--allowedTools") || contains(cmd, "--disallowedTools") {
+		t.Fatalf("unrestricted launch should emit no tool flags; got %#v", cmd)
+	}
+}
+
 func contains(values []string, needle string) bool {
 	for _, v := range values {
 		if v == needle {

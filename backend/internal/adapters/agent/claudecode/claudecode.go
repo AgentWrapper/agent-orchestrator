@@ -150,6 +150,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		permissions = cfg.Config.Permissions
 	}
 	appendPermissionFlags(&cmd, permissions)
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
@@ -310,6 +311,20 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 		*cmd = append(*cmd, "--permission-mode", "auto")
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
+	}
+}
+
+// appendToolFlags emits --allowedTools / --disallowedTools for a tool-scoped
+// launch. Each list is joined with commas into one value so rules that contain
+// spaces (e.g. "Bash(git diff:*)") are not split into separate tool names.
+// Empty lists emit nothing, so an unrestricted launch is unchanged. These rules
+// only bite when the launch is off bypassPermissions, which ignores them.
+func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
+	if len(allowed) > 0 {
+		*cmd = append(*cmd, "--allowedTools", strings.Join(allowed, ","))
+	}
+	if len(disallowed) > 0 {
+		*cmd = append(*cmd, "--disallowedTools", strings.Join(disallowed, ","))
 	}
 }
 

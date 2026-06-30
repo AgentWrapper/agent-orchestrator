@@ -1319,13 +1319,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: OK
         "201":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
+                $ref: '#/components/schemas/TriggerReviewResponse'
           description: Created
         "404":
           content:
@@ -1805,7 +1805,7 @@ components:
           type: string
         reviews:
           items:
-            $ref: '#/components/schemas/ReviewRun'
+            $ref: '#/components/schemas/PRReviewState'
           type: array
       required:
       - reviewerHandleId
@@ -1940,6 +1940,33 @@ components:
       required:
       - id
       - projectId
+      type: object
+    PRReviewState:
+      properties:
+        latestRun:
+          $ref: '#/components/schemas/ReviewRun'
+        prNumber:
+          type: integer
+        prUrl:
+          type: string
+        status:
+          enum:
+          - needs_review
+          - running
+          - up_to_date
+          - changes_requested
+          - ineligible
+          type: string
+        targetSha:
+          type: string
+        title:
+          type: string
+      required:
+      - prUrl
+      - prNumber
+      - title
+      - targetSha
+      - status
       type: object
     Project:
       properties:
@@ -2102,6 +2129,8 @@ components:
       type: object
     ReviewRun:
       properties:
+        batchId:
+          type: string
         body:
           type: string
         createdAt:
@@ -2134,6 +2163,7 @@ components:
       - id
       - reviewId
       - sessionId
+      - batchId
       - harness
       - prUrl
       - targetSha
@@ -2149,8 +2179,13 @@ components:
           $ref: '#/components/schemas/ReviewRun'
         reviewerHandleId:
           type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - review
+      - reviews
       - reviewerHandleId
       type: object
     RoleOverride:
@@ -2422,10 +2457,14 @@ components:
       properties:
         count:
           type: integer
+        isBot:
+          type: boolean
         links:
           items:
             $ref: '#/components/schemas/SessionPRReviewCommentLink'
           type: array
+        reviewUrl:
+          type: string
         reviewerId:
           type: string
       required:
@@ -2511,6 +2550,9 @@ components:
       properties:
         branch:
           type: string
+        displayName:
+          maxLength: 20
+          type: string
         harness:
           enum:
           - claude-code
@@ -2560,6 +2602,26 @@ components:
         githubReviewId:
           description: Id of the GitHub PR review the reviewer posted, if any.
           type: string
+        reviews:
+          description: Batched review results recorded by one reviewer CLI command.
+          items:
+            $ref: '#/components/schemas/SubmitReviewItem'
+          type: array
+        runId:
+          description: Review run id being completed.
+          type: string
+        verdict:
+          description: 'Review verdict: approved or changes_requested.'
+          type: string
+      type: object
+    SubmitReviewItem:
+      properties:
+        body:
+          description: Review body recorded by AO. Required for changes_requested.
+          type: string
+        githubReviewId:
+          description: Id of the GitHub PR review the reviewer posted, if any.
+          type: string
         runId:
           description: Review run id being completed.
           type: string
@@ -2569,8 +2631,18 @@ components:
       required:
       - runId
       - verdict
-      - body
-      - githubReviewId
+      type: object
+    TriggerReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
       type: object
     WorkspaceRepo:
       properties:

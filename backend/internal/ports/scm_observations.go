@@ -184,12 +184,30 @@ type SCMCheckObservation struct {
 type SCMReviewObservation struct {
 	// Decision is AO's normalized review decision.
 	Decision string
+	// Reviews contains submitted review summaries fetched on the slower review cadence.
+	Reviews []SCMReviewSummaryObservation
 	// Threads contains normalized review threads fetched on the slower review cadence.
 	Threads []SCMReviewThreadObservation
 	// Partial is true when the provider intentionally fetched and persisted a
 	// bounded review-thread window instead of a complete PR-lifetime snapshot.
 	// Consumers should treat Threads as a merge/update set in that case.
 	Partial bool
+}
+
+// SCMReviewSummaryObservation is one submitted review with its provider summary URL.
+type SCMReviewSummaryObservation struct {
+	// ID is the provider's stable submitted-review identifier.
+	ID string
+	// Author is the provider login/name of the reviewer.
+	Author string
+	// State is AO's normalized review decision for this review.
+	State string
+	// URL is a provider link to the submitted review summary.
+	URL string
+	// IsBot is true when the provider identifies the reviewer as a bot.
+	IsBot bool
+	// SubmittedAt is the provider's review submission timestamp.
+	SubmittedAt time.Time
 }
 
 // SCMReviewThreadObservation is a normalized review thread with comments.

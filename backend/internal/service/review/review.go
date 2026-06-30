@@ -27,6 +27,7 @@ var (
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
+	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
 }
 
@@ -45,12 +46,14 @@ type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
 // been persisted.
 type Reducer interface {
 	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
+	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
 // Option customizes the review service.
@@ -68,7 +71,11 @@ func WithClock(clock func() time.Time) Option {
 
 // New wraps a core review engine as the API-facing service.
 func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
-	s := &Service{engine: engine, store: store, clock: func() time.Time { return time.Now().UTC() }}
+	s := &Service{
+		engine: engine,
+		store:  store,
+		clock:  func() time.Time { return time.Now().UTC() },
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -80,11 +87,76 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (revie
 	return s.engine.Trigger(ctx, workerID)
 }
 
+// SubmittedReview is one review result supplied by the reviewer CLI.
+type SubmittedReview struct {
+	RunID          string
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+}
+
 // Submit records a reviewer's result for a specific worker review pass.
 func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
-	if workerID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	runs, err := s.SubmitMany(ctx, workerID, []SubmittedReview{{
+		RunID:          runID,
+		Verdict:        verdict,
+		Body:           body,
+		GithubReviewID: githubReviewID,
+	}})
+	if err != nil {
+		return domain.ReviewRun{}, err
 	}
+	if len(runs) == 0 {
+		return domain.ReviewRun{}, fmt.Errorf("%w: no review result submitted", ErrInvalid)
+	}
+	return runs[0], nil
+}
+
+// SubmitMany records one reviewer CLI submission containing results for one or
+// more PR-scoped runs. Delivery is scoped to the runs in this submission, so a
+// missing/stuck result for another PR in the same trigger cannot block feedback.
+func (s *Service) SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error) {
+	if workerID == "" {
+		return nil, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if len(reviews) == 0 {
+		return nil, fmt.Errorf("%w: at least one review result is required", ErrInvalid)
+	}
+	if s.store == nil {
+		return nil, fmt.Errorf("review service store is not configured")
+	}
+	runs := make([]domain.ReviewRun, 0, len(reviews))
+	for _, review := range reviews {
+		run, err := s.submitOne(ctx, workerID, review)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	if s.lifecycle == nil {
+		return runs, nil
+	}
+	delivered, err := s.deliverSubmitted(ctx, workerID, runs)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.ReviewRun, len(delivered))
+	for _, run := range delivered {
+		byID[run.ID] = run
+	}
+	for i, run := range runs {
+		if deliveredRun, ok := byID[run.ID]; ok {
+			runs[i] = deliveredRun
+		}
+	}
+	return runs, nil
+}
+
+func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, review SubmittedReview) (domain.ReviewRun, error) {
+	runID := review.RunID
+	verdict := review.Verdict
+	body := review.Body
+	githubReviewID := review.GithubReviewID
 	if runID == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
 	}
@@ -93,9 +165,6 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 	}
 	if verdict == domain.VerdictChangesRequested && body == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
-	}
-	if s.store == nil {
-		return domain.ReviewRun{}, fmt.Errorf("review service store is not configured")
 	}
 	run, ok, err := s.store.GetReviewRun(ctx, runID)
 	if err != nil {
@@ -136,35 +205,92 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 	default:
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
+	return run, nil
+}
 
-	if s.lifecycle == nil {
-		return run, nil
-	}
-	outcome, err := s.lifecycle.ApplyReviewResult(ctx, workerID, lifecycle.ReviewResult{
-		RunID:          run.ID,
-		WorkerID:       workerID,
-		PRURL:          run.PRURL,
-		TargetSHA:      run.TargetSHA,
-		Verdict:        run.Verdict,
-		Body:           run.Body,
-		GithubReviewID: run.GithubReviewID,
-		DeliveredAt:    run.DeliveredAt,
-	})
+func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
+	deliverable, err := s.deliverableRuns(ctx, workerID, runs)
 	if err != nil {
-		return domain.ReviewRun{}, err
+		return nil, err
 	}
-	if outcome == lifecycle.ReviewDeliverySent {
-		deliveredAt := s.clock()
+	if len(deliverable) == 0 {
+		return nil, nil
+	}
+	results := reviewResults(workerID, deliverable)
+	var outcome lifecycle.ReviewDeliveryOutcome
+	if len(results) == 1 && results[0].BatchID == "" {
+		outcome, err = s.lifecycle.ApplyReviewResult(ctx, workerID, results[0])
+	} else {
+		outcome, err = s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if outcome != lifecycle.ReviewDeliverySent {
+		return nil, nil
+	}
+	deliveredAt := s.clock()
+	delivered := make([]domain.ReviewRun, 0, len(deliverable))
+	for _, run := range deliverable {
 		updated, err := s.store.MarkReviewRunDelivered(ctx, run.ID, deliveredAt)
 		if err != nil {
-			return domain.ReviewRun{}, err
+			return nil, err
 		}
 		if updated {
 			run.Status = domain.ReviewRunDelivered
 			run.DeliveredAt = &deliveredAt
+			delivered = append(delivered, run)
 		}
 	}
-	return run, nil
+	return delivered, nil
+}
+
+func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
+	currentHeads, err := s.currentHeadsByPR(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	deliverable := make([]domain.ReviewRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+			continue
+		}
+		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
+			continue
+		}
+		deliverable = append(deliverable, run)
+	}
+	return deliverable, nil
+}
+
+func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {
+	results := make([]lifecycle.ReviewResult, 0, len(runs))
+	for _, run := range runs {
+		results = append(results, lifecycle.ReviewResult{
+			RunID:          run.ID,
+			BatchID:        run.BatchID,
+			WorkerID:       workerID,
+			PRURL:          run.PRURL,
+			TargetSHA:      run.TargetSHA,
+			Verdict:        run.Verdict,
+			Body:           run.Body,
+			GithubReviewID: run.GithubReviewID,
+			DeliveredAt:    run.DeliveredAt,
+		})
+	}
+	return results
+}
+
+func (s *Service) currentHeadsByPR(ctx context.Context, workerID domain.SessionID) (map[string]string, error) {
+	prs, err := s.store.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	current := make(map[string]string, len(prs))
+	for _, pr := range prs {
+		current[pr.URL] = pr.HeadSHA
+	}
+	return current, nil
 }
 
 // List returns a worker's review state.

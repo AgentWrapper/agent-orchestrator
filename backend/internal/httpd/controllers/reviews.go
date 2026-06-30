@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
@@ -17,23 +18,40 @@ import (
 // reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
 // attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
-	ReviewerHandleID string             `json:"reviewerHandleId"`
-	Reviews          []domain.ReviewRun `json:"reviews"`
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
 }
 
-// ReviewRunResponse is the body of trigger (200/201) and submit (200). It
-// carries the run plus the reviewer pane handle so the UI can attach a terminal.
+// ReviewRunResponse is the body of submit (200). It carries the run plus the
+// reviewer pane handle so the UI can attach a terminal.
 type ReviewRunResponse struct {
-	Review           domain.ReviewRun `json:"review"`
-	ReviewerHandleID string           `json:"reviewerHandleId"`
+	Review           domain.ReviewRun   `json:"review"`
+	Reviews          []domain.ReviewRun `json:"reviews"`
+	ReviewerHandleID string             `json:"reviewerHandleId"`
+}
+
+// TriggerReviewResponse is the body of trigger (200/201). reviews carries the
+// PR-scoped review state after the trigger.
+type TriggerReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+}
+
+// SubmitReviewItem is one review result in a batched submit request.
+type SubmitReviewItem struct {
+	RunID          string `json:"runId" description:"Review run id being completed."`
+	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Body           string `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
+	GithubReviewID string `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
 }
 
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
 type SubmitReviewInput struct {
-	RunID          string `json:"runId" description:"Review run id being completed."`
-	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
-	Body           string `json:"body" description:"Review body recorded by AO. Required for changes_requested."`
-	GithubReviewID string `json:"githubReviewId" description:"Id of the GitHub PR review the reviewer posted, if any."`
+	RunID          string             `json:"runId,omitempty" description:"Review run id being completed."`
+	Verdict        string             `json:"verdict,omitempty" description:"Review verdict: approved or changes_requested."`
+	Body           string             `json:"body,omitempty" description:"Review body recorded by AO. Required for changes_requested."`
+	GithubReviewID string             `json:"githubReviewId,omitempty" description:"Id of the GitHub PR review the reviewer posted, if any."`
+	Reviews        []SubmitReviewItem `json:"reviews,omitempty" description:"Batched review results recorded by one reviewer CLI command."`
 }
 
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
@@ -58,11 +76,11 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 		writeReviewError(w, r, err)
 		return
 	}
-	runs := res.Runs
-	if runs == nil {
-		runs = []domain.ReviewRun{}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: runs})
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews})
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +99,14 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	if res.Created {
 		status = http.StatusCreated
 	}
-	envelope.WriteJSON(w, status, ReviewRunResponse{Review: res.Run, ReviewerHandleID: res.ReviewerHandleID})
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	envelope.WriteJSON(w, status, TriggerReviewResponse{
+		ReviewerHandleID: res.ReviewerHandleID,
+		Reviews:          reviews,
+	})
 }
 
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
@@ -94,12 +119,34 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
 		return
 	}
-	run, err := c.Svc.Submit(r.Context(), sessionID(r), in.RunID, domain.ReviewVerdict(in.Verdict), in.Body, in.GithubReviewID)
+	reviews := make([]reviewsvc.SubmittedReview, 0, len(in.Reviews))
+	if len(in.Reviews) > 0 {
+		for _, item := range in.Reviews {
+			reviews = append(reviews, reviewsvc.SubmittedReview{
+				RunID:          item.RunID,
+				Verdict:        domain.ReviewVerdict(item.Verdict),
+				Body:           item.Body,
+				GithubReviewID: item.GithubReviewID,
+			})
+		}
+	} else {
+		reviews = append(reviews, reviewsvc.SubmittedReview{
+			RunID:          in.RunID,
+			Verdict:        domain.ReviewVerdict(in.Verdict),
+			Body:           in.Body,
+			GithubReviewID: in.GithubReviewID,
+		})
+	}
+	runs, err := c.Svc.SubmitMany(r.Context(), sessionID(r), reviews)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: run})
+	first := domain.ReviewRun{}
+	if len(runs) > 0 {
+		first = runs[0]
+	}
+	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: first, Reviews: runs})
 }
 
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {

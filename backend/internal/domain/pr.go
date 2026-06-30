@@ -107,6 +107,16 @@ type PullRequestReviewThread struct {
 	UpdatedAt    time.Time
 }
 
+// PullRequestReview is one submitted provider review for a pull request.
+type PullRequestReview struct {
+	ID          string
+	Author      string
+	State       ReviewDecision
+	URL         string
+	IsBot       bool
+	SubmittedAt time.Time
+}
+
 // CIState is the aggregate CI status of a PR.
 type CIState string
 

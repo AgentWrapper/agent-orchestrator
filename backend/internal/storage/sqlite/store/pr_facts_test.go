@@ -28,7 +28,7 @@ func TestListPRFactsForSessionProjectsAllPRsNewestFirst(t *testing.T) {
 	// historical PR. Distinct updated_at so newest-first ordering is observable.
 	write := func(pr domain.PullRequest) {
 		t.Helper()
-		if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		if err := s.WriteSCMObservation(ctx, pr, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
 			t.Fatalf("write %s: %v", pr.URL, err)
 		}
 	}

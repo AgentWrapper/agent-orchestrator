@@ -270,7 +270,7 @@ function ReviewerSelect({ id, value, onChange }: { id: string; value: string; on
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">Project default</SelectItem>
+				<SelectItem value="__default__">claude-code (default)</SelectItem>
 				{REVIEWER_OPTIONS.map((reviewer) => (
 					<SelectItem key={reviewer} value={reviewer}>
 						{reviewer}

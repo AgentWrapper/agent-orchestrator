@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"runtime"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -12,12 +14,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 )
 
+// maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
+// daemon's spawn handler so a direct API call is held to the same limit.
+const maxDisplayNameLen = 20
+
 type spawnOptions struct {
 	project    string
 	harness    string
 	branch     string
 	prompt     string
 	issue      string
+	name       string
 	claimPR    string
 	noTakeover bool
 }
@@ -25,11 +32,12 @@ type spawnOptions struct {
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
 // POST /api/v1/sessions. The CLI keeps its own copy so it need not import httpd.
 type spawnRequest struct {
-	ProjectID string `json:"projectId"`
-	IssueID   string `json:"issueId,omitempty"`
-	Harness   string `json:"harness,omitempty"`
-	Branch    string `json:"branch,omitempty"`
-	Prompt    string `json:"prompt,omitempty"`
+	ProjectID   string `json:"projectId"`
+	IssueID     string `json:"issueId,omitempty"`
+	Harness     string `json:"harness,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	DisplayName string `json:"displayName"`
 }
 
 type spawnResult struct {
@@ -52,6 +60,13 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if opts.project == "" {
 				return usageError{fmt.Errorf("--project is required")}
 			}
+			name := strings.TrimSpace(opts.name)
+			if name == "" {
+				return usageError{fmt.Errorf("--name is required")}
+			}
+			if utf8.RuneCountInString(name) > maxDisplayNameLen {
+				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
+			}
 			if opts.noTakeover && opts.claimPR == "" {
 				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
 			}
@@ -67,11 +82,12 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 			req := spawnRequest{
-				ProjectID: opts.project,
-				IssueID:   opts.issue,
-				Harness:   opts.harness,
-				Branch:    opts.branch,
-				Prompt:    opts.prompt,
+				ProjectID:   opts.project,
+				IssueID:     opts.issue,
+				Harness:     opts.harness,
+				Branch:      opts.branch,
+				Prompt:      opts.prompt,
+				DisplayName: name,
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -125,6 +141,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
+	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	return cmd

@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -108,7 +108,7 @@ export function CreateProjectAgentSheet({
 	);
 }
 
-export function RequiredAgentField({
+export const RequiredAgentField = memo(function RequiredAgentField({
 	id,
 	invalid = false,
 	label,
@@ -142,4 +142,4 @@ export function RequiredAgentField({
 			</Select>
 		</div>
 	);
-}
+});
