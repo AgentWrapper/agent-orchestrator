@@ -117,7 +117,6 @@ func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID)
 type fakeLCM struct {
 	store        *fakeStore
 	completed    int
-	terminated   int
 	termErr      error
 	termFailures int
 	termAlways   bool
@@ -135,7 +134,6 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
-	l.terminated++
 	if l.termErr != nil && l.termAlways {
 		return l.termErr
 	}
@@ -626,8 +624,8 @@ func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
 	if rt.destroyed != 1 {
 		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
 	}
-	if lcm.terminated != 1 {
-		t.Fatalf("termination records = %d, want 1", lcm.terminated)
+	if lcm.terminated["mer-1"] != 1 {
+		t.Fatalf("termination records = %d, want 1", lcm.terminated["mer-1"])
 	}
 	if got := st.sessions["mer-1"]; !got.IsTerminated {
 		t.Fatalf("retired session = %+v, want terminated after destroy intent", got)
