@@ -1283,6 +1283,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg-muted);
 }
 
+.reviewer-row__verdict-group {
+	display: inline-flex;
+	min-width: max-content;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+}
+
 .reviewer-row__verdict--running {
 	color: var(--orange);
 }
@@ -1293,6 +1301,21 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .reviewer-row__verdict--danger {
 	color: var(--red);
+}
+
+.reviewer-row__previous {
+	white-space: nowrap;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--fg-passive);
+}
+
+.reviewer-row__previous--success {
+	color: color-mix(in srgb, var(--green) 78%, var(--fg-passive));
+}
+
+.reviewer-row__previous--danger {
+	color: color-mix(in srgb, var(--red) 78%, var(--fg-passive));
 }
 
 @media (max-width: 680px) {

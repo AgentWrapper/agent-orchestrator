@@ -137,6 +137,10 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	lcm.SetReviewTrigger(func(ctx context.Context, id domain.SessionID) error {
+		_, err := reviewSvc.Trigger(ctx, id)
+		return err
+	})
 	return sessionSvc, reviewSvc, mgr, nil
 }
 

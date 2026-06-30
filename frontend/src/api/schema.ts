@@ -652,6 +652,7 @@ export interface components {
             latestRun?: components["schemas"]["ReviewRun"];
             prNumber: number;
             prUrl: string;
+            previousRun?: components["schemas"]["ReviewRun"];
             /** @enum {string} */
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
