@@ -64,7 +64,7 @@ func ampSettingsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	for _, key := range []string{"amp.apiKey", "amp.api_key", "apiKey", "api_key"} {
 		if value, ok := settings[key]; ok {

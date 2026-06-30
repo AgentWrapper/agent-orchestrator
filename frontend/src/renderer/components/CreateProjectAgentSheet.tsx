@@ -153,26 +153,26 @@ export function CreateProjectAgentSheet({
 }
 
 export function RequiredAgentField({
-	authorized,
+	authorized = [],
 	disabled = false,
 	id,
 	invalid = false,
-	installed,
+	installed = [],
 	label,
 	onChange,
 	placeholder,
-	supported,
+	supported = [],
 	value,
 }: {
-	authorized: AgentInfo[];
+	authorized?: AgentInfo[];
 	disabled?: boolean;
 	id: string;
 	invalid?: boolean;
-	installed: AgentInfo[];
+	installed?: AgentInfo[];
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
-	supported: AgentInfo[];
+	supported?: AgentInfo[];
 	value: string;
 }) {
 	const authorizedIds = new Set(authorized.map((agent) => agent.id));

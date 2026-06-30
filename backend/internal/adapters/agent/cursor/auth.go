@@ -41,7 +41,10 @@ func cursorLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, er
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return cursorConfigAuthStatus(filepath.Join(home, ".cursor", "cli-config.json"))
@@ -55,7 +58,7 @@ func cursorConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	type cursorConfig struct {
@@ -71,7 +74,7 @@ func cursorConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err := json.Unmarshal(data, &cfgs); err != nil {
 		var cfg cursorConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			return ports.AgentAuthStatusUnknown, false, nil
+			return ports.AgentAuthStatusUnknown, false, err
 		}
 		cfgs = []cursorConfig{cfg}
 	}

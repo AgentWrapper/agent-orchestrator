@@ -70,7 +70,7 @@ func kimiConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	matches := kimiAPIKeyLineRE.FindAllStringSubmatch(string(data), -1)

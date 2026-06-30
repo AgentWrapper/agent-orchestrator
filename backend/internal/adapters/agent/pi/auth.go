@@ -62,13 +62,13 @@ func piAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 
 	var entries map[string]piAuthEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
 		return ports.AgentAuthStatusUnauthorized, true, nil

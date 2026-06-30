@@ -29,7 +29,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	_ "modernc.org/sqlite"
+
+	_ "modernc.org/sqlite" // register sqlite driver for opencode session metadata probes
 )
 
 const (
@@ -261,13 +262,13 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnauthorized, true, nil
 	}
 
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
 		return ports.AgentAuthStatusUnauthorized, true, nil
@@ -298,7 +299,9 @@ func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStat
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	authorized, known, err := opencodeDBHasAuthorizedAccount(ctx, db)
 	if err != nil {
@@ -313,7 +316,7 @@ func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStat
 	return ports.AgentAuthStatusUnauthorized, true, nil
 }
 
-func opencodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized bool, known bool, err error) {
+func opencodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized, known bool, err error) {
 	for _, query := range []string{
 		`SELECT COUNT(*) FROM account_state WHERE active_account_id IS NOT NULL AND trim(active_account_id) != ''`,
 		`SELECT COUNT(*) FROM account WHERE trim(access_token) != ''`,

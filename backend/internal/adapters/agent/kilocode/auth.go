@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	_ "modernc.org/sqlite"
+
+	_ "modernc.org/sqlite" // register sqlite driver for KiloCode auth database probes
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -110,7 +111,7 @@ func kilocodeDataDir() (string, bool) {
 	return filepath.Join(home, ".local", "share", "kilo"), true
 }
 
-func kilocodeAuthJSONStatus(path string) (authorized bool, known bool, err error) {
+func kilocodeAuthJSONStatus(path string) (authorized, known bool, err error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return false, false, nil
@@ -118,12 +119,12 @@ func kilocodeAuthJSONStatus(path string) (authorized bool, known bool, err error
 	if err != nil {
 		return false, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return false, false, nil
 	}
 	var providers map[string]map[string]any
 	if err := json.Unmarshal(data, &providers); err != nil {
-		return false, false, nil
+		return false, false, err
 	}
 	for _, provider := range providers {
 		if len(provider) == 0 {
@@ -144,7 +145,7 @@ func asString(value any) string {
 	return s
 }
 
-func kilocodeDBAuthStatus(ctx context.Context, path string) (authorized bool, known bool, err error) {
+func kilocodeDBAuthStatus(ctx context.Context, path string) (authorized, known bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, false, err
 	}
@@ -158,11 +159,13 @@ func kilocodeDBAuthStatus(ctx context.Context, path string) (authorized bool, kn
 	if err != nil {
 		return false, false, err
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 	return kilocodeDBHasAuthorizedAccount(ctx, db)
 }
 
-func kilocodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized bool, known bool, err error) {
+func kilocodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized, known bool, err error) {
 	for _, query := range []string{
 		`SELECT COUNT(*) FROM account_state WHERE active_account_id IS NOT NULL AND trim(active_account_id) != ''`,
 		`SELECT COUNT(*) FROM account WHERE trim(access_token) != ''`,
@@ -197,6 +200,7 @@ func kilocodeShellEnvAuthStatus(ctx context.Context) (ports.AgentAuthStatus, boo
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
+	//nolint:gosec // shell is the user's configured login shell; the script only checks known env var names
 	out, err := exec.CommandContext(probeCtx, shell, "-ic", kilocodeShellEnvProbeScript()).CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, false, probeCtx.Err()

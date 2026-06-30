@@ -29,7 +29,8 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 }
 
 const (
-	vibeDefaultAPIKeyEnvVar = "MISTRAL_API_KEY"
+	// This names the default env var Vibe reads; it is not a credential value.
+	vibeDefaultAPIKeyEnvVar = "MISTRAL_API_KEY" //nolint:gosec // env var name, not a credential value
 	vibeKeychainService     = "vibe"
 )
 
@@ -38,7 +39,10 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	vibeHome := os.Getenv("VIBE_HOME")
@@ -123,6 +127,7 @@ func vibeKeychainAuthStatus(ctx context.Context, envVar string) (ports.AgentAuth
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
+	//nolint:gosec // invokes macOS security with fixed command and validated account/service arguments
 	out, err := exec.CommandContext(probeCtx, "security", "find-generic-password", "-s", vibeKeychainService, "-a", envVar, "-w").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, false, nil

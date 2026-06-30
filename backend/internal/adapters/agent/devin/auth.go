@@ -31,7 +31,10 @@ func devinLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, err
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return devinCredentialsAuthStatus(filepath.Join(home, ".local", "share", "devin", "credentials.toml"))

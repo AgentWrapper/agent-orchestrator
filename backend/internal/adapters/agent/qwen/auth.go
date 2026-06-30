@@ -48,7 +48,10 @@ func qwenLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	}
 
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return qwenAuthStatusFromSettings(filepath.Join(home, ".qwen", "settings.json"))
@@ -62,13 +65,13 @@ func qwenAuthStatusFromSettings(path string) (ports.AgentAuthStatus, bool, error
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 
 	var root any
 	if err := json.Unmarshal(data, &root); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if containsQwenAPIKey(root) {
 		return ports.AgentAuthStatusAuthorized, true, nil

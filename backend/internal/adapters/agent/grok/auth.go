@@ -36,7 +36,10 @@ func grokLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	}
 
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	path := filepath.Join(home, ".grok", "auth.json")
@@ -47,13 +50,13 @@ func grokLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnauthorized, true, nil
 	}
 
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
 		return ports.AgentAuthStatusUnauthorized, true, nil

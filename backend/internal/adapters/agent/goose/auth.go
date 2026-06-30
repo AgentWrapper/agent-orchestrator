@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -96,13 +97,13 @@ func gooseAuthStatusFromConfig(path string) (ports.AgentAuthStatus, bool, error)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnauthorized, true, nil
 	}
 
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if gooseConfigHasCredential(&root) || gooseConfigHasConfiguredProvider(&root) {
 		return ports.AgentAuthStatusAuthorized, true, nil

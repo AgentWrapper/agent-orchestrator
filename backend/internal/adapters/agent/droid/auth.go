@@ -34,7 +34,10 @@ func droidLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, err
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return droidFactoryAuthStatus(filepath.Join(home, ".factory"))
@@ -66,7 +69,7 @@ func droidSettingsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		} `json:"customModels"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	for _, model := range settings.CustomModels {
 		if strings.TrimSpace(model.Model) != "" &&

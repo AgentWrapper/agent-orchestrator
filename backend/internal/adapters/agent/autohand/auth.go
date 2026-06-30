@@ -34,7 +34,7 @@ func autohandConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) 
 
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(data, &config); err != nil {
-		return ports.AgentAuthStatusUnknown, nil
+		return ports.AgentAuthStatusUnknown, err
 	}
 
 	authReady, authKnown := autohandCloudAuthReady(config)
@@ -47,7 +47,7 @@ func autohandConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
-func autohandCloudAuthReady(config map[string]json.RawMessage) (ready bool, known bool) {
+func autohandCloudAuthReady(config map[string]json.RawMessage) (ready, known bool) {
 	authRaw, ok := config["auth"]
 	if !ok {
 		return false, false

@@ -55,7 +55,10 @@ func clineProviderAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, 
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	path := filepath.Join(home, ".cline", "data", "settings", "providers.json")
@@ -66,13 +69,13 @@ func clineProviderAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, 
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnauthorized, true, nil
 	}
 
 	var file clineProvidersFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(file.Providers) == 0 {
 		return ports.AgentAuthStatusUnauthorized, true, nil

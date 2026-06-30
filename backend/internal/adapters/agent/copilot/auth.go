@@ -45,7 +45,10 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 	}
 
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	configStatus, configOK, err := copilotConfigAuthStatus(filepath.Join(home, ".copilot", "config.json"))
@@ -139,7 +142,7 @@ func textContainsTokenAssignment(text string) bool {
 			continue
 		}
 		lower := strings.ToLower(line)
-		if !(strings.Contains(lower, "token") || strings.Contains(lower, "auth")) {
+		if !strings.Contains(lower, "token") && !strings.Contains(lower, "auth") {
 			continue
 		}
 		for _, sep := range []string{":", "="} {
