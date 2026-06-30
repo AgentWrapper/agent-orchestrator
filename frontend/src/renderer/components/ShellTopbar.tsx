@@ -13,6 +13,8 @@ import {
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { startDaemon } from "../lib/daemon-status";
+import { useShell } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
@@ -52,11 +54,14 @@ const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; br
 export function ShellTopbar() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const { daemonStatus } = useShell();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
+	const daemonReady = daemonStatus.state === "ready";
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -79,7 +84,7 @@ export function ShellTopbar() {
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
 
 	const openNewTask = () => {
-		if (!projectId) return;
+		if (!projectId || !daemonReady) return;
 		setIsNewTaskOpen(true);
 	};
 
@@ -94,6 +99,7 @@ export function ShellTopbar() {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		if (!daemonReady) return;
 		void addRendererExceptionStep("Orchestrator open requested", {
 			source: "orchestrator-open",
 			operation: "open_orchestrator",
@@ -126,6 +132,24 @@ export function ShellTopbar() {
 			console.error("Failed to spawn orchestrator:", error);
 		} finally {
 			setIsSpawning(false);
+		}
+	};
+
+	const restartDaemon = async () => {
+		setIsRestartingDaemon(true);
+		try {
+			await startDaemon();
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		} catch (error) {
+			void captureRendererException(error, {
+				source: "daemon-restart",
+				operation: "restart_daemon",
+				surface: isSessionRoute ? "session_detail" : "project_board",
+				project_id: projectId,
+			});
+			console.error("Failed to restart daemon:", error);
+		} finally {
+			setIsRestartingDaemon(false);
 		}
 	};
 
@@ -164,6 +188,18 @@ export function ShellTopbar() {
 
 			<div className="dashboard-app-header__actions">
 				<NotificationCenter style={noDragStyle} />
+				{projectId && !daemonReady ? (
+					<button
+						aria-label="Restart daemon"
+						className="dashboard-app-header__accent-btn"
+						disabled={isRestartingDaemon}
+						onClick={() => void restartDaemon()}
+						style={noDragStyle}
+						type="button"
+					>
+						{isRestartingDaemon ? "Restarting..." : "Restart daemon"}
+					</button>
+				) : null}
 				{isSessionRoute ? (
 					<>
 						{isOrchestrator ? (
@@ -171,6 +207,7 @@ export function ShellTopbar() {
 								<button
 									aria-label="New task"
 									className="dashboard-app-header__primary-btn"
+									disabled={!daemonReady}
 									onClick={openNewTask}
 									style={noDragStyle}
 									type="button"
@@ -197,7 +234,7 @@ export function ShellTopbar() {
 							<button
 								aria-label="Open orchestrator"
 								className="dashboard-app-header__primary-btn dashboard-app-header__primary-btn--compact"
-								disabled={isSpawning}
+								disabled={isSpawning || !daemonReady}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								type="button"
