@@ -170,6 +170,35 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
 	});
 
+	it("offers every supported reviewer harness", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		const reviewerAgent = await screen.findByRole("combobox", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerAgent);
+		for (const option of ["claude-code (default)", "claude-code", "codex", "opencode"]) {
+			expect(await screen.findByRole("option", { name: option })).toBeInTheDocument();
+		}
+	});
+
 	it("defaults worker and orchestrator to claude-code for projects missing role config", async () => {
 		getMock.mockResolvedValue({
 			data: {
