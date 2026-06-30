@@ -2549,6 +2549,8 @@ components:
       properties:
         assignee:
           type: string
+        baseURL:
+          type: string
         enabled:
           type: boolean
         labels:
@@ -2557,11 +2559,17 @@ components:
           type: array
         limit:
           type: integer
+        projectKey:
+          type: string
         provider:
           enum:
           - github
+          - linear
+          - jira
           type: string
         repo:
+          type: string
+        team:
           type: string
       type: object
     TriggerReviewResponse:

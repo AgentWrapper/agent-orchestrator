@@ -913,12 +913,15 @@ export interface components {
         };
         TrackerIntakeConfig: {
             assignee?: string;
+            baseURL?: string;
             enabled?: boolean;
             labels?: string[];
             limit?: number;
+            projectKey?: string;
             /** @enum {string} */
-            provider?: "github";
+            provider?: "github" | "linear" | "jira";
             repo?: string;
+            team?: string;
         };
         TriggerReviewResponse: {
             reviewerHandleId: string;
