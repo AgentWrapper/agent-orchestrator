@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
+type TrackerProvider = NonNullable<TrackerIntakeConfig["provider"]>;
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -21,6 +23,12 @@ const PERMISSION_MODE_OPTIONS = [
 ] as const;
 
 const REVIEWER_OPTIONS = ["claude-code"] as const;
+
+const PROVIDER_OPTIONS: { value: TrackerProvider; label: string }[] = [
+	{ value: "github", label: "GitHub" },
+	{ value: "linear", label: "Linear" },
+	{ value: "jira", label: "Jira" },
+];
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -66,6 +74,8 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
+	const intake = (config.trackerIntake ?? {}) as TrackerIntakeConfig;
+	const initialProvider: TrackerProvider = isTrackerProvider(intake.provider) ? intake.provider : "github";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -74,10 +84,58 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: initialProvider,
+		intakeRepo: intake.repo ?? "",
+		intakeTeam: intake.team ?? "",
+		intakeBaseURL: intake.baseURL ?? "",
+		intakeProjectKey: intake.projectKey ?? "",
+		intakeLabels: (intake.labels ?? []).join(", "),
+		intakeAssignee: intake.assignee ?? "",
+		intakeLimit: intake.limit ? String(intake.limit) : "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const intakeLabelList = parseLabels(form.intakeLabels);
+	const intakeNeedsRule = form.intakeEnabled && intakeLabelList.length === 0 && form.intakeAssignee.trim() === "";
+	const intakeMissingScope =
+		form.intakeEnabled &&
+		((form.intakeProvider === "linear" && form.intakeTeam.trim() === "") ||
+			(form.intakeProvider === "jira" && (form.intakeBaseURL.trim() === "" || form.intakeProjectKey.trim() === "")));
+
+	// Build the trackerIntake block from the form, sending only the fields that
+	// apply to the selected provider so the daemon's per-provider validator does
+	// not see cross-provider noise. Omitted entirely when disabled and
+	// unconfigured so the config can store NULL.
+	const buildIntake = (): TrackerIntakeConfig | undefined => {
+		const limit = Number.parseInt(form.intakeLimit, 10);
+		const scope =
+			form.intakeProvider === "github"
+				? { repo: form.intakeRepo.trim() || undefined }
+				: form.intakeProvider === "linear"
+					? { team: form.intakeTeam.trim() || undefined }
+					: {
+							baseURL: form.intakeBaseURL.trim() || undefined,
+							projectKey: form.intakeProjectKey.trim() || undefined,
+						};
+		const next: TrackerIntakeConfig = {
+			...intake,
+			// Drop the old scope fields from any prior provider so a switch doesn't
+			// silently leave stale repo/team/baseURL/projectKey in the payload.
+			repo: undefined,
+			team: undefined,
+			baseURL: undefined,
+			projectKey: undefined,
+			...scope,
+			enabled: form.intakeEnabled || undefined,
+			provider: form.intakeEnabled ? form.intakeProvider : undefined,
+			labels: intakeLabelList.length ? intakeLabelList : undefined,
+			assignee: form.intakeAssignee.trim() || undefined,
+			limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+		};
+		return blankToUndefined(next);
+	};
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -95,6 +153,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				trackerIntake: buildIntake(),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -118,6 +177,18 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setSavedAt(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (intakeNeedsRule) {
+					setValidationError("Enabling intake requires at least one label or assignee.");
+					return;
+				}
+				if (intakeMissingScope) {
+					setValidationError(
+						form.intakeProvider === "linear"
+							? "Linear intake requires a team key."
+							: "Jira intake requires a site URL and project key.",
+					);
 					return;
 				}
 				setValidationError(null);
@@ -219,6 +290,124 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<p className="text-[12px] leading-5 text-muted-foreground">
+						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
+						sessions; the tracker is not commented on or transitioned.
+					</p>
+					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+						<input
+							type="checkbox"
+							className="h-4 w-4 accent-accent"
+							checked={form.intakeEnabled}
+							onChange={(e) => setForm((f) => ({ ...f, intakeEnabled: e.target.checked }))}
+						/>
+						Enable issue intake
+					</label>
+					{form.intakeEnabled && (
+						<>
+							<Field label="Provider" htmlFor="intakeProvider">
+								<ProviderSelect
+									id="intakeProvider"
+									value={form.intakeProvider}
+									onChange={(v) => setForm((f) => ({ ...f, intakeProvider: v }))}
+								/>
+							</Field>
+							{form.intakeProvider === "github" && (
+								<Field label="Repository" htmlFor="intakeRepo">
+									<input
+										id="intakeRepo"
+										className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+										value={form.intakeRepo}
+										onChange={(e) => setForm((f) => ({ ...f, intakeRepo: e.target.value }))}
+										placeholder="owner/repo (defaults to git origin)"
+									/>
+								</Field>
+							)}
+							{form.intakeProvider === "linear" && (
+								<Field label="Team key" htmlFor="intakeTeam">
+									<input
+										id="intakeTeam"
+										className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+										value={form.intakeTeam}
+										onChange={(e) => setForm((f) => ({ ...f, intakeTeam: e.target.value }))}
+										placeholder="e.g. ENG"
+									/>
+								</Field>
+							)}
+							{form.intakeProvider === "jira" && (
+								<>
+									<Field label="Site URL" htmlFor="intakeBaseURL">
+										<input
+											id="intakeBaseURL"
+											className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+											value={form.intakeBaseURL}
+											onChange={(e) => setForm((f) => ({ ...f, intakeBaseURL: e.target.value }))}
+											placeholder="acme.atlassian.net"
+										/>
+									</Field>
+									<Field label="Project key" htmlFor="intakeProjectKey">
+										<input
+											id="intakeProjectKey"
+											className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+											value={form.intakeProjectKey}
+											onChange={(e) => setForm((f) => ({ ...f, intakeProjectKey: e.target.value }))}
+											placeholder="e.g. ENG"
+										/>
+									</Field>
+								</>
+							)}
+							<Field label="Labels" htmlFor="intakeLabels">
+								<input
+									id="intakeLabels"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeLabels}
+									onChange={(e) => setForm((f) => ({ ...f, intakeLabels: e.target.value }))}
+									placeholder={labelsPlaceholder(form.intakeProvider)}
+								/>
+							</Field>
+							<Field label="Assignee" htmlFor="intakeAssignee">
+								<input
+									id="intakeAssignee"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeAssignee}
+									onChange={(e) => setForm((f) => ({ ...f, intakeAssignee: e.target.value }))}
+									placeholder={assigneePlaceholder(form.intakeProvider)}
+								/>
+							</Field>
+							<Field label="Per-poll limit" htmlFor="intakeLimit">
+								<input
+									id="intakeLimit"
+									type="number"
+									min={0}
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeLimit}
+									onChange={(e) => setForm((f) => ({ ...f, intakeLimit: e.target.value }))}
+									placeholder="(adapter default)"
+								/>
+							</Field>
+							{intakeNeedsRule && (
+								<p className="text-[12px] leading-5 text-error">
+									Enabling intake requires at least one label or assignee.
+								</p>
+							)}
+							{intakeMissingScope && (
+								<p className="text-[12px] leading-5 text-error">
+									{form.intakeProvider === "linear"
+										? "Linear intake requires a team key."
+										: "Jira intake requires a site URL and project key."}
+								</p>
+							)}
+							<CredentialHint provider={form.intakeProvider} />
+						</>
+					)}
+				</CardContent>
+			</Card>
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
@@ -261,6 +450,72 @@ function PermissionModeSelect({
 			</SelectContent>
 		</Select>
 	);
+}
+
+function ProviderSelect({
+	id,
+	value,
+	onChange,
+}: {
+	id: string;
+	value: TrackerProvider;
+	onChange: (value: TrackerProvider) => void;
+}) {
+	return (
+		<Select value={value} onValueChange={(v) => onChange(v as TrackerProvider)}>
+			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
+				{PROVIDER_OPTIONS.map((opt) => (
+					<SelectItem key={opt.value} value={opt.value}>
+						{opt.label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
+function CredentialHint({ provider }: { provider: TrackerProvider }) {
+	const envVars = CREDENTIAL_ENV_VARS[provider];
+	return (
+		<p className="text-[11px] leading-5 text-muted-foreground">
+			Reads credentials from <span className="font-mono">{envVars.join(", ")}</span>. Restart the daemon after setting.
+		</p>
+	);
+}
+
+const CREDENTIAL_ENV_VARS: Record<TrackerProvider, string[]> = {
+	github: ["AO_GITHUB_TOKEN", "or `gh auth token`"],
+	linear: ["AO_LINEAR_TOKEN"],
+	jira: ["AO_JIRA_EMAIL", "AO_JIRA_TOKEN"],
+};
+
+function isTrackerProvider(value: unknown): value is TrackerProvider {
+	return value === "github" || value === "linear" || value === "jira";
+}
+
+function labelsPlaceholder(provider: TrackerProvider): string {
+	switch (provider) {
+		case "github":
+			return "comma-separated, e.g. agent-ready, bug";
+		case "linear":
+			return "comma-separated Linear label names";
+		case "jira":
+			return "comma-separated Jira labels";
+	}
+}
+
+function assigneePlaceholder(provider: TrackerProvider): string {
+	switch (provider) {
+		case "github":
+			return "github login, or * for any";
+		case "linear":
+			return "Linear display name";
+		case "jira":
+			return "Jira accountId or email";
+	}
 }
 
 function ReviewerSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
@@ -313,4 +568,11 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 // rather than an empty {} the daemon would persist.
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
+}
+
+function parseLabels(value: string): string[] {
+	return value
+		.split(",")
+		.map((label) => label.trim())
+		.filter((label) => label.length > 0);
 }

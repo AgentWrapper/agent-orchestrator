@@ -8,7 +8,7 @@ import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { canonicalTrackerIssueId, sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -169,6 +169,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
+	const issueId = canonicalTrackerIssueId(session.issueId);
 
 	return (
 		<div role="tabpanel">
@@ -191,6 +192,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
+					{issueId && <Row k="Issue" v={issueId} mono />}
 					<Row k="Branch" v={branchLabel} mono />
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />

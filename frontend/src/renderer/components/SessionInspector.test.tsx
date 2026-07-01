@@ -172,6 +172,13 @@ describe("SessionInspector tabs", () => {
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
 	});
+
+	it("shows the intake issue id in the summary overview when present", () => {
+		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
+
+		expect(screen.getByText("Issue")).toBeInTheDocument();
+		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector reviews tab", () => {

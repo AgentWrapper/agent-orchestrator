@@ -1938,6 +1938,8 @@ components:
           items:
             type: string
           type: array
+        trackerIntake:
+          $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
       type: object
@@ -2545,6 +2547,33 @@ components:
       required:
       - runId
       - verdict
+      type: object
+    TrackerIntakeConfig:
+      properties:
+        assignee:
+          type: string
+        baseURL:
+          type: string
+        enabled:
+          type: boolean
+        labels:
+          items:
+            type: string
+          type: array
+        limit:
+          type: integer
+        projectKey:
+          type: string
+        provider:
+          enum:
+          - github
+          - linear
+          - jira
+          type: string
+        repo:
+          type: string
+        team:
+          type: string
       type: object
     TriggerReviewResponse:
       properties:

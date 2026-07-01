@@ -96,6 +96,8 @@ export type WorkspaceSession = {
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
+	/** Raw issue/task identifier from the daemon. Intake IDs are provider-prefixed. */
+	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
 	branch: string;
@@ -131,6 +133,13 @@ export type WorkspaceSession = {
 	 */
 	displayStatus?: WorkerDisplayStatus;
 };
+
+const TRACKER_PROVIDER_PREFIXES = ["github:", "linear:", "jira:"] as const;
+
+export function canonicalTrackerIssueId(issueId?: string): string | undefined {
+	if (!issueId) return undefined;
+	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
+}
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
