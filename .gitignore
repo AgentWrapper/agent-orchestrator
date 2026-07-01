@@ -50,6 +50,7 @@ session-events.jsonl.*
 # Local tooling (not for the team)
 .codegraph/
 .cursor/
+.worktrees/
 
 # OS
 .DS_Store
