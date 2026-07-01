@@ -114,6 +114,9 @@ func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID)
 	return f.worktrees[id], nil
 }
 func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionID) error {
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "DeleteSessionWorktrees:"+string(id))
+	}
 	delete(f.worktrees, id)
 	return nil
 }
@@ -1422,6 +1425,60 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	// The session must be marked terminated.
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("session must be terminated after SaveAndTeardownAll")
+	}
+}
+
+func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if rows := st.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Fatalf("replacement retirement must not write restore markers, got %#v", rows)
+	}
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("retired orchestrator must be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+
+	stashIdx, deleteIdx, forceIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "StashUncommitted:mer-orch":
+			stashIdx = i
+		case "DeleteSessionWorktrees:mer-orch":
+			deleteIdx = i
+		case "ForceDestroy:mer-orch":
+			forceIdx = i
+		}
+	}
+	if stashIdx == -1 || deleteIdx == -1 || forceIdx == -1 {
+		t.Fatalf("missing expected calls in shared log: %v", sharedLog)
+	}
+	if !(stashIdx < deleteIdx && deleteIdx < forceIdx) {
+		t.Fatalf("replacement retire must capture, clear restore marker, then force release; log=%v", sharedLog)
 	}
 }
 

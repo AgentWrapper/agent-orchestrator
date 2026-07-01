@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
+import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
@@ -45,6 +46,10 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
+	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
+	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -86,6 +91,7 @@ function ShellLayout() {
 				name: data.project.name,
 				path: data.project.path,
 				type: "main",
+				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
 				sessions: [],
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
@@ -131,6 +137,33 @@ function ShellLayout() {
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
 		},
 		[updateWorkspaces],
+	);
+
+	const restartOrchestrator = useCallback(
+		async (projectId: string) => {
+			setProjectRestarting(projectId, true);
+			setOrchestratorReplacementError(projectId, null);
+			try {
+				const sessionId = await spawnOrchestrator(projectId, true);
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId },
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "Could not replace orchestrator";
+				setOrchestratorReplacementError(projectId, message);
+				void captureRendererException(error, {
+					source: "orchestrator-replace",
+					operation: "replace_orchestrator",
+					surface: "shell",
+					project_id: projectId,
+				});
+			} finally {
+				setProjectRestarting(projectId, false);
+			}
+		},
+		[navigate, queryClient, setOrchestratorReplacementError, setProjectRestarting],
 	);
 
 	useEffect(() => {
@@ -206,6 +239,15 @@ function ShellLayout() {
               by window-drag even though DOM hit-testing looks correct. */}
 					<TitlebarNav />
 				</SidebarProvider>
+				<OrchestratorReplacementDialog
+					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
+					onOpenChange={(open) => {
+						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
+					}}
+					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					projectId={replacementErrorProjectId}
+					workspaces={workspaces}
+				/>
 			</div>
 		</ShellProvider>
 	);
