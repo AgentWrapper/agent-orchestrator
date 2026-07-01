@@ -50,6 +50,7 @@ import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
+import { pathInside, samePath } from "./shared/path-identity";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -338,21 +339,6 @@ function daemonEnv(): NodeJS.ProcessEnv {
 		return { ...process.env, ...telemetryOverrides(), ...ownerTag };
 	}
 	return buildDaemonEnv(process.env, cachedShellEnv, { ...telemetryOverrides(), ...ownerTag });
-}
-
-function pathKey(value: string): string {
-	const resolved = path.resolve(value);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function samePath(a: string, b: string): boolean {
-	return pathKey(a) === pathKey(b);
-}
-
-function pathInside(child: string, parent: string): boolean {
-	const childKey = pathKey(child);
-	const parentKey = pathKey(parent);
-	return childKey === parentKey || childKey.startsWith(parentKey + path.sep);
 }
 
 function processAlive(pid: number): boolean {
