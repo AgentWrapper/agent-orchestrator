@@ -62,6 +62,7 @@ type CreateProjectInput = {
 	path: string;
 	workerAgent: string;
 	orchestratorAgent: string;
+	trackerIntake?: unknown;
 	asWorkspace?: boolean;
 };
 type CreateProjectHandler = (input: CreateProjectInput) => Promise<void>;
@@ -234,8 +235,8 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(screen.getByRole("dialog", { name: "Workspace agents" })).toBeInTheDocument();
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		await waitFor(() =>
@@ -279,8 +280,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
 		await user.click(await screen.findByRole("button", { name: /Choose a folder/i }));
 		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText(/Validation failed · workspace not registered/i)).toBeInTheDocument();
@@ -326,6 +327,8 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a project folder/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 
 		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
@@ -368,6 +371,8 @@ describe("Sidebar", () => {
 		renderSidebar({ onCreateProject, seedAgents: false });
 
 		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Project/i }));
+		await user.click(await screen.findByRole("button", { name: /Choose a project folder/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
@@ -398,6 +403,8 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				trackerIntake: undefined,
+				asWorkspace: false,
 			}),
 		);
 	});
