@@ -113,17 +113,10 @@ func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionW
 func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
 	return f.worktrees[id], nil
 }
-func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionID) error {
-	delete(f.worktrees, id)
-	return nil
-}
 
 type fakeLCM struct {
-	store        *fakeStore
-	completed    int
-	termErr      error
-	termFailures int
-	termAlways   bool
+	store     *fakeStore
+	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 }
@@ -138,13 +131,6 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
-	if l.termErr != nil && l.termAlways {
-		return l.termErr
-	}
-	if l.termErr != nil && l.termFailures > 0 {
-		l.termFailures--
-		return l.termErr
-	}
 	if l.terminated == nil {
 		l.terminated = map[domain.SessionID]int{}
 	}
@@ -158,15 +144,12 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
-	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle map[string]bool
 	aliveErr      error
 	destroyedIDs  []string
-	alive         bool
-	probeErr      error
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -180,17 +163,11 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
-	return r.destroyErr
+	return nil
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
-	if r.probeErr != nil {
-		return false, r.probeErr
-	}
 	if r.aliveErr != nil {
 		return false, r.aliveErr
-	}
-	if r.alive {
-		return true, nil
 	}
 	return r.aliveByHandle[handle.ID], nil
 }
@@ -226,7 +203,6 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 // session manager resolved and forwarded a project's agent config.
 type recordingAgent struct {
 	fakeAgent
-	delivery    ports.PromptDeliveryStrategy
 	lastConfig  ports.AgentConfig
 	lastLaunch  ports.LaunchConfig
 	lastRestore ports.RestoreConfig
@@ -236,13 +212,6 @@ func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCon
 	a.lastConfig = cfg.Config
 	a.lastLaunch = cfg
 	return []string{"launch"}, nil
-}
-
-func (a *recordingAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if a.delivery != "" {
-		return a.delivery, nil
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
@@ -601,128 +570,6 @@ func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
 		t.Fatalf("kill err = %v, want workspace error surfaced", err)
 	}
 }
-
-func TestRetireOrchestrator_TerminatesOldOrchestratorWhenDestroySucceeds(t *testing.T) {
-	m, st, rt, ws := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
-		t.Fatalf("RetireOrchestrator: %v", err)
-	}
-	if rt.destroyed != 1 || ws.destroyed != 1 {
-		t.Fatalf("destroyed runtime/workspace = %d/%d, want 1/1", rt.destroyed, ws.destroyed)
-	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatalf("retired session = %+v, want terminated", st.sessions["mer-1"])
-	}
-}
-
-func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
-	m, st, rt, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	lcm := &fakeLCM{store: st}
-	m.lcm = lcm
-	rt.alive = true
-	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetiredSessionStillAlive) {
-		t.Fatalf("RetireOrchestrator err = %v, want ErrRetiredSessionStillAlive", err)
-	}
-	if rt.destroyed != 1 {
-		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
-	}
-	if lcm.terminated["mer-1"] != 1 {
-		t.Fatalf("termination records = %d, want 1", lcm.terminated["mer-1"])
-	}
-	if got := st.sessions["mer-1"]; !got.IsTerminated {
-		t.Fatalf("retired session = %+v, want terminated after destroy intent", got)
-	}
-}
-
-func TestRetireOrchestrator_TerminatesWhenProbeFailsAfterDestroy(t *testing.T) {
-	m, st, rt, ws := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	rt.probeErr = errors.New("list sessions failed")
-	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
-		t.Fatalf("RetireOrchestrator: %v", err)
-	}
-	if ws.destroyed != 1 {
-		t.Fatalf("workspace destroy attempts = %d, want 1", ws.destroyed)
-	}
-	if got := st.sessions["mer-1"]; !got.IsTerminated {
-		t.Fatalf("retired session = %+v, want terminated despite probe failure after destroy", got)
-	}
-}
-
-func TestRetireOrchestrator_TerminatesWhenWorkspaceDestroyFailsAfterRuntimeDestroy(t *testing.T) {
-	m, st, _, ws := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	ws.destroyErr = errors.New("cleanup failed")
-	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
-		t.Fatalf("RetireOrchestrator: %v", err)
-	}
-	if got := st.sessions["mer-1"]; !got.IsTerminated {
-		t.Fatalf("retired session = %+v, want terminated despite workspace cleanup failure", got)
-	}
-}
-
-func TestRetireOrchestrator_ReturnsRecoveryErrorWhenTerminationRecordFailsAfterDestroy(t *testing.T) {
-	m, st, rt, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	m.lcm = &fakeLCM{store: st, termErr: errors.New("db unavailable"), termAlways: true}
-	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetireTerminationUnrecorded) {
-		t.Fatalf("RetireOrchestrator err = %v, want ErrRetireTerminationUnrecorded", err)
-	}
-	if rt.destroyed != 1 {
-		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
-	}
-	if got := st.sessions["mer-1"]; got.IsTerminated {
-		t.Fatalf("retired session = %+v, want active because termination record failed", got)
-	}
-}
-
-func TestRetireOrchestrator_RetriesTransientTerminationRecordFailure(t *testing.T) {
-	m, st, rt, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	m.lcm = &fakeLCM{store: st, termErr: errors.New("database locked"), termFailures: 1}
-	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
-		t.Fatalf("RetireOrchestrator: %v", err)
-	}
-	if rt.destroyed != 1 {
-		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
-	}
-	if got := st.sessions["mer-1"]; !got.IsTerminated {
-		t.Fatalf("retired session = %+v, want terminated after retry", got)
-	}
-}
-
-func TestRetireOrchestrator_ReturnsIncompleteHandleWhenHandleMissing(t *testing.T) {
-	m, st, _, _ := newManager()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
-	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
-		t.Fatalf("RetireOrchestrator err = %v, want ErrIncompleteHandle", err)
-	}
-}
-
-// TestKill_DeletesRestoreMarker covers issue #2319 (a): a user kill is explicit
-// terminal intent and must delete the session_worktrees "shutdown-saved" marker.
-// A session that carried a marker (e.g. it survived a prior reopen cycle) and is
-// then killed must not keep that marker, or the next boot's RestoreAll would
-// resurrect it.
-func TestKill_DeletesRestoreMarker(t *testing.T) {
-	m, st, _, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	// The session carries a leftover shutdown-saved marker from a prior cycle.
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("kill must delete the restore marker, got %d rows", len(rows))
-	}
-}
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
@@ -917,35 +764,6 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
 		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
-	}
-}
-
-func TestSpawnWorker_DeliversPromptAfterStartWhenAdapterRequestsIt(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	agent := &recordingAgent{delivery: ports.PromptDeliveryAfterStart}
-	rt := &fakeRuntime{}
-	ws := &fakeWorkspace{}
-	msg := &fakeMessenger{}
-	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: msg, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
-
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if agent.lastLaunch.Prompt != "" {
-		t.Fatalf("launch prompt = %q, want empty for after-start delivery", agent.lastLaunch.Prompt)
-	}
-	if got := st.sessions[s.ID].Metadata.Prompt; got != "do it" {
-		t.Fatalf("metadata prompt = %q, want preserved prompt", got)
-	}
-	if len(msg.msgs) != 1 || msg.msgs[0] != "do it" {
-		t.Fatalf("sent messages = %#v, want prompt delivered once after start", msg.msgs)
-	}
-	if rt.destroyed != 0 {
-		t.Fatalf("runtime destroyed = %d, want 0", rt.destroyed)
 	}
 }
 
@@ -1757,81 +1575,6 @@ func TestRestoreAll_SkipsSessionsKilledBeforeShutdown(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Error("user-killed session must remain terminated")
-	}
-}
-
-// TestRestoreAll_DeletesMarkerAfterRelaunch covers issue #2319 (b): the
-// shutdown-saved marker is one-shot. After RestoreAll relaunches a session, its
-// session_worktrees marker is deleted, so a second RestoreAll (with no fresh
-// marker) does NOT relaunch it again.
-func TestRestoreAll_DeletesMarkerAfterRelaunch(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("RestoreAll must delete the one-shot marker, got %d rows", len(rows))
-	}
-}
-
-// TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot covers issue #2319 (c),
-// the killed-session-resurrection scenario. A terminated session WITH a marker
-// is relaunched exactly once; on a second RestoreAll (no new marker) it stays
-// terminated and is not relaunched again.
-func TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	// First boot: marker present, session relaunches once.
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("first RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-
-	// Simulate the user killing the relaunched session before the next quit, so
-	// it has no fresh marker, then a second boot.
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("second RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("killed session must NOT be resurrected on second boot, runtime.Create total = %d, want 1", rt.created)
-	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Error("killed session must remain terminated after second RestoreAll")
 	}
 }
 

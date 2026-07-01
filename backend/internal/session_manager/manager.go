@@ -42,18 +42,6 @@ var (
 	// with the system prompt only). Workers without a task and without a native
 	// session id have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
-	// ErrSessionStillAlive means teardown could not prove the runtime is gone
-	// even after destroy was attempted.
-	ErrSessionStillAlive = errors.New("session: runtime still alive after destroy")
-	// ErrRetiredSessionStillAlive means replacement cutover durably marked the
-	// old orchestrator terminated, but its runtime still appeared alive after
-	// destroy. Recovery tooling must retry the runtime kill because active-list
-	// scans will no longer surface the terminated row.
-	ErrRetiredSessionStillAlive = errors.New("session: terminated runtime still alive after destroy")
-	// ErrRetireTerminationUnrecorded means replacement cutover destroyed the old
-	// orchestrator runtime but could not update durable session state. Callers
-	// must not claim the previous orchestrator was preserved.
-	ErrRetireTerminationUnrecorded = errors.New("session: runtime destroyed but termination was not recorded")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -63,12 +51,6 @@ const (
 	EnvIssueID   = "AO_ISSUE_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
-	// Replacement cutover gets one retry after the initial destroy attempt
-	// before the old orchestrator retirement fails hard.
-	orchestratorRetireAttempts = 2
-	// A transient SQLite lock after runtime destroy should be retried before
-	// surfacing recovery-required state to the user.
-	orchestratorTerminationRecordAttempts = 3
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -114,8 +96,6 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
-	// DeleteSessionWorktrees clears the "shutdown-saved" restore marker.
-	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -277,7 +257,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	launchCfg := ports.LaunchConfig{
+	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
@@ -285,17 +265,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		IssueID:       string(cfg.IssueID),
 		Config:        agentConfig,
 		Permissions:   agentConfig.Permissions,
-	}
-	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
-	if err != nil {
-		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
-	}
-	if delivery == ports.PromptDeliveryAfterStart {
-		launchCfg.Prompt = ""
-	}
-	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
+	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -328,13 +298,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
-	}
-	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
-		if err := m.messenger.Send(ctx, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.markSpawnFailedTerminated(ctx, id)
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
-		}
 	}
 	return m.getRecord(ctx, id)
 }
@@ -485,12 +448,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 
-	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
-	// killed session (#2319). Best-effort: teardown below still matters.
-	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
-	}
-
 	// Only tear down what exists. A session may have lost its handle after a
 	// crash or never acquired one if spawn failed partway.
 	if handle.ID != "" {
@@ -509,70 +466,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		freed = true
 	}
 	return freed, nil
-}
-
-// RetireOrchestrator tears down an old orchestrator during replacement cutover.
-// Once runtime destroy succeeds, terminal intent is recorded before fallible
-// probe/workspace cleanup so the old orchestrator is not reported as preserved.
-func (m *Manager) RetireOrchestrator(ctx context.Context, id domain.SessionID) error {
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil {
-		return fmt.Errorf("retire %s: %w", id, err)
-	}
-	if !ok || rec.IsTerminated {
-		return nil
-	}
-	handle := runtimeHandle(rec.Metadata)
-	ws := workspaceInfo(rec)
-	if handle.ID == "" || ws.Path == "" {
-		return fmt.Errorf("retire %s: %w", id, ErrIncompleteHandle)
-	}
-	for attempt := 0; attempt < orchestratorRetireAttempts; attempt++ {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			if attempt == orchestratorRetireAttempts-1 {
-				return fmt.Errorf("retire %s: destroy: %w", id, err)
-			}
-			continue
-		}
-		if err := m.recordRetiredTermination(ctx, id); err != nil {
-			return err
-		}
-		alive, err := m.runtime.IsAlive(ctx, handle)
-		if err != nil {
-			m.logger.Warn("session manager: old orchestrator probe failed after runtime destroy",
-				"session", id, "err", err)
-		} else if alive {
-			return fmt.Errorf("retire %s: %w", id, ErrRetiredSessionStillAlive)
-		}
-		if err := m.workspace.Destroy(ctx, ws); err != nil && !errors.Is(err, ports.ErrWorkspaceDirty) {
-			m.logger.Warn("session manager: old orchestrator workspace destroy failed after runtime exit",
-				"session", id, "err", err)
-		}
-		return nil
-	}
-	return fmt.Errorf("retire %s: %w", id, ErrSessionStillAlive)
-}
-
-func (m *Manager) recordRetiredTermination(ctx context.Context, id domain.SessionID) error {
-	var lastErr error
-	for attempt := 0; attempt < orchestratorTerminationRecordAttempts; attempt++ {
-		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-			lastErr = err
-			if attempt == orchestratorTerminationRecordAttempts-1 {
-				break
-			}
-			timer := time.NewTimer(25 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return fmt.Errorf("retire %s: %w: %w", id, ErrRetireTerminationUnrecorded, ctx.Err())
-			case <-timer.C:
-			}
-			continue
-		}
-		return nil
-	}
-	return fmt.Errorf("retire %s: %w: %w", id, ErrRetireTerminationUnrecorded, lastErr)
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
@@ -947,12 +840,6 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			} else {
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
-		}
-
-		// One-shot: drop the consumed marker so it never outlives one restart
-		// (#2319). A still-live session re-acquires it at the next quit.
-		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-			m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
 	return nil

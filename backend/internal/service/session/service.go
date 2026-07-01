@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -46,7 +45,6 @@ type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-	RetireOrchestrator(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -83,14 +81,12 @@ type scmProvider interface {
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager             commander
-	store               Store
-	prClaimer           ports.PRClaimer
-	scm                 scmProvider
-	clock               func() time.Time
-	telemetry           ports.EventSink
-	orchestratorLocksMu sync.Mutex
-	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	manager   commander
+	store     Store
+	prClaimer ports.PRClaimer
+	scm       scmProvider
+	clock     func() time.Time
+	telemetry ports.EventSink
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -262,73 +258,33 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
-// true it performs a replacement cutover: start the new orchestrator first,
-// then retire any older active orchestrators for that project so a failed
-// replacement never causes downtime. When clean is false it is idempotent: if
-// an active orchestrator already exists it is returned as-is. This business rule
+// true it first tears down any active orchestrator(s) for that project so the new
+// one is the only live coordinator. When clean is false it is idempotent: if an
+// active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	unlock := s.lockOrchestratorProject(projectID)
-	defer unlock()
-
-	if _, err := s.requireProject(ctx, projectID); err != nil {
-		return domain.Session{}, err
-	}
 	active := true
-	existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
-	if err != nil {
-		return domain.Session{}, err
-	}
-	if !clean && len(existing) > 0 {
-		return existing[0], nil
-	}
-	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
-	if err != nil || !clean {
-		return sess, err
-	}
-	for _, orch := range existing {
-		if orch.ID == sess.ID {
-			continue
+	if clean {
+		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		if err != nil {
+			return domain.Session{}, err
 		}
-		if err := s.manager.RetireOrchestrator(ctx, orch.ID); err != nil {
-			if errors.Is(err, sessionmanager.ErrRetiredSessionStillAlive) {
-				return domain.Session{}, apierr.Conflict(
-					"ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
-					fmt.Sprintf("Replacement orchestrator started and previous orchestrator %s was marked terminated, but its runtime still appeared alive after destroy", orch.ID),
-					map[string]any{"oldOrchestratorId": orch.ID},
-				)
+		for _, orch := range existing {
+			if _, err := s.Kill(ctx, orch.ID); err != nil {
+				return domain.Session{}, err
 			}
-			if errors.Is(err, sessionmanager.ErrRetireTerminationUnrecorded) {
-				return domain.Session{}, apierr.Conflict(
-					"ORCHESTRATOR_REPLACEMENT_RECOVERY_REQUIRED",
-					fmt.Sprintf("Replacement orchestrator started and previous orchestrator %s was stopped, but its terminated state could not be recorded", orch.ID),
-					map[string]any{"oldOrchestratorId": orch.ID},
-				)
-			}
-			return domain.Session{}, apierr.Conflict(
-				"ORCHESTRATOR_REPLACEMENT_INCOMPLETE",
-				fmt.Sprintf("Replacement orchestrator started, but previous orchestrator %s could not be retired", orch.ID),
-				map[string]any{"oldOrchestratorId": orch.ID},
-			)
+		}
+	} else {
+		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
+		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if len(existing) > 0 {
+			return existing[0], nil
 		}
 	}
-	return sess, nil
-}
-
-func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
-	s.orchestratorLocksMu.Lock()
-	if s.orchestratorLocks == nil {
-		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
-	}
-	projectLock := s.orchestratorLocks[projectID]
-	if projectLock == nil {
-		projectLock = &sync.Mutex{}
-		s.orchestratorLocks[projectID] = projectLock
-	}
-	s.orchestratorLocksMu.Unlock()
-
-	projectLock.Lock()
-	return projectLock.Unlock
+	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
