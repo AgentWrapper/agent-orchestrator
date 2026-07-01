@@ -514,10 +514,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-		return false, fmt.Errorf("kill %s: delete restore marker: %w", id, err)
-	}
-
 	// Only tear down what exists. A session may have lost its handle after a
 	// crash or never acquired one if spawn failed partway.
 	if handle.ID != "" {
@@ -534,6 +530,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
 		}
 		freed = true
+	}
+	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
+	// killed session (#2319). For workspace projects this must happen after
+	// teardown reads the rows; dirty-preserved rows return above and are left as
+	// non-restorable inventory.
+	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 	}
 	return freed, nil
 }

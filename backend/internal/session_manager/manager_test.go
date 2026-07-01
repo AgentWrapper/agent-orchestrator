@@ -660,8 +660,8 @@ func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.
 	if ws.destroyed != 0 {
 		t.Fatalf("single-workspace destroy calls = %d, want 0", ws.destroyed)
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("orphaned spawn should be terminated")
+	if _, present := st.sessions["mer-1"]; present {
+		t.Fatal("seed row should be deleted after runtime creation failure")
 	}
 }
 
@@ -1935,6 +1935,81 @@ func TestRestoreAll_SkipsSessionsKilledBeforeShutdown(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Error("user-killed session must remain terminated")
+	}
+}
+
+// TestRestoreAll_DeletesMarkerAfterRelaunch covers issue #2319 (b): the
+// shutdown-saved marker is one-shot. After RestoreAll relaunches a session, its
+// session_worktrees marker is deleted, so a second RestoreAll (with no fresh
+// marker) does NOT relaunch it again.
+func TestRestoreAll_DeletesMarkerAfterRelaunch(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__", State: "removed"}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
+	}
+	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("RestoreAll must delete the one-shot marker, got %d rows", len(rows))
+	}
+}
+
+// TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot covers issue #2319 (c),
+// the killed-session-resurrection scenario. A terminated session WITH a marker
+// is relaunched exactly once; on a second RestoreAll (no new marker) it stays
+// terminated and is not relaunched again.
+func TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__", State: "removed"}}
+
+	// First boot: marker present, session relaunches once.
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("first RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
+	}
+
+	// Simulate the user killing the relaunched session before the next quit, so
+	// it has no fresh marker, then a second boot.
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("kill err = %v", err)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("second RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("killed session must NOT be resurrected on second boot, runtime.Create total = %d, want 1", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("killed session must remain terminated after second RestoreAll")
 	}
 }
 
