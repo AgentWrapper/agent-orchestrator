@@ -3,6 +3,8 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -64,6 +66,40 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 	}
 }
 
+func TestBashAllowlistCoversPromptRequiredCommands(t *testing.T) {
+	bash := reviewerConfigBashPolicy(t)
+
+	tests := []struct {
+		name    string
+		command string
+		allowed bool
+	}{
+		{
+			name:    "github review creation",
+			command: `printf '%s' '{ "event": "COMMENT", "body": "x" }' | gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'`,
+			allowed: true,
+		},
+		{
+			name:    "local review submit",
+			command: `printf '%s' '{ "reviews": [] }' | ao review submit --session sess-1 --reviews -`,
+			allowed: true,
+		},
+		{
+			name:    "arbitrary shell command",
+			command: `rm -rf /`,
+			allowed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bashAllowsCommand(t, bash, tt.command); got != tt.allowed {
+				t.Fatalf("bashAllowsCommand(%q) = %v, want %v", tt.command, got, tt.allowed)
+			}
+		})
+	}
+}
+
 func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	got, err := (&Reviewer{}).ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "next review"})
 	if err != nil {
@@ -72,4 +108,49 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	if got != "next review" {
 		t.Fatalf("message = %q", got)
 	}
+}
+
+func reviewerConfigBashPolicy(t *testing.T) map[string]string {
+	t.Helper()
+
+	var config struct {
+		Permission struct {
+			Bash map[string]string `json:"bash"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(reviewerConfig), &config); err != nil {
+		t.Fatalf("reviewerConfig is invalid JSON: %v", err)
+	}
+	if len(config.Permission.Bash) == 0 {
+		t.Fatal("reviewerConfig permission.bash is empty")
+	}
+	return config.Permission.Bash
+}
+
+func bashAllowsCommand(t *testing.T, bash map[string]string, command string) bool {
+	t.Helper()
+
+	for pattern, action := range bash {
+		if action == "deny" {
+			continue
+		}
+		if simplePicomatchGlobMatches(t, pattern, command) {
+			return true
+		}
+	}
+	return false
+}
+
+func simplePicomatchGlobMatches(t *testing.T, pattern, command string) bool {
+	t.Helper()
+
+	parts := strings.Split(pattern, "*")
+	for i, part := range parts {
+		parts[i] = regexp.QuoteMeta(part)
+	}
+	re, err := regexp.Compile("^" + strings.Join(parts, ".*") + "$")
+	if err != nil {
+		t.Fatalf("compile pattern %q: %v", pattern, err)
+	}
+	return re.MatchString(command)
 }
