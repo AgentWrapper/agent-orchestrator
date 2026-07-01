@@ -865,6 +865,65 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 	}
 }
 
+func TestActiveOrchestratorSessionIDPrefersNewestActive(t *testing.T) {
+	m, st, _, _ := newManager()
+	older := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	st.sessions["mer-old"] = domain.SessionRecord{ID: "mer-old", ProjectID: "mer", Kind: domain.KindOrchestrator, CreatedAt: older, UpdatedAt: older}
+	st.sessions["mer-new"] = domain.SessionRecord{ID: "mer-new", ProjectID: "mer", Kind: domain.KindOrchestrator, CreatedAt: newer, UpdatedAt: newer}
+	st.sessions["mer-dead-newer"] = domain.SessionRecord{ID: "mer-dead-newer", ProjectID: "mer", Kind: domain.KindOrchestrator, CreatedAt: newer.Add(time.Hour), IsTerminated: true}
+
+	got, ok, err := m.activeOrchestratorSessionID(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("activeOrchestratorSessionID: %v", err)
+	}
+	if !ok || got != "mer-new" {
+		t.Fatalf("activeOrchestratorSessionID = %q, %v; want mer-new, true", got, ok)
+	}
+}
+
+func TestReconcileRetiresStaleActiveOrchestrators(t *testing.T) {
+	m, st, rt, ws := newManager()
+	older := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	st.sessions["mer-old"] = domain.SessionRecord{
+		ID:        "mer-old",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		CreatedAt: older,
+		UpdatedAt: older,
+		Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator", WorkspacePath: "/ws/mer-old", RuntimeHandleID: "old-handle"},
+	}
+	st.sessions["mer-new"] = domain.SessionRecord{
+		ID:        "mer-new",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		CreatedAt: newer,
+		UpdatedAt: newer,
+		Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator", WorkspacePath: "/ws/mer-new", RuntimeHandleID: "new-handle"},
+	}
+	rt.aliveByHandle = map[string]bool{"new-handle": true, "old-handle": true}
+
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !st.sessions["mer-old"].IsTerminated {
+		t.Fatal("older duplicate orchestrator should be terminated on boot")
+	}
+	if st.sessions["mer-new"].IsTerminated {
+		t.Fatal("newest orchestrator should remain active")
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "old-handle" {
+		t.Fatalf("destroyed runtimes = %v, want only old-handle", rt.destroyedIDs)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace Destroy calls = %d, want 1 for stale orchestrator", ws.destroyed)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime Create calls = %d, want 0 (stale duplicate must not be restored)", rt.created)
+	}
+}
+
 // TestRestore_OrchestratorRederivesSystemPrompt: the system prompt is derived,
 // not persisted, so a restored orchestrator must get its role instructions
 // recomputed and handed to the agent's native resume command.

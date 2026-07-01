@@ -16,7 +16,8 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 import {
 	attentionZone,
-	isOrchestratorSession,
+	findProjectOrchestrator,
+	orchestratorNeedsRestart,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -410,18 +411,19 @@ function ProjectItem({
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
-	const orchestrator = workspace.sessions.find((s) => isOrchestratorSession(s) && sessionIsActive(s));
+	const orchestrator = findProjectOrchestrator([workspace], workspace.id);
+	const restartNeeded = orchestratorNeedsRestart(workspace, orchestrator);
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
 	const openOrchestrator = async () => {
-		if (orchestrator) {
+		if (orchestrator && !restartNeeded) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(workspace.id);
+			const sessionId = await spawnOrchestrator(workspace.id, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
@@ -523,7 +525,13 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
+							aria-label={
+								restartNeeded
+									? `Restart ${workspace.name} orchestrator`
+									: orchestrator
+										? `Open ${workspace.name} orchestrator`
+										: `Spawn ${workspace.name} orchestrator`
+							}
 							className={HOVER_ACTION_CLASS}
 							disabled={isSpawning}
 							onClick={() => void openOrchestrator()}
@@ -533,7 +541,15 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+						{isSpawning
+							? restartNeeded
+								? "Restarting…"
+								: "Spawning…"
+							: restartNeeded
+								? "Restart needed"
+								: orchestrator
+									? "Orchestrator"
+									: "Spawn orchestrator"}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>

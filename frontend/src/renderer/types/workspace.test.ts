@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
 	findProjectOrchestrator,
+	orchestratorNeedsRestart,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
@@ -134,6 +135,24 @@ describe("findProjectOrchestrator", () => {
 	it("returns undefined for an unknown project", () => {
 		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working" });
 		expect(findProjectOrchestrator([workspaceWith([live])], "other")).toBeUndefined();
+	});
+});
+
+describe("orchestratorNeedsRestart", () => {
+	function workspaceWith(orchestratorAgent?: WorkspaceSummary["orchestratorAgent"]): WorkspaceSummary {
+		return { id: "skills", name: "skills", path: "/tmp/skills", orchestratorAgent, sessions: [] };
+	}
+
+	it("is true when the running orchestrator harness differs from project config", () => {
+		const orchestrator = sessionWith({ kind: "orchestrator", provider: "claude-code" });
+		expect(orchestratorNeedsRestart(workspaceWith("codex"), orchestrator)).toBe(true);
+	});
+
+	it("is false when the harness matches or the config is unavailable", () => {
+		const orchestrator = sessionWith({ kind: "orchestrator", provider: "claude-code" });
+		expect(orchestratorNeedsRestart(workspaceWith("claude-code"), orchestrator)).toBe(false);
+		expect(orchestratorNeedsRestart(workspaceWith(), orchestrator)).toBe(false);
+		expect(orchestratorNeedsRestart(workspaceWith("codex"), undefined)).toBe(false);
 	});
 });
 

@@ -4,7 +4,14 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import {
+	type AttentionZone,
+	type WorkspaceSession,
+	attentionZone,
+	findProjectOrchestrator,
+	orchestratorNeedsRestart,
+	workerSessions,
+} from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { OrchestratorIcon } from "./icons";
@@ -72,9 +79,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
-	const orchestrator = projectId
-		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
-		: undefined;
+	const workspace = projectId ? workspaces[0] : undefined;
+	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const restartNeeded = workspace ? orchestratorNeedsRestart(workspace, orchestrator) : false;
+	const orchestratorPendingLabel = restartNeeded ? "Restarting..." : "Spawning...";
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 
@@ -96,7 +104,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
-		if (orchestrator) {
+		if (orchestrator && !restartNeeded) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
@@ -105,7 +113,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -137,14 +145,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				New task
 			</button>
 			<button
-				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				aria-label={restartNeeded ? "Restart Orchestrator" : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 				className="dashboard-app-header__primary-btn"
 				disabled={isSpawning}
 				onClick={() => void openOrchestrator()}
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				{isSpawning ? orchestratorPendingLabel : restartNeeded ? "Restart Orchestrator" : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 			</button>
 		</>
 	) : undefined;

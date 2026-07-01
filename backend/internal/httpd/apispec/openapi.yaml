@@ -2067,6 +2067,8 @@ components:
           type: string
         name:
           type: string
+        orchestratorAgent:
+          type: string
         path:
           type: string
         resolveError:

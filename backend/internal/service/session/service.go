@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -92,6 +93,9 @@ type Service struct {
 	// the no_signal downgrade: a hook-less harness staying silent forever is
 	// normal, not a broken pipeline. nil means "unknown": never downgrade.
 	signalCapable func(domain.AgentHarness) bool
+
+	orchestratorLocksMu sync.Mutex
+	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -131,6 +135,15 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	// Worker spawn builds coordination instructions from the project's active
+	// orchestrator. Serialize project spawns with orchestrator replacement so a
+	// worker does not target an orchestrator that is being retired.
+	unlock := s.lockOrchestratorProject(cfg.ProjectID)
+	defer unlock()
+	return s.spawn(ctx, cfg)
+}
+
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, err
@@ -263,6 +276,9 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	unlock := s.lockOrchestratorProject(projectID)
+	defer unlock()
+
 	active := true
 	if clean {
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -281,10 +297,46 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return domain.Session{}, err
 		}
 		if len(existing) > 0 {
-			return existing[0], nil
+			return newestSession(existing), nil
 		}
 	}
-	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+}
+
+func newestSession(sessions []domain.Session) domain.Session {
+	newest := sessions[0]
+	for _, sess := range sessions[1:] {
+		if sessionNewer(sess.SessionRecord, newest.SessionRecord) {
+			newest = sess
+		}
+	}
+	return newest
+}
+
+func sessionNewer(a, b domain.SessionRecord) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return a.UpdatedAt.After(b.UpdatedAt)
+	}
+	return string(a.ID) > string(b.ID)
+}
+
+func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
+	s.orchestratorLocksMu.Lock()
+	if s.orchestratorLocks == nil {
+		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
+	}
+	mu := s.orchestratorLocks[projectID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.orchestratorLocks[projectID] = mu
+	}
+	s.orchestratorLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.

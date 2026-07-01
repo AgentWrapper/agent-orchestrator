@@ -297,6 +297,7 @@ export type WorkspaceSummary = {
 	id: string;
 	name: string;
 	path: string;
+	orchestratorAgent?: AgentProvider;
 	type?: "main" | "worktree";
 	accentColor?: string;
 	diff?: {
@@ -305,6 +306,11 @@ export type WorkspaceSummary = {
 	};
 	sessions: WorkspaceSession[];
 };
+
+export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {
+	if (!orchestrator || !workspace.orchestratorAgent) return false;
+	return orchestrator.provider !== workspace.orchestratorAgent;
+}
 
 export function toAgentProvider(provider?: string): AgentProvider {
 	switch (provider) {

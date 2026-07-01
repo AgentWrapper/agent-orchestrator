@@ -6,6 +6,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
+	orchestratorNeedsRestart,
 	sessionIsActive,
 	workerDisplayStatus,
 	type WorkerDisplayStatus,
@@ -74,6 +75,7 @@ export function ShellTopbar() {
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const restartNeeded = project ? orchestratorNeedsRestart(project, orchestrator) : false;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
@@ -101,7 +103,7 @@ export function ShellTopbar() {
 			project_id: projectId,
 		});
 		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
-		if (orchestrator) {
+		if (orchestrator && !restartNeeded) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
@@ -110,7 +112,7 @@ export function ShellTopbar() {
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId);
+			const sessionId = await spawnOrchestrator(projectId, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -195,7 +197,7 @@ export function ShellTopbar() {
 						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
 						{!isOrchestrator && (
 							<button
-								aria-label="Open orchestrator"
+								aria-label={restartNeeded ? "Restart orchestrator" : "Open orchestrator"}
 								className="dashboard-app-header__primary-btn dashboard-app-header__primary-btn--compact"
 								disabled={isSpawning}
 								onClick={() => void openOrchestrator()}
@@ -203,7 +205,7 @@ export function ShellTopbar() {
 								type="button"
 							>
 								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning ? "Spawning…" : "Orchestrator"}
+								{isSpawning ? (restartNeeded ? "Restarting…" : "Spawning…") : restartNeeded ? "Restart" : "Orchestrator"}
 							</button>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}

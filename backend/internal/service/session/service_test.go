@@ -207,9 +207,17 @@ type fakeCommander struct {
 	spawnErr        error
 	spawned         bool
 	killsAtSpawn    int
+	spawnEntered    chan struct{}
+	spawnBlock      chan struct{}
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	if f.spawnEntered != nil {
+		f.spawnEntered <- struct{}{}
+	}
+	if f.spawnBlock != nil {
+		<-f.spawnBlock
+	}
 	if f.spawnErr != nil {
 		return domain.SessionRecord{}, f.spawnErr
 	}
@@ -315,6 +323,98 @@ func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T)
 	}
 	if !fc.spawned || fc.killsAtSpawn != 2 {
 		t.Fatalf("spawn must run after both kills: spawned=%v killsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+}
+
+func TestSpawnOrchestratorCleanSerializesReplacementPerProject(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+
+	fc := &fakeCommander{
+		spawnEntered: make(chan struct{}, 2),
+		spawnBlock:   make(chan struct{}),
+	}
+	svc := &Service{manager: fc, store: st}
+
+	errs := make(chan error, 2)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		errs <- err
+	}()
+
+	<-fc.spawnEntered
+
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		errs <- err
+	}()
+
+	select {
+	case <-fc.spawnEntered:
+		t.Fatal("second replacement reached spawn before the first released the orchestrator lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	fc.spawnBlock <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("first SpawnOrchestrator: %v", err)
+	}
+
+	select {
+	case <-fc.spawnEntered:
+	case <-time.After(time.Second):
+		t.Fatal("second replacement did not reach spawn after the first released the orchestrator lock")
+	}
+	fc.spawnBlock <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("second SpawnOrchestrator: %v", err)
+	}
+}
+
+func TestWorkerSpawnWaitsDuringOrchestratorReplacement(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+
+	fc := &fakeCommander{
+		spawnEntered: make(chan struct{}, 2),
+		spawnBlock:   make(chan struct{}),
+	}
+	svc := &Service{manager: fc, store: st}
+
+	errs := make(chan error, 2)
+	go func() {
+		_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+		errs <- err
+	}()
+
+	<-fc.spawnEntered
+
+	go func() {
+		_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		errs <- err
+	}()
+
+	select {
+	case <-fc.spawnEntered:
+		t.Fatal("worker spawn reached manager while orchestrator replacement was still in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	fc.spawnBlock <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("replacement SpawnOrchestrator: %v", err)
+	}
+
+	select {
+	case <-fc.spawnEntered:
+	case <-time.After(time.Second):
+		t.Fatal("worker spawn did not continue after orchestrator replacement released the lock")
+	}
+	fc.spawnBlock <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatalf("worker Spawn: %v", err)
 	}
 }
 
@@ -592,6 +692,29 @@ func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	// Exactly one session in the store (no duplicate).
 	if len(st.sessions) != 1 {
 		t.Fatalf("session count = %d, want 1 (no duplicate)", len(st.sessions))
+	}
+}
+
+func TestSpawnOrchestratorNoCleanReturnsNewestActiveOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	older := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	st.sessions["mer-old"] = domain.SessionRecord{ID: "mer-old", ProjectID: "mer", Kind: domain.KindOrchestrator, CreatedAt: older, UpdatedAt: older}
+	st.sessions["mer-new"] = domain.SessionRecord{ID: "mer-new", ProjectID: "mer", Kind: domain.KindOrchestrator, CreatedAt: newer, UpdatedAt: newer}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	if err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if got.ID != "mer-new" {
+		t.Fatalf("returned id = %q, want newest active orchestrator mer-new", got.ID)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be called when active orchestrators already exist")
 	}
 }
 

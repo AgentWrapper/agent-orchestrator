@@ -9,7 +9,11 @@ type Summary struct {
 	Path          string             `json:"path"`
 	Kind          domain.ProjectKind `json:"kind"`
 	SessionPrefix string             `json:"sessionPrefix"`
-	ResolveError  string             `json:"resolveError,omitempty"`
+	// OrchestratorAgent is the configured default harness for orchestrator
+	// sessions. It lets thin clients detect when a live orchestrator needs to be
+	// restarted after a config change without fetching every project detail.
+	OrchestratorAgent domain.AgentHarness `json:"orchestratorAgent,omitempty"`
+	ResolveError      string              `json:"resolveError,omitempty"`
 }
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.

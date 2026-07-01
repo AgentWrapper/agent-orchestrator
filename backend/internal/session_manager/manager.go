@@ -738,8 +738,12 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
 	}
+	retiredOrchestrators := m.retireStaleActiveOrchestrators(ctx, recs)
 	for _, rec := range recs {
 		if rec.IsTerminated {
+			continue
+		}
+		if retiredOrchestrators[rec.ID] {
 			continue
 		}
 		if err := m.reconcileLive(ctx, rec); err != nil {
@@ -994,12 +998,69 @@ func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domai
 	if err != nil {
 		return "", false, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
+	var newest domain.SessionRecord
+	found := false
 	for _, rec := range recs {
 		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
-			return rec.ID, true, nil
+			if !found || sessionRecordNewer(rec, newest) {
+				newest = rec
+				found = true
+			}
 		}
 	}
-	return "", false, nil
+	if !found {
+		return "", false, nil
+	}
+	return newest.ID, true, nil
+}
+
+func (m *Manager) retireStaleActiveOrchestrators(ctx context.Context, recs []domain.SessionRecord) map[domain.SessionID]bool {
+	byProject := make(map[domain.ProjectID][]domain.SessionRecord)
+	for _, rec := range recs {
+		if rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			byProject[rec.ProjectID] = append(byProject[rec.ProjectID], rec)
+		}
+	}
+	retired := make(map[domain.SessionID]bool)
+	for project, active := range byProject {
+		if len(active) < 2 {
+			continue
+		}
+		newest := active[0]
+		stale := make([]string, 0, len(active)-1)
+		for _, rec := range active[1:] {
+			if sessionRecordNewer(rec, newest) {
+				stale = append(stale, string(newest.ID))
+				newest = rec
+				continue
+			}
+			stale = append(stale, string(rec.ID))
+		}
+		m.logger.Warn("reconcile: multiple active orchestrators; newest is authoritative, cleanup needed",
+			"projectID", project,
+			"activeOrchestratorID", newest.ID,
+			"staleOrchestratorIDs", stale,
+		)
+		for _, id := range stale {
+			sessionID := domain.SessionID(id)
+			if _, err := m.Kill(ctx, sessionID); err != nil {
+				m.logger.Error("reconcile: stale orchestrator retirement failed, skipping", "sessionID", sessionID, "error", err)
+				continue
+			}
+			retired[sessionID] = true
+		}
+	}
+	return retired
+}
+
+func sessionRecordNewer(a, b domain.SessionRecord) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return a.UpdatedAt.After(b.UpdatedAt)
+	}
+	return string(a.ID) > string(b.ID)
 }
 
 // systemPromptGuard is appended to every agent system prompt. The role,
