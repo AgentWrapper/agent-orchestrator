@@ -65,7 +65,7 @@ one), never a bare PATH lookup.
 | Source                   | How to gather                                                                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Discord/Slack thread** | Read full thread. Extract: reporter name, original description (the thread starter, not whoever tagged you), screenshots, follow-ups |
-| **GitHub issue**         | `gh issue view <number> --repo AronPerez/agent-orchestrator --json body,comments`                                                             |
+| **GitHub issue**         | `gh issue view <number> --repo AronPerez/agent-orchestrator --json body,comments`                                                    |
 | **Live observation**     | Pull live state via the daemon: `ao status`, `ao session ls`, `ao session get <id>`                                                  |
 
 ### 2b. Minimum viable report gate
@@ -353,7 +353,7 @@ any priority/confidence stated in the body), root cause summary.
 | **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
 | **Daemon / HTTP API**           | `ao status`, port, daemon.log             | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
 | **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state  | `backend/internal/session_manager/manager.go`                              |
-| **Runtime (tmux)**            | tmux version, `tmux ls`    | `backend/internal/adapters/runtime/`                                       |
+| **Runtime (tmux)**              | tmux version, `tmux ls`                   | `backend/internal/adapters/runtime/`                                       |
 | **Terminal mux**                | Runtime type, shell, attach behavior      | `backend/internal/terminal/`                                               |
 | **Agent harness**               | Harness name + version                    | `backend/internal/adapters/agent/<harness>/`                               |
 | **Storage**                     | DB state, migrations                      | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
