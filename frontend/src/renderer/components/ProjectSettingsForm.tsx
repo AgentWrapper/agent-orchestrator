@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -22,6 +23,12 @@ const PERMISSION_MODE_OPTIONS = [
 ] as const;
 
 const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
+
+// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
+// backend's openapi enum). Adding Linear/Jira later means: the backend enum
+// grows, this form gains a provider <Select> + per-provider scope fields in
+// buildIntake (same save-scrub shape PR #2288/#2289 used), and the intake
+// Card's guard/validation copy stays as-is.
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -67,6 +74,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
+	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -75,8 +83,31 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		intakeEnabled: intake.enabled ?? false,
+		intakeRepo: intake.repo ?? "",
+		intakeLabels: (intake.labels ?? []).join(", "),
+		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [validationError, setValidationError] = useState<string | null>(null);
+	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const intakeLabelList = parseLabels(form.intakeLabels);
+	const intakeNeedsRule = form.intakeEnabled && intakeLabelList.length === 0 && form.intakeAssignee.trim() === "";
+
+	// Only "github" exists today (see PROVIDER_OPTIONS), so the payload always
+	// carries the github scope field. A second provider adds a picker in the
+	// UI plus a scope-switch here — the same save-scrub shape PR #2288/#2289
+	// used for their three-provider version.
+	const buildIntake = (): TrackerIntakeConfig | undefined => {
+		const next: TrackerIntakeConfig = {
+			enabled: form.intakeEnabled || undefined,
+			provider: form.intakeEnabled ? "github" : undefined,
+			repo: form.intakeRepo.trim() || undefined,
+			labels: intakeLabelList.length ? intakeLabelList : undefined,
+			assignee: form.intakeAssignee.trim() || undefined,
+		};
+		return blankToUndefined(next);
+	};
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -94,6 +125,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				trackerIntake: buildIntake(),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -114,6 +146,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			onSubmit={(event) => {
 				event.preventDefault();
 				setSavedAt(null);
+				if (missingRequiredAgent) {
+					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (intakeNeedsRule) {
+					setValidationError("Enabling intake requires at least one label or assignee.");
+					return;
+				}
+				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
@@ -207,10 +248,72 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<p className="text-[12px] leading-5 text-muted-foreground">
+						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
+						sessions; the tracker is not commented on or transitioned.
+					</p>
+					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+						<input
+							type="checkbox"
+							className="h-4 w-4 accent-accent"
+							checked={form.intakeEnabled}
+							onChange={(e) => setForm((f) => ({ ...f, intakeEnabled: e.target.checked }))}
+						/>
+						Enable issue intake
+					</label>
+					{form.intakeEnabled && (
+						<>
+							<Field label="Repository" htmlFor="intakeRepo">
+								<input
+									id="intakeRepo"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeRepo}
+									onChange={(e) => setForm((f) => ({ ...f, intakeRepo: e.target.value }))}
+									placeholder="owner/repo (defaults to git origin)"
+								/>
+							</Field>
+							<Field label="Labels" htmlFor="intakeLabels">
+								<input
+									id="intakeLabels"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeLabels}
+									onChange={(e) => setForm((f) => ({ ...f, intakeLabels: e.target.value }))}
+									placeholder="comma-separated, e.g. agent-ready, bug"
+								/>
+							</Field>
+							<Field label="Assignee" htmlFor="intakeAssignee">
+								<input
+									id="intakeAssignee"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeAssignee}
+									onChange={(e) => setForm((f) => ({ ...f, intakeAssignee: e.target.value }))}
+									placeholder="github login, or * for any"
+								/>
+							</Field>
+							{intakeNeedsRule && (
+								<p className="text-[12px] leading-5 text-error">
+									Enabling intake requires at least one label or assignee.
+								</p>
+							)}
+							<p className="text-[11px] leading-5 text-muted-foreground">
+								Reads credentials from <span className="font-mono">AO_GITHUB_TOKEN, or `gh auth token`</span>. Restart
+								the daemon after setting.
+							</p>
+						</>
+					)}
+				</CardContent>
+			</Card>
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
+				{validationError && <span className="text-[12px] text-error">{validationError}</span>}
 				{mutation.isError && (
 					<span className="text-[12px] text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
@@ -300,4 +403,11 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 // rather than an empty {} the daemon would persist.
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
+}
+
+function parseLabels(value: string): string[] {
+	return value
+		.split(",")
+		.map((label) => label.trim())
+		.filter((label) => label.length > 0);
 }

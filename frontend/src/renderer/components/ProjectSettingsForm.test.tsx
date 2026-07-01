@@ -239,4 +239,76 @@ describe("ProjectSettingsForm", () => {
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	});
+
+	it("saves GitHub tracker intake settings", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.type(screen.getByLabelText("Repository"), "acme/project-one");
+		await userEvent.type(screen.getByLabelText("Labels"), "agent-ready, bug");
+		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			repo: "acme/project-one",
+			labels: ["agent-ready", "bug"],
+			assignee: "octocat",
+		});
+	});
+
+	it("loads existing tracker intake config and blocks save without a label or assignee", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: { enabled: true, provider: "github", labels: ["agent-ready"] },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("Labels")).toHaveValue("agent-ready");
+		await userEvent.clear(screen.getByLabelText("Labels"));
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Enabling intake requires at least one label or assignee.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
+	});
 });
