@@ -120,6 +120,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+cfg.Addr(), preview.PollerConfig{Logger: log}).Start(ctx)
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
