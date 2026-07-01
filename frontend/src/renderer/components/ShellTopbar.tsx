@@ -205,7 +205,13 @@ export function ShellTopbar() {
 								type="button"
 							>
 								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning ? (restartNeeded ? "Restarting…" : "Spawning…") : restartNeeded ? "Restart" : "Orchestrator"}
+								{isSpawning
+									? restartNeeded
+										? "Restarting…"
+										: "Spawning…"
+									: restartNeeded
+										? "Restart"
+										: "Orchestrator"}
 							</button>
 						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
