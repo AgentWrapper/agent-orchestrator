@@ -263,6 +263,43 @@ describe("useTerminalSession", () => {
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 
+	it("reconnects when a restored session becomes live with the same terminal handle", () => {
+		const muxes: FakeMux[] = [];
+		const createMux = () => {
+			const fake = createFakeMux();
+			muxes.push(fake);
+			return fake.mux;
+		};
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const view = renderHook(
+			({ attachedSession }) => useTerminalSession(attachedSession, { daemonReady: true, createMux }),
+			{ initialProps: { attachedSession: session }, wrapper },
+		);
+		const terminal = createFakeTerminal();
+		act(() => {
+			view.result.current.attach(terminal);
+		});
+		act(() => muxes[0].emitOpened("handle-1"));
+		act(() => muxes[0].emitExit("handle-1"));
+		expect(view.result.current.state).toBe("exited");
+
+		view.rerender({ attachedSession: { ...session, status: "terminated", updatedAt: "terminated" } });
+		expect(muxes).toHaveLength(1);
+
+		view.rerender({ attachedSession: { ...session, status: "idle", updatedAt: "restored" } });
+		expect(view.result.current.state).toBe("connecting");
+		expect(muxes).toHaveLength(2);
+		expect(muxes[0].disposed).toBe(true);
+		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
+		act(() => muxes[1].emitOpened("handle-1"));
+		expect(view.result.current.state).toBe("attached");
+		terminal.typeKeys("echo ok\r");
+		expect(muxes[1].inputs).toEqual([["handle-1", "echo ok\r"]]);
+	});
+
 	it("surfaces pane errors and refetches, with no automatic retry", () => {
 		const { view, muxes, invalidateSpy } = setup();
 		act(() => muxes[0].emitError("handle-1", "no such pane"));
