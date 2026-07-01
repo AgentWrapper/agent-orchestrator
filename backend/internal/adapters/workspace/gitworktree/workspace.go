@@ -611,6 +611,14 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		return err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
+		if isMissingRegisteredWorktreeError(err) {
+			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
+				return fmt.Errorf("gitworktree: worktree add branch %q from %q: recover stale registration: %w", branch, baseRef, pruneErr)
+			}
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); retryErr == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
@@ -681,6 +689,14 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 		return "", err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); err != nil {
+		if isMissingRegisteredWorktreeError(err) {
+			if pruneErr := w.pruneWorktrees(ctx, repo.repoPath); pruneErr != nil {
+				return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: recover stale registration: %w", repo.name, branch, baseRef, pruneErr)
+			}
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); retryErr == nil {
+				return baseSHA, nil
+			}
+		}
 		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
 	}
 	return baseSHA, nil
@@ -688,13 +704,24 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 
 func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) error {
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
-	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
-		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	if err := w.pruneWorktrees(ctx, repo); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil
+}
+
+func (w *Workspace) pruneWorktrees(ctx context.Context, repo string) error {
+	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	}
+	return nil
+}
+
+func isMissingRegisteredWorktreeError(err error) bool {
+	return strings.Contains(err.Error(), "is a missing but already registered worktree")
 }
 
 func (w *Workspace) revParse(ctx context.Context, repo, ref string) (string, error) {

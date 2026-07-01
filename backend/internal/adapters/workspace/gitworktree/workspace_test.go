@@ -211,6 +211,68 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 }
 
+func TestCreateWorkspaceProjectRepoPrunesStaleRegisteredWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	output := filepath.Join(root, "proj", "orchestrator", "proj-orchestrator", "api")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	exitErr := exec.Command("sh", "-c", "exit 1").Run()
+	if exitErr == nil {
+		t.Fatal("expected exit error")
+	}
+	var calls []string
+	addAttempts := 0
+	ws.run = func(_ context.Context, binary string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		switch {
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/feature/test"):
+			return nil, commandError{args: append([]string{binary}, args...), err: exitErr}
+		case strings.Contains(joined, "rev-parse --verify --quiet origin/main"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify origin/main"):
+			return []byte("abc123\n"), nil
+		case strings.Contains(joined, "worktree add -b feature/test "+output+" origin/main"):
+			addAttempts++
+			if addAttempts == 1 {
+				return nil, commandError{
+					args:   append([]string{binary}, args...),
+					output: "Preparing worktree (new branch 'feature/test')\nfatal: '" + output + "' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear",
+					err:    errors.New("exit status 128"),
+				}
+			}
+			return nil, nil
+		case strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	baseSHA, err := ws.createWorkspaceProjectRepo(context.Background(), workspaceProjectRepo{
+		name:       "api",
+		repoPath:   repo,
+		outputPath: output,
+	}, "feature/test")
+	if err != nil {
+		t.Fatalf("createWorkspaceProjectRepo: %v", err)
+	}
+	if baseSHA != "abc123" {
+		t.Fatalf("baseSHA = %q, want abc123", baseSHA)
+	}
+	if addAttempts != 2 {
+		t.Fatalf("add attempts = %d, want 2", addAttempts)
+	}
+	got := strings.Join(calls, "\n")
+	if !strings.Contains(got, "worktree prune") {
+		t.Fatalf("calls missing worktree prune:\n%s", got)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.
