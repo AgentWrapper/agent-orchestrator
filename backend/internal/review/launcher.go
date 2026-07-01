@@ -21,6 +21,8 @@ type Launcher interface {
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
+	// Stop tears down a reviewer pane before replacing it with a fresh pass.
+	Stop(ctx context.Context, handleID string) error
 }
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
@@ -40,6 +42,7 @@ type LaunchSpec struct {
 // satisfies it.
 type reviewerRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
@@ -149,4 +152,11 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 		return false, nil
 	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+func (l *agentLauncher) Stop(ctx context.Context, handleID string) error {
+	if handleID == "" {
+		return nil
+	}
+	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 }

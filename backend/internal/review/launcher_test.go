@@ -47,6 +47,7 @@ type fakeRuntime struct {
 	createCfg ports.RuntimeConfig
 	sentMsg   string
 	sentTo    string
+	destroyed string
 	alive     bool
 }
 
@@ -56,6 +57,10 @@ func (f *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 }
 func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, error) {
 	return f.alive, nil
+}
+func (f *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	f.destroyed = handle.ID
+	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
 	f.sentTo = handle.ID
@@ -133,6 +138,20 @@ func TestLauncherAlive(t *testing.T) {
 	}
 	if ok, _ := l.Alive(context.Background(), ""); ok {
 		t.Fatal("empty handle should not be alive")
+	}
+}
+
+func TestLauncherStopDestroysHandle(t *testing.T) {
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{ok: true}, rt)
+	if err := l.Stop(context.Background(), "review-mer-1"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if rt.destroyed != "review-mer-1" {
+		t.Fatalf("destroyed = %q, want review-mer-1", rt.destroyed)
+	}
+	if err := l.Stop(context.Background(), ""); err != nil {
+		t.Fatalf("empty Stop: %v", err)
 	}
 }
 

@@ -116,7 +116,11 @@ func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, ba
 
 func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
 	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
 
@@ -132,6 +136,27 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
+	}
+}
+
+func TestSubmitSkipsStaleChangesRequestedForSupersededHead(t *testing.T) {
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "old", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "new"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+	svc := New(nil, st, WithLifecycleReducer(reducer))
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "stale fix", "987")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.Status != domain.ReviewRunComplete || run.DeliveredAt != nil {
+		t.Fatalf("stale review should be complete but undelivered: %+v", run)
+	}
+	if reducer.calls != 0 || reducer.batchCalls != 0 || st.markCalls != 0 {
+		t.Fatalf("stale review should not notify or mark delivered: calls=%d batch=%d mark=%d", reducer.calls, reducer.batchCalls, st.markCalls)
 	}
 }
 
@@ -229,7 +254,11 @@ func TestSubmitBatchApprovedOnlySendsNothing(t *testing.T) {
 
 func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	sendErr := errors.New("dead pane")
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{err: sendErr}
 	svc := New(nil, st, WithLifecycleReducer(reducer))
 

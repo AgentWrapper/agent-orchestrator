@@ -144,6 +144,8 @@ type fakeLauncher struct {
 	spawned    bool
 	spawnCount int
 	notified   bool
+	stopped    bool
+	stopHandle string
 	gotSpec    LaunchSpec
 	gotHandle  string
 	specs      []LaunchSpec
@@ -170,6 +172,12 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 }
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
 	return f.alive || f.spawned, nil
+}
+func (f *fakeLauncher) Stop(_ context.Context, handleID string) error {
+	f.stopped = true
+	f.stopHandle = handleID
+	f.alive = false
+	return nil
 }
 
 func liveWorker() domain.SessionRecord {
@@ -377,7 +385,7 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	}
 }
 
-func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
+func TestTriggerStopsStaleReviewerBeforeReplacingOlderRunningRun(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
@@ -395,8 +403,11 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
+	if !launcher.stopped || launcher.stopHandle != "review-mer-1" {
+		t.Fatalf("expected stale live reviewer pane stopped before replacement: %+v", launcher)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected fresh spawn after stopping stale reviewer: %+v", launcher)
 	}
 }
 
@@ -603,5 +614,29 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	}
 	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 {
 		t.Fatalf("list = %+v", got)
+	}
+}
+
+func TestListMarksRunningRunsFailedWhenReviewerStopped(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{alive: false})
+	got, err := eng.List(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got.Runs) != 1 || got.Runs[0].Status != domain.ReviewRunFailed {
+		t.Fatalf("runs = %+v, want failed running run", got.Runs)
+	}
+	if got.Reviews[0].Status == ReviewStateRunning {
+		t.Fatalf("review state should not remain running after stopped reviewer: %+v", got.Reviews[0])
+	}
+	if !strings.Contains(store.runs[0].Body, "reviewer stopped") {
+		t.Fatalf("failed body = %q", store.runs[0].Body)
 	}
 }

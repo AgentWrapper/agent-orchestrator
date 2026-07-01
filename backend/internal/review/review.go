@@ -207,6 +207,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	var created []domain.ReviewRun
 	batchID := ""
+	stoppedStaleReviewer := false
 	for _, reviewState := range reviews {
 		if reviewState.Status != ReviewStateNeedsReview && reviewState.Status != ReviewStateChangesRequested {
 			continue
@@ -225,8 +226,12 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 				}
 			}
 		}
-		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+		stale, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit")
+		if err != nil {
 			return TriggerResult{}, err
+		}
+		if stale > 0 {
+			stoppedStaleReviewer = true
 		}
 		if batchID == "" {
 			batchID = e.newID()
@@ -277,7 +282,11 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)
 		}
-		if alive {
+		if alive && stoppedStaleReviewer {
+			if err := e.launcher.Stop(ctx, reviewRow.ReviewerHandleID); err != nil {
+				return TriggerResult{}, failRuns(0, fmt.Errorf("stop stale reviewer: %w", err))
+			}
+		} else if alive {
 			handleID = reviewRow.ReviewerHandleID
 		}
 	}
@@ -367,11 +376,41 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	} else if ok {
 		handle = review.ReviewerHandleID
 	}
+	if handle != "" && e.launcher != nil {
+		alive, err := e.launcher.Alive(ctx, handle)
+		if err != nil {
+			return SessionReviews{}, err
+		}
+		if !alive {
+			runs, err = e.failRunningRuns(ctx, runs, "reviewer stopped before submitting review")
+			if err != nil {
+				return SessionReviews{}, err
+			}
+		}
+	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return SessionReviews{}, err
 	}
 	return SessionReviews{ReviewerHandleID: handle, Runs: runs, Reviews: Plan(prs, runs)}, nil
+}
+
+func (e *Engine) failRunningRuns(ctx stdctx.Context, runs []domain.ReviewRun, body string) ([]domain.ReviewRun, error) {
+	for i := range runs {
+		if runs[i].Status != domain.ReviewRunRunning {
+			continue
+		}
+		updated, err := e.store.UpdateReviewRunResult(ctx, runs[i].ID, domain.ReviewRunFailed, domain.VerdictNone, body, "")
+		if err != nil {
+			return nil, err
+		}
+		if updated {
+			runs[i].Status = domain.ReviewRunFailed
+			runs[i].Verdict = domain.VerdictNone
+			runs[i].Body = body
+		}
+	}
+	return runs, nil
 }
 
 // reviewerHarness resolves which harness reviews the worker's PR: a configured

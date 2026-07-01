@@ -255,7 +255,7 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
 			continue
 		}
-		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
+		if currentHeads[run.PRURL] != run.TargetSHA {
 			continue
 		}
 		deliverable = append(deliverable, run)
