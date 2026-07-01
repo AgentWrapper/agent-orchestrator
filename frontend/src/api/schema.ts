@@ -178,6 +178,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/collisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the project's current cross-session edit collisions */
+        get: operations["listProjectCollisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/config": {
         parameters: {
             query?: never;
@@ -532,6 +549,25 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        Collision: {
+            files: components["schemas"]["CollisionFile"][];
+            /** Format: date-time */
+            firstSeenAt: string;
+            sessionA: string;
+            sessionB: string;
+            /** @enum {string} */
+            severity: "soft" | "hot";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CollisionFile: {
+            path: string;
+            ranges?: components["schemas"]["CollisionRange"][];
+        };
+        CollisionRange: {
+            end: number;
+            start: number;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -589,6 +625,9 @@ export interface components {
         };
         ListNotificationsResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
+        };
+        ListProjectCollisionsResponse: {
+            collisions: components["schemas"]["Collision"][];
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
@@ -1555,6 +1594,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listProjectCollisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListProjectCollisionsResponse"];
                 };
             };
             /** @description Internal Server Error */

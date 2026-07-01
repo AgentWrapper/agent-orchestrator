@@ -141,6 +141,27 @@ type Workspace interface {
 	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
 }
 
+// LineRange is an inclusive [Start, End] span of changed lines in a file's new
+// revision (1-based). A pure deletion is reported as a single-line range at the
+// position the removed lines occupied.
+type LineRange struct {
+	Start int
+	End   int
+}
+
+// WorkspaceDiffer reports the files (and changed line ranges within them) that a
+// session's worktree has modified relative to its base. It is intentionally a
+// capability distinct from the core Workspace lifecycle interface so that the
+// only consumer — the convergence observer that detects cross-session edit
+// collisions — depends on exactly what it uses and existing Workspace fakes are
+// untouched. The returned map is keyed by repo-relative path; an entry with an
+// empty range slice means the file changed but no line-level detail is
+// available (e.g. a deletion or a binary file), which still counts as a
+// file-level overlap.
+type WorkspaceDiffer interface {
+	ChangedRegions(ctx context.Context, info WorkspaceInfo) (map[string][]LineRange, error)
+}
+
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
 // can map them to typed errors rather than collapsing every adapter failure
 // into an opaque 500. Adapters wrap these via fmt.Errorf("...: %w", sentinel).

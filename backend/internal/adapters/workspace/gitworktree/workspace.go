@@ -84,6 +84,7 @@ type Workspace struct {
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
 
 var _ ports.Workspace = (*Workspace)(nil)
+var _ ports.WorkspaceDiffer = (*Workspace)(nil)
 
 // New builds a gitworktree Workspace, validating that ManagedRoot and
 // RepoResolver are set and resolving the root to an absolute, symlink-free path.
@@ -463,6 +464,48 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
 	}
 	return ports.WorkspaceInfo{}, false, nil
+}
+
+// ChangedRegions implements ports.WorkspaceDiffer. It returns the files (and
+// changed line ranges within them) the session's worktree has modified relative
+// to where it forked from the base branch — committed branch work and
+// uncommitted edits alike — which the convergence observer compares across
+// sessions to detect edit collisions before they become merge conflicts.
+func (w *Workspace) ChangedRegions(ctx context.Context, info ports.WorkspaceInfo) (map[string][]ports.LineRange, error) {
+	if info.Path == "" {
+		return nil, fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return nil, err
+	}
+	base := w.resolveDiffBase(ctx, path)
+	out, err := w.run(ctx, w.binary, diffUnifiedZeroArgs(path, base)...)
+	if err != nil {
+		return nil, fmt.Errorf("gitworktree: diff %q against %q: %w", path, base, err)
+	}
+	return parseDiffChangedRegions(string(out)), nil
+}
+
+// resolveDiffBase picks the commit ChangedRegions diffs against: the merge-base
+// of HEAD and the first reachable base-branch ref. It falls back to "HEAD"
+// (uncommitted changes only) when no base branch ref resolves or the two share
+// no common ancestor, so a brand-new or remoteless repo still reports live edits.
+func (w *Workspace) resolveDiffBase(ctx context.Context, path string) string {
+	for _, ref := range baseBranchRefCandidates(w.defaultBranch) {
+		exists, err := w.refExists(ctx, path, ref)
+		if err != nil || !exists {
+			continue
+		}
+		out, err := w.run(ctx, w.binary, mergeBaseArgs(path, ref)...)
+		if err != nil {
+			continue
+		}
+		if mb := strings.TrimSpace(string(out)); mb != "" {
+			return mb
+		}
+	}
+	return "HEAD"
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {

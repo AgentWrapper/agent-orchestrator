@@ -107,6 +107,31 @@ func ignoredCountArgs(worktree string) []string {
 	return []string{"-C", worktree, "status", "--ignored", "--porcelain"}
 }
 
+// mergeBaseArgs returns the merge-base (fork point) of HEAD and ref in the
+// worktree. Exit code 1 means no common ancestor.
+func mergeBaseArgs(worktree, ref string) []string {
+	return []string{"-C", worktree, "merge-base", "HEAD", ref}
+}
+
+// diffUnifiedZeroArgs diffs the worktree's current state (committed AND
+// uncommitted tracked changes) against base with zero context lines, so the
+// hunk headers report exactly the changed line ranges. --no-color and
+// --no-ext-diff keep the output machine-parseable regardless of user git config.
+func diffUnifiedZeroArgs(worktree, base string) []string {
+	return []string{"-C", worktree, "diff", "--unified=0", "--no-color", "--no-ext-diff", base}
+}
+
+// baseBranchRefCandidates lists the refs to try, in order, when locating the
+// base branch a session's worktree forked from. It mirrors baseRefCandidates'
+// remote-then-local preference but targets the default/base branch only (never
+// the session branch itself, which would make the merge-base degenerate).
+func baseBranchRefCandidates(defaultBranch string) []string {
+	if strings.Contains(defaultBranch, "/") {
+		return []string{defaultBranch, "refs/heads/" + defaultBranch}
+	}
+	return []string{"origin/" + defaultBranch, "refs/heads/" + defaultBranch}
+}
+
 func baseRefCandidates(branch, defaultBranch string) []string {
 	candidates := []string{"origin/" + branch}
 	if strings.Contains(defaultBranch, "/") {
