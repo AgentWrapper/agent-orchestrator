@@ -36,6 +36,8 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s needs input", sessionLabel(intent))
 	case domain.NotificationReadyToMerge:
 		return fmt.Sprintf("%s is ready to merge", prLabel(intent))
+	case domain.NotificationPRConflicting:
+		return fmt.Sprintf("%s has merge conflicts", prLabel(intent))
 	case domain.NotificationPRMerged:
 		return fmt.Sprintf("%s was merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
@@ -54,6 +56,11 @@ func bodyForIntent(intent Intent) string {
 			return fmt.Sprintf("%s has no known blocking CI or review feedback.", s)
 		}
 		return "The pull request has no known blocking CI or review feedback."
+	case domain.NotificationPRConflicting:
+		if s := sessionLabel(intent); s != "session" {
+			return fmt.Sprintf("%s needs a rebase before this pull request can merge.", s)
+		}
+		return "The pull request needs a rebase before it can merge."
 	case domain.NotificationPRMerged:
 		if title := strings.TrimSpace(intent.PRTitle); title != "" {
 			return fmt.Sprintf("%s was merged.", title)

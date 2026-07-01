@@ -3,6 +3,7 @@ export type SessionStatus =
 	| "pr_open"
 	| "draft"
 	| "ci_failed"
+	| "conflicting"
 	| "review_pending"
 	| "changes_requested"
 	| "approved"
@@ -19,6 +20,7 @@ const sessionStatuses = new Set<SessionStatus>([
 	"pr_open",
 	"draft",
 	"ci_failed",
+	"conflicting",
 	"review_pending",
 	"changes_requested",
 	"approved",
@@ -134,7 +136,7 @@ export type WorkspaceSession = {
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
-	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
+	"working" | "needs_you" | "mergeable" | "ci_failed" | "conflicting" | "no_signal" | "done" | "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -145,6 +147,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";
+		case "conflicting":
+			return "conflicting";
 		case "no_signal":
 			return "no_signal";
 		case "approved":
@@ -215,6 +219,7 @@ export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 		session.status === "needs_input" ||
 		session.status === "no_signal" ||
 		session.status === "changes_requested" ||
+		session.status === "conflicting" ||
 		session.status === "review_pending" ||
 		session.status === "ci_failed"
 	);
@@ -225,6 +230,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	needs_you: "needs you",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
+	conflicting: "conflicting",
 	no_signal: "no signal",
 	done: "done",
 	unknown: "unknown",
@@ -270,6 +276,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		case "needs_input":
 		case "no_signal":
 		case "ci_failed":
+		case "conflicting":
 		case "changes_requested":
 			return "action";
 		// Waiting on an external reviewer / CI — nothing to do right now.

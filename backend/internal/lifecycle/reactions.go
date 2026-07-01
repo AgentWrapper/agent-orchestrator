@@ -143,7 +143,11 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated {
+		return nil
+	}
+	waitingInput := rec.Activity.State == domain.ActivityWaitingInput
+	if waitingInput && o.Mergeability != domain.MergeConflicting {
 		return nil
 	}
 	if o.CI == domain.CIFailing {
@@ -276,15 +280,20 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if !o.Fetched {
 		return nil
 	}
-	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
-		return err
+	prErr := m.ApplyPRObservation(ctx, id, scmToPRObservation(o))
+	if prErr != nil && domain.Mergeability(o.Mergeability.State) != domain.MergeConflicting {
+		return prErr
+	}
+	if prErr != nil {
+		slog.Default().Warn("lifecycle: merge-conflict nudge failed; still emitting user notification",
+			"session", id, "pr", firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL), "err", prErr)
 	}
 	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
 	if err != nil {
 		return err
 	}
 	m.emitNotification(ctx, intent)
-	return nil
+	return prErr
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
@@ -323,6 +332,10 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 	}
 	if o.PR.Closed {
 		base.Type = domain.NotificationPRClosedUnmerged
+		return &base
+	}
+	if !rec.IsTerminated && domain.Mergeability(o.Mergeability.State) == domain.MergeConflicting {
+		base.Type = domain.NotificationPRConflicting
 		return &base
 	}
 	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput || !scmObservationIsReadyToMerge(o) {

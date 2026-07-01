@@ -32,16 +32,23 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusTerminated
 	}
 
-	if rec.Activity.State == domain.ActivityWaitingInput {
-		return domain.StatusNeedsInput
-	}
-
 	open := openPRs(prs)
 	if len(open) > 0 {
-		return aggregatePRStatus(open)
+		status := aggregatePRStatus(open)
+		if status == domain.StatusConflicting {
+			return status
+		}
+		if rec.Activity.State == domain.ActivityWaitingInput {
+			return domain.StatusNeedsInput
+		}
+		return status
 	}
 	if anyMerged(prs) {
 		return domain.StatusMerged
+	}
+
+	if rec.Activity.State == domain.ActivityWaitingInput {
+		return domain.StatusNeedsInput
 	}
 
 	if rec.Activity.State == domain.ActivityActive {
@@ -81,10 +88,11 @@ func anyMerged(prs []domain.PRFacts) bool {
 // A stacked child blocked by an open parent cannot merge yet, so its readiness
 // signals (mergeable/approved/review-pending/open) are not actionable for the
 // session and are suppressed. Its problem signals are still actionable: failing
-// CI, draft state, and requested-changes/unresolved-comments must stay visible
-// so a broken child is not hidden behind the stack. If no PR contributes any
-// signal (a degenerate stack with no visible root), it falls back to aggregating
-// the raw status across all open PRs so the session never goes dark.
+// CI, merge conflicts, draft state, and requested-changes/unresolved-comments
+// must stay visible so a broken child is not hidden behind the stack. If no PR
+// contributes any signal (a degenerate stack with no visible root), it falls
+// back to aggregating the raw status across all open PRs so the session never
+// goes dark.
 func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 	stacks := buildStacks(open)
 	candidates := make([]domain.SessionStatus, 0, len(open))
@@ -114,7 +122,7 @@ func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 // inability to merge until its parent does.
 func isActionableChildSignal(s domain.SessionStatus) bool {
 	switch s {
-	case domain.StatusCIFailed, domain.StatusDraft, domain.StatusChangesRequested:
+	case domain.StatusCIFailed, domain.StatusConflicting, domain.StatusDraft, domain.StatusChangesRequested:
 		return true
 	default:
 		return false
@@ -128,20 +136,22 @@ func statusSeverity(s domain.SessionStatus) int {
 	switch s {
 	case domain.StatusCIFailed:
 		return 0
-	case domain.StatusChangesRequested:
+	case domain.StatusConflicting:
 		return 1
-	case domain.StatusDraft:
+	case domain.StatusChangesRequested:
 		return 2
-	case domain.StatusReviewPending:
+	case domain.StatusDraft:
 		return 3
-	case domain.StatusPROpen:
+	case domain.StatusReviewPending:
 		return 4
-	case domain.StatusApproved:
+	case domain.StatusPROpen:
 		return 5
-	case domain.StatusMergeable:
+	case domain.StatusApproved:
 		return 6
-	default:
+	case domain.StatusMergeable:
 		return 7
+	default:
+		return 8
 	}
 }
 
@@ -149,6 +159,8 @@ func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
 	switch {
 	case pr.CI == domain.CIFailing:
 		return domain.StatusCIFailed
+	case pr.Mergeability == domain.MergeConflicting:
+		return domain.StatusConflicting
 	case pr.Draft:
 		return domain.StatusDraft
 	case pr.Review == domain.ReviewChangesRequest || pr.ReviewComments:

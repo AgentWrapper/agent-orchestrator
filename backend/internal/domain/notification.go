@@ -13,6 +13,8 @@ const (
 	NotificationNeedsInput NotificationType = "needs_input"
 	// NotificationReadyToMerge means a PR has no known merge blockers.
 	NotificationReadyToMerge NotificationType = "ready_to_merge"
+	// NotificationPRConflicting means a tracked PR has merge conflicts.
+	NotificationPRConflicting NotificationType = "pr_conflicting"
 	// NotificationPRMerged means a tracked PR was merged.
 	NotificationPRMerged NotificationType = "pr_merged"
 	// NotificationPRClosedUnmerged means a tracked PR closed without merging.
@@ -22,7 +24,7 @@ const (
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRConflicting, NotificationPRMerged, NotificationPRClosedUnmerged:
 		return true
 	default:
 		return false

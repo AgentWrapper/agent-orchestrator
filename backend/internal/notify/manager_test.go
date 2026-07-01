@@ -78,6 +78,34 @@ func TestManagerNotifyRejectsUnknownType(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyEnrichesPRConflicting(t *testing.T) {
+	st := &fakeStore{}
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+
+	err := mgr.Notify(context.Background(), Intent{
+		Type:               domain.NotificationPRConflicting,
+		SessionID:          "mer-1",
+		ProjectID:          "mer",
+		SessionDisplayName: "checkout-flow",
+		PRURL:              "https://github.com/o/r/pull/1",
+		PRNumber:           1,
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if len(st.rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(st.rows))
+	}
+	got := st.rows[0]
+	if got.Type != domain.NotificationPRConflicting || got.Title != "PR #1 has merge conflicts" {
+		t.Fatalf("stored notification = %+v", got)
+	}
+	if got.Body != "checkout-flow needs a rebase before this pull request can merge." {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
 func TestHubProjectFilter(t *testing.T) {
 	hub := NewHub()
 	ch, unsub := hub.Subscribe("mer")

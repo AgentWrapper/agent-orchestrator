@@ -549,7 +549,7 @@ export interface components {
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
-            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
+            status: "working" | "pr_open" | "draft" | "ci_failed" | "conflicting" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
@@ -635,7 +635,7 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
+            type: "needs_input" | "ready_to_merge" | "pr_conflicting" | "pr_merged" | "pr_closed_unmerged";
         };
         NotificationTarget: {
             /** @enum {string} */

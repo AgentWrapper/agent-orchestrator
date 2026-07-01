@@ -1586,6 +1586,7 @@ components:
           - pr_open
           - draft
           - ci_failed
+          - conflicting
           - review_pending
           - changes_requested
           - approved
@@ -1813,6 +1814,7 @@ components:
           enum:
           - needs_input
           - ready_to_merge
+          - pr_conflicting
           - pr_merged
           - pr_closed_unmerged
           type: string

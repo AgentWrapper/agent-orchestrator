@@ -10,6 +10,7 @@ const (
 	StatusPROpen           SessionStatus = "pr_open"
 	StatusDraft            SessionStatus = "draft"
 	StatusCIFailed         SessionStatus = "ci_failed"
+	StatusConflicting      SessionStatus = "conflicting"
 	StatusReviewPending    SessionStatus = "review_pending"
 	StatusChangesRequested SessionStatus = "changes_requested"
 	StatusApproved         SessionStatus = "approved"
