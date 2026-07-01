@@ -6,6 +6,7 @@ import { type AttentionZone, type WorkspaceSession, attentionZone, workerSession
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { NotificationCenter } from "./NotificationCenter";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -126,6 +127,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			<NotificationCenter />
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
@@ -146,7 +148,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 			</button>
 		</>
-	) : undefined;
+	) : (
+		<NotificationCenter />
+	);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
