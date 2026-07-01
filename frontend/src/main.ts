@@ -48,7 +48,7 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
-import { shouldLinkOnAttach } from "./main/daemon-owner";
+import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -530,8 +530,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus(existing.status);
 		// Re-link the supervisor only when attaching to an app-owned daemon (one we
 		// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
-		// so they remain persistent after app quit.
-		if (shouldLinkOnAttach(existing.owner)) {
+		// so they remain persistent after app quit. AO_KEEP_DAEMON also skips the
+		// link so the app's own daemon stays persistent across quit.
+		if (shouldLinkOnAttach(existing.owner, process.env)) {
 			establishSupervisorLink();
 		}
 		return daemonStatus;
@@ -571,7 +572,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 				// run-file absent or unreadable: treat as headless, skip link.
 			}
 		}
-		if (shouldLinkOnAttach(portAttachOwner)) {
+		if (shouldLinkOnAttach(portAttachOwner, process.env)) {
 			establishSupervisorLink();
 		}
 		return daemonStatus;
@@ -686,14 +687,19 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
 
-		// Establish the OS-native liveness link unconditionally: this callback fires
-		// only on the spawn path (we own this daemon). Holding the connection keeps
-		// the daemon alive; when Electron exits for any reason, the OS closes the fd
-		// and the daemon detects EOF, then self-stops after its ~5s grace period.
-		// The attach paths link only when the daemon is app-owned (see
-		// establishSupervisorLink + shouldLinkOnAttach); headless `ao start` daemons
-		// stay unlinked so they remain persistent across app quit.
-		establishSupervisorLink();
+		// Establish the OS-native liveness link on the spawn path (we own this
+		// daemon). Holding the connection keeps the daemon alive; when Electron
+		// exits for any reason, the OS closes the fd and the daemon detects EOF,
+		// then self-stops after its ~5s grace period. The attach paths link only
+		// when the daemon is app-owned (see establishSupervisorLink +
+		// shouldLinkOnAttach); headless `ao start` daemons stay unlinked so they
+		// remain persistent across app quit.
+		//
+		// AO_KEEP_DAEMON opts out of the link entirely: the daemon is spawned but
+		// survives the window closing, stopping only on an explicit `ao stop`.
+		if (!keepDaemonAlive(process.env)) {
+			establishSupervisorLink();
+		}
 	};
 
 	// One scanner per stream: each keeps its own partial-line buffer.
@@ -991,8 +997,12 @@ app.on("before-quit", () => {
 // exits without tearing down sessions, which survive for the next boot to adopt.
 // When the link IS connected we do nothing here and rely on the OS closing the
 // fd on exit, which covers crash and SIGKILL uniformly.
+//
+// AO_KEEP_DAEMON opts out entirely: the daemon is deliberately spawned without a
+// supervisor link so it persists across app quit, so this orphan-cleanup kill
+// must be skipped — otherwise it would defeat the whole point on quit.
 process.on("exit", () => {
-	if (daemonProcess && !supervisorLink?.connected) {
+	if (daemonProcess && !supervisorLink?.connected && !keepDaemonAlive(process.env)) {
 		killDaemon(daemonProcess);
 	}
 });
