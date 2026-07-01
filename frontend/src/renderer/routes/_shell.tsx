@@ -69,6 +69,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+			asWorkspace?: boolean;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
@@ -83,6 +84,7 @@ function ShellLayout() {
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
+					asWorkspace: input.asWorkspace || undefined,
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
@@ -104,7 +106,9 @@ function ShellLayout() {
 			const workspace: WorkspaceSummary = {
 				id: data.project.id,
 				name: data.project.name,
+				kind: data.project.kind === "workspace" ? "workspace" : "single_repo",
 				path: data.project.path,
+				workspaceRepos: data.project.workspaceRepos,
 				type: "main",
 				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
 				sessions: [],
