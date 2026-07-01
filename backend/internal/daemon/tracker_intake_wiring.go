@@ -17,26 +17,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-// startTrackerIntake wires the opt-in GitHub issue-intake loop. The observer is
-// started only when at least one currently registered project has intake
-// enabled. The adapter itself remains lazy so daemon readiness is not blocked by
-// credential probing or a gh CLI call.
+// startTrackerIntake wires the opt-in GitHub issue-intake loop. The observer
+// always runs — Poll re-reads each project's config on every tick and skips
+// projects with intake disabled, so a project enabling intake after daemon
+// boot is picked up on the next tick without a restart. The adapter itself
+// stays lazy so daemon readiness is not blocked by credential probing or a gh
+// CLI call, and no token is resolved until some enabled project is actually
+// polled.
 func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, logger *slog.Logger) <-chan struct{} {
-	projects, err := store.ListProjects(ctx)
-	if err != nil {
-		logger.Warn("tracker intake disabled: project scan failed", "err", err)
-		return closedDone()
-	}
-	var enabled bool
-	for _, project := range projects {
-		if project.Config.TrackerIntake.Enabled {
-			enabled = true
-			break
-		}
-	}
-	if !enabled {
-		return closedDone()
-	}
 	resolver := trackerintake.SingleTrackerResolver{
 		Provider: domain.TrackerProviderGitHub,
 		Adapter:  newLazyGitHubTracker(logger),
