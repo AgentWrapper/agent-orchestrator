@@ -616,8 +616,8 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 		Config: testRoleAgents(),
 	}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
-		{Name: "api", RelativePath: "services/api"},
-		{Name: "web", RelativePath: "apps/web"},
+		{Name: "api", RelativePath: "services/api", DefaultBranch: "master"},
+		{Name: "web", RelativePath: "apps/web", DefaultBranch: "develop"},
 	}
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{path: "/managed/mer-1"}
@@ -648,6 +648,12 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	}
 	if got := ws.lastProjectCfg.Repos[1].RepoPath; got != "/repo/mer/apps/web" {
 		t.Fatalf("web repo path = %q, want /repo/mer/apps/web", got)
+	}
+	if got := ws.lastProjectCfg.Repos[0].BaseBranch; got != "master" {
+		t.Fatalf("api base branch = %q, want master", got)
+	}
+	if got := ws.lastProjectCfg.Repos[1].BaseBranch; got != "develop" {
+		t.Fatalf("web base branch = %q, want develop", got)
 	}
 	rows := st.worktrees["mer-1"]
 	if len(rows) != 3 {

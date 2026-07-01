@@ -916,6 +916,7 @@ export interface components {
             reviews: components["schemas"]["PRReviewState"][];
         };
         WorkspaceRepo: {
+            defaultBranch: string;
             name: string;
             relativePath: string;
             repo: string;

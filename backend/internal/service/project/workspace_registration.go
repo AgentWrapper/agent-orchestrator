@@ -176,6 +176,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			Name:          name,
 			RelativePath:  filepath.ToSlash(name),
 			RepoOriginURL: resolveGitOriginURL(child),
+			DefaultBranch: resolveDefaultBranch(child),
 			RegisteredAt:  registeredAt,
 		})
 	}
@@ -206,8 +207,7 @@ func validateWorkspaceChild(ctx context.Context, child string) error {
 			"suggestedFix": "Run `git init -b main`, add the initial files, and create the first commit before registering the workspace.",
 		})
 	}
-	branch, err := gitOutput(ctx, child, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil || strings.TrimSpace(branch) == "" {
+	if branch := resolveDefaultBranch(child); branch == "" {
 		return apierr.Invalid("WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN", "Workspace child repositories must have an identifiable default branch", map[string]any{
 			"path":         child,
 			"suggestedFix": "Check out the repository's default branch (for example `main`) and retry.",
@@ -352,7 +352,16 @@ func guardNoGitlinks(ctx context.Context, repo string) error {
 func workspaceReposFromRecords(records []domain.WorkspaceRepoRecord) []WorkspaceRepo {
 	out := make([]WorkspaceRepo, 0, len(records))
 	for _, rec := range records {
-		out = append(out, WorkspaceRepo{Name: rec.Name, RelativePath: rec.RelativePath, Repo: rec.RepoOriginURL})
+		defaultBranch := rec.DefaultBranch
+		if defaultBranch == "" {
+			defaultBranch = domain.DefaultBranchName
+		}
+		out = append(out, WorkspaceRepo{
+			Name:          rec.Name,
+			RelativePath:  rec.RelativePath,
+			Repo:          rec.RepoOriginURL,
+			DefaultBranch: defaultBranch,
+		})
 	}
 	return out
 }

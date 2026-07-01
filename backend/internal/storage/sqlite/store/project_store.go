@@ -45,6 +45,7 @@ func (s *Store) UpsertWorkspaceProject(ctx context.Context, r domain.ProjectReco
 				Name:          repo.Name,
 				RelativePath:  repo.RelativePath,
 				RepoOriginURL: repo.RepoOriginURL,
+				DefaultBranch: repo.DefaultBranch,
 				RegisteredAt:  repo.RegisteredAt,
 			}); err != nil {
 				return err
@@ -67,6 +68,7 @@ func (s *Store) ListWorkspaceRepos(ctx context.Context, projectID string) ([]dom
 			Name:          row.Name,
 			RelativePath:  row.RelativePath,
 			RepoOriginURL: row.RepoOriginURL,
+			DefaultBranch: row.DefaultBranch,
 			RegisteredAt:  row.RegisteredAt,
 		})
 	}
