@@ -679,6 +679,45 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	}
 }
 
+func TestSpawn_WorkspaceProjectOrchestratorUsesOrchestratorPath(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Path:   "/repo/mer",
+		Kind:   domain.ProjectKindWorkspace,
+		Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api", DefaultBranch: "main"}}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: "/managed/mer/orchestrator/mer-orchestrator"}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Kind != domain.KindOrchestrator {
+		t.Fatalf("kind = %q, want orchestrator", rec.Kind)
+	}
+	if rec.Metadata.WorkspacePath != "/managed/mer/orchestrator/mer-orchestrator" {
+		t.Fatalf("workspace path = %q", rec.Metadata.WorkspacePath)
+	}
+	if ws.lastProjectCfg.Kind != domain.KindOrchestrator {
+		t.Fatalf("workspace project kind = %q, want orchestrator", ws.lastProjectCfg.Kind)
+	}
+	if ws.lastProjectCfg.Branch != "ao/mer-1" {
+		t.Fatalf("workspace project branch = %q, want ao/mer-1", ws.lastProjectCfg.Branch)
+	}
+	rows := st.worktrees["mer-1"]
+	if len(rows) != 2 {
+		t.Fatalf("session worktree rows = %d, want root and api: %#v", len(rows), rows)
+	}
+}
+
 func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{

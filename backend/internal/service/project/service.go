@@ -196,6 +196,11 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err != nil {
 			return Project{}, err
 		}
+		if row.Config.DefaultBranch == "" {
+			if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
+				row.Config.DefaultBranch = branch
+			}
+		}
 		row.Kind = domain.ProjectKindWorkspace
 		row.RepoOriginURL = resolveGitOriginURL(path)
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {

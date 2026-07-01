@@ -634,6 +634,30 @@ func TestManager_AddWorkspaceDetectsChildDefaultBranches(t *testing.T) {
 	}
 }
 
+func TestManager_AddWorkspaceDetectsParentDefaultBranch(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	gitRepoWithCommitOnBranch(t, parent, "master")
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.DefaultBranch != "master" {
+		t.Fatalf("workspace parent default branch = %q, want master", proj.DefaultBranch)
+	}
+	got, err := m.Get(ctx, "ws")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.DefaultBranch != "master" {
+		t.Fatalf("stored workspace default branch = %#v, want master", got.Project)
+	}
+}
+
 func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
