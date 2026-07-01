@@ -91,6 +91,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	// The Electron app only registers git projects today, so the daemon always has a usable
+	// git origin to derive owner/repo from (trackerRepo() in observer.go) when
+	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
+	// same derivation client-side purely for display (a link to the repo being polled).
+	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
 	const intakeLabelList = parseLabels(form.intakeLabels);
 	const intakeNeedsRule = form.intakeEnabled && intakeLabelList.length === 0 && form.intakeAssignee.trim() === "";
 
@@ -268,15 +273,27 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					</label>
 					{form.intakeEnabled && (
 						<>
-							<Field label="Repository" htmlFor="intakeRepo">
-								<input
-									id="intakeRepo"
-									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={form.intakeRepo}
-									onChange={(e) => setForm((f) => ({ ...f, intakeRepo: e.target.value }))}
-									placeholder="owner/repo (defaults to git origin)"
-								/>
+							<Field label="Repository">
+								{effectiveIntakeRepo ? (
+									<a
+										href={`https://github.com/${effectiveIntakeRepo}`}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="text-[13px] text-accent hover:underline"
+									>
+										{effectiveIntakeRepo}
+									</a>
+								) : (
+									<span className="text-[13px] text-muted-foreground">
+										Could not detect a GitHub repo from this project's git origin.
+									</span>
+								)}
 							</Field>
+							{/*
+								Labels are temporarily disabled in this form. form.intakeLabels /
+								buildIntake's labels field stay wired so labels set via the CLI
+								(--tracker-label) aren't wiped by a UI save; Assignee is the only
+								eligibility rule editable here for now.
 							<Field label="Labels" htmlFor="intakeLabels">
 								<input
 									id="intakeLabels"
@@ -286,6 +303,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 									placeholder="comma-separated, e.g. agent-ready, bug"
 								/>
 							</Field>
+							*/}
 							<Field label="Assignee" htmlFor="intakeAssignee">
 								<input
 									id="intakeAssignee"
@@ -410,4 +428,29 @@ function parseLabels(value: string): string[] {
 		.split(",")
 		.map((label) => label.trim())
 		.filter((label) => label.length > 0);
+}
+
+// Mirrors the daemon's parseGitHubRepoNative (observer.go): derive "owner/repo" from a git
+// origin URL for display only. The daemon does the authoritative derivation server-side at
+// poll time; this is purely so the settings card can show which repo intake will actually
+// poll without a manual input.
+function deriveGitHubRepo(remote?: string): string | undefined {
+	const trimmed = remote?.trim();
+	if (!trimmed) return undefined;
+	let path: string | undefined;
+	if (trimmed.startsWith("git@")) {
+		path = trimmed.split(":")[1];
+	} else {
+		try {
+			path = new URL(trimmed).pathname;
+		} catch {
+			path = trimmed;
+		}
+	}
+	if (!path) return undefined;
+	const parts = path.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "").split("/");
+	if (parts.length < 2) return undefined;
+	const owner = parts[parts.length - 2].trim();
+	const repo = parts[parts.length - 1].trim();
+	return owner && repo ? `${owner}/${repo}` : undefined;
 }
