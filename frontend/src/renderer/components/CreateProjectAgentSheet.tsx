@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import { AGENT_OPTIONS } from "../lib/agent-options";
+import { AGENT_OPTIONS, DEFAULT_PROJECT_AGENT } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -28,14 +28,14 @@ export function CreateProjectAgentSheet({
 	open,
 	path,
 }: CreateProjectAgentSheetProps) {
-	const [workerAgent, setWorkerAgent] = useState("");
-	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [workerAgent, setWorkerAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
+	const [orchestratorAgent, setOrchestratorAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
 	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating;
 
 	useEffect(() => {
 		if (!open) {
-			setWorkerAgent("");
-			setOrchestratorAgent("");
+			setWorkerAgent(DEFAULT_PROJECT_AGENT);
+			setOrchestratorAgent(DEFAULT_PROJECT_AGENT);
 		}
 	}, [open, path]);
 
