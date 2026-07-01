@@ -207,6 +207,44 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("shows needs-auth agents as unavailable while keeping authorized agents selectable", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		getMock.mockResolvedValueOnce({
+			data: {
+				supported: [
+					{ id: "claude-code", label: "Claude Code" },
+					{ id: "cursor", label: "Cursor" },
+					{ id: "aider", label: "Aider" },
+				],
+				installed: [
+					{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+					{ id: "cursor", label: "Cursor", authStatus: "unauthorized" },
+				],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+			},
+			error: undefined,
+		});
+		renderSidebar({ onCreateProject, seedAgents: false });
+
+		await user.click(screen.getByLabelText("New project"));
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		const options = await screen.findAllByRole("option");
+		expect(options.map((option) => option.textContent)).toEqual(["Claude Code", "CursorNeeds auth", "AiderNeeds install"]);
+		expect(options[1]).toHaveAttribute("aria-disabled", "true");
+		expect(options[2]).toHaveAttribute("aria-disabled", "true");
+		await user.keyboard("{Escape}");
+
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Claude Code");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ workerAgent: "claude-code" })));
+	});
+
 	it("updates project agent options when the catalog loads after the dialog opens", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;

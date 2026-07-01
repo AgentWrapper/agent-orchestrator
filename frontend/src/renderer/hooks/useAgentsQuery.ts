@@ -12,6 +12,12 @@ async function fetchAgents(): Promise<AgentCatalog> {
 	return data as AgentCatalog;
 }
 
+export async function refreshAgents(): Promise<AgentCatalog> {
+	const { data, error } = await apiClient.POST("/api/v1/agents/refresh");
+	if (error) throw new Error(apiErrorMessage(error));
+	return data as AgentCatalog;
+}
+
 export const agentsQueryOptions = {
 	queryKey: agentsQueryKey,
 	queryFn: fetchAgents,

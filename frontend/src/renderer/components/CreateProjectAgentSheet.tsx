@@ -1,9 +1,9 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { components } from "../../api/schema";
-import { agentsQueryKey, agentsQueryOptions, type AgentCatalog } from "../hooks/useAgentsQuery";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -34,11 +34,13 @@ export function CreateProjectAgentSheet({
 	path,
 }: CreateProjectAgentSheetProps) {
 	const queryClient = useQueryClient();
-	const cachedAgents = queryClient.getQueryData<AgentCatalog>(agentsQueryKey);
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
-		enabled: cachedAgents === undefined,
-		initialData: cachedAgents,
+		enabled: open,
+	});
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 	const agents = agentsQuery.data;
 	const installedAgents = agents?.installed ?? [];
@@ -119,16 +121,36 @@ export function CreateProjectAgentSheet({
 
 						{isLoadingAgents && <p className="text-[12px] leading-5 text-muted-foreground">Loading agents...</p>}
 
+						<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+							<span>Agent availability is cached.</span>
+							<button
+								type="button"
+								className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+								disabled={refreshAgentsMutation.isPending}
+								onClick={() => refreshAgentsMutation.mutate()}
+							>
+								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+							</button>
+						</div>
+
 						{agentsError && (
 							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
 								<span>{agentsError}</span>
 								<button
 									type="button"
 									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline"
-									onClick={() => void queryClient.invalidateQueries({ queryKey: agentsQueryKey })}
+									onClick={() => refreshAgentsMutation.mutate()}
 								>
 									Retry
 								</button>
+							</div>
+						)}
+
+						{refreshAgentsMutation.isError && (
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+								{refreshAgentsMutation.error instanceof Error
+									? refreshAgentsMutation.error.message
+									: "Could not refresh agent catalog."}
 							</div>
 						)}
 

@@ -296,9 +296,18 @@ func agentOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
-			summary: "List supported and locally installed agent adapters",
+			summary: "Return cached supported and locally installed agent adapters",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/refresh", id: "refreshAgents", tag: "agents",
+			summary: "Refresh the cached local agent adapter catalog",
+			resps: []respUnit{
+				{http.StatusOK, controllers.RefreshAgentsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

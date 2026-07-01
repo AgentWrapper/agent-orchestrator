@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -78,6 +79,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentCatalog = agentsQuery.data;
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -171,6 +178,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.workerAgent}
 						placeholder="Select worker agent"
 						label="Default worker agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
 						invalid={validationError !== null && form.workerAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 					/>
@@ -179,9 +190,31 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.orchestratorAgent}
 						placeholder="Select orchestrator agent"
 						label="Default orchestrator agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
 						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
+					<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+						<span>Agent availability is cached.</span>
+						<button
+							type="button"
+							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							disabled={refreshAgentsMutation.isPending}
+							onClick={() => refreshAgentsMutation.mutate()}
+						>
+							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+						</button>
+					</div>
+					{refreshAgentsMutation.isError && (
+						<p className="text-[12px] leading-5 text-error">
+							{refreshAgentsMutation.error instanceof Error
+								? refreshAgentsMutation.error.message
+								: "Could not refresh agent catalog."}
+						</p>
+					)}
 					{missingRequiredAgent && (
 						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
 					)}

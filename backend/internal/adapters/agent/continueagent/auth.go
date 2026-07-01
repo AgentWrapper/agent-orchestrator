@@ -17,8 +17,8 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	cmd, err := p.GetLaunchCommand(ctx, ports.LaunchConfig{})
-	if err != nil || len(cmd) == 0 {
+	binary, err := p.ResolveBinary(ctx)
+	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	if status, ok, err := continueLocalAuthStatus(ctx); err != nil {
@@ -26,12 +26,12 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	if status, err := continuePrintAuthStatus(ctx, cmd[0]); err != nil {
+	if status, err := continuePrintAuthStatus(ctx, binary); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	} else if status != ports.AgentAuthStatusUnknown {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, cmd[0], nil)
+	return authprobe.CLIStatus(ctx, binary, nil)
 }
 
 func continueLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {

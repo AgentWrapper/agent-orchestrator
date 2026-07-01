@@ -17,14 +17,14 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	cmd, err := p.GetLaunchCommand(ctx, ports.LaunchConfig{})
-	if err != nil || len(cmd) == 0 {
+	binary, err := p.ResolveBinary(ctx)
+	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	if status, ok, err := ampLocalAuthStatus(ctx); err != nil || ok {
 		return status, err
 	}
-	return ampUsageAuthStatus(ctx, cmd[0])
+	return ampUsageAuthStatus(ctx, binary)
 }
 
 func ampLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {

@@ -24,6 +24,11 @@ type fakeAuthAgent struct {
 	authDelay time.Duration
 }
 
+type probeTrackingAgent struct {
+	fakeAgent
+	onProbe func()
+}
+
 func (f fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
@@ -40,6 +45,27 @@ func (f fakeAgent) GetLaunchCommand(ctx context.Context, _ ports.LaunchConfig) (
 		return nil, f.err
 	}
 	return []string{"agent"}, nil
+}
+
+func (f fakeAgent) ResolveBinary(ctx context.Context) (string, error) {
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return "", f.err
+	}
+	return "agent", nil
+}
+
+func (f probeTrackingAgent) ResolveBinary(ctx context.Context) (string, error) {
+	if f.onProbe != nil {
+		f.onProbe()
+	}
+	return f.fakeAgent.ResolveBinary(ctx)
 }
 
 func (f fakeAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
@@ -69,16 +95,44 @@ func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, e
 	return f.status, f.authErr
 }
 
-func TestListReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
+func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
+	probed := false
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.AgentHarness("codex"),
+			Manifest: adapters.Manifest{
+				ID:   "codex",
+				Name: "Codex",
+			},
+			Agent: probeTrackingAgent{onProbe: func() { probed = true }},
+		},
+	})
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if probed {
+		t.Fatal("List ran a live probe")
+	}
+	if len(got.Supported) != 1 || got.Supported[0].ID != "codex" {
+		t.Fatalf("supported = %#v, want codex", got.Supported)
+	}
+	if len(got.Installed) != 0 || len(got.Authorized) != 0 {
+		t.Fatalf("inventory = %#v, want only supported entries before refresh", got)
+	}
+}
+
+func TestRefreshReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
 		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
 		harnessAgent("broken", "Broken", errors.New("unexpected detector failure")),
 	})
 
-	got, err := svc.List(context.Background())
+	got, err := svc.Refresh(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Refresh: %v", err)
 	}
 	if len(got.Supported) != 3 {
 		t.Fatalf("supported = %#v, want 3 agents", got.Supported)
@@ -88,7 +142,7 @@ func TestListReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	}
 }
 
-func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
+func TestRefreshReportsAuthorizedInstalledAgents(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAuthAgent("codex", "Codex", ports.AgentAuthStatusAuthorized, nil),
 		harnessAuthAgent("claude-code", "Claude Code", ports.AgentAuthStatusUnauthorized, nil),
@@ -96,9 +150,9 @@ func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
 		harnessAuthAgent("broken-auth", "Broken Auth", ports.AgentAuthStatusAuthorized, errors.New("probe failed")),
 	})
 
-	got, err := svc.List(context.Background())
+	got, err := svc.Refresh(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Refresh: %v", err)
 	}
 	if len(got.Supported) != 4 || len(got.Installed) != 4 {
 		t.Fatalf("inventory = %#v, want supported=4 installed=4", got)
@@ -125,7 +179,7 @@ func TestListReportsAuthorizedInstalledAgents(t *testing.T) {
 	}
 }
 
-func TestListDoesNotWaitForSlowAgentProbe(t *testing.T) {
+func TestRefreshDoesNotWaitForSlowAgentProbe(t *testing.T) {
 	previous := agentInstallProbeTimeout
 	agentInstallProbeTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { agentInstallProbeTimeout = previous })
@@ -143,9 +197,9 @@ func TestListDoesNotWaitForSlowAgentProbe(t *testing.T) {
 	})
 
 	start := time.Now()
-	got, err := svc.List(context.Background())
+	got, err := svc.Refresh(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Refresh: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("List took %s, want bounded by slow probe timeout", elapsed)
@@ -158,7 +212,7 @@ func TestListDoesNotWaitForSlowAgentProbe(t *testing.T) {
 	}
 }
 
-func TestListUsesSeparateTimeoutForAuthProbe(t *testing.T) {
+func TestRefreshUsesSeparateTimeoutForAuthProbe(t *testing.T) {
 	previousInstall := agentInstallProbeTimeout
 	previousAuth := agentAuthProbeTimeout
 	agentInstallProbeTimeout = 20 * time.Millisecond
@@ -183,12 +237,40 @@ func TestListUsesSeparateTimeoutForAuthProbe(t *testing.T) {
 		},
 	})
 
-	got, err := svc.List(context.Background())
+	got, err := svc.Refresh(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Refresh: %v", err)
 	}
 	if len(got.Authorized) != 1 || got.Authorized[0].ID != "claude-code" {
 		t.Fatalf("authorized = %#v, want claude-code", got.Authorized)
+	}
+}
+
+func TestRefreshIsRateLimited(t *testing.T) {
+	previous := agentRefreshMinInterval
+	agentRefreshMinInterval = time.Hour
+	t.Cleanup(func() { agentRefreshMinInterval = previous })
+
+	probes := 0
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.AgentHarness("codex"),
+			Manifest: adapters.Manifest{
+				ID:   "codex",
+				Name: "Codex",
+			},
+			Agent: probeTrackingAgent{onProbe: func() { probes++ }},
+		},
+	})
+
+	if _, err := svc.Refresh(context.Background()); err != nil {
+		t.Fatalf("first Refresh: %v", err)
+	}
+	if _, err := svc.Refresh(context.Background()); err != nil {
+		t.Fatalf("second Refresh: %v", err)
+	}
+	if probes != 1 {
+		t.Fatalf("probes = %d, want 1", probes)
 	}
 }
 

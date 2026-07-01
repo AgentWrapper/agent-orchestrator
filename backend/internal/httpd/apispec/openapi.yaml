@@ -30,7 +30,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List supported and locally installed agent adapters
+      summary: Return cached supported and locally installed agent adapters
+      tags:
+      - agents
+  /api/v1/agents/refresh:
+    post:
+      operationId: refreshAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
   /api/v1/events:
@@ -1514,6 +1539,8 @@ components:
     AgentInfo:
       properties:
         authStatus:
+          description: Advisory local auth probe result. authorized means a recent
+            local probe passed; spawn remains the authoritative validation point.
           enum:
           - authorized
           - unauthorized
@@ -1739,14 +1766,20 @@ components:
     ListAgentsResponse:
       properties:
         authorized:
+          description: Compatibility list of installed agents whose local auth probe
+            recently returned authorized. Advisory and stale-prone; spawn may still
+            fail.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
         installed:
+          description: Agents whose binary resolved during the latest best-effort
+            local catalog probe.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
         supported:
+          description: Agents supported by this daemon build.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array

@@ -20,11 +20,10 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	cmd, err := p.GetLaunchCommand(ctx, ports.LaunchConfig{})
-	if err != nil || len(cmd) == 0 {
+	binary, err := p.ResolveBinary(ctx)
+	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
-	binary := cmd[0]
 	if status, ok, err := kilocodeLocalAuthStatus(ctx); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	} else if ok {

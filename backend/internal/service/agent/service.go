@@ -14,6 +14,7 @@ import (
 var (
 	agentInstallProbeTimeout = 2 * time.Second
 	agentAuthProbeTimeout    = 5 * time.Second
+	agentRefreshMinInterval  = 10 * time.Second
 )
 
 type probeResult struct {
@@ -26,37 +27,73 @@ type probeResult struct {
 type Info struct {
 	ID         string                `json:"id"`
 	Label      string                `json:"label"`
-	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown"`
+	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
 }
 
-// Inventory describes all daemon-supported agents and which are runnable here.
+// Inventory describes all daemon-supported agents and best-effort local probe
+// results. Installed/authorized entries are advisory snapshots and can be stale;
+// session spawn is the authoritative validation point for binary availability,
+// runtime prerequisites, and model-call readiness.
 type Inventory struct {
-	Supported  []Info `json:"supported"`
-	Installed  []Info `json:"installed"`
-	Authorized []Info `json:"authorized"`
+	Supported  []Info `json:"supported" description:"Agents supported by this daemon build."`
+	Installed  []Info `json:"installed" description:"Agents whose binary resolved during the latest best-effort local catalog probe."`
+	Authorized []Info `json:"authorized" description:"Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
 }
 
-// Service reports supported and locally runnable agent adapters.
+// Service reports supported agent adapters and best-effort local readiness
+// probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
 	agents []agentregistry.HarnessAgent
+
+	mu          sync.RWMutex
+	inventory   Inventory
+	lastRefresh time.Time
+	refreshMu   sync.Mutex
 }
 
 // New returns an agent inventory service backed by the daemon's shipped
 // adapter registry.
 func New() *Service {
-	return &Service{agents: agentregistry.Harnessed()}
+	return NewWithAgents(agentregistry.Harnessed())
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents}
+	return &Service{agents: agents, inventory: Inventory{Supported: supportedInfos(agents)}}
 }
 
-// List returns every supported agent plus the subset whose binary can be
-// resolved on this machine. Detector errors are intentionally isolated to the
-// affected agent; one broken adapter should not hide the rest of the catalog.
+// List returns the cached agent inventory without running probes. Installed and
+// authorized entries come from the last explicit Refresh call and are advisory:
+// they can be stale by the time a user starts a session, and session spawn
+// performs the authoritative binary/runtime validation.
 func (s *Service) List(ctx context.Context) (Inventory, error) {
+	if err := ctx.Err(); err != nil {
+		return Inventory{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneInventory(s.inventory), nil
+}
+
+// Refresh runs the bounded local binary/auth probes, updates the cached
+// inventory, and returns the new snapshot. Refreshes are serialized and
+// rate-limited so repeated frontend reloads cannot stampede agent CLIs.
+func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
+	if err := ctx.Err(); err != nil {
+		return Inventory{}, err
+	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	s.mu.RLock()
+	if !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
+		cached := cloneInventory(s.inventory)
+		s.mu.RUnlock()
+		return cached, nil
+	}
+	s.mu.RUnlock()
+
 	results := make(chan probeResult, len(s.agents))
 	var wg sync.WaitGroup
 	for _, item := range s.agents {
@@ -87,11 +124,37 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 	sortInfos(supported)
 	sortInfos(installed)
 	sortInfos(authorized)
-	return Inventory{
+	next := Inventory{
 		Supported:  supported,
 		Installed:  installed,
 		Authorized: authorized,
-	}, nil
+	}
+	s.mu.Lock()
+	s.inventory = cloneInventory(next)
+	s.lastRefresh = time.Now()
+	s.mu.Unlock()
+	return next, nil
+}
+
+func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
+	supported := make([]Info, 0, len(agents))
+	for _, item := range agents {
+		info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
+		if info.Label == "" {
+			info.Label = info.ID
+		}
+		supported = append(supported, info)
+	}
+	sortInfos(supported)
+	return supported
+}
+
+func cloneInventory(in Inventory) Inventory {
+	return Inventory{
+		Supported:  append([]Info(nil), in.Supported...),
+		Installed:  append([]Info(nil), in.Installed...),
+		Authorized: append([]Info(nil), in.Authorized...),
+	}
 }
 
 func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {
@@ -101,7 +164,11 @@ func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResul
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, agentInstallProbeTimeout)
 	defer cancel()
-	if _, err := item.Agent.GetLaunchCommand(probeCtx, ports.LaunchConfig{}); err != nil {
+	resolver, ok := item.Agent.(ports.AgentBinaryResolver)
+	if !ok {
+		return probeResult{info: info}
+	}
+	if _, err := resolver.ResolveBinary(probeCtx); err != nil {
 		return probeResult{info: info}
 	}
 	authCtx, authCancel := context.WithTimeout(ctx, agentAuthProbeTimeout)

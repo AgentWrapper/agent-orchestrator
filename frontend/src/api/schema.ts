@@ -11,10 +11,27 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List supported and locally installed agent adapters */
+        /** Return cached supported and locally installed agent adapters */
         get: operations["listAgents"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh the cached local agent adapter catalog */
+        post: operations["refreshAgents"];
         delete?: never;
         options?: never;
         head?: never;
@@ -530,7 +547,10 @@ export interface components {
             permissions?: string;
         };
         AgentInfo: {
-            /** @enum {string} */
+            /**
+             * @description Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point.
+             * @enum {string}
+             */
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
@@ -611,8 +631,11 @@ export interface components {
             sessionId: string;
         };
         ListAgentsResponse: {
+            /** @description Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail. */
             authorized: components["schemas"]["AgentInfo"][];
+            /** @description Agents whose binary resolved during the latest best-effort local catalog probe. */
             installed: components["schemas"]["AgentInfo"][];
+            /** @description Agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
         };
         ListNotificationsResponse: {
@@ -958,6 +981,44 @@ export interface components {
 export type $defs = Record<string, never>;
 export interface operations {
     listAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    refreshAgents: {
         parameters: {
             query?: never;
             header?: never;

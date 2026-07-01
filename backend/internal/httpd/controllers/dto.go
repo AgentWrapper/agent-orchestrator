@@ -439,6 +439,9 @@ type OrchestratorResponse struct {
 // ListAgentsResponse is the body of GET /api/v1/agents.
 type ListAgentsResponse = agentsvc.Inventory
 
+// RefreshAgentsResponse is the body of POST /api/v1/agents/refresh.
+type RefreshAgentsResponse = agentsvc.Inventory
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 

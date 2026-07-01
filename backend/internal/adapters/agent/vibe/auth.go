@@ -16,8 +16,8 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	cmd, err := p.GetLaunchCommand(ctx, ports.LaunchConfig{})
-	if err != nil || len(cmd) == 0 {
+	binary, err := p.ResolveBinary(ctx)
+	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	if status, ok, err := vibeLocalAuthStatus(ctx); err != nil {
@@ -25,7 +25,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, cmd[0], nil)
+	return authprobe.CLIStatus(ctx, binary, nil)
 }
 
 const (

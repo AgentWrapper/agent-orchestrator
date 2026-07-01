@@ -44,6 +44,45 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
+const agentCatalogResponse = {
+	data: {
+		supported: [
+			{ id: "claude-code", label: "Claude Code" },
+			{ id: "codex", label: "Codex" },
+			{ id: "goose", label: "Goose" },
+			{ id: "kiro", label: "Kiro" },
+			{ id: "opencode", label: "OpenCode" },
+		],
+		installed: [
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+		],
+		authorized: [
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+		],
+	},
+	error: undefined,
+};
+
+function mockProject(project: Record<string, unknown>) {
+	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents") return agentCatalogResponse;
+		return {
+			data: {
+				status: "ok",
+				project,
+			},
+			error: undefined,
+		};
+	});
+}
+
 beforeEach(() => {
 	getMock.mockReset();
 	putMock.mockReset();
@@ -52,36 +91,30 @@ beforeEach(() => {
 
 describe("ProjectSettingsForm", () => {
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						defaultBranch: "develop",
-						sessionPrefix: "po",
-						env: { FOO: "bar" },
-						symlinks: [".env"],
-						postCreate: ["npm install"],
-						worker: {
-							agent: "codex",
-							agentConfig: { model: "worker-model" },
-						},
-						orchestrator: { agent: "claude-code" },
-						agentConfig: {
-							model: "claude-opus-4-5",
-							permissions: "auto",
-						},
-						reviewers: [{ harness: "claude-code" }],
-					},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				sessionPrefix: "po",
+				env: { FOO: "bar" },
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				worker: {
+					agent: "codex",
+					agentConfig: { model: "worker-model" },
 				},
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					model: "claude-opus-4-5",
+					permissions: "auto",
+				},
+				reviewers: [{ harness: "claude-code" }],
 			},
-			error: undefined,
 		});
 
 		renderSettings();
@@ -106,8 +139,8 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
 		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
-		await chooseOption(workerAgent, "opencode");
-		await chooseOption(orchestratorAgent, "goose");
+		await chooseOption(workerAgent, "OpenCode");
+		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -139,23 +172,17 @@ describe("ProjectSettingsForm", () => {
 	}, 20_000);
 
 	it("shows the daemon validation message when save fails", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
 			},
-			error: undefined,
 		});
 		putMock.mockResolvedValue({
 			data: undefined,
@@ -171,20 +198,14 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "",
-					defaultBranch: "main",
-					config: {},
-				},
-			},
-			error: undefined,
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {},
 		});
 
 		renderSettings();
@@ -199,5 +220,35 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("shows needs-auth agents as unavailable in project settings", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
+		await userEvent.click(workerAgent);
+		const options = await screen.findAllByRole("option");
+		expect(options.map((option) => option.textContent)).toEqual([
+			"Claude Code",
+			"Codex",
+			"Goose",
+			"OpenCode",
+			"KiroNeeds auth",
+		]);
+		expect(options[4]).toHaveAttribute("aria-disabled", "true");
 	});
 });
