@@ -148,11 +148,6 @@ type Workspace interface {
 type WorkspaceProject interface {
 	CreateWorkspaceProject(ctx context.Context, cfg WorkspaceProjectConfig) (WorkspaceProjectInfo, error)
 	DestroyWorkspaceProject(ctx context.Context, info WorkspaceProjectInfo) error
-	DestroyWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) error
-	ForceDestroyWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) error
-	RestoreWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) (WorkspaceRepoInfo, error)
-	StashWorkspaceProjectWorktree(ctx context.Context, info WorkspaceRepoInfo) (ref string, err error)
-	ApplyWorkspaceProjectPreserved(ctx context.Context, info WorkspaceRepoInfo, ref string) error
 }
 
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
@@ -195,6 +190,10 @@ type WorkspaceConfig struct {
 	// BaseBranch is the per-project default branch new session branches are
 	// created from. Empty falls back to the workspace adapter's own default.
 	BaseBranch string
+	// RepoPath optionally overrides ProjectID-based repo resolution.
+	RepoPath string
+	// Path optionally supplies an existing managed worktree path for restore.
+	Path string
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
@@ -203,6 +202,10 @@ type WorkspaceInfo struct {
 	Branch    string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
+	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
+	// when the normal workspace lifecycle primitives operate on one child repo
+	// inside a workspace project.
+	RepoPath string
 }
 
 // WorkspaceProjectConfig describes a multi-repo workspace session. RootRepoPath
