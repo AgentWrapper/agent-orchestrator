@@ -282,7 +282,7 @@ func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
 	}
 }
 
-func TestRestoreWorkspaceProjectWorktreeMovesStrayPathAside(t *testing.T) {
+func TestRestoreWithRepoPathMovesStrayPathAside(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
@@ -317,16 +317,15 @@ func TestRestoreWorkspaceProjectWorktreeMovesStrayPathAside(t *testing.T) {
 		}
 	}
 
-	info, err := ws.RestoreWorkspaceProjectWorktree(context.Background(), ports.WorkspaceRepoInfo{
-		RepoName:  "api",
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "proj-1",
+		Branch:    "ao/proj-1",
 		RepoPath:  repo,
 		Path:      path,
-		Branch:    "ao/proj-1",
-		SessionID: "proj-1",
-		ProjectID: "proj",
 	})
 	if err != nil {
-		t.Fatalf("RestoreWorkspaceProjectWorktree: %v", err)
+		t.Fatalf("Restore: %v", err)
 	}
 	if info.Path != path || addPath != path {
 		t.Fatalf("restored path=%q addPath=%q, want %q", info.Path, addPath, path)

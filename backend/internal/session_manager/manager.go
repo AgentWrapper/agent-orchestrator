@@ -1074,12 +1074,8 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 }
 
 func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo, destroyRuntime bool) error {
-	adapter, ok := m.workspace.(ports.WorkspaceProject)
-	if !ok {
-		return errors.New("workspace project lifecycle is not supported by workspace adapter")
-	}
 	for _, row := range rows {
-		ref, err := adapter.StashWorkspaceProjectWorktree(ctx, row)
+		ref, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row))
 		if err != nil {
 			return fmt.Errorf("save %s repo %s: stash: %w", rec.ID, row.RepoName, err)
 		}
@@ -1105,7 +1101,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		}
 	}
 	for i := len(rows) - 1; i >= 0; i-- {
-		if err := adapter.ForceDestroyWorkspaceProjectWorktree(ctx, rows[i]); err != nil {
+		if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
 			m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "repo", rows[i].RepoName, "error", err)
 		}
 	}
@@ -1113,36 +1109,17 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 }
 
 func (m *Manager) destroyWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (bool, error) {
-	adapter, ok := m.workspace.(ports.WorkspaceProject)
-	if !ok {
-		return false, errors.New("workspace project lifecycle is not supported by workspace adapter")
-	}
 	cleaned := false
 	var firstErr error
 	for i := len(rows) - 1; i >= 0; i-- {
 		if rows[i].Path == "" {
 			continue
 		}
-		if err := adapter.DestroyWorkspaceProjectWorktree(ctx, rows[i]); err != nil {
+		info := workspaceInfoFromRepoInfo(rows[i])
+		if err := m.workspace.Destroy(ctx, info); err != nil {
 			preservedRef := ""
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				ref, preserveErr := adapter.StashWorkspaceProjectWorktree(ctx, rows[i])
-				if preserveErr == nil {
-					preservedRef = ref
-					if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "unavailable", ref); stateErr != nil {
-						preserveErr = stateErr
-					}
-				}
-				if preserveErr == nil {
-					forceErr := adapter.ForceDestroyWorkspaceProjectWorktree(ctx, rows[i])
-					if forceErr == nil {
-						cleaned = true
-						continue
-					}
-					err = forceErr
-				} else {
-					err = preserveErr
-				}
+				return cleaned, err
 			}
 			if stateErr := m.upsertWorkspaceProjectRowState(ctx, rows[i], "retry_remove", preservedRef); stateErr != nil && firstErr == nil {
 				firstErr = stateErr
@@ -1173,18 +1150,22 @@ func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.
 }
 
 func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.WorkspaceRepoInfo) (ports.WorkspaceRepoInfo, error) {
-	adapter, ok := m.workspace.(ports.WorkspaceProject)
-	if !ok {
-		return ports.WorkspaceRepoInfo{}, errors.New("workspace project lifecycle is not supported by workspace adapter")
-	}
 	var root ports.WorkspaceRepoInfo
 	for _, row := range rows {
-		restored, err := adapter.RestoreWorkspaceProjectWorktree(ctx, row)
+		restored, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+			ProjectID: row.ProjectID,
+			SessionID: row.SessionID,
+			Branch:    row.Branch,
+			RepoPath:  row.RepoPath,
+			Path:      row.Path,
+		})
 		if err != nil {
 			return ports.WorkspaceRepoInfo{}, fmt.Errorf("repo %s: %w", row.RepoName, err)
 		}
-		if restored.RepoName == domain.RootWorkspaceRepoName {
-			root = restored
+		row.Path = restored.Path
+		row.Branch = restored.Branch
+		if row.RepoName == domain.RootWorkspaceRepoName {
+			root = row
 		}
 	}
 	if root.Path == "" {
@@ -1194,10 +1175,6 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 }
 
 func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []ports.WorkspaceRepoInfo) {
-	adapter, ok := m.workspace.(ports.WorkspaceProject)
-	if !ok {
-		return
-	}
 	for _, row := range rows {
 		var preserveRef string
 		sessionRows, err := m.store.ListSessionWorktrees(ctx, row.SessionID)
@@ -1214,7 +1191,7 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 		if preserveRef == "" {
 			continue
 		}
-		if applyErr := adapter.ApplyWorkspaceProjectPreserved(ctx, row, preserveRef); applyErr != nil {
+		if applyErr := m.workspace.ApplyPreserved(ctx, workspaceInfoFromRepoInfo(row), preserveRef); applyErr != nil {
 			if errors.Is(applyErr, ports.ErrPreservedConflict) {
 				m.logger.Warn("restore-all: apply preserved produced conflicts; agent relaunched with conflict markers in place",
 					"sessionID", row.SessionID, "repo", row.RepoName, "ref", preserveRef, "error", applyErr)
@@ -1793,6 +1770,7 @@ func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo
 		Branch:    info.Branch,
 		SessionID: info.SessionID,
 		ProjectID: info.ProjectID,
+		RepoPath:  info.RepoPath,
 	}
 }
 
