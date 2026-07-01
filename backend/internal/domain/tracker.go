@@ -1,5 +1,10 @@
 package domain
 
+import (
+	"fmt"
+	"strings"
+)
+
 // TrackerProvider identifies an issue-tracker provider implementation.
 type TrackerProvider string
 
@@ -71,4 +76,60 @@ type ListFilter struct {
 	Labels   []string        `json:"labels,omitempty"`
 	Assignee string          `json:"assignee,omitempty"`
 	Limit    int             `json:"limit,omitempty"`
+}
+
+// TrackerIntakeConfig controls issue-driven worker spawning for a project.
+// Enabled requires at least one explicit eligibility rule so turning intake on
+// cannot accidentally drain an entire issue backlog.
+type TrackerIntakeConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Provider defaults to github when Enabled is true.
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
+	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
+	// intake loop derives it from the project's repo origin URL. GitHub only.
+	Repo string `json:"repo,omitempty"`
+	// Labels narrows eligible issues. All labels are forwarded to the provider's
+	// list filter; providers decide whether the match is all-of or provider-native.
+	Labels []string `json:"labels,omitempty"`
+	// Assignee narrows eligible issues to one assignee. Provider-specific values
+	// such as "*" are passed through unchanged.
+	Assignee string `json:"assignee,omitempty"`
+}
+
+// WithDefaults fills the provider only when intake is enabled. Disabled intake
+// leaves the zero value untouched so empty project configs still store as NULL.
+func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
+	if c.Enabled && c.Provider == "" {
+		c.Provider = TrackerProviderGitHub
+	}
+	return c
+}
+
+// Validate rejects accidental broad intake and unknown providers.
+func (c TrackerIntakeConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	c = c.WithDefaults()
+	if c.Enabled && c.Provider != TrackerProviderGitHub {
+		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
+	}
+	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
+		return err
+	}
+	for i, label := range c.Labels {
+		if strings.TrimSpace(label) == "" {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
+		}
+		if strings.TrimSpace(label) != label {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not have leading or trailing whitespace", i)
+		}
+	}
+	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
+		return err
+	}
+	if len(c.Labels) == 0 && strings.TrimSpace(c.Assignee) == "" {
+		return fmt.Errorf("trackerIntake: at least one of labels or assignee is required when enabled")
+	}
+	return nil
 }
