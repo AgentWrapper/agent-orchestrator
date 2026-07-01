@@ -1,0 +1,4 @@
+interface:
+  display_name: "AO Agent Plugin Builder"
+  short_description: "Build AO agent plugins from repo patterns"
+  default_prompt: "Use this skill to add one AO agent plugin by copying the closest existing agent package pattern, wiring registry/CLI/web surfaces, testing activity/session behavior, and validating the diff."
