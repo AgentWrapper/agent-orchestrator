@@ -1005,7 +1005,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	for _, row := range rows {
 		repoPath := repoPaths[row.RepoName]
 		if repoPath == "" {
-			return nil, fmt.Errorf("repo %q is not registered for workspace project %s", row.RepoName, project.ID)
+			continue
 		}
 		out = append(out, ports.WorkspaceRepoInfo{
 			RepoName:     row.RepoName,

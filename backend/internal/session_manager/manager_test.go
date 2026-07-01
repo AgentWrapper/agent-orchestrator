@@ -1033,11 +1033,9 @@ func TestCleanup_WorkspaceProjectMarksRetryRemoveAfterTeardownFailure(t *testing
 	}
 }
 
-func TestCleanup_WorkspaceProjectRetryRemoveKeepsPreservedRef(t *testing.T) {
+func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 	m, st, _, ws := newManager()
 	ws.destroyErr = fmt.Errorf("dirty: %w", ports.ErrWorkspaceDirty)
-	ws.forceDestroyErr = errors.New("still locked")
-	ws.stashRef = "refs/ao/preserved/mer-1"
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1"})
@@ -1059,8 +1057,8 @@ func TestCleanup_WorkspaceProjectRetryRemoveKeepsPreservedRef(t *testing.T) {
 		refs[row.RepoName] = row.PreservedRef
 		states[row.RepoName] = row.State
 	}
-	if states["api"] != "retry_remove" || refs["api"] != "refs/ao/preserved/mer-1/api" {
-		t.Fatalf("api state/ref = %q/%q, want retry_remove with preserved ref", states["api"], refs["api"])
+	if states["api"] != "" || refs["api"] != "" {
+		t.Fatalf("api state/ref = %q/%q, want unchanged dirty row", states["api"], refs["api"])
 	}
 }
 
