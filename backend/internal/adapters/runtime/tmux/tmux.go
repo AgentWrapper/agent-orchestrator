@@ -23,6 +23,17 @@ import (
 const (
 	defaultTimeout    = 5 * time.Second
 	defaultChunkBytes = 16 * 1024
+	// defaultEnterDelay spaces the submit Enter after the literal text in
+	// SendMessage. Codex's TUI has paste-burst detection: text and an Enter
+	// arriving in the same input burst are treated as a paste, so the Enter is
+	// inserted as a literal newline instead of submitting. The pause lets that
+	// window close so the Enter registers as a discrete keypress.
+	//
+	// ponytail: a fixed delay, not condition-polling — the paste window is an
+	// external, codex-version-dependent quantity with no clean signal to observe
+	// (capture-pane shows a rendered TUI, not input-buffer state). Tunable via
+	// Options.EnterDelay if a codex release changes the threshold.
+	defaultEnterDelay = 120 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -32,20 +43,22 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary    string        // default "tmux" (resolved via exec.LookPath)
-	Shell     string        // default $SHELL else /bin/sh
-	Timeout   time.Duration // default 5s
-	ChunkSize int           // default 16*1024
+	Binary     string        // default "tmux" (resolved via exec.LookPath)
+	Shell      string        // default $SHELL else /bin/sh
+	Timeout    time.Duration // default 5s
+	ChunkSize  int           // default 16*1024
+	EnterDelay time.Duration // pause before the submit Enter; default 120ms, <0 disables
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary    string
-	shell     string
-	timeout   time.Duration
-	chunkSize int
-	runner    runner
+	binary     string
+	shell      string
+	timeout    time.Duration
+	chunkSize  int
+	enterDelay time.Duration
+	runner     runner
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -90,12 +103,21 @@ func New(opts Options) *Runtime {
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkBytes
 	}
+	// 0 → default; a negative value explicitly disables the pause.
+	enterDelay := opts.EnterDelay
+	switch {
+	case enterDelay == 0:
+		enterDelay = defaultEnterDelay
+	case enterDelay < 0:
+		enterDelay = 0
+	}
 	return &Runtime{
-		binary:    binary,
-		shell:     shellPath,
-		timeout:   timeout,
-		chunkSize: chunkSize,
-		runner:    execRunner{},
+		binary:     binary,
+		shell:      shellPath,
+		timeout:    timeout,
+		chunkSize:  chunkSize,
+		enterDelay: enterDelay,
+		runner:     execRunner{},
 	}
 }
 
@@ -189,8 +211,13 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return true, nil
 }
 
-// SendMessage sends literal text to the session (chunked via send-keys -l) then
-// presses Enter to submit.
+// SendMessage sends literal text to the session (chunked via send-keys -l),
+// pauses r.enterDelay so the input settles, then presses Enter to submit.
+//
+// The pause matters for TUIs with paste-burst detection (codex): text and an
+// immediately-following Enter arriving in one burst are treated as a paste, so
+// the Enter becomes a literal newline and nothing is submitted (the user has to
+// press Enter by hand). Spacing the Enter out makes it a discrete keypress.
 //
 // ponytail: send-keys -l chunked is simpler than load-buffer/paste-buffer; the
 // ceiling is very large messages may be slower, but chunk size defaults to 16 KB
@@ -205,10 +232,29 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 			return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 		}
 	}
+	if err := sleep(ctx, r.enterDelay); err != nil {
+		return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
+	}
 	if _, err := r.run(ctx, sendEnterArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+// sleep waits d, returning early with the context error if ctx is cancelled.
+// A non-positive d returns immediately.
+func sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // GetOutput returns the last `lines` lines of the session pane's captured

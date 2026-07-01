@@ -46,6 +46,7 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	fr := &fakeRunner{}
 	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
 	r.runner = fr
+	r.enterDelay = 0 // keep the send-message tests instant; delay is covered explicitly below
 	return r, fr
 }
 
@@ -477,6 +478,56 @@ func TestSendMessageUsesLiteralFlag(t *testing.T) {
 	// First call must use -l so "Enter" is sent literally, not as a key binding.
 	if fr.calls[0].args[3] != "-l" {
 		t.Fatalf("send-keys args[3] = %q, want -l", fr.calls[0].args[3])
+	}
+}
+
+func TestNewEnterDelayDefaultsAndDisable(t *testing.T) {
+	if got := New(Options{}).enterDelay; got != defaultEnterDelay {
+		t.Fatalf("default enterDelay = %v, want %v", got, defaultEnterDelay)
+	}
+	if got := New(Options{EnterDelay: -1}).enterDelay; got != 0 {
+		t.Fatalf("negative EnterDelay = %v, want 0 (disabled)", got)
+	}
+	if got := New(Options{EnterDelay: 7 * time.Millisecond}).enterDelay; got != 7*time.Millisecond {
+		t.Fatalf("explicit EnterDelay = %v, want 7ms", got)
+	}
+}
+
+// The submit Enter must land after a settle delay so codex's paste-burst
+// detection treats it as a keypress (submit), not a pasted newline.
+func TestSendMessageDelaysBeforeEnter(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	r.enterDelay = 40 * time.Millisecond
+	start := time.Now()
+	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "hi"); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 35*time.Millisecond {
+		t.Fatalf("SendMessage returned after %v, want >= the 40ms enter delay", elapsed)
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want 2 (chunk + Enter)", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("last call = %#v, want Enter %#v (delay must precede the Enter)", got, want)
+	}
+}
+
+// The settle delay is context-aware: an aborted send returns the context error
+// and must NOT press Enter (proving the delay sits before the Enter).
+func TestSendMessageEnterDelayRespectsContext(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	r.enterDelay = time.Hour // would hang if the delay ignored ctx cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "hi")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendMessage err = %v, want context.Canceled", err)
+	}
+	for _, c := range fr.calls {
+		if reflect.DeepEqual(c.args, sendEnterArgs("sess-1")) {
+			t.Fatalf("Enter was sent despite cancellation during the settle delay")
+		}
 	}
 }
 
