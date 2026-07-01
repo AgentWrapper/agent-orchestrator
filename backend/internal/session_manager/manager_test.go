@@ -1477,7 +1477,7 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	if stashIdx == -1 || deleteIdx == -1 || forceIdx == -1 {
 		t.Fatalf("missing expected calls in shared log: %v", sharedLog)
 	}
-	if !(stashIdx < deleteIdx && deleteIdx < forceIdx) {
+	if stashIdx >= deleteIdx || deleteIdx >= forceIdx {
 		t.Fatalf("replacement retire must capture, clear restore marker, then force release; log=%v", sharedLog)
 	}
 }
