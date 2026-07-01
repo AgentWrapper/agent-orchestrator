@@ -453,7 +453,10 @@ function deriveGitHubRepo(remote?: string): string | undefined {
 		}
 	}
 	if (!path) return undefined;
-	const parts = path.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "").split("/");
+	const parts = path
+		.replace(/\.git$/, "")
+		.replace(/^\/+|\/+$/g, "")
+		.split("/");
 	if (parts.length < 2) return undefined;
 	const owner = parts[parts.length - 2].trim();
 	const repo = parts[parts.length - 1].trim();
