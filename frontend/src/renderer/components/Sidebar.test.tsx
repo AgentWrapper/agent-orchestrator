@@ -4,13 +4,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
-import type { WorkspaceSummary } from "../types/workspace";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 
-const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigateMock: vi.fn() }));
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-
-const { navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
+const { getMock, navigateMock, mockParams, renameSessionMock } = vi.hoisted(() => ({
+	getMock: vi.fn(),
 	navigateMock: vi.fn(),
 	mockParams: { projectId: undefined as string | undefined },
 	renameSessionMock: vi.fn().mockResolvedValue(undefined),
@@ -67,11 +65,12 @@ function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	seedAgents = true,
+	workspaces = [workspace],
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
 	seedAgents?: boolean;
-	workspaces = [workspace],
+	workspaces?: WorkspaceSummary[];
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
