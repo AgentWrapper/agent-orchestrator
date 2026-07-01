@@ -406,6 +406,10 @@ function ProjectItem({
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const startRestart = useUiStore((state) => state.startOrchestratorRestart);
+	const finishRestart = useUiStore((state) => state.finishOrchestratorRestart);
+	const setReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
@@ -413,6 +417,7 @@ function ProjectItem({
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = findProjectOrchestrator([workspace], workspace.id);
 	const restartNeeded = orchestratorNeedsRestart(workspace, orchestrator);
+	const isRestarting = restartingProjectIds.has(workspace.id);
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
@@ -422,13 +427,19 @@ function ProjectItem({
 			return;
 		}
 		setIsSpawning(true);
+		if (restartNeeded) startRestart(workspace.id);
 		try {
 			const sessionId = await spawnOrchestrator(workspace.id, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
-			console.error("Failed to spawn orchestrator:", err);
+			setReplacementError({
+				projectId: workspace.id,
+				projectName: workspace.name,
+				message: err instanceof Error ? err.message : restartNeeded ? "Could not restart orchestrator" : "Could not spawn orchestrator",
+			});
 		} finally {
+			if (restartNeeded) finishRestart(workspace.id);
 			setIsSpawning(false);
 		}
 	};
@@ -533,7 +544,7 @@ function ProjectItem({
 										: `Spawn ${workspace.name} orchestrator`
 							}
 							className={HOVER_ACTION_CLASS}
-							disabled={isSpawning}
+							disabled={isSpawning || isRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
@@ -541,7 +552,7 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isSpawning
+						{isSpawning || isRestarting
 							? restartNeeded
 								? "Restarting…"
 								: "Spawning…"

@@ -56,6 +56,10 @@ export function ShellTopbar() {
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const startRestart = useUiStore((state) => state.startOrchestratorRestart);
+	const finishRestart = useUiStore((state) => state.finishOrchestratorRestart);
+	const setReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
@@ -76,12 +80,13 @@ export function ShellTopbar() {
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "agent-orchestrator");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const restartNeeded = project ? orchestratorNeedsRestart(project, orchestrator) : false;
+	const isRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
 
 	const openNewTask = () => {
-		if (!projectId) return;
+		if (!projectId || isRestarting) return;
 		setIsNewTaskOpen(true);
 	};
 
@@ -111,6 +116,7 @@ export function ShellTopbar() {
 			return;
 		}
 		setIsSpawning(true);
+		if (restartNeeded) startRestart(projectId);
 		try {
 			const sessionId = await spawnOrchestrator(projectId, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -125,8 +131,13 @@ export function ShellTopbar() {
 				surface: isSessionRoute ? "session_detail" : "project_board",
 				project_id: projectId,
 			});
-			console.error("Failed to spawn orchestrator:", error);
+			setReplacementError({
+				projectId,
+				projectName: project?.name,
+				message: error instanceof Error ? error.message : restartNeeded ? "Could not restart orchestrator" : "Could not spawn orchestrator",
+			});
 		} finally {
+			if (restartNeeded) finishRestart(projectId);
 			setIsSpawning(false);
 		}
 	};
@@ -171,9 +182,10 @@ export function ShellTopbar() {
 						{isOrchestrator ? (
 							<>
 								<button
-									aria-label="New task"
-									className="dashboard-app-header__primary-btn"
-									onClick={openNewTask}
+								aria-label="New task"
+								className="dashboard-app-header__primary-btn"
+								disabled={isRestarting}
+								onClick={openNewTask}
 									style={noDragStyle}
 									type="button"
 								>
@@ -199,13 +211,13 @@ export function ShellTopbar() {
 							<button
 								aria-label={restartNeeded ? "Restart orchestrator" : "Open orchestrator"}
 								className="dashboard-app-header__primary-btn dashboard-app-header__primary-btn--compact"
-								disabled={isSpawning}
+								disabled={isSpawning || isRestarting}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								type="button"
 							>
 								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning
+								{isSpawning || isRestarting
 									? restartNeeded
 										? "Restarting…"
 										: "Spawning…"

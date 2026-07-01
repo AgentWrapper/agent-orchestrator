@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
 	findProjectOrchestrator,
+	orchestratorHealth,
 	orchestratorNeedsRestart,
 	sessionIsActive,
 	sessionNeedsAttention,
@@ -153,6 +154,34 @@ describe("orchestratorNeedsRestart", () => {
 		expect(orchestratorNeedsRestart(workspaceWith("claude-code"), orchestrator)).toBe(false);
 		expect(orchestratorNeedsRestart(workspaceWith(), orchestrator)).toBe(false);
 		expect(orchestratorNeedsRestart(workspaceWith("codex"), undefined)).toBe(false);
+	});
+});
+
+describe("orchestratorHealth", () => {
+	function workspaceWith(sessions: WorkspaceSession[], orchestratorAgent?: WorkspaceSummary["orchestratorAgent"]): WorkspaceSummary {
+		return { id: "skills", name: "skills", path: "/tmp/skills", orchestratorAgent, sessions };
+	}
+
+	it("reports restarting while replacement is pending", () => {
+		const health = orchestratorHealth(workspaceWith([], "codex"), true);
+		expect(health.state).toBe("restarting");
+	});
+
+	it("reports missing, duplicate, and restart-needed states", () => {
+		expect(orchestratorHealth(workspaceWith([])).state).toBe("missing");
+		expect(
+			orchestratorHealth(
+				workspaceWith([
+					sessionWith({ id: "old", kind: "orchestrator", provider: "claude-code" }),
+					sessionWith({ id: "new", kind: "orchestrator", provider: "codex" }),
+				]),
+			).state,
+		).toBe("duplicates");
+		expect(orchestratorHealth(workspaceWith([sessionWith({ kind: "orchestrator", provider: "claude-code" })], "codex")).state).toBe("restart_needed");
+	});
+
+	it("reports ok when the active orchestrator matches config", () => {
+		expect(orchestratorHealth(workspaceWith([sessionWith({ kind: "orchestrator", provider: "codex" })], "codex")).state).toBe("ok");
 	});
 });
 

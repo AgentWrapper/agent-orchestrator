@@ -96,6 +96,7 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
+	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -466,6 +467,59 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		freed = true
 	}
 	return freed, nil
+}
+
+// RetireForReplacement terminates a live orchestrator and releases its branch
+// for a replacement session. Unlike Kill, this captures uncommitted work before
+// force-removing the worktree, so a dirty canonical orchestrator worktree does
+// not block the replacement from claiming the canonical branch.
+//
+// This deliberately does not write a session_worktrees row: those rows are
+// boot-restore markers, and a replaced orchestrator must stay terminated.
+func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, err)
+	}
+	if !ok || rec.IsTerminated {
+		return nil
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		}
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+		}
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("retire replacement: runtime destroy failed", "sessionID", rec.ID, "error", err)
+			}
+		}
+		return nil
+	}
+
+	ws := workspaceInfo(rec)
+	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: stash: %w", id, err)
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("retire replacement: runtime destroy failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
+	}
+	return nil
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs

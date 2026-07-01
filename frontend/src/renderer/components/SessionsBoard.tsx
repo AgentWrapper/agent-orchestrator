@@ -9,6 +9,7 @@ import {
 	type WorkspaceSession,
 	attentionZone,
 	findProjectOrchestrator,
+	orchestratorHealth,
 	orchestratorNeedsRestart,
 	workerSessions,
 } from "../types/workspace";
@@ -20,6 +21,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
+import { useUiStore } from "../stores/ui-store";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -81,7 +83,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const workspace = projectId ? workspaces[0] : undefined;
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const startRestart = useUiStore((state) => state.startOrchestratorRestart);
+	const finishRestart = useUiStore((state) => state.finishOrchestratorRestart);
+	const setReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const isRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const restartNeeded = workspace ? orchestratorNeedsRestart(workspace, orchestrator) : false;
+	const health = workspace ? orchestratorHealth(workspace, isRestarting) : { state: "ok" as const };
 	const orchestratorPendingLabel = restartNeeded ? "Restarting..." : "Spawning...";
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
@@ -112,6 +120,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		setIsSpawning(true);
+		if (restartNeeded) startRestart(projectId);
 		try {
 			const sessionId = await spawnOrchestrator(projectId, restartNeeded);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -119,7 +128,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			});
+		} catch (err) {
+			setReplacementError({
+				projectId,
+				projectName: workspace?.name,
+				message: err instanceof Error ? err.message : restartNeeded ? "Could not restart orchestrator" : "Could not spawn orchestrator",
+			});
 		} finally {
+			if (restartNeeded) finishRestart(projectId);
 			setIsSpawning(false);
 		}
 	};
@@ -138,6 +154,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
+				disabled={isRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
 				type="button"
 			>
@@ -147,12 +164,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<button
 				aria-label={restartNeeded ? "Restart Orchestrator" : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 				className="dashboard-app-header__primary-btn"
-				disabled={isSpawning}
+				disabled={isSpawning || isRestarting}
 				onClick={() => void openOrchestrator()}
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isSpawning
+				{isSpawning || isRestarting
 					? orchestratorPendingLabel
 					: restartNeeded
 						? "Restart Orchestrator"
@@ -170,6 +187,27 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				subtitle="Live agent sessions flowing from work → review → merge."
 				actions={actions}
 			/>
+			{health.state !== "ok" && (
+				<div className="border-b border-border bg-surface px-[18px] py-2 text-[12px] text-muted-foreground">
+					<span
+						className={cn(
+							"font-medium",
+							(health.state === "restart_needed" || health.state === "duplicates") && "text-warning",
+							health.state === "missing" && "text-error",
+							health.state === "restarting" && "text-foreground",
+						)}
+					>
+						{health.state === "restart_needed"
+							? "Orchestrator restart needed"
+							: health.state === "duplicates"
+								? "Duplicate orchestrators detected"
+								: health.state === "missing"
+									? "No orchestrator running"
+									: "Restarting orchestrator"}
+					</span>
+					<span className="ml-2">{health.message}</span>
+				</div>
+			)}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (

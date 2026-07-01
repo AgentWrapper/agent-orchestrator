@@ -46,6 +46,7 @@ type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -279,6 +280,10 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	unlock := s.lockOrchestratorProject(projectID)
 	defer unlock()
 
+	project, err := s.requireProject(ctx, projectID)
+	if err != nil {
+		return domain.Session{}, err
+	}
 	active := true
 	if clean {
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -286,8 +291,9 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return domain.Session{}, err
 		}
 		for _, orch := range existing {
-			if _, err := s.Kill(ctx, orch.ID); err != nil {
-				return domain.Session{}, err
+			_ = s.sendRetireNotice(ctx, orch.ID)
+			if err := s.manager.RetireForReplacement(ctx, orch.ID); err != nil {
+				return domain.Session{}, toAPIError(err)
 			}
 		}
 	} else {
@@ -300,7 +306,51 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	return s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if err := verifyOrchestratorReplacement(project, sess); err != nil {
+		return domain.Session{}, err
+	}
+	return sess, nil
+}
+
+const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
+
+func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
+	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
+		return fmt.Errorf("send retire notice to %s: %w", id, err)
+	}
+	return nil
+}
+
+func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	if sess.IsTerminated {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s is terminated", sess.ID)
+	}
+	if sess.Kind != domain.KindOrchestrator {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
+	}
+	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
+	}
+	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-orchestrator"
+	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
+		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
+	}
+	return nil
+}
+
+func serviceSessionPrefix(project domain.ProjectRecord) string {
+	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
+		return p
+	}
+	id := project.ID
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
 }
 
 func newestSession(sessions []domain.Session) domain.Session {
