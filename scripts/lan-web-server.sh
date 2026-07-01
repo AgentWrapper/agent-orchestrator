@@ -17,8 +17,8 @@ _latest_node_bin=$(ls -d "$NVM_DIR"/versions/node/*/bin 2>/dev/null | sort -V | 
 [ -n "$_latest_node_bin" ] && export PATH="$_latest_node_bin:$PATH"
 
 # Current LAN IP, derived at start. DHCP drifts, and a hardcoded IP here (was
-# .250) is exactly what broke the UI when the lease moved to .227. The launchd
-# daemon (ao-daemon.sh) pins AO_ALLOWED_ORIGINS to this same value, so the API
+# .250) is exactly what broke the UI when the lease moved to .227. The manually
+# started daemon must use this same value for AO_ALLOWED_ORIGINS, so the API
 # base the browser uses and the daemon's allowed origin always agree.
 IP=$(ipconfig getifaddr "$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')" 2>/dev/null)
 [ -z "$IP" ] && IP=$(ipconfig getifaddr en0 2>/dev/null)
@@ -29,6 +29,6 @@ IP=$(ipconfig getifaddr "$(route -n get default 2>/dev/null | awk '/interface:/{
 # the daemon from a terminal (which has Desktop access) instead:
 #   AO_ALLOWED_ORIGINS=http://$IP:3000 ao start
 
-cd "$HOME/dev/agent-orchestrator/frontend" || exit 1
+cd "$HOME/dev/ag-orc/frontend" || exit 1
 exec env VITE_NO_ELECTRON=1 VITE_AO_API_BASE_URL="http://${IP}:3000" \
   ./node_modules/.bin/vite --config vite.renderer.config.ts --host 0.0.0.0 --port 3000 --strictPort
