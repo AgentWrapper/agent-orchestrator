@@ -167,6 +167,18 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 }
 
+func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	token, err := (&trackerTokenSource{}).Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "ao-token" {
+		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
+	}
+}
+
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle
 	message string
