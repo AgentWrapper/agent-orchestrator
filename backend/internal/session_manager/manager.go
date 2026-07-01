@@ -1123,6 +1123,13 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
+	workspacePrompt, err := m.workspaceProjectPrompt(ctx, kind, projectID)
+	if err != nil {
+		return "", err
+	}
+	if workspacePrompt != "" {
+		base += "\n\n" + workspacePrompt
+	}
 	return base + m.aoSkillPointer() + systemPromptGuard, nil
 }
 
@@ -1138,6 +1145,28 @@ func (m *Manager) aoSkillPointer() string {
 	commandsGlob := filepath.Join(dir, "commands", "*.md")
 	return "\n\n" + "## Using the ao CLI\n\n" +
 		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+}
+
+func (m *Manager) workspaceProjectPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	project, err := m.loadProject(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return "", nil
+	}
+	repos, err := m.store.ListWorkspaceRepos(ctx, string(projectID))
+	if err != nil {
+		return "", fmt.Errorf("list workspace repos for prompt: %w", err)
+	}
+	switch kind {
+	case domain.KindOrchestrator:
+		return workspaceOrchestratorPrompt(repos), nil
+	case domain.KindWorker:
+		return workspaceWorkerPrompt(repos), nil
+	default:
+		return "", nil
+	}
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -1178,6 +1207,36 @@ Message workers with `+"`ao send`"+`, for example:
 To discover any other AO command, run `+"`ao --help`"+` (and `+"`ao <command> --help`"+` for details on one).
 
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
+}
+
+func workspaceOrchestratorPrompt(repos []domain.WorkspaceRepoRecord) string {
+	return fmt.Sprintf(`## Workspace project
+
+This project is a multi-repository workspace. Sessions start at the workspace root. The root repository is %s at path `+"`.`"+`; child repositories are nested below it.
+
+Repositories:
+%s
+
+When spawning workers, name the repository path or paths they should work in. Work can span multiple repositories, so track deliverables, pull requests, and checks by repository.`, domain.RootWorkspaceRepoName, workspaceRepoList(repos))
+}
+
+func workspaceWorkerPrompt(repos []domain.WorkspaceRepoRecord) string {
+	return fmt.Sprintf(`## Workspace project
+
+This session is a multi-repository workspace. You start at the workspace root. The root repository is %s at path `+"`.`"+`; child repositories are nested below it.
+
+Repositories:
+%s
+
+Before editing, identify which repository owns the task and keep changes scoped to the requested repository or repositories. If you touch root files, call that out explicitly because root changes are separate from child-repository changes.`, domain.RootWorkspaceRepoName, workspaceRepoList(repos))
+}
+
+func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
+	lines := []string{fmt.Sprintf("- %s: .", domain.RootWorkspaceRepoName)}
+	for _, repo := range repos {
+		lines = append(lines, fmt.Sprintf("- %s: %s", repo.Name, repo.RelativePath))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func workerOrchestratorPrompt(orchestratorID domain.SessionID) string {
