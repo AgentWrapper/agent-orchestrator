@@ -1232,7 +1232,8 @@ Before editing, identify which repository owns the task and keep changes scoped 
 }
 
 func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
-	lines := []string{fmt.Sprintf("- %s: .", domain.RootWorkspaceRepoName)}
+	lines := make([]string, 0, 1+len(repos))
+	lines = append(lines, fmt.Sprintf("- %s: .", domain.RootWorkspaceRepoName))
 	for _, repo := range repos {
 		lines = append(lines, fmt.Sprintf("- %s: %s", repo.Name, repo.RelativePath))
 	}
