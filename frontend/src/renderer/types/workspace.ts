@@ -96,6 +96,8 @@ export type WorkspaceSession = {
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
+	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
+	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
 	branch: string;
@@ -131,6 +133,22 @@ export type WorkspaceSession = {
 	 */
 	displayStatus?: WorkerDisplayStatus;
 };
+
+// Tracker providers whose ids the intake daemon stamps sessions with, in
+// "<provider>:<native>" form. Adding a provider (Linear, Jira, ...) later is
+// just another prefix in this list — no caller of canonicalTrackerIssueId
+// needs to change.
+const TRACKER_PROVIDER_PREFIXES = ["github:"] as const;
+
+/**
+ * The provider-prefixed issue id if `issueId` came from tracker intake, or
+ * undefined for manually created sessions (whose issueId, if any, is a plain
+ * task title with no provider prefix).
+ */
+export function canonicalTrackerIssueId(issueId?: string): string | undefined {
+	if (!issueId) return undefined;
+	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
+}
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
