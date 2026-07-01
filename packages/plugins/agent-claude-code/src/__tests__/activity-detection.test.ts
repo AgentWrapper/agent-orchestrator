@@ -178,6 +178,38 @@ describe("Claude Code Activity Detection", () => {
     });
 
     // -----------------------------------------------------------------------
+    // SDK (streaming) runtime — no CLI process to probe (mae-338)
+    // -----------------------------------------------------------------------
+    //
+    // findClaudeProcess only knows how to look for a tmux pane or a
+    // handle.data.pid; an SDK handle carries neither (it has hostPid /
+    // socketPath instead), so isProcessRunning always resolves `false` for it
+    // regardless of whether the streaming host is actually alive. Before this
+    // fix, that false negative made every SDK session short-circuit to
+    // `exited` here and never reach the native-JSONL cascade below, so the
+    // real idle/ready/active signal used by the idle-worker auto-retire and
+    // completion-ping (lifecycle-manager.ts) was permanently unreachable.
+
+    it("does NOT probe the process and reads native JSONL for an sdk runtime handle, even when isProcessRunning would say false", async () => {
+      vi.spyOn(agent, "isProcessRunning").mockResolvedValue(false);
+      writeJsonl([{ type: "assistant", message: { content: "Done!" } }]);
+      const session = makeSession({
+        runtimeHandle: { id: "test-1", runtimeName: "sdk", data: {} },
+      });
+      expect((await agent.getActivityState(session))?.state).toBe("ready");
+      expect(agent.isProcessRunning).not.toHaveBeenCalled();
+    });
+
+    it("returns 'idle' (not 'exited') for a stale sdk session whose host is still alive", async () => {
+      vi.spyOn(agent, "isProcessRunning").mockResolvedValue(false);
+      writeJsonl([{ type: "assistant" }], 400_000); // 6+ min old, clean turn-end
+      const session = makeSession({
+        runtimeHandle: { id: "test-1", runtimeName: "sdk", data: {} },
+      });
+      expect((await agent.getActivityState(session))?.state).toBe("idle");
+    });
+
+    // -----------------------------------------------------------------------
     // Fallback cases (no JSONL data available)
     // -----------------------------------------------------------------------
 

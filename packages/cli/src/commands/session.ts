@@ -206,6 +206,27 @@ export function registerSession(program: Command): void {
       const sm = await getSessionManager(config);
       const sessionInfo = await sm.get(sessionName);
 
+      // The SDK (streaming) runtime has no terminal/PTY — the host talks over a
+      // Unix socket, not tmux (Unix) or a named pipe (Windows). Without this
+      // check, `attach` fell through to the tmux/pipe path below, which always
+      // reports "does not exist" for an SDK session — alive or dead — because
+      // no tmux pane or pipe was ever created for it. That misleading message
+      // was indistinguishable from a genuinely dead/unknown session (mae-338):
+      // `ao status` can correctly show a live SDK session as "working" while
+      // `attach` claims it doesn't exist. Give an accurate, runtime-aware
+      // message instead of running the tmux probe against a runtime that never
+      // has one.
+      if (sessionInfo?.runtimeHandle?.runtimeName === "sdk") {
+        console.error(
+          chalk.yellow(
+            `Session '${sessionName}' runs on the SDK runtime and has no terminal to attach to ` +
+              `(status: ${sessionInfo.status}). Use \`ao status\`/\`ao send ${sessionName} <message>\` ` +
+              `or watch \`~/.agent-orchestrator/runtime-sdk/${sessionName}/events.ndjson\` for live output.`,
+          ),
+        );
+        process.exit(1);
+      }
+
       if (isWindows()) {
         // Windows: connect to PTY host named pipe and relay raw terminal I/O
         // Prefer explicit pipePath from runtimeHandle.data if it's a valid string

@@ -366,9 +366,22 @@ export async function getClaudeActivityState(
 
   const exitedAt = new Date();
   if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
-  const running = await isProcessAlive(session.runtimeHandle);
-  if (running === PROCESS_PROBE_INDETERMINATE) return null;
-  if (!running) return { state: "exited", timestamp: exitedAt };
+  // The SDK (streaming) runtime has no separate "claude" CLI process to find —
+  // the host process itself IS the session, and `findClaudeProcess` only knows
+  // how to look for a tmux pane or a `handle.data.pid` (neither of which an SDK
+  // handle has: it carries `hostPid`/`socketPath` instead). Probing it here
+  // therefore ALWAYS finds nothing and returns `false`, so every SDK session
+  // short-circuited straight to `exited` before ever reaching the native-JSONL
+  // cascade below — permanently masking the real idle/ready/active/
+  // waiting_input signal for 100% of SDK sessions (mae-338). Runtime liveness
+  // for SDK hosts is already established independently by runtime.isAlive()
+  // at the lifecycle-manager layer, so skip this CLI-process probe for SDK
+  // handles and read the native JSONL activity unconditionally instead.
+  if (session.runtimeHandle.runtimeName !== "sdk") {
+    const running = await isProcessAlive(session.runtimeHandle);
+    if (running === PROCESS_PROBE_INDETERMINATE) return null;
+    if (!running) return { state: "exited", timestamp: exitedAt };
+  }
 
   if (!session.workspacePath) return null;
 

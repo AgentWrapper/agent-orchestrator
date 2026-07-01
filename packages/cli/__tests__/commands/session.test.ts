@@ -758,6 +758,38 @@ describe("session attach", () => {
     ).rejects.toThrow("process.exit(1)");
   });
 
+  it("reports an SDK-runtime-aware message instead of a false 'does not exist' for an SDK session", async () => {
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: { id: "sdk-target-1", runtimeName: "sdk", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "attach", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errOutput = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errOutput).toContain("SDK runtime");
+    expect(errOutput).toContain("(status: working)");
+    expect(errOutput).not.toContain("does not exist");
+    // Never probes tmux for a runtime that has no tmux pane
+    expect(mockTmux).not.toHaveBeenCalled();
+  });
+
   it("connects to named pipe on Windows", async () => {
     mockIsWindows.mockReturnValue(true);
     mockSessionManager.get.mockResolvedValue({
