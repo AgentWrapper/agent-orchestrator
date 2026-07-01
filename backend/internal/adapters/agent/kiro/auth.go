@@ -2,7 +2,6 @@ package kiro
 
 import (
 	"context"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -23,12 +22,9 @@ func kiroWhoamiAuthStatus(ctx context.Context, binary string) (ports.AgentAuthSt
 	if binary == "" {
 		return ports.AgentAuthStatusUnknown, nil
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-
-	out, err := authprobe.CmdRunner(probeCtx, binary, "whoami")
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, probeCtx.Err()
+	out, err := authprobe.CmdRunner(ctx, binary, "whoami")
+	if ctx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, ctx.Err()
 	}
 	if status := authprobe.StatusFromText(string(out)); status != ports.AgentAuthStatusUnknown {
 		return status, nil

@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -261,6 +262,28 @@ func clearOpenCodeAuthEnv(t *testing.T) {
 	}
 	t.Setenv("OPENCODE_DATA_DIR", "")
 	t.Setenv("XDG_DATA_HOME", "")
+}
+
+func TestResolveOpenCodeBinaryFallback(t *testing.T) {
+	bin, err := ResolveOpenCodeBinary(context.Background())
+	if err != nil {
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
+	}
+	if bin == "" {
+		t.Fatal("ResolveOpenCodeBinary returned empty path with no error")
+	}
+}
+
+func TestResolveOpenCodeBinaryContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := ResolveOpenCodeBinary(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ResolveOpenCodeBinary err = %v, want context.Canceled", err)
+	}
 }
 
 func TestGetLaunchCommandBuildsArgv(t *testing.T) {

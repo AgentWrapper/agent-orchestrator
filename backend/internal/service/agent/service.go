@@ -13,7 +13,7 @@ import (
 
 var (
 	agentInstallProbeTimeout = 2 * time.Second
-	agentAuthProbeTimeout    = 5 * time.Second
+	agentAuthProbeTimeout    = 10 * time.Second
 	agentRefreshMinInterval  = 10 * time.Second
 )
 
@@ -60,7 +60,11 @@ func New() *Service {
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents, inventory: Inventory{Supported: supportedInfos(agents)}}
+	return &Service{agents: agents, inventory: Inventory{
+		Supported:  supportedInfos(agents),
+		Installed:  []Info{},
+		Authorized: []Info{},
+	}}
 }
 
 // List returns the cached agent inventory without running probes. Installed and
@@ -151,10 +155,16 @@ func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
 
 func cloneInventory(in Inventory) Inventory {
 	return Inventory{
-		Supported:  append([]Info(nil), in.Supported...),
-		Installed:  append([]Info(nil), in.Installed...),
-		Authorized: append([]Info(nil), in.Authorized...),
+		Supported:  cloneInfos(in.Supported),
+		Installed:  cloneInfos(in.Installed),
+		Authorized: cloneInfos(in.Authorized),
 	}
+}
+
+func cloneInfos(in []Info) []Info {
+	out := make([]Info, len(in))
+	copy(out, in)
+	return out
 }
 
 func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {

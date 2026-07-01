@@ -96,6 +96,10 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
+	// DeleteSessionWorktrees consumes stale shutdown-restore markers. Explicit
+	// Kill and successful RestoreAll must remove these rows to prevent
+	// resurrecting sessions the user intentionally terminated.
+	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -446,6 +450,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// when the runtime/workspace handle is missing.
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
+	}
+	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+		return false, fmt.Errorf("kill %s: delete restore marker: %w", id, err)
 	}
 
 	// Only tear down what exists. A session may have lost its handle after a
@@ -840,6 +847,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			} else {
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
+			continue
+		}
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			m.logger.Error("restore-all: delete consumed worktree marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
 	return nil

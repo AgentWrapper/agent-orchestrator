@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,9 +373,7 @@ func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 
 // ResolveOpenCodeBinary returns the path to the opencode binary on this machine,
 // searching PATH then a handful of well-known install locations (the install
-// script's ~/.opencode/bin, Homebrew, npm global). Returns "opencode" as a
-// last-ditch fallback so callers see a clear "command not found" rather than an
-// empty argv.
+// script's ~/.opencode/bin, Homebrew, npm global).
 func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -398,7 +397,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 				return candidate, nil
 			}
 		}
-		return "opencode", nil
+		return "", fmt.Errorf("opencode: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("opencode"); err == nil && path != "" {
@@ -425,7 +424,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "opencode", nil
+	return "", fmt.Errorf("opencode: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) opencodeBinary(ctx context.Context) (string, error) {

@@ -5,34 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
 	yaml "gopkg.in/yaml.v3"
 )
-
-var _ ports.AgentAuthChecker = (*Plugin)(nil)
-
-// AuthStatus returns the plugin's local authentication status.
-func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, err
-	}
-	if status, ok, err := continueLocalAuthStatus(ctx); err != nil {
-		return ports.AgentAuthStatusUnknown, err
-	} else if ok {
-		return status, nil
-	}
-	if status, err := continuePrintAuthStatus(ctx, binary); err != nil {
-		return ports.AgentAuthStatusUnknown, err
-	} else if status != ports.AgentAuthStatusUnknown {
-		return status, nil
-	}
-	return authprobe.CLIStatus(ctx, binary, nil)
-}
 
 func continueLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
 	if err := ctx.Err(); err != nil {
@@ -99,24 +76,4 @@ func continueConfigHasCredential(node *yaml.Node) bool {
 		}
 	}
 	return false
-}
-
-func continuePrintAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-
-	out, err := authprobe.CmdRunner(probeCtx, binary, "-p", "hi")
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, nil
-	}
-	if status := authprobe.StatusFromText(string(out)); status != ports.AgentAuthStatusUnknown {
-		return status, nil
-	}
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, nil
-	}
-	if strings.TrimSpace(string(out)) != "" {
-		return ports.AgentAuthStatusAuthorized, nil
-	}
-	return ports.AgentAuthStatusUnknown, nil
 }

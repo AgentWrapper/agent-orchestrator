@@ -121,6 +121,12 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	if len(got.Installed) != 0 || len(got.Authorized) != 0 {
 		t.Fatalf("inventory = %#v, want only supported entries before refresh", got)
 	}
+	if got.Installed == nil {
+		t.Fatal("Installed = nil, want empty slice")
+	}
+	if got.Authorized == nil {
+		t.Fatal("Authorized = nil, want empty slice")
+	}
 }
 
 func TestRefreshReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
