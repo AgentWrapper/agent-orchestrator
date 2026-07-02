@@ -1030,10 +1030,15 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --prompt \"<clear worker task>\"`"+`
+`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"<clear worker task>\"`"+`
+Both --project and --name are required.
+
+To run a worker on a specific agent, add `+"`--agent <name>`"+` (an alias for `+"`--harness`"+`) — for example `+"`--agent codex`"+` or `+"`--agent claude-code`"+`. If you omit it, the project's default worker agent is used. Run `+"`ao spawn --help`"+` for the full list of agents and every flag.
 
 Message workers with `+"`ao send`"+`, for example:
 `+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
+
+To discover any other AO command, run `+"`ao --help`"+` (and `+"`ao <command> --help`"+` for details on one).
 
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }
