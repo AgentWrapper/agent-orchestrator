@@ -16,6 +16,8 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	review     *domain.Review
+	reviewRuns []domain.ReviewRun
 	signatures map[string]string
 
 	signatureWriteErr error
@@ -33,6 +35,17 @@ func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.S
 
 func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (domain.Review, bool, error) {
+	if f.review == nil {
+		return domain.Review{}, false, nil
+	}
+	return *f.review, true, nil
+}
+
+func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
+	return append([]domain.ReviewRun(nil), f.reviewRuns...), nil
 }
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
@@ -268,6 +281,68 @@ func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	}
 	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
 		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
+func TestPRObservation_AutoTriggersReviewWhenHeadAdvances(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", HeadSHA: "sha2"}}
+	st.review = &domain.Review{ID: "review-1", SessionID: "mer-1"}
+	st.reviewRuns = []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested}}
+	var triggered []domain.SessionID
+	m.SetReviewTrigger(func(_ context.Context, id domain.SessionID) error {
+		triggered = append(triggered, id)
+		return nil
+	})
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(triggered) != 1 || triggered[0] != "mer-1" {
+		t.Fatalf("triggered = %#v, want mer-1", triggered)
+	}
+}
+
+func TestPRObservation_AutoReviewSkipsCurrentRunningHead(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", HeadSHA: "sha2"}}
+	st.review = &domain.Review{ID: "review-1", SessionID: "mer-1"}
+	st.reviewRuns = []domain.ReviewRun{
+		{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested},
+		{ID: "run-2", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha2", Status: domain.ReviewRunRunning},
+	}
+	calls := 0
+	m.SetReviewTrigger(func(context.Context, domain.SessionID) error {
+		calls++
+		return nil
+	})
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("trigger calls = %d, want 0", calls)
+	}
+}
+
+func TestPRObservation_AutoReviewRequiresReviewRow(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", HeadSHA: "sha2"}}
+	st.reviewRuns = []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved}}
+	calls := 0
+	m.SetReviewTrigger(func(context.Context, domain.SessionID) error {
+		calls++
+		return nil
+	})
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("trigger calls = %d, want 0", calls)
 	}
 }
 

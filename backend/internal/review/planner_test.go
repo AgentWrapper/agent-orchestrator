@@ -48,6 +48,20 @@ func TestPlanStatuses(t *testing.T) {
 	}
 }
 
+func TestPlanIncludesPreviousCompletedRunForAdvancedHead(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	got := Plan([]domain.PullRequest{planPR("pr1", 1, "sha3")}, []domain.ReviewRun{
+		{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, CreatedAt: now},
+		{ID: "run-2", PRURL: "pr1", TargetSHA: "sha2", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now.Add(time.Second)},
+	})
+	if len(got) != 1 {
+		t.Fatalf("review states = %d, want 1", len(got))
+	}
+	if got[0].PreviousRun == nil || got[0].PreviousRun.ID != "run-2" {
+		t.Fatalf("previous run = %+v, want latest completed run-2", got[0].PreviousRun)
+	}
+}
+
 func planPR(url string, n int, sha string) domain.PullRequest {
 	return domain.PullRequest{URL: url, Number: n, HeadSHA: sha}
 }

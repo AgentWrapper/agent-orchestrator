@@ -24,12 +24,13 @@ const (
 
 // PRReviewState is one PR-scoped review decision for a worker session.
 type PRReviewState struct {
-	PRURL     string            `json:"prUrl"`
-	PRNumber  int               `json:"prNumber"`
-	Title     string            `json:"title"`
-	TargetSHA string            `json:"targetSha"`
-	Status    StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
-	LatestRun *domain.ReviewRun `json:"latestRun,omitempty"`
+	PRURL       string            `json:"prUrl"`
+	PRNumber    int               `json:"prNumber"`
+	Title       string            `json:"title"`
+	TargetSHA   string            `json:"targetSha"`
+	Status      StateStatus       `json:"status" enum:"needs_review,running,up_to_date,changes_requested,ineligible"`
+	LatestRun   *domain.ReviewRun `json:"latestRun,omitempty"`
+	PreviousRun *domain.ReviewRun `json:"previousRun,omitempty"`
 }
 
 // Plan computes per-PR review work from the currently observed PRs and existing
@@ -37,6 +38,7 @@ type PRReviewState struct {
 // the same eligibility/status rules.
 func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 	latest := latestRunsByPRAndSHA(runs)
+	latestCompletedByPR := latestCompletedRunsByPR(runs)
 	reviews := make([]PRReviewState, 0, len(prs))
 	for _, pr := range prs {
 		review := PRReviewState{
@@ -45,6 +47,9 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 			Title:     pr.Title,
 			TargetSHA: pr.HeadSHA,
 			Status:    ReviewStateNeedsReview,
+		}
+		if run, ok := latestCompletedByPR[review.PRURL]; ok && run.TargetSHA != review.TargetSHA {
+			review.PreviousRun = &run
 		}
 		if pr.URL == "" || pr.HeadSHA == "" || pr.Draft || pr.Merged || pr.Closed {
 			review.Status = ReviewStateIneligible
@@ -89,6 +94,22 @@ func latestRunsByPRAndSHA(runs []domain.ReviewRun) map[string]domain.ReviewRun {
 		key := run.PRURL + "\x00" + run.TargetSHA
 		if existing, ok := latest[key]; !ok || run.CreatedAt.After(existing.CreatedAt) {
 			latest[key] = run
+		}
+	}
+	return latest
+}
+
+func latestCompletedRunsByPR(runs []domain.ReviewRun) map[string]domain.ReviewRun {
+	latest := make(map[string]domain.ReviewRun)
+	for _, run := range runs {
+		if run.PRURL == "" || run.TargetSHA == "" {
+			continue
+		}
+		if run.Verdict != domain.VerdictApproved && run.Verdict != domain.VerdictChangesRequested {
+			continue
+		}
+		if existing, ok := latest[run.PRURL]; !ok || run.CreatedAt.After(existing.CreatedAt) {
+			latest[run.PRURL] = run
 		}
 	}
 	return latest

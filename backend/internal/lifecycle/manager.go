@@ -23,6 +23,8 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
+	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
@@ -33,6 +35,8 @@ type sessionStore interface {
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
+
+type reviewTriggerFunc func(context.Context, domain.SessionID) error
 
 // Option customizes a Manager.
 type Option func(*Manager)
@@ -47,6 +51,12 @@ func WithTelemetry(sink ports.EventSink) Option {
 	return func(m *Manager) { m.telemetry = sink }
 }
 
+// SetReviewTrigger wires the review service after daemon construction has built
+// both lifecycle and review components.
+func (m *Manager) SetReviewTrigger(trigger reviewTriggerFunc) {
+	m.reviewTrigger = trigger
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
@@ -54,11 +64,12 @@ type Manager struct {
 	messenger     ports.AgentMessenger
 	notifications notificationSink
 
-	mu        sync.Mutex
-	window    time.Duration
-	clock     func() time.Time
-	react     reactionState
-	telemetry ports.EventSink
+	mu            sync.Mutex
+	window        time.Duration
+	clock         func() time.Time
+	react         reactionState
+	telemetry     ports.EventSink
+	reviewTrigger reviewTriggerFunc
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.

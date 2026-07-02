@@ -146,6 +146,9 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
 		return nil
 	}
+	if err := m.autoTriggerReviewForHeadAdvance(ctx, id, o.URL); err != nil {
+		return err
+	}
 	if o.CI == domain.CIFailing {
 		for _, ch := range o.Checks {
 			if ch.Status == domain.PRCheckFailed {
@@ -187,6 +190,50 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	return nil
+}
+
+func (m *Manager) autoTriggerReviewForHeadAdvance(ctx context.Context, id domain.SessionID, prURL string) error {
+	if m.reviewTrigger == nil || prURL == "" {
+		return nil
+	}
+	if _, ok, err := m.store.GetReviewBySession(ctx, id); err != nil || !ok {
+		return err
+	}
+	prs, err := m.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return err
+	}
+	var headSHA string
+	for _, pr := range prs {
+		if pr.URL == prURL {
+			headSHA = pr.HeadSHA
+			break
+		}
+	}
+	if headSHA == "" {
+		return nil
+	}
+	runs, err := m.store.ListReviewRunsBySession(ctx, id)
+	if err != nil {
+		return err
+	}
+	hasPreviousRun := false
+	for _, run := range runs {
+		if run.PRURL != prURL {
+			continue
+		}
+		if run.TargetSHA == headSHA {
+			if run.Status == domain.ReviewRunRunning {
+				return nil
+			}
+			return nil
+		}
+		hasPreviousRun = true
+	}
+	if !hasPreviousRun {
+		return nil
+	}
+	return m.reviewTrigger(ctx, id)
 }
 
 // ApplyReviewResult reacts to a completed AO-internal review pass after the
