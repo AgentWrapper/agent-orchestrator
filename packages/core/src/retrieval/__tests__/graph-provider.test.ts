@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createGraphProvider } from "../graph-provider.js";
-import type { TaskContext } from "../types.js";
+import { applyRelevanceFloor, createGraphProvider } from "../graph-provider.js";
+import type { RetrievalItem, TaskContext } from "../types.js";
 
 const CTX: TaskContext = {
   projectId: "demo_abc123",
@@ -36,7 +36,10 @@ describe("graph provider", () => {
     const provider = createGraphProvider({
       queryRunner: vi.fn(async () => stdout),
     });
-    const items = await provider.query(CTX, { maxTokens: 500 });
+    const items = await provider.query(
+      { ...CTX, taskText: "rebuild graph-store ensureGraphBuilt flow" },
+      { maxTokens: 500 },
+    );
     expect(items).toHaveLength(3);
     expect(items[0]).toMatchObject({
       provider: "graph",
@@ -61,5 +64,73 @@ describe("graph provider", () => {
     const items = await provider.query({ ...CTX, taskText: undefined }, { maxTokens: 500 });
     expect(items).toEqual([]);
     expect(queryRunner).not.toHaveBeenCalled();
+  });
+
+  it("degrades to [] when a code-shaped query hits an unrelated (ops) graph", async () => {
+    const stdout = [
+      "NODE ChatBubble.swift [src=Sources/ChatBubble.swift loc=L1 community=1]",
+      "NODE renderMarkdown() [src=Sources/ChatBubble.swift loc=L40 community=1]",
+      "EDGE ChatBubble.swift --contains [EXTRACTED]--> renderMarkdown()",
+      "",
+    ].join("\n");
+    const provider = createGraphProvider({ queryRunner: vi.fn(async () => stdout) });
+    const items = await provider.query(
+      { ...CTX, taskText: "build and notarize the release DMG and publish the appcast" },
+      { maxTokens: 500 },
+    );
+    expect(items).toEqual([]);
+  });
+});
+
+describe("applyRelevanceFloor", () => {
+  const node = (label: string, src: string, loc: number): RetrievalItem => ({
+    provider: "graph",
+    kind: "symbol",
+    file: src,
+    line: loc,
+    score: 1,
+    rank: 0,
+    text: `NODE ${label} [src=${src} loc=L${loc} community=0]`,
+    tokens: 10,
+    citations: [],
+    meta: { label },
+  });
+
+  const edge = (from: string, to: string): RetrievalItem => ({
+    provider: "graph",
+    kind: "subgraph",
+    file: null,
+    line: null,
+    score: 1,
+    rank: 0,
+    text: `EDGE ${from} --contains [EXTRACTED]--> ${to}`,
+    tokens: 10,
+    citations: [],
+    meta: { from, rel: "contains", to, confidence: "EXTRACTED" },
+  });
+
+  it("drops all items when none share a term with the query", () => {
+    const items = [node("WebChatBridge.swift", "WebChatBridge.swift", 1)];
+    expect(applyRelevanceFloor(items, "notarize the release DMG")).toEqual([]);
+  });
+
+  it("keeps a direct hit plus its 1-hop neighborhood, drops unrelated nodes", () => {
+    const hit = node("WebChatBridge.swift", "WebChatBridge.swift", 1);
+    const neighbor = node("applyFull()", "WebChatBridge.swift", 726);
+    const unrelated = node("dist.sh", "scripts/dist.sh", 1);
+    const linkingEdge = edge("WebChatBridge.swift", "applyFull()");
+    const items = [hit, neighbor, unrelated, linkingEdge];
+
+    const kept = applyRelevanceFloor(items, "fix WebChatBridge renamespace reconnect");
+
+    expect(kept).toContain(hit);
+    expect(kept).toContain(neighbor);
+    expect(kept).toContain(linkingEdge);
+    expect(kept).not.toContain(unrelated);
+  });
+
+  it("passes items through unchanged when the query has no meaningful terms", () => {
+    const items = [node("dist.sh", "scripts/dist.sh", 1)];
+    expect(applyRelevanceFloor(items, "ok")).toEqual(items);
   });
 });

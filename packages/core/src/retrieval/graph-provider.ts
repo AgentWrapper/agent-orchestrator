@@ -21,6 +21,118 @@ const execFileAsync = promisify(execFile);
 const NODE_RE = /^NODE\s+(.+?)\s+\[src=(\S+)\s+loc=L(\d+)\s+community=(\d+)\]\s*$/;
 const EDGE_RE = /^EDGE\s+(.+?)\s+--(\S+)\s+\[(\S+)\]-->\s+(.+?)\s*$/;
 
+// Relevance floor (mae-379): `graphify query --budget N` has no built-in
+// score/threshold flag (verified via `graphify query --help`) — it always
+// fills the budget with its best-N BFS-reachable nodes, even when NONE of
+// them actually relate to the query (ops/build/notarize tasks graphify
+// doesn't index as code). Without a floor those "filler" nodes get packed
+// into every spawn's context as noise. The floor below drops nodes with zero
+// term-overlap with the query, keeping only real hits plus their direct
+// (1-hop) graph neighbors — mirrors seedRlmContext's graceful degrade to
+// vector-only when nothing actually matches.
+const MIN_TERM_LEN = 3;
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "from",
+  "with",
+  "that",
+  "this",
+  "into",
+  "when",
+  "then",
+  "than",
+  "have",
+  "has",
+  "are",
+  "was",
+  "were",
+  "not",
+  "but",
+  "our",
+  "your",
+  "you",
+  "and",
+  "add",
+  "fix",
+  "bug",
+  "issue",
+  "task",
+  "make",
+  "sure",
+  "use",
+  "using",
+]);
+
+function normalizeTerms(text: string): Set<string> {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/i).filter(Boolean);
+  return new Set(words.filter((w) => w.length >= MIN_TERM_LEN && !STOPWORDS.has(w)));
+}
+
+// Symbol labels/paths are identifiers, not prose — "ReasoningEffortOption"
+// has no word-boundary punctuation around "effort", so word-level Set
+// equality misses it. Match by substring containment against a punctuation-
+// stripped haystack instead, which catches terms glued inside camelCase/
+// PascalCase/snake_case identifiers.
+function toHaystack(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/gi, "");
+}
+
+function hasOverlap(itemText: string, queryTerms: Set<string>): boolean {
+  const haystack = toHaystack(itemText);
+  for (const t of queryTerms) {
+    if (haystack.includes(t)) return true;
+  }
+  return false;
+}
+
+/**
+ * Drops NODE/EDGE items with no term-overlap with the query, keeping only
+ * direct hits (label or src file shares a query term) plus nodes/edges
+ * reachable in one hop from a hit. Returns [] when there is no hit at all —
+ * the correct graceful outcome is degrading to vector-only, not padding the
+ * bundle with unrelated "best effort" nodes.
+ */
+export function applyRelevanceFloor(items: RetrievalItem[], queryText: string): RetrievalItem[] {
+  const queryTerms = normalizeTerms(queryText);
+  if (queryTerms.size === 0) {
+    return items;
+  }
+
+  const nodes = items.filter((i) => i.kind === "symbol");
+  const edges = items.filter((i) => i.kind === "subgraph");
+
+  const labelOf = (item: RetrievalItem): string => String(item.meta?.["label"] ?? "");
+
+  const hitLabels = new Set<string>();
+  for (const node of nodes) {
+    if (hasOverlap(`${labelOf(node)} ${node.file ?? ""}`, queryTerms)) {
+      hitLabels.add(labelOf(node));
+    }
+  }
+
+  if (hitLabels.size === 0) {
+    return [];
+  }
+
+  // Expand one hop: any edge touching a hit pulls in its other endpoint.
+  const keptLabels = new Set(hitLabels);
+  const keptEdges: RetrievalItem[] = [];
+  for (const edge of edges) {
+    const from = String(edge.meta?.["from"] ?? "");
+    const to = String(edge.meta?.["to"] ?? "");
+    if (hitLabels.has(from) || hitLabels.has(to)) {
+      keptEdges.push(edge);
+      keptLabels.add(from);
+      keptLabels.add(to);
+    }
+  }
+
+  const keptNodes = nodes.filter((n) => keptLabels.has(labelOf(n)));
+  return [...keptNodes, ...keptEdges];
+}
+
 /** Injectable for tests. Runs `graphify query` and returns raw stdout. */
 export type GraphifyQueryRunner = (
   bin: string,
@@ -136,7 +248,7 @@ export function createGraphProvider(opts?: {
         const bin = resolveGraphifyBin();
         const graphJsonPath = getGraphJsonPath(ctx.projectId);
         const stdout = await queryRunner(bin, taskText, budget.maxTokens, graphJsonPath, 4000);
-        return parseGraphifyOutput(stdout);
+        return applyRelevanceFloor(parseGraphifyOutput(stdout), taskText);
       } catch {
         return [];
       }
