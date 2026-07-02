@@ -910,6 +910,12 @@ export interface SCM {
   /** Close a PR without merging */
   closePR(pr: PRInfo): Promise<void>;
 
+  /**
+   * Post a comment on the PR. Optional — plugins that do not implement this
+   * cannot receive auto-posted review verdicts (see review.autoPostVerdict).
+   */
+  commentOnPR?(pr: PRInfo, body: string): Promise<void>;
+
   // --- CI Tracking ---
 
   /** Get individual CI check statuses */
@@ -1622,6 +1628,8 @@ export interface ReviewConfig {
   agent?: "codex" | "claude";
   /** Optional model override for the selected reviewer agent. */
   model?: string;
+  /** Auto-post the reviewer's verdict to the session's PR via SCM. Defaults to false. */
+  autoPostVerdict?: boolean;
 }
 
 export interface ProjectConfig {

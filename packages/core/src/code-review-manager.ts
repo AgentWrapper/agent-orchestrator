@@ -26,7 +26,10 @@ import {
   isOrchestratorSession,
   SessionNotFoundError,
   type OrchestratorConfig,
+  type PluginRegistry,
+  type PRInfo,
   type ProjectConfig,
+  type SCM,
   type Session,
   type SessionManager,
 } from "./types.js";
@@ -210,6 +213,8 @@ export interface ExecuteCodeReviewRunOptions {
   runReviewer?: CodeReviewRunner;
   now?: () => Date;
   force?: boolean;
+  /** Needed to resolve the project's SCM plugin when review.autoPostVerdict is on. */
+  registry?: PluginRegistry;
 }
 
 export interface ExecuteCodeReviewRunInput {
@@ -571,6 +576,17 @@ const SUPERSEDABLE_RUN_STATUSES: ReadonlySet<CodeReviewRunStatus> = new Set([
   "clean",
 ]);
 
+/**
+ * Runs in these statuses represent an in-progress or not-yet-started reviewer
+ * pass. A concurrent trigger for the same session must not spawn a second
+ * one — it returns this run instead (see triggerCodeReviewForSession).
+ */
+const ACTIVE_REVIEW_RUN_STATUSES: ReadonlySet<CodeReviewRunStatus> = new Set([
+  "queued",
+  "preparing",
+  "running",
+]);
+
 function markSupersededReviewRuns({
   store,
   existingRuns,
@@ -926,6 +942,83 @@ export function formatCodeReviewFindingsForAgent({
   ].join("\n");
 }
 
+function formatCodeReviewVerdictForPr({
+  run,
+  findings,
+}: {
+  run: CodeReviewRun;
+  findings: CodeReviewFinding[];
+}): string {
+  const header = `AO reviewer ${run.reviewerSessionId} found ${findings.length} issue${
+    findings.length === 1 ? "" : "s"
+  }.`;
+
+  return [
+    header,
+    "",
+    ...findings.map((finding, index) => {
+      const location = formatFindingLocation(finding);
+      const locationLabel = location ? ` (${location})` : "";
+      return `${index + 1}. [${finding.severity}] ${finding.title}${locationLabel}`;
+    }),
+  ].join("\n");
+}
+
+/**
+ * Post the reviewer's verdict to the session's PR when review.autoPostVerdict
+ * is enabled. Best-effort: missing PR, missing registry, or an SCM plugin
+ * without commentOnPR all result in a warn-logged no-op rather than a thrown
+ * error, since the review run itself already succeeded.
+ */
+async function maybePostVerdictToPr({
+  project,
+  registry,
+  session,
+  store,
+  run,
+  findings,
+  now,
+}: {
+  project: ProjectConfig;
+  registry: PluginRegistry | undefined;
+  session: Session;
+  store: CodeReviewStore;
+  run: CodeReviewRun;
+  findings: CodeReviewFinding[];
+  now: Date;
+}): Promise<void> {
+  if (!project.review?.autoPostVerdict) return;
+  if (run.verdictPostedAt) return;
+  if (findings.length === 0) return;
+
+  const pr: PRInfo | null = session.pr ?? null;
+  if (!pr) {
+    console.warn(
+      `[code-review] autoPostVerdict enabled but session ${session.id} has no PR; skipping.`,
+    );
+    return;
+  }
+
+  if (!registry) {
+    console.warn(
+      `[code-review] autoPostVerdict enabled but no plugin registry was provided; skipping post for run ${run.id}.`,
+    );
+    return;
+  }
+
+  const scmPluginName = project.scm?.plugin;
+  const scm = scmPluginName ? registry.get<SCM>("scm", scmPluginName) : null;
+  if (!scm?.commentOnPR) {
+    console.warn(
+      `[code-review] autoPostVerdict enabled but SCM plugin "${scmPluginName ?? "unknown"}" does not support commentOnPR; skipping post for run ${run.id}.`,
+    );
+    return;
+  }
+
+  await scm.commentOnPR(pr, formatCodeReviewVerdictForPr({ run, findings }));
+  store.updateRun(run.id, { verdictPostedAt: now.toISOString() }, now);
+}
+
 export async function triggerCodeReviewForSession(
   {
     config,
@@ -966,6 +1059,18 @@ export async function triggerCodeReviewForSession(
 
   return withReviewRunCreationLock(store, () => {
     const existingRuns = store.listRuns();
+
+    // Serialize concurrent triggers for the same session: if a reviewer run is
+    // already in flight (queued/preparing/running), return it instead of
+    // spawning a second one. The file lock above makes this check atomic
+    // across concurrent callers, including truly simultaneous triggers.
+    const activeRun = existingRuns.find(
+      (run) => run.linkedSessionId === session.id && ACTIVE_REVIEW_RUN_STATUSES.has(run.status),
+    );
+    if (activeRun) {
+      return summarizeRun(store, activeRun.id);
+    }
+
     const reviewerSessionId = allocateReviewerSessionId(existingRuns, sessionPrefix);
 
     markSupersededReviewRuns({
@@ -1034,6 +1139,7 @@ export async function executeCodeReviewRun(
     runReviewer,
     now = () => new Date(),
     force = false,
+    registry,
   }: ExecuteCodeReviewRunOptions,
   { projectId, runId }: ExecuteCodeReviewRunInput,
 ): Promise<CodeReviewRunSummary> {
@@ -1099,7 +1205,7 @@ export async function executeCodeReviewRun(
     }
 
     const completedAt = now();
-    store.updateRun(
+    run = store.updateRun(
       run.id,
       {
         status: findings.length > 0 ? "needs_triage" : "clean",
@@ -1109,6 +1215,16 @@ export async function executeCodeReviewRun(
       },
       completedAt,
     );
+
+    await maybePostVerdictToPr({
+      project,
+      registry,
+      session,
+      store,
+      run,
+      findings: store.listFindings({ runId: run.id }),
+      now: now(),
+    });
   } catch (error) {
     const completedAt = now();
     store.updateRun(

@@ -30,6 +30,9 @@ import { createInitialCanonicalLifecycle } from "../lifecycle-state.js";
 import {
   SessionNotFoundError,
   type OrchestratorConfig,
+  type PluginRegistry,
+  type PRInfo,
+  type SCM,
   type Session,
   type SessionManager,
 } from "../types.js";
@@ -232,7 +235,7 @@ describe("triggerCodeReviewForSession", () => {
     expect(run.reviewerSessionId).toBe("app-rev-8");
   });
 
-  it("allocates unique reviewer ids for concurrent review requests", async () => {
+  it("serializes concurrent triggers for the same session into a single reviewer run", async () => {
     let resolveGate: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       resolveGate = resolve;
@@ -257,13 +260,54 @@ describe("triggerCodeReviewForSession", () => {
       triggerCodeReviewForSession(options, { sessionId: "app-1", requestedBy: "web" }),
     ]);
 
-    expect(new Set([first.reviewerSessionId, second.reviewerSessionId]).size).toBe(2);
-    expect(
-      store
-        .listRuns()
-        .map((run) => run.reviewerSessionId)
-        .sort(),
-    ).toEqual(["app-rev-1", "app-rev-2"]);
+    expect(first.id).toBe(second.id);
+    expect(first.reviewerSessionId).toBe(second.reviewerSessionId);
+    expect(store.listRuns()).toHaveLength(1);
+  });
+
+  it("does not block concurrent triggers for different sessions", async () => {
+    const options = {
+      config,
+      sessionManager: makeSessionManager(null, {
+        get: async (sessionId: string) =>
+          sessionId === "app-1" ? makeSession({ id: "app-1" }) : makeSession({ id: "app-2" }),
+      }),
+      storeFactory: () => store,
+      resolveTargetSha: async () => "abc123",
+    };
+
+    const [first, second] = await Promise.all([
+      triggerCodeReviewForSession(options, { sessionId: "app-1", requestedBy: "web" }),
+      triggerCodeReviewForSession(options, { sessionId: "app-2", requestedBy: "web" }),
+    ]);
+
+    expect(first.id).not.toBe(second.id);
+    expect(new Set([first.linkedSessionId, second.linkedSessionId])).toEqual(
+      new Set(["app-1", "app-2"]),
+    );
+    expect(store.listRuns()).toHaveLength(2);
+  });
+
+  it("returns the existing active run instead of creating a duplicate", async () => {
+    const existing = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "running",
+      targetSha: "abc123",
+    });
+
+    const run = await triggerCodeReviewForSession(
+      {
+        config,
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        resolveTargetSha: async () => "abc123",
+      },
+      { sessionId: "app-1", requestedBy: "web" },
+    );
+
+    expect(run.id).toBe(existing.id);
+    expect(store.listRuns()).toHaveLength(1);
   });
 
   it("marks previous review runs for older worker SHAs as outdated", async () => {
@@ -549,6 +593,144 @@ describe("executeCodeReviewRun", () => {
     );
     expect(failedSummary.status).toBe("failed");
     expect(failedSummary.terminationReason).toBe("review command crashed");
+  });
+});
+
+describe("executeCodeReviewRun — autoPostVerdict", () => {
+  function makeRegistry(scm: Partial<SCM> | null): PluginRegistry {
+    return {
+      register: () => {},
+      get: <T,>() => (scm as T) ?? null,
+      list: () => [],
+      loadBuiltins: async () => {},
+      loadFromConfig: async () => {},
+    };
+  }
+
+  const autoPostConfig: OrchestratorConfig = {
+    ...config,
+    projects: {
+      app: {
+        ...config.projects.app,
+        scm: { plugin: "github" },
+        review: { agent: "codex", autoPostVerdict: true },
+      },
+    },
+  };
+
+  it("does not post when autoPostVerdict is off (default)", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+    });
+    const commentOnPR = vi.fn();
+
+    await executeCodeReviewRun(
+      {
+        config, // no review.autoPostVerdict
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({ findings: [{ severity: "error", title: "bug" }] }),
+        registry: makeRegistry({ name: "github", commentOnPR }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(commentOnPR).not.toHaveBeenCalled();
+  });
+
+  it("posts the verdict to the PR via SCM when autoPostVerdict is on and findings exist", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+    });
+    const commentOnPR = vi.fn(async (_pr: PRInfo, _body: string) => {});
+
+    const summary = await executeCodeReviewRun(
+      {
+        config: autoPostConfig,
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({
+          findings: [
+            {
+              severity: "error",
+              title: "Broken save path",
+              body: "details",
+              filePath: "src/save.ts",
+              startLine: 12,
+            },
+          ],
+        }),
+        registry: makeRegistry({ name: "github", commentOnPR }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(commentOnPR).toHaveBeenCalledTimes(1);
+    const [pr, body] = commentOnPR.mock.calls[0];
+    expect(pr).toMatchObject({ number: 7 });
+    expect(body).toContain("[error] Broken save path");
+    expect(body).toContain("src/save.ts:12");
+    expect(store.getRun(run.id)?.verdictPostedAt).toBeDefined();
+    expect(summary.status).toBe("needs_triage");
+  });
+
+  it("no-ops with a warning when the session has no PR", async () => {
+    const run = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "queued",
+    });
+    const commentOnPR = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await executeCodeReviewRun(
+      {
+        config: autoPostConfig,
+        sessionManager: makeSessionManager(makeSession({ pr: null })),
+        storeFactory: () => store,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({ findings: [{ severity: "error", title: "bug" }] }),
+        registry: makeRegistry({ name: "github", commentOnPR }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(commentOnPR).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("does not post the verdict twice when a run is re-executed", async () => {
+    const created = store.createRun({
+      linkedSessionId: "app-1",
+      reviewerSessionId: "app-rev-1",
+      status: "needs_triage",
+    });
+    const run = store.updateRun(created.id, {
+      verdictPostedAt: "2026-05-10T11:00:00.000Z",
+    });
+    const commentOnPR = vi.fn(async () => {});
+
+    await executeCodeReviewRun(
+      {
+        config: autoPostConfig,
+        sessionManager: makeSessionManager(makeSession()),
+        storeFactory: () => store,
+        force: true,
+        prepareWorkspace: async () => "/tmp/reviews/app-rev-1",
+        runReviewer: async () => ({ findings: [{ severity: "error", title: "bug again" }] }),
+        registry: makeRegistry({ name: "github", commentOnPR }),
+      },
+      { projectId: "app", runId: run.id },
+    );
+
+    expect(commentOnPR).not.toHaveBeenCalled();
   });
 });
 

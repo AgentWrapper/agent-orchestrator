@@ -351,6 +351,7 @@ export const LocalProjectConfigSchema = z
       .object({
         agent: z.enum(["codex", "claude"]).optional(),
         model: z.string().optional(),
+        autoPostVerdict: z.boolean().optional(),
       })
       .passthrough()
       .optional(),

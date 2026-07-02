@@ -74,6 +74,39 @@ describe("Config Validation - defaultWorkerModel", () => {
   });
 });
 
+describe("Config Validation - review.autoPostVerdict", () => {
+  const baseConfig = {
+    projects: {
+      app: {
+        path: "/repos/app",
+      },
+    },
+  };
+
+  it("defaults to false when the review block is absent", () => {
+    const cfg = validateConfig(baseConfig);
+    expect(cfg.projects.app.review).toBeUndefined();
+  });
+
+  it("defaults to false when review is present without autoPostVerdict", () => {
+    const cfg = validateConfig({
+      ...baseConfig,
+      projects: { app: { ...baseConfig.projects.app, review: { agent: "claude" } } },
+    });
+    expect(cfg.projects.app.review?.autoPostVerdict).toBe(false);
+  });
+
+  it("preserves an explicit true value", () => {
+    const cfg = validateConfig({
+      ...baseConfig,
+      projects: {
+        app: { ...baseConfig.projects.app, review: { autoPostVerdict: true } },
+      },
+    });
+    expect(cfg.projects.app.review?.autoPostVerdict).toBe(true);
+  });
+});
+
 describe("Config Validation - Numeric Fields", () => {
   const baseConfig = {
     projects: {

@@ -250,6 +250,10 @@ const RoleAgentConfigSchema = z
 const ReviewConfigSchema = z.object({
   agent: z.enum(["codex", "claude"]).default("codex"),
   model: z.string().optional(),
+  // Auto-post the reviewer's verdict (summary + findings) to the session's PR
+  // via the SCM plugin once a run completes. Default off — absent config keeps
+  // findings visible only in the AO store/dashboard, unchanged from before.
+  autoPostVerdict: z.boolean().default(false),
 });
 
 // maestro-retrieval fusion layer (dormant, engine-only — Ф1). Default off:

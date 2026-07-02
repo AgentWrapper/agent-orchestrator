@@ -37,6 +37,8 @@ export interface CodeReviewRun {
   reviewerWorkspacePath?: string;
   summary?: string;
   terminationReason?: string;
+  /** Set once the verdict has been auto-posted to the PR, to avoid double-posting on retries. */
+  verdictPostedAt?: string;
 }
 
 export interface CodeReviewFinding {
@@ -234,6 +236,7 @@ function parseRun(projectId: string, value: unknown): CodeReviewRun | null {
     reviewerWorkspacePath: parseOptionalString(value["reviewerWorkspacePath"]),
     summary: parseOptionalString(value["summary"]),
     terminationReason: parseOptionalString(value["terminationReason"]),
+    verdictPostedAt: normalizeIsoTimestamp(value["verdictPostedAt"]),
   });
 }
 
