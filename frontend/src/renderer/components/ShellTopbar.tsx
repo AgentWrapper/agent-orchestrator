@@ -30,6 +30,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
 	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
+	in_review: { label: "In review", tone: "var(--fg-muted)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
