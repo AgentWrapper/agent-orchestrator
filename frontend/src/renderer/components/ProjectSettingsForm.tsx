@@ -5,6 +5,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -22,12 +23,6 @@ const PERMISSION_MODE_OPTIONS = [
 ] as const;
 
 const REVIEWER_OPTIONS = ["claude-code"] as const;
-
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, this form gains a provider <Select> + per-provider scope fields in
-// buildIntake (same save-scrub shape PR #2288/#2289 used), and the intake
-// Card's guard/validation copy stays as-is.
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -90,28 +85,27 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+
 	// The Electron app only registers git projects today, so the daemon always has a usable
 	// git origin to derive owner/repo from (trackerRepo() in observer.go) when
 	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
 	// same derivation client-side purely for display (a link to the repo being polled).
-	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeLabelList = parseLabels(form.intakeLabels);
-	const intakeNeedsRule = form.intakeEnabled && intakeLabelList.length === 0 && form.intakeAssignee.trim() === "";
-
-	// Only "github" exists today (see PROVIDER_OPTIONS), so the payload always
-	// carries the github scope field. A second provider adds a picker in the
-	// UI plus a scope-switch here — the same save-scrub shape PR #2288/#2289
-	// used for their three-provider version.
-	const buildIntake = (): TrackerIntakeConfig | undefined => {
-		const next: TrackerIntakeConfig = {
-			enabled: form.intakeEnabled || undefined,
-			provider: form.intakeEnabled ? "github" : undefined,
-			repo: form.intakeRepo.trim() || undefined,
-			labels: intakeLabelList.length ? intakeLabelList : undefined,
-			assignee: form.intakeAssignee.trim() || undefined,
-		};
-		return blankToUndefined(next);
+	const intakeForm: IntakeForm = {
+		enabled: form.intakeEnabled,
+		repo: form.intakeRepo,
+		labels: form.intakeLabels,
+		assignee: form.intakeAssignee,
 	};
+	const patchIntake = (patch: Partial<IntakeForm>) =>
+		setForm((f) => ({
+			...f,
+			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeRepo: patch.repo ?? f.intakeRepo,
+			intakeLabels: patch.labels ?? f.intakeLabels,
+			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+		}));
+	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
+	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -129,7 +123,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
-				trackerIntake: buildIntake(),
+				trackerIntake: buildIntake(intakeForm),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -155,7 +149,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					setValidationError("Worker and orchestrator agents are required.");
 					return;
 				}
-				if (intakeNeedsRule) {
+				if (intakeIncomplete) {
 					setValidationError("Enabling intake requires at least one label or assignee.");
 					return;
 				}
@@ -262,73 +256,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<CardHeader>
 					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
 				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<p className="text-[12px] leading-5 text-muted-foreground">
-						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
-						sessions; the tracker is not commented on or transitioned.
-					</p>
-					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
-						<input
-							type="checkbox"
-							className="h-4 w-4 accent-accent"
-							checked={form.intakeEnabled}
-							onChange={(e) => setForm((f) => ({ ...f, intakeEnabled: e.target.checked }))}
-						/>
-						Enable issue intake
-					</label>
-					{form.intakeEnabled && (
-						<>
-							<Field label="Repository">
-								{effectiveIntakeRepo ? (
-									<a
-										href={`https://github.com/${effectiveIntakeRepo}`}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="text-[13px] text-accent hover:underline"
-									>
-										{effectiveIntakeRepo}
-									</a>
-								) : (
-									<span className="text-[13px] text-muted-foreground">
-										Could not detect a GitHub repo from this project's git origin.
-									</span>
-								)}
-							</Field>
-							{/*
-								Labels are temporarily disabled in this form. form.intakeLabels /
-								buildIntake's labels field stay wired so labels set via the CLI
-								(--tracker-label) aren't wiped by a UI save; Assignee is the only
-								eligibility rule editable here for now.
-							<Field label="Labels" htmlFor="intakeLabels">
-								<input
-									id="intakeLabels"
-									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={form.intakeLabels}
-									onChange={(e) => setForm((f) => ({ ...f, intakeLabels: e.target.value }))}
-									placeholder="comma-separated, e.g. agent-ready, bug"
-								/>
-							</Field>
-							*/}
-							<Field label="Assignee" htmlFor="intakeAssignee">
-								<input
-									id="intakeAssignee"
-									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={form.intakeAssignee}
-									onChange={(e) => setForm((f) => ({ ...f, intakeAssignee: e.target.value }))}
-									placeholder="github login, or * for any"
-								/>
-							</Field>
-							{intakeNeedsRule && (
-								<p className="text-[12px] leading-5 text-error">
-									Enabling intake requires at least one label or assignee.
-								</p>
-							)}
-							<p className="text-[11px] leading-5 text-muted-foreground">
-								Reads credentials from <span className="font-mono">AO_GITHUB_TOKEN, or `gh auth token`</span>. Restart
-								the daemon after setting.
-							</p>
-						</>
-					)}
+				<CardContent>
+					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
 				</CardContent>
 			</Card>
 
@@ -426,39 +355,4 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 // rather than an empty {} the daemon would persist.
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
-}
-
-function parseLabels(value: string): string[] {
-	return value
-		.split(",")
-		.map((label) => label.trim())
-		.filter((label) => label.length > 0);
-}
-
-// Mirrors the daemon's parseGitHubRepoNative (observer.go): derive "owner/repo" from a git
-// origin URL for display only. The daemon does the authoritative derivation server-side at
-// poll time; this is purely so the settings card can show which repo intake will actually
-// poll without a manual input.
-function deriveGitHubRepo(remote?: string): string | undefined {
-	const trimmed = remote?.trim();
-	if (!trimmed) return undefined;
-	let path: string | undefined;
-	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
-	} else {
-		try {
-			path = new URL(trimmed).pathname;
-		} catch {
-			path = trimmed;
-		}
-	}
-	if (!path) return undefined;
-	const parts = path
-		.replace(/\.git$/, "")
-		.replace(/^\/+|\/+$/g, "")
-		.split("/");
-	if (parts.length < 2) return undefined;
-	const owner = parts[parts.length - 2].trim();
-	const repo = parts[parts.length - 1].trim();
-	return owner && repo ? `${owner}/${repo}` : undefined;
 }
