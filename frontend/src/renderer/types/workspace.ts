@@ -35,6 +35,28 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 	return isTerminated ? "terminated" : "unknown";
 }
 
+export type SessionActivityState = "active" | "idle" | "waiting_input" | "exited" | "unknown";
+
+const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "exited"]);
+
+export type SessionActivity = {
+	state: SessionActivityState;
+	lastActivityAt: string;
+};
+
+export function toSessionActivity(
+	activity?: { state?: string; lastActivityAt?: string } | null,
+): SessionActivity | undefined {
+	if (!activity) return undefined;
+	const state = sessionActivityStates.has(activity.state as SessionActivityState)
+		? (activity.state as SessionActivityState)
+		: "unknown";
+	return {
+		state,
+		lastActivityAt: activity.lastActivityAt ?? "",
+	};
+}
+
 export type AgentProvider =
 	| "codex"
 	| "claude-code"
@@ -104,6 +126,8 @@ export type WorkspaceSession = {
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	/** Raw agent lifecycle activity from the daemon. */
+	activity?: SessionActivity;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.

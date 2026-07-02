@@ -7,8 +7,8 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prBrowserUrl, prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
-import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import type { SessionActivityState, WorkspaceSession } from "../types/workspace";
+import { sortedPRs } from "../types/workspace";
 import { BrowserPanelView } from "./BrowserPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
@@ -259,24 +259,29 @@ type TimelineTone = "now" | "good" | "warn" | "neutral";
 
 function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
-	const detail = activityDetail(session.status);
 
 	events.push({
-		tone: "now",
-		node: (
-			<>
-				<span className="inspector-timeline__badge">
-					<InspectorStatusPill session={session} />
-				</span>
-				{detail ? <span className="inspector-timeline__detail"> — {detail}</span> : null}
-			</>
-		),
-		ts: formatTimeCompact(session.updatedAt),
+		tone: "neutral",
+		node: <>Created worktree &amp; branch</>,
+		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
 	});
 
-	for (const pr of sortedPRs(session)) {
+	const prs = sortedPRs(session);
+	for (const pr of prs.filter((pr) => pr.state === "draft")) {
 		events.push({
-			tone: "good",
+			tone: "neutral",
+			node: (
+				<>
+					Draft <b>PR #{pr.number}</b>
+				</>
+			),
+			ts: null,
+		});
+	}
+
+	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
+		events.push({
+			tone: "neutral",
 			node: (
 				<>
 					Opened <b>PR #{pr.number}</b>
@@ -287,10 +292,41 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	}
 
 	events.push({
-		tone: "neutral",
-		node: <>Created worktree &amp; branch</>,
-		ts: formatTimeCompact(session.createdAt ?? session.updatedAt),
+		tone: "now",
+		node: (
+			<span className="inline-flex flex-wrap items-center gap-1.5">
+				<span className="inspector-timeline__badge">
+					<InspectorActivityPill state={session.activity?.state ?? "unknown"} />
+				</span>
+				{scmTimelineStates(session).map((state) => (
+					<span key={state} className="inspector-timeline__badge">
+						<InspectorScmPill state={state} />
+					</span>
+				))}
+			</span>
+		),
+		ts: session.activity?.lastActivityAt ? formatTimeCompact(session.activity.lastActivityAt) : null,
 	});
+
+	for (const pr of prs.filter((pr) => pr.state === "merged")) {
+		events.push({
+			tone: "good",
+			node: (
+				<>
+					Merged <b>PR #{pr.number}</b>
+				</>
+			),
+			ts: null,
+		});
+	}
+
+	if (session.status === "merged") {
+		events.push({
+			tone: "good",
+			node: <>Done</>,
+			ts: formatTimeCompact(session.updatedAt),
+		});
+	}
 
 	return (
 		<div className="inspector-timeline">
@@ -313,38 +349,31 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function activityDetail(status: SessionStatus): string | null {
-	switch (status) {
-		case "idle":
-			return "Session idle";
-		case "needs_input":
-			return "Waiting for your input";
-		case "no_signal":
-			return "No recent agent signal";
-		case "working":
-			return null;
-		default:
-			return null;
-	}
-}
-
-const STATUS_PILL: Record<
-	ReturnType<typeof workerDisplayStatus> | "idle",
-	{ label: string; tone: string; breathe: boolean }
-> = {
-	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
-	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
-	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
-	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
-	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
-	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
+const ACTIVITY_PILL: Record<SessionActivityState, { label: string; tone: string; breathe: boolean }> = {
+	active: { label: "Working", tone: "var(--orange)", breathe: true },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
+	waiting_input: { label: "Input needed", tone: "var(--amber)", breathe: false },
+	exited: { label: "Exited", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 };
 
-function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
-	const key = session.status === "idle" ? "idle" : workerDisplayStatus(session);
-	const { label, tone, breathe } = STATUS_PILL[key];
+type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
+
+const SCM_PILL: Record<ScmTimelineState, { label: string; tone: string; breathe: boolean }> = {
+	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
+	changes_requested: { label: "Changes requested", tone: "var(--amber)", breathe: false },
+	conflict: { label: "Conflict", tone: "var(--red)", breathe: false },
+};
+
+function InspectorActivityPill({ state }: { state: SessionActivityState }) {
+	return <TimelinePill {...ACTIVITY_PILL[state]} />;
+}
+
+function InspectorScmPill({ state }: { state: ScmTimelineState }) {
+	return <TimelinePill {...SCM_PILL[state]} />;
+}
+
+function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
 	return (
 		<span
 			className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold"
@@ -361,6 +390,26 @@ function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
 			{label}
 		</span>
 	);
+}
+
+function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
+	const states: ScmTimelineState[] = [];
+	const seen = new Set<ScmTimelineState>();
+	const add = (state: ScmTimelineState) => {
+		if (seen.has(state)) return;
+		seen.add(state);
+		states.push(state);
+	};
+
+	if (session.status === "ci_failed") add("ci_failed");
+	if (session.status === "changes_requested") add("changes_requested");
+	for (const pr of session.prs) {
+		if (pr.ci === "failing") add("ci_failed");
+		if (pr.review === "changes_requested") add("changes_requested");
+		if (pr.mergeability === "conflicting") add("conflict");
+	}
+
+	return states;
 }
 
 function ReviewsView({

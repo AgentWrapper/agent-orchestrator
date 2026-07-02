@@ -6,6 +6,7 @@ import {
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
+	toSessionActivity,
 	toSessionStatus,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -57,6 +58,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				activity: toSessionActivity(session.activity),
 				previewUrl: session.previewUrl,
 				previewRevision: session.previewRevision,
 				prs: (session.prs ?? []).map(toPullRequestFacts),
