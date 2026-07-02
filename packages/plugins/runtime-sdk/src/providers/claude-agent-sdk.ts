@@ -5,7 +5,7 @@
  * endpoint first — see providers/mimo-anthropic.ts).
  */
 
-import { query, type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { query, type EffortLevel, type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionHost } from "../host/session-host.js";
 
 export interface ClaudeAgentModeOptions {
@@ -17,6 +17,8 @@ export interface ClaudeAgentModeOptions {
   resumeFrom: string | null;
   /** Model id, or null to use the SDK default. */
   model: string | null;
+  /** Reasoning-effort override, or null to use the SDK default. */
+  effort: EffortLevel | null;
   /** Turn-1 prompt submitted once after the stream starts, or null. */
   initialPrompt: string | null;
 }
@@ -69,6 +71,7 @@ export async function runClaudeAgentMode(
       includePartialMessages: true,
       ...(opts.resumeFrom ? { resume: opts.resumeFrom } : {}),
       ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.effort ? { effort: opts.effort } : {}),
       ...(useCanUseTool ? { canUseTool: host.canUseTool } : {}),
       stderr: () => {},
     },

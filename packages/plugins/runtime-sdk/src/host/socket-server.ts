@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import net from "node:net";
-import { type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { type PermissionMode, type EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import {
   encodeLine,
   LineParser,
@@ -208,6 +208,12 @@ export async function runStandalone(): Promise<void> {
     "bypassPermissions") as PermissionMode;
   const resumeFrom = process.env.AO_SDK_RESUME || null;
   const model = process.env.AO_SDK_MODEL || null;
+  // Reasoning-effort override for the Claude Agent SDK's `effort` query option
+  // (low/medium/high/xhigh/max). Unset by default — the SDK picks its own
+  // default, matching pre-existing behavior. Nothing sets this env var yet
+  // (spawn/set-model plumbing for it is not wired); this is leaf-level plumbing
+  // ready for that wiring.
+  const effort = (process.env.AO_SDK_EFFORT || null) as EffortLevel | null;
   const cwd = process.env.AO_SDK_CWD || process.cwd();
   const initialPrompt = process.env.AO_SDK_INITIAL_PROMPT || null;
   // Persistent persona/rules (orchestrator/worker) — appended to the Claude Code
@@ -366,6 +372,7 @@ export async function runStandalone(): Promise<void> {
       appendSystemPrompt,
       resumeFrom,
       model,
+      effort,
       initialPrompt,
     });
   }
