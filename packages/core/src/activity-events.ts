@@ -102,6 +102,7 @@ export type ActivityEventKind =
   | "config.project_malformed"
   | "config.project_invalid"
   | "config.migrated"
+  | "retrieval.bundle"
   | "plugin-registry.load_failed"
   | "plugin-registry.validation_failed"
   | "plugin-registry.specifier_failed"

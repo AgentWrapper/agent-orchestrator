@@ -74,6 +74,7 @@ import {
 } from "./lifecycle-state.js";
 import { buildPrompt } from "./prompt-builder.js";
 import { seedRlmContext, withRlmContext } from "./rlm-seed.js";
+import { assembleContextBundle } from "./retrieval/index.js";
 import { classifyActivitySignal, createActivitySignal } from "./activity-signal.js";
 import {
   getProjectSessionsDir,
@@ -1838,16 +1839,54 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       let seededTaskPrompt = taskPrompt;
       if (selection.role !== "orchestrator") {
         try {
-          const rlmBlock = await seedRlmContext({
-            projectId: spawnConfig.projectId,
-            taskText: spawnConfig.prompt ?? resolvedIssue?.title,
-          });
-          if (rlmBlock) {
-            seededTaskPrompt = taskPrompt ? withRlmContext(rlmBlock, taskPrompt) : rlmBlock;
+          const taskText = spawnConfig.prompt ?? resolvedIssue?.title;
+          // retrieval.fusion (dormant, default off — mae-374 Ф1): when on,
+          // seed from the graph+vector fusion bundle instead of the legacy
+          // vector-only rlm-seed path. Degrades to vector-only automatically
+          // when the graph isn't available; still FAIL-OPEN (never throws,
+          // never blocks the spawn beyond its own combined deadline).
+          const useFusion = project.retrieval?.fusion === true;
+          let referenceBlock: string | null | undefined;
+
+          if (useFusion) {
+            const bundle = await assembleContextBundle({
+              projectId: spawnConfig.projectId,
+              projectRoot: project.path,
+              taskText,
+              ...(spawnConfig.issueId && { issueId: spawnConfig.issueId }),
+            });
+            referenceBlock = bundle?.markdown;
+            if (bundle) {
+              recordActivityEvent({
+                projectId: spawnConfig.projectId,
+                sessionId,
+                source: "session-manager",
+                kind: "retrieval.bundle",
+                level: "info",
+                summary: `retrieval bundle: ${bundle.json.itemsPacked} item(s) packed, ${bundle.json.dedupSaved} deduped`,
+                data: {
+                  graphTokens: bundle.json.graphTokensPacked,
+                  vectorTokens: bundle.json.vectorTokensPacked,
+                  dedupSaved: bundle.json.dedupSaved,
+                  packed: bundle.json.itemsPacked,
+                },
+              });
+            }
+          } else {
+            referenceBlock = await seedRlmContext({
+              projectId: spawnConfig.projectId,
+              taskText,
+            });
+          }
+
+          if (referenceBlock) {
+            seededTaskPrompt = taskPrompt
+              ? withRlmContext(referenceBlock, taskPrompt)
+              : referenceBlock;
           }
         } catch {
-          // Belt-and-suspenders: seedRlmContext is already fail-open and never
-          // throws, but the spawn must never break on seeding regressions.
+          // Belt-and-suspenders: both seeding paths are already fail-open and
+          // never throw, but the spawn must never break on seeding regressions.
         }
       }
 

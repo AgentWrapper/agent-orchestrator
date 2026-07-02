@@ -252,6 +252,13 @@ const ReviewConfigSchema = z.object({
   model: z.string().optional(),
 });
 
+// maestro-retrieval fusion layer (dormant, engine-only — Ф1). Default off:
+// worker spawns keep using the legacy seedRlmContext path until this flag
+// is flipped. See packages/core/src/retrieval/.
+const RetrievalConfigSchema = z.object({
+  fusion: z.boolean().default(false),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string().optional(),
@@ -283,6 +290,7 @@ const ProjectConfigSchema = z.object({
     .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
     .optional(),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
+  retrieval: RetrievalConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({

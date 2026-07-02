@@ -1700,6 +1700,14 @@ export interface ProjectConfig {
     | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
+
+  /** maestro-retrieval fusion layer (dormant, engine-only — default off) */
+  retrieval?: RetrievalConfig;
+}
+
+export interface RetrievalConfig {
+  /** Seed worker spawns from the graph+vector fusion bundle instead of the legacy vector-only rlm-seed path */
+  fusion: boolean;
 }
 
 export interface TrackerConfig {

@@ -130,6 +130,11 @@ export function getProjectCodeReviewsDir(projectId: string): string {
   return join(getProjectDir(projectId), "code-reviews");
 }
 
+/** Get the maestro-retrieval store directory for a project (graph.json + build stamp). */
+export function getProjectRetrievalDir(projectId: string): string {
+  return join(getProjectDir(projectId), "retrieval");
+}
+
 /** Get the feedback reports directory for a project (V2 layout). */
 export function getProjectFeedbackReportsDir(projectId: string): string {
   return join(getProjectDir(projectId), "feedback-reports");
