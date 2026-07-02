@@ -85,9 +85,7 @@ describe("report problem drafts", () => {
 
 	it("builds copy handoff destinations for GitHub, Discord, and email", () => {
 		const github = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "github"));
-		expect(`${github.origin}${github.pathname}`).toBe(
-			"https://github.com/AgentWrapper/agent-orchestrator/issues/new",
-		);
+		expect(`${github.origin}${github.pathname}`).toBe("https://github.com/AgentWrapper/agent-orchestrator/issues/new");
 		expect(github.searchParams.get("title")).toBe("Terminal keeps reconnecting after daemon restart");
 		expect(github.searchParams.get("body")).toContain("[redacted-local-path]");
 		expect(github.searchParams.get("body")).toContain("[redacted-local-url]");
