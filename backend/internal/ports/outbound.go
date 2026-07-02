@@ -190,6 +190,10 @@ type WorkspaceConfig struct {
 	// BaseBranch is the per-project default branch new session branches are
 	// created from. Empty falls back to the workspace adapter's own default.
 	BaseBranch string
+	// RepoPath optionally overrides ProjectID-based repo resolution.
+	RepoPath string
+	// Path optionally supplies an existing managed worktree path for restore.
+	Path string
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
@@ -198,6 +202,10 @@ type WorkspaceInfo struct {
 	Branch    string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
+	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
+	// when the normal workspace lifecycle primitives operate on one child repo
+	// inside a workspace project.
+	RepoPath string
 }
 
 // WorkspaceProjectConfig describes a multi-repo workspace session. RootRepoPath

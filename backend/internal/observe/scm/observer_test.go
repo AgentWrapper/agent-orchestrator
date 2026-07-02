@@ -21,16 +21,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-var testRepo = ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}
+var (
+	testRepo    = ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}
+	testAPIRepo = ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "api", Repo: "o/api"}
+)
 
 type fakeStore struct {
 	mu sync.Mutex
 
-	sessions []domain.SessionRecord
-	projects map[string]domain.ProjectRecord
-	prs      map[domain.SessionID][]domain.PullRequest
-	checks   map[string][]domain.PullRequestCheck
-	writeErr error
+	sessions       []domain.SessionRecord
+	projects       map[string]domain.ProjectRecord
+	workspaceRepos map[string][]domain.WorkspaceRepoRecord
+	prs            map[domain.SessionID][]domain.PullRequest
+	checks         map[string][]domain.PullRequestCheck
+	writeErr       error
 
 	writes []fakeWrite
 
@@ -81,6 +85,12 @@ func (s *fakeStore) UpsertProject(_ context.Context, row domain.ProjectRecord) e
 	}
 	s.projects[row.ID] = row
 	return nil
+}
+
+func (s *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.WorkspaceRepoRecord(nil), s.workspaceRepos[projectID]...), nil
 }
 
 func (s *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
@@ -139,7 +149,16 @@ func (p *fakeProvider) SCMCredentialsAvailable(context.Context) (bool, error) {
 }
 
 func (p *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	return testRepo, remote != ""
+	if remote == "" {
+		return ports.SCMRepo{}, false
+	}
+	if strings.Contains(remote, "o/api") {
+		return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "api", Repo: "o/api"}, true
+	}
+	if strings.Contains(remote, "o/web") {
+		return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "web", Repo: "o/web"}, true
+	}
+	return testRepo, true
 }
 func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, _ string) (ports.SCMGuardResult, error) {
 	p.mu.Lock()
@@ -509,6 +528,64 @@ func TestPoll_DiscoversSiblingUnderRootSessionNamespace(t *testing.T) {
 	}
 	if got := store.writes[0].pr.SourceBranch; got != "ao/p-1/fix" {
 		t.Fatalf("source branch = %q, want ao/p-1/fix", got)
+	}
+	if got := store.writes[0].pr.SessionID; got != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle observations = %d, want 1", len(lc.observed))
+	}
+}
+
+func TestPoll_DiscoversWorkspaceChildRepoPR(t *testing.T) {
+	store := testStoreWithSession()
+	store.sessions[0].Metadata.Branch = "ao/p-1/root"
+	store.projects["p"] = domain.ProjectRecord{
+		ID:            "p",
+		RepoOriginURL: "https://github.com/o/r.git",
+		Kind:          domain.ProjectKindWorkspace,
+	}
+	store.workspaceRepos = map[string][]domain.WorkspaceRepoRecord{
+		"p": {{ProjectID: "p", Name: "api", RelativePath: "api", RepoOriginURL: "https://github.com/o/api.git"}},
+	}
+	prObs := testObs(12)
+	prObs.Repo = "o/api"
+	prObs.PR.URL = "https://github.com/o/api/pull/12"
+	prObs.PR.HTMLURL = "https://github.com/o/api/pull/12"
+	prObs.PR.Number = 12
+	prObs.PR.SourceBranch = "ao/p-1/api-billing"
+	prObs.PR.TargetBranch = "main"
+	prObs.PR.HeadSHA = "api-sha"
+	prObs.CI.HeadSHA = "api-sha"
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{
+			prKey(testRepo, 0):    {ETag: "root-v2"},
+			prKey(testAPIRepo, 0): {ETag: "api-v2"},
+		},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(testAPIRepo, 0): {
+				{URL: "https://github.com/o/api/pull/12", Number: 12, SourceBranch: "ao/p-1/api-billing", HeadRepo: "o/api", TargetBranch: "main", HeadSHA: "api-sha"},
+			},
+		},
+		observations: map[string]ports.SCMObservation{prKey(testAPIRepo, 12): prObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 {
+		t.Fatalf("child repo PR not refreshed: %#v", provider.fetchBatches)
+	}
+	ref := provider.fetchBatches[0][0]
+	if ref.Repo.Repo != "o/api" || ref.Number != 12 {
+		t.Fatalf("fetched ref = %#v, want o/api#12", ref)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected child repo PR write")
+	}
+	if got := store.writes[0].pr.Repo; got != "o/api" {
+		t.Fatalf("persisted repo = %q, want o/api", got)
 	}
 	if got := store.writes[0].pr.SessionID; got != "p-1" {
 		t.Fatalf("session id = %q, want p-1", got)

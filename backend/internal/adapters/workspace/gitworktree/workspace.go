@@ -256,13 +256,10 @@ func (w *Workspace) DestroyWorkspaceProject(ctx context.Context, info ports.Work
 // Destroy removes the session's worktree and prunes it from the repo, refusing
 // (rather than force-deleting) if git still has the path registered afterwards.
 func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
-	if info.ProjectID == "" {
-		return errors.New("gitworktree: project id is required")
-	}
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
-	repo, err := w.repoPath(info.ProjectID)
+	repo, err := w.repoPathForInfo(info)
 	if err != nil {
 		return err
 	}
@@ -311,13 +308,10 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 // discards agent work. For interactive teardown (ao session kill, ao cleanup)
 // use Destroy, which refuses dirty worktrees via ErrWorkspaceDirty.
 func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) error {
-	if info.ProjectID == "" {
-		return errors.New("gitworktree: project id is required")
-	}
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
 	}
-	repo, err := w.repoPath(info.ProjectID)
+	repo, err := w.repoPathForInfo(info)
 	if err != nil {
 		return err
 	}
@@ -527,11 +521,11 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	repo, err := w.repoPath(cfg.ProjectID)
+	repo, err := w.repoPathForConfig(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	path, err := w.managedPath(cfg)
+	path, err := w.restorePath(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -544,12 +538,17 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		if branch == "" {
 			branch = cfg.Branch
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 	}
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
 	} else if nonEmpty {
-		return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
+		if cfg.Path == "" {
+			return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
+		}
+		if _, err := moveStrayPathAside(path); err != nil {
+			return ports.WorkspaceInfo{}, err
+		}
 	}
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -557,7 +556,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
 func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
@@ -612,6 +611,14 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		return err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
+		if isMissingRegisteredWorktreeError(err) {
+			if pruneErr := w.pruneWorktrees(ctx, repo); pruneErr != nil {
+				return fmt.Errorf("gitworktree: worktree add branch %q from %q: recover stale registration: %w", branch, baseRef, pruneErr)
+			}
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); retryErr == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
@@ -682,6 +689,14 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 		return "", err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); err != nil {
+		if isMissingRegisteredWorktreeError(err) {
+			if pruneErr := w.pruneWorktrees(ctx, repo.repoPath); pruneErr != nil {
+				return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: recover stale registration: %w", repo.name, branch, baseRef, pruneErr)
+			}
+			if _, retryErr := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo.repoPath, branch, repo.outputPath, baseRef)...); retryErr == nil {
+				return baseSHA, nil
+			}
+		}
 		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
 	}
 	return baseSHA, nil
@@ -689,13 +704,24 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 
 func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) error {
 	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
-	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
-		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	if err := w.pruneWorktrees(ctx, repo); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
 	}
 	return nil
+}
+
+func (w *Workspace) pruneWorktrees(ctx context.Context, repo string) error {
+	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	}
+	return nil
+}
+
+func isMissingRegisteredWorktreeError(err error) bool {
+	return strings.Contains(err.Error(), "is a missing but already registered worktree")
 }
 
 func (w *Workspace) revParse(ctx context.Context, repo, ref string) (string, error) {
@@ -796,6 +822,31 @@ func (w *Workspace) repoPath(project domain.ProjectID) (string, error) {
 		return "", fmt.Errorf("gitworktree: repo path: %w", err)
 	}
 	return abs, nil
+}
+
+func (w *Workspace) repoPathForInfo(info ports.WorkspaceInfo) (string, error) {
+	if info.RepoPath != "" {
+		repo, err := physicalAbs(info.RepoPath)
+		if err != nil {
+			return "", fmt.Errorf("gitworktree: repo path: %w", err)
+		}
+		return repo, nil
+	}
+	if info.ProjectID == "" {
+		return "", errors.New("gitworktree: project id is required")
+	}
+	return w.repoPath(info.ProjectID)
+}
+
+func (w *Workspace) repoPathForConfig(cfg ports.WorkspaceConfig) (string, error) {
+	if cfg.RepoPath != "" {
+		repo, err := physicalAbs(cfg.RepoPath)
+		if err != nil {
+			return "", fmt.Errorf("gitworktree: repo path: %w", err)
+		}
+		return repo, nil
+	}
+	return w.repoPath(cfg.ProjectID)
 }
 
 func physicalAbs(path string) (string, error) {
@@ -905,6 +956,13 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	return w.validateManagedPath(path)
 }
 
+func (w *Workspace) restorePath(cfg ports.WorkspaceConfig) (string, error) {
+	if cfg.Path != "" {
+		return w.validateManagedPath(cfg.Path)
+	}
+	return w.managedPath(cfg)
+}
+
 // resolvedSessionPrefix returns cfg.SessionPrefix when set, otherwise the first
 // 12 characters of the project ID (matching the display-prefix convention).
 func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
@@ -1008,6 +1066,25 @@ func pathExistsNonEmpty(path string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
+}
+
+func moveStrayPathAside(path string) (string, error) {
+	for i := 0; i < 100; i++ {
+		candidate := path + ".stray"
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.stray-%d", path, i+1)
+		}
+		if _, err := os.Lstat(candidate); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("gitworktree: inspect stray destination %q: %w", candidate, err)
+		}
+		if err := os.Rename(path, candidate); err != nil {
+			return "", fmt.Errorf("gitworktree: move stray path %q aside to %q: %w", path, candidate, err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("gitworktree: move stray path %q aside: no available destination", path)
 }
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
