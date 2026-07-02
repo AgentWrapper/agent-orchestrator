@@ -180,6 +180,74 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
 	});
 
+	it("opens feedback above Settings and copies redacted report drafts", async () => {
+		const user = userEvent.setup();
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		window.ao!.clipboard.writeText = writeText;
+		window.ao!.app.getVersion = vi.fn().mockResolvedValue("9.9.9-test");
+		window.ao!.daemon.getStatus = vi.fn().mockResolvedValue({
+			state: "ready",
+			message: "Listening at http://127.0.0.1:31001?token=secret",
+		});
+		renderSidebar();
+
+		const feedbackButton = screen.getAllByRole("button", { name: "Feedback" })[0];
+		const settingsButton = screen.getAllByRole("button", { name: "Settings" })[0];
+		expect(feedbackButton.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		await user.click(feedbackButton);
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Summary"), "Create project fails in /Users/alice/private-repo");
+		await user.type(
+			screen.getByLabelText("Details / repro"),
+			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create.",
+		);
+		await user.type(screen.getByLabelText("Expected / request"), "Show a clear prerequisite error.");
+
+		expect(screen.getByLabelText("Report preview")).toHaveTextContent("[redacted-local-path]");
+		await user.click(screen.getByRole("button", { name: "Copy and open GitHub" }));
+
+		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+		const copied = writeText.mock.calls[0][0] as string;
+		expect(copied).toContain("Create project fails");
+		expect(copied).toContain("AO version: 9.9.9-test");
+		expect(copied).toContain("Daemon: ready");
+		expect(copied).toContain("[redacted-local-path]");
+		expect(copied).toContain("[redacted-local-url]");
+		expect(copied).not.toContain("/Users/alice");
+		expect(copied).not.toContain("local-secret");
+		expect(open).toHaveBeenCalledWith(
+			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
+			"_blank",
+			"noopener,noreferrer",
+		);
+	});
+
+	it("copies Discord and email drafts when daemon diagnostics are unavailable", async () => {
+		const user = userEvent.setup();
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		window.ao!.clipboard.writeText = writeText;
+		window.ao!.app.getVersion = vi.fn().mockRejectedValue(new Error("version unavailable"));
+		window.ao!.daemon.getStatus = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
+		renderSidebar();
+
+		await user.click(screen.getAllByRole("button", { name: "Feedback" })[0]);
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
+
+		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
+		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
+
+		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
+		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
+		expect(open).toHaveBeenNthCalledWith(1, "https://discord.com/invite/UZv7JjxbwG", "_blank", "noopener,noreferrer");
+		expect(open).toHaveBeenNthCalledWith(2, expect.stringMatching(/^mailto:\?/), "_blank", "noopener,noreferrer");
+	});
+
 	it("renames a session inline and persists via the daemon", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
