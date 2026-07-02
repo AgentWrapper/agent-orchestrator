@@ -7,6 +7,7 @@ import { Input } from "./ui/input";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import type { AgentProvider } from "../types/workspace";
 
 type Project = components["schemas"]["Project"];
@@ -77,6 +78,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 
 		setIsSubmitting(true);
 		setError(undefined);
+		void captureRendererEvent("ao.renderer.task_create_requested", { project_id: projectId });
 		try {
 			const { data, error: apiError } = await apiClient.POST("/api/v1/sessions", {
 				body: {
@@ -90,9 +92,11 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			});
 			if (apiError) throw new Error(apiErrorMessage(apiError, "Unable to start task"));
 			if (!data?.session?.id) throw new Error("Task creation returned no session");
+			void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: projectId });
 			onCreated(data.session.id);
 			onOpenChange(false);
 		} catch (err) {
+			void captureRendererEvent("ao.renderer.task_create_failed", { project_id: projectId });
 			setError(err instanceof Error ? err.message : "Unable to start task");
 		} finally {
 			setIsSubmitting(false);
