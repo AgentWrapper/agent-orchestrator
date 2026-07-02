@@ -3,9 +3,11 @@
 // workspace-local Cline hooks, and reading hook-derived session info.
 //
 // Cline is an autonomous coding agent that runs in the terminal (binary
-// "cline", installed via `npm i -g cline`). AO drives it headlessly by passing
-// the prompt as a positional argument and requesting NDJSON output with
-// `--json`, which Cline emits one event per line for machine parsing.
+// "cline", installed via `npm i -g cline`). AO drives task launches headlessly
+// by passing the prompt as a positional argument and requesting NDJSON output
+// with `--json`, which Cline emits one event per line for machine parsing.
+// Promptless launches (notably orchestrators) must stay in Cline's interactive
+// mode because Cline rejects `--json` without a prompt or piped stdin.
 //
 // AO-managed sessions derive native session identity from Cline hooks
 // (the workspace-local `.clinerules/hooks/` executable scripts AO installs)
@@ -67,18 +69,21 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
 
-// GetLaunchCommand builds the argv to start a new headless Cline session,
-// requesting machine-readable NDJSON output (`--json`), applying the approval
-// flags, an optional system-prompt override (`-s`), and the initial prompt as
-// the trailing positional argument. The prompt is placed after `--` so a
-// leading "-" is not read as a flag.
+// GetLaunchCommand builds the argv to start a new Cline session. Prompted
+// launches request machine-readable NDJSON output (`--json`). Promptless
+// launches stay interactive because Cline's JSON output mode requires a prompt
+// argument or piped stdin. The prompt is placed after `--` so a leading "-" is
+// not read as a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.clineBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary, "--json"}
+	cmd = []string{binary}
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--json")
+	}
 	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.SystemPrompt != "" {
@@ -102,9 +107,10 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Cline session:
-// `cline --json [approval flags] --id <agentSessionId>`. ok is false when the
-// hook-derived native session id has not landed yet, so callers can fall back
-// to fresh launch behavior.
+// `cline [approval flags] --id <agentSessionId>`. Resumes are interactive
+// because no prompt is supplied here. ok is false when the hook-derived native
+// session id has not landed yet, so callers can fall back to fresh launch
+// behavior.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -120,7 +126,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 
 	cmd = make([]string, 0, 8)
-	cmd = append(cmd, binary, "--json")
+	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--id", agentSessionID)
 	return cmd, true, nil

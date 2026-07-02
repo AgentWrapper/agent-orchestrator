@@ -4,6 +4,14 @@ import { apiClient } from "./api-client";
 
 vi.mock("./api-client", () => ({
 	apiClient: { POST: vi.fn() },
+	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
+		if (typeof error === "object" && error !== null && "message" in error) {
+			const body = error as { code?: unknown; message: unknown };
+			const message = String(body.message);
+			return typeof body.code === "string" && body.code !== "" ? `${message} (${body.code})` : message;
+		}
+		return fallback;
+	},
 }));
 
 describe("spawnOrchestrator", () => {
@@ -32,5 +40,15 @@ describe("spawnOrchestrator", () => {
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj", clean: false },
 		});
+	});
+
+	it("surfaces daemon spawn error messages and codes", async () => {
+		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
+			data: undefined,
+			error: { code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" },
+			response: { status: 400 },
+		});
+
+		await expect(spawnOrchestrator("proj")).rejects.toThrow("agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)");
 	});
 });

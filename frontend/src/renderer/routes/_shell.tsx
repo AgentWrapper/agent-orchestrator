@@ -1,10 +1,11 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
+import { agentsQueryKey, agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -44,6 +45,7 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
+	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 
 	const updateWorkspaces = useCallback(
@@ -61,6 +63,10 @@ function ShellLayout() {
 				surface: "project_board",
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
+			const status = await refreshDaemonStatus();
+			if (status.state !== "ready" || !status.port) {
+				throw new Error(status.message || "AO daemon is not ready.");
+			}
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,
@@ -137,6 +143,16 @@ function ShellLayout() {
 		document.documentElement.dataset.theme = theme;
 		document.documentElement.style.colorScheme = theme;
 	}, [theme]);
+
+	useEffect(() => {
+		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
+		if (agentCatalogPortRef.current === daemonStatus.port) return;
+
+		agentCatalogPortRef.current = daemonStatus.port;
+		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+		void queryClient.ensureQueryData(agentsQueryOptions);
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance only until the user picks a theme explicitly.
 	useEffect(() => {

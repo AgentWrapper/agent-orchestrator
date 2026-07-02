@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { DEFAULT_PROJECT_AGENT } from "../lib/agent-options";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -70,13 +70,21 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
-		workerAgent: config.worker?.agent || DEFAULT_PROJECT_AGENT,
-		orchestratorAgent: config.orchestrator?.agent || DEFAULT_PROJECT_AGENT,
+		workerAgent: config.worker?.agent ?? "",
+		orchestratorAgent: config.orchestrator?.agent ?? "",
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [validationError, setValidationError] = useState<string | null>(null);
+	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentCatalog = agentsQuery.data;
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -103,6 +111,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		},
 		onSuccess: () => {
 			setSavedAt(Date.now());
+			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
 		},
@@ -114,6 +123,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			onSubmit={(event) => {
 				event.preventDefault();
 				setSavedAt(null);
+				if (missingRequiredAgent) {
+					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
@@ -164,6 +178,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.workerAgent}
 						placeholder="Select worker agent"
 						label="Default worker agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
+						invalid={validationError !== null && form.workerAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 					/>
 					<RequiredAgentField
@@ -171,8 +190,34 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.orchestratorAgent}
 						placeholder="Select orchestrator agent"
 						label="Default orchestrator agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
+						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
+					<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+						<span>Agent availability is cached.</span>
+						<button
+							type="button"
+							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							disabled={refreshAgentsMutation.isPending}
+							onClick={() => refreshAgentsMutation.mutate()}
+						>
+							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+						</button>
+					</div>
+					{refreshAgentsMutation.isError && (
+						<p className="text-[12px] leading-5 text-error">
+							{refreshAgentsMutation.error instanceof Error
+								? refreshAgentsMutation.error.message
+								: "Could not refresh agent catalog."}
+						</p>
+					)}
+					{missingRequiredAgent && (
+						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
+					)}
 					<Field label="Model override" htmlFor="model">
 						<input
 							id="model"
@@ -211,6 +256,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
+				{validationError && <span className="text-[12px] text-error">{validationError}</span>}
 				{mutation.isError && (
 					<span className="text-[12px] text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
@@ -257,7 +303,7 @@ function ReviewerSelect({ id, value, onChange }: { id: string; value: string; on
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">claude-code (default)</SelectItem>
+				<SelectItem value="__default__">Project default</SelectItem>
 				{REVIEWER_OPTIONS.map((reviewer) => (
 					<SelectItem key={reviewer} value={reviewer}>
 						{reviewer}

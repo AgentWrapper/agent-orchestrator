@@ -1,11 +1,12 @@
-import { useState, type KeyboardEvent } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+
+import { DashboardSubhead } from "./DashboardSubhead";
 import { Plus } from "lucide-react";
 import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -264,13 +265,10 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		if (event.target !== event.currentTarget) {
-			return;
-		}
-		if (event.key === "Enter" || event.key === " ") {
-			event.preventDefault();
-			onOpen();
-		}
+		if (event.currentTarget !== event.target) return;
+		if (event.key !== "Enter" && event.key !== " ") return;
+		event.preventDefault();
+		onOpen();
 	};
 	return (
 		<div

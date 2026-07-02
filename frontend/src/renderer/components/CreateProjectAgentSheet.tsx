@@ -1,10 +1,15 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import { AGENT_OPTIONS, DEFAULT_PROJECT_AGENT } from "../lib/agent-options";
+import type { components } from "../../api/schema";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { AGENT_OPTIONS } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+
+type AgentInfo = components["schemas"]["AgentInfo"];
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
@@ -28,14 +33,33 @@ export function CreateProjectAgentSheet({
 	open,
 	path,
 }: CreateProjectAgentSheetProps) {
-	const [workerAgent, setWorkerAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
-	const [orchestratorAgent, setOrchestratorAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating;
+	const queryClient = useQueryClient();
+	const agentsQuery = useQuery({
+		...agentsQueryOptions,
+		enabled: open,
+	});
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
+	const agents = agentsQuery.data;
+	const installedAgents = agents?.installed ?? [];
+	const agentOptions = agents?.authorized ?? [];
+	const supportedAgents = agents?.supported ?? [];
+	const isLoadingAgents = agents === undefined && agentsQuery.isFetching;
+	const agentsError = agentsQuery.isError
+		? agentsQuery.error instanceof Error
+			? agentsQuery.error.message
+			: "Could not load agent catalog."
+		: null;
+	const [workerAgent, setWorkerAgent] = useState("");
+	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating && !isLoadingAgents;
 
 	useEffect(() => {
 		if (!open) {
-			setWorkerAgent(DEFAULT_PROJECT_AGENT);
-			setOrchestratorAgent(DEFAULT_PROJECT_AGENT);
+			setWorkerAgent("");
+			setOrchestratorAgent("");
 		}
 	}, [open, path]);
 
@@ -76,6 +100,10 @@ export function CreateProjectAgentSheet({
 								label="Worker agent"
 								placeholder="Select worker agent"
 								value={workerAgent}
+								authorized={agentOptions}
+								installed={installedAgents}
+								supported={supportedAgents}
+								disabled={isLoadingAgents}
 								onChange={setWorkerAgent}
 							/>
 							<RequiredAgentField
@@ -83,9 +111,48 @@ export function CreateProjectAgentSheet({
 								label="Orchestrator agent"
 								placeholder="Select orchestrator agent"
 								value={orchestratorAgent}
+								authorized={agentOptions}
+								installed={installedAgents}
+								supported={supportedAgents}
+								disabled={isLoadingAgents}
 								onChange={setOrchestratorAgent}
 							/>
 						</div>
+
+						{isLoadingAgents && <p className="text-[12px] leading-5 text-muted-foreground">Loading agents...</p>}
+
+						<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+							<span>Agent availability is cached.</span>
+							<button
+								type="button"
+								className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+								disabled={refreshAgentsMutation.isPending}
+								onClick={() => refreshAgentsMutation.mutate()}
+							>
+								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+							</button>
+						</div>
+
+						{agentsError && (
+							<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+								<span>{agentsError}</span>
+								<button
+									type="button"
+									className="shrink-0 rounded text-foreground underline-offset-2 hover:underline"
+									onClick={() => refreshAgentsMutation.mutate()}
+								>
+									Retry
+								</button>
+							</div>
+						)}
+
+						{refreshAgentsMutation.isError && (
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+								{refreshAgentsMutation.error instanceof Error
+									? refreshAgentsMutation.error.message
+									: "Could not refresh agent catalog."}
+							</div>
+						)}
 
 						{error && (
 							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
@@ -109,33 +176,69 @@ export function CreateProjectAgentSheet({
 }
 
 export const RequiredAgentField = memo(function RequiredAgentField({
+	authorized,
+	disabled = false,
 	id,
 	invalid = false,
+	installed,
 	label,
 	onChange,
 	placeholder,
+	supported,
 	value,
 }: {
+	authorized?: AgentInfo[];
+	disabled?: boolean;
 	id: string;
 	invalid?: boolean;
+	installed?: AgentInfo[];
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
+	supported?: AgentInfo[];
 	value: string;
 }) {
+	const fallbackAgents = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
+	const supportedAgents = supported ?? fallbackAgents;
+	const installedAgents = installed ?? supportedAgents;
+	const authorizedAgents = authorized ?? supportedAgents;
+	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
+	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
+	const options = supportedAgents
+		.map((agent) => {
+			const installedAgent = installedById.get(agent.id);
+			const isAuthorized = authorizedIds.has(agent.id);
+			const rank = isAuthorized ? 0 : installedAgent ? 1 : 2;
+			return {
+				...agent,
+				disabled: !isAuthorized,
+				rank,
+				reason: !installedAgent ? "Needs install" : !isAuthorized ? "Needs auth" : "",
+			};
+		})
+		.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+
 	return (
 		<div className="flex flex-col gap-1.5">
 			<Label htmlFor={id} className="text-[12px] font-medium text-muted-foreground">
 				{label}
 			</Label>
-			<Select value={value} onValueChange={onChange}>
+			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger id={id} className="h-8 w-full text-[13px]" aria-invalid={invalid || undefined}>
 					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
-				<SelectContent>
-					{AGENT_OPTIONS.map((agent) => (
-						<SelectItem key={agent} value={agent}>
-							{agent}
+				<SelectContent position="popper" align="start" sideOffset={4} className="!max-h-80">
+					{options.map((agent) => (
+						<SelectItem
+							key={agent.id}
+							value={agent.id}
+							disabled={agent.disabled}
+							className="[&>span:last-child]:w-full"
+						>
+							<span className="flex min-w-0 w-full items-center justify-between gap-4">
+								<span className="truncate">{agent.label}</span>
+								{agent.reason && <span className="shrink-0 text-[11px] text-muted-foreground">{agent.reason}</span>}
+							</span>
 						</SelectItem>
 					))}
 				</SelectContent>

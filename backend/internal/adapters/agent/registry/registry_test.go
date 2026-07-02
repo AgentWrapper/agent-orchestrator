@@ -23,6 +23,9 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 	for _, ha := range Harnessed() {
 		t.Run(string(ha.Harness), func(t *testing.T) {
 			ws := t.TempDir()
+			if ha.Harness == "autohand" {
+				t.Setenv("AUTOHAND_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+			}
 			cfg := ports.WorkspaceHookConfig{
 				SessionID:     "proj-1",
 				WorkspacePath: ws,
@@ -49,6 +52,23 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEveryHarnessReportsAuthStatus(t *testing.T) {
+	authCheckerExempt := map[string]string{
+		"continue": "Continue auth probes require sending a model prompt, so catalog refresh must not run them",
+	}
+	for _, ha := range Harnessed() {
+		if reason, exempt := authCheckerExempt[string(ha.Harness)]; exempt {
+			if _, ok := ha.Agent.(ports.AgentAuthChecker); ok {
+				t.Errorf("%s implements ports.AgentAuthChecker but is exempt: %s", ha.Harness, reason)
+			}
+			continue
+		}
+		if _, ok := ha.Agent.(ports.AgentAuthChecker); !ok {
+			t.Errorf("%s does not implement ports.AgentAuthChecker", ha.Harness)
+		}
 	}
 }
 
