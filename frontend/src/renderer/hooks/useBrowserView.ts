@@ -80,10 +80,15 @@ export function useBrowserView({
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
+	const hasUrlRef = useRef(false);
 
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);
+
+	useEffect(() => {
+		hasUrlRef.current = Boolean(navState.url);
+	}, [navState.url]);
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
@@ -95,7 +100,7 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected) {
+		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -189,12 +194,12 @@ export function useBrowserView({
 	}, []);
 
 	useEffect(() => {
-		if (active) {
+		if (navState.url && active) {
 			scheduleSettleMeasure();
 		} else {
 			sendHiddenBounds();
 		}
-	}, [active, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
+	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();

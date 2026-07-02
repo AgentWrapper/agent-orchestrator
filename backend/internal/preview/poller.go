@@ -112,6 +112,13 @@ func (p *Poller) Poll(ctx context.Context) error {
 		}
 		entry, ok := DiscoverEntry(sess.Metadata.WorkspacePath)
 		if !ok {
+			if isWorkspacePreviewURL(sess.Metadata.PreviewURL, sess.ID) {
+				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
+					p.logger.Error("preview poller: failed to clear stale preview",
+						"session", sess.ID, "err", err)
+				}
+				delete(p.seen, sess.ID)
+			}
 			continue
 		}
 		state := stateFor(entry)
