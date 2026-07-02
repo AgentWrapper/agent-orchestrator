@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   dedupeGraphItems,
   dedupeVectorItems,
+  dedupeCrossModal,
   interleaveWeighted,
   fuseRetrievalItems,
 } from "../fusion.js";
-import type { RetrievalItem } from "../types.js";
+import type { RetrievalCitation, RetrievalItem } from "../types.js";
 
 function graphItem(rank: number, file: string, line: number | null): RetrievalItem {
   return {
@@ -21,7 +22,12 @@ function graphItem(rank: number, file: string, line: number | null): RetrievalIt
   };
 }
 
-function vectorItem(rank: number, sessionId: string, text: string): RetrievalItem {
+function vectorItem(
+  rank: number,
+  sessionId: string,
+  text: string,
+  citations: RetrievalCitation[] = [],
+): RetrievalItem {
   return {
     provider: "vector",
     kind: "transcript",
@@ -31,7 +37,7 @@ function vectorItem(rank: number, sessionId: string, text: string): RetrievalIte
     rank,
     text,
     tokens: 5,
-    citations: [],
+    citations,
     meta: { sessionId },
   };
 }
@@ -87,16 +93,66 @@ describe("interleaveWeighted", () => {
   });
 });
 
+describe("dedupeCrossModal", () => {
+  it("drops a vector item whose citations are ≥60% covered by graph items", () => {
+    const graphItems = [graphItem(0, "a.ts", 10), graphItem(1, "b.ts", 50)];
+    const vectorItems = [
+      vectorItem(0, "s", "covered", [
+        { file: "a.ts", line: 11 },
+        { file: "b.ts", line: 50 },
+      ]),
+    ];
+    const { kept, dropped } = dedupeCrossModal(graphItems, vectorItems);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toHaveLength(1);
+  });
+
+  it("keeps a vector item with novel citations not covered by graph items", () => {
+    const graphItems = [graphItem(0, "a.ts", 10)];
+    const vectorItems = [
+      vectorItem(0, "s", "novel", [
+        { file: "a.ts", line: 11 },
+        { file: "z.ts", line: 999 },
+      ]),
+    ];
+    const { kept, dropped } = dedupeCrossModal(graphItems, vectorItems);
+    expect(kept).toHaveLength(1); // only 50% coverage — below the 60% threshold
+    expect(dropped).toHaveLength(0);
+  });
+
+  it("never drops a graph item in favor of a vector item", () => {
+    const graphItems = [graphItem(0, "a.ts", 10)];
+    const vectorItems = [vectorItem(0, "s", "covered", [{ file: "a.ts", line: 10 }])];
+    const { dropped } = dedupeCrossModal(graphItems, vectorItems);
+    expect(dropped).toHaveLength(1);
+    // graphItems is never mutated or filtered by this function.
+    expect(graphItems).toHaveLength(1);
+  });
+});
+
 describe("fuseRetrievalItems", () => {
-  it("dedups intra-modally then interleaves — no cross-modal dedup", () => {
+  it("dedups intra-modally then interleaves when there is no cross-modal overlap", () => {
     const graphItems = [graphItem(0, "a.ts", 10), graphItem(1, "a.ts", 11)];
     const vectorItems = [vectorItem(0, "s", "hit")];
-    const out = fuseRetrievalItems({
+    const { items } = fuseRetrievalItems({
       graphItems,
       vectorItems,
       graphWeight: 0.55,
       vectorWeight: 0.45,
     });
-    expect(out).toHaveLength(2); // graph deduped 2→1, vector untouched
+    expect(items).toHaveLength(2); // graph deduped 2→1, vector untouched
+  });
+
+  it("drops cross-modally covered vector items and reports dedupSavedTokens per provider", () => {
+    const graphItems = [graphItem(0, "a.ts", 10)];
+    const vectorItems = [vectorItem(0, "s", "covered", [{ file: "a.ts", line: 10 }])];
+    const { items, dedupSavedTokens } = fuseRetrievalItems({
+      graphItems,
+      vectorItems,
+      graphWeight: 0.55,
+      vectorWeight: 0.45,
+    });
+    expect(items).toEqual(graphItems);
+    expect(dedupSavedTokens).toEqual({ graph: 0, vector: 5 });
   });
 });

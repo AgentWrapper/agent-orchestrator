@@ -21,7 +21,10 @@ export { BUNDLE_MAX } from "./planner.js";
 
 export interface ContextBundle {
   markdown: string;
-  json: BundleAccounting & { dedupSaved: number };
+  json: BundleAccounting & {
+    dedupSaved: number;
+    dedupSavedTokens: { graph: number; vector: number };
+  };
 }
 
 /** Combined deadline for both provider queries together (not per-provider). */
@@ -107,15 +110,18 @@ export async function assembleContextBundle(
       vectorWeight: shares.vectorWeight,
     });
     // interleaveWeighted never drops items — every raw candidate that
-    // survived intra-modal dedup is present in `fused`, so the raw/fused
-    // delta is exactly what dedup removed.
-    const dedupSaved = graphItems.length + vectorItems.length - fused.length;
+    // survived intra-modal + cross-modal dedup is present in `fused.items`,
+    // so the raw/fused delta is exactly what dedup removed.
+    const dedupSaved = graphItems.length + vectorItems.length - fused.items.length;
 
-    const bundle = packBundle(fused, { maxTokens: BUNDLE_MAX });
+    const bundle = packBundle(fused.items, { maxTokens: BUNDLE_MAX });
     if (!bundle) {
       return null;
     }
-    return { markdown: bundle.markdown, json: { ...bundle.json, dedupSaved } };
+    return {
+      markdown: bundle.markdown,
+      json: { ...bundle.json, dedupSaved, dedupSavedTokens: fused.dedupSavedTokens },
+    };
   } catch {
     // Belt-and-suspenders: every sub-call above already fails open, but the
     // spawn must never break on a fusion-layer regression.
