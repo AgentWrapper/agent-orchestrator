@@ -78,9 +78,7 @@ export function formatReportProblemDraft(
 	output: ReportProblemOutput,
 ): string {
 	const fields = normalizeInput(input);
-	const diagnosticsBlock = input.includeDiagnostics
-		? formatDiagnostics(diagnostics)
-		: "No diagnostics included.";
+	const diagnosticsBlock = input.includeDiagnostics ? formatDiagnostics(diagnostics) : "No diagnostics included.";
 
 	if (output === "discord") {
 		return [
