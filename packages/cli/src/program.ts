@@ -23,6 +23,7 @@ import { registerConfig } from "./commands/config.js";
 import { registerModels } from "./commands/models.js";
 import { registerSkills } from "./commands/skills.js";
 import { registerRetrieve } from "./commands/retrieve.js";
+import { registerGraph } from "./commands/graph.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 import { getCliVersion } from "./options/version.js";
 
@@ -62,6 +63,7 @@ export function createProgram(): Command {
   registerModels(program);
   registerSkills(program);
   registerRetrieve(program);
+  registerGraph(program);
 
   program
     .command("config-help")

@@ -529,6 +529,13 @@ export type {
 } from "./retrieval/index.js";
 
 export {
+  ensureGraphBuilt,
+  getGraphOutDir,
+  getGraphJsonPath,
+  resolveGraphifyBin,
+} from "./retrieval/graph-store.js";
+
+export {
   discoverProjects,
   loadRegistered,
   loadPreferences,
