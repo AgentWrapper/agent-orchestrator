@@ -210,5 +210,6 @@ type WorkspaceRepo struct {
 	Name          string
 	RelativePath  string
 	RepoOriginURL string
+	DefaultBranch string
 	RegisteredAt  time.Time
 }

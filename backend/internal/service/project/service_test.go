@@ -530,7 +530,12 @@ func configureCommitter(t *testing.T) {
 
 func gitRepoWithCommit(t *testing.T, dir string) string {
 	t.Helper()
-	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+	return gitRepoWithCommitOnBranch(t, dir, "main")
+}
+
+func gitRepoWithCommitOnBranch(t *testing.T, dir, branch string) string {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v (%s)", err, out)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
@@ -566,6 +571,11 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	if len(proj.WorkspaceRepos) != 2 || proj.WorkspaceRepos[0].Name != "api" || proj.WorkspaceRepos[1].Name != "cli" {
 		t.Fatalf("WorkspaceRepos = %#v", proj.WorkspaceRepos)
 	}
+	for _, repo := range proj.WorkspaceRepos {
+		if repo.DefaultBranch != "main" {
+			t.Fatalf("repo %s default branch = %q, want main", repo.Name, repo.DefaultBranch)
+		}
+	}
 	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
 	if err != nil {
 		t.Fatal(err)
@@ -592,6 +602,59 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 	if got.Project == nil || got.Project.Kind != domain.ProjectKindWorkspace || len(got.Project.WorkspaceRepos) != 2 {
 		t.Fatalf("Get = %#v", got)
+	}
+}
+
+func TestManager_AddWorkspaceDetectsChildDefaultBranches(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	gitRepoWithCommitOnBranch(t, filepath.Join(parent, "api"), "master")
+	gitRepoWithCommitOnBranch(t, filepath.Join(parent, "cli"), "develop")
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	want := map[string]string{"api": "master", "cli": "develop"}
+	for _, repo := range proj.WorkspaceRepos {
+		if repo.DefaultBranch != want[repo.Name] {
+			t.Fatalf("repo %s default branch = %q, want %q", repo.Name, repo.DefaultBranch, want[repo.Name])
+		}
+	}
+	got, err := m.Get(ctx, "ws")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	for _, repo := range got.Project.WorkspaceRepos {
+		if repo.DefaultBranch != want[repo.Name] {
+			t.Fatalf("stored repo %s default branch = %q, want %q", repo.Name, repo.DefaultBranch, want[repo.Name])
+		}
+	}
+}
+
+func TestManager_AddWorkspaceDetectsParentDefaultBranch(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	gitRepoWithCommitOnBranch(t, parent, "master")
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.DefaultBranch != "master" {
+		t.Fatalf("workspace parent default branch = %q, want master", proj.DefaultBranch)
+	}
+	got, err := m.Get(ctx, "ws")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.DefaultBranch != "master" {
+		t.Fatalf("stored workspace default branch = %#v, want master", got.Project)
 	}
 }
 

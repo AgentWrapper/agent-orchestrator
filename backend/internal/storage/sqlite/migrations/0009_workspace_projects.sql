@@ -8,6 +8,7 @@ CREATE TABLE workspace_repos (
     name            TEXT NOT NULL,
     relative_path   TEXT NOT NULL,
     repo_origin_url TEXT NOT NULL DEFAULT '',
+    default_branch  TEXT NOT NULL DEFAULT 'main',
     registered_at   TIMESTAMP NOT NULL,
     PRIMARY KEY (project_id, name),
     UNIQUE (project_id, relative_path)

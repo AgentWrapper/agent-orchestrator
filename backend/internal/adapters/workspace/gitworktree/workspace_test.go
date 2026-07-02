@@ -174,6 +174,60 @@ func TestOrchestratorManagedPath(t *testing.T) {
 	})
 }
 
+func TestCreateWorkspaceProjectOrchestratorCreatesRootAndChildWorktrees(t *testing.T) {
+	root := t.TempDir()
+	parentRepo := gitRepoWithInitialCommit(t, filepath.Join(t.TempDir(), "workspace-root"), "main")
+	childRepo := gitRepoWithInitialCommit(t, filepath.Join(t.TempDir(), "api"), "main")
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": parentRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "proj",
+		Branch:        "ao/proj-1",
+		RootRepoPath:  parentRepo,
+		BaseBranch:    "main",
+		Repos: []ports.WorkspaceProjectRepoConfig{{
+			Name:         "api",
+			RelativePath: "api",
+			RepoPath:     childRepo,
+			BaseBranch:   "main",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkspaceProject: %v", err)
+	}
+	wantRoot := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	wantChild := filepath.Join(wantRoot, "api")
+	wantChildRepo, err := physicalAbs(childRepo)
+	if err != nil {
+		t.Fatalf("child physical path: %v", err)
+	}
+	if info.Root.Path != wantRoot || info.Root.Branch != "ao/proj-1" {
+		t.Fatalf("root = %#v, want path %q branch ao/proj-1", info.Root, wantRoot)
+	}
+	if len(info.Worktrees) != 2 {
+		t.Fatalf("worktrees = %d, want root and api: %#v", len(info.Worktrees), info.Worktrees)
+	}
+	if info.Worktrees[1].Path != wantChild || info.Worktrees[1].RepoPath != wantChildRepo {
+		t.Fatalf("child worktree = %#v, want path %q repo %q", info.Worktrees[1], wantChild, wantChildRepo)
+	}
+	if out, err := exec.Command("git", "-C", parentRepo, "worktree", "list", "--porcelain").CombinedOutput(); err != nil {
+		t.Fatalf("root worktree list: %v (%s)", err, out)
+	} else if !strings.Contains(string(out), wantRoot) {
+		t.Fatalf("root worktree list missing %q:\n%s", wantRoot, out)
+	}
+	if out, err := exec.Command("git", "-C", childRepo, "worktree", "list", "--porcelain").CombinedOutput(); err != nil {
+		t.Fatalf("child worktree list: %v (%s)", err, out)
+	} else if !strings.Contains(string(out), wantChild) {
+		t.Fatalf("child worktree list missing %q:\n%s", wantChild, out)
+	}
+}
+
 func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
@@ -279,6 +333,62 @@ func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
 	_, err = ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
 	if err == nil || !strings.Contains(err.Error(), "path exists and is not a registered worktree") {
 		t.Fatalf("restore error = %v", err)
+	}
+}
+
+func TestRestoreWithRepoPathMovesStrayPathAside(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess", "api")
+	if err := mkdirFile(path, "keep.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	var addPath string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse"):
+			return []byte("commit"), nil
+		case strings.Contains(joined, "worktree add"):
+			if len(args) >= 2 {
+				addPath = args[len(args)-2]
+			}
+			if addPath == "" {
+				t.Fatalf("could not find worktree add path in args: %v", args)
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "proj-1",
+		Branch:    "ao/proj-1",
+		RepoPath:  repo,
+		Path:      path,
+	})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if info.Path != path || addPath != path {
+		t.Fatalf("restored path=%q addPath=%q, want %q", info.Path, addPath, path)
+	}
+	if _, err := os.Stat(filepath.Join(path+".stray", "keep.txt")); err != nil {
+		t.Fatalf("stray path was not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "keep.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original path still has stray file: %v", err)
 	}
 }
 
@@ -475,4 +585,27 @@ func mkdirFile(dir, name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644)
+}
+
+func gitRepoWithInitialCommit(t *testing.T, dir, branch string) string {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "config", "user.email", "ao@example.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config email: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "config", "user.name", "AO Test").CombinedOutput(); err != nil {
+		t.Fatalf("git config name: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	return dir
 }

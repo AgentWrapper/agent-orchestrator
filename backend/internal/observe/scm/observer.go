@@ -51,6 +51,7 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	UpsertProject(ctx context.Context, row domain.ProjectRecord) error
+	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
@@ -454,17 +455,27 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 			projects[sess.ProjectID] = p
 			proj = p
 		}
-		repo, ok := o.provider.ParseRepository(proj.RepoOriginURL)
-		if !ok {
-			o.logger.Debug("scm observer: project has no supported SCM origin", "project", proj.ID, "origin", proj.RepoOriginURL)
+		repos, err := o.projectSCMRepos(ctx, proj)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(repos) == 0 {
+			o.logger.Debug("scm observer: project has no supported SCM origins", "project", proj.ID)
 			continue
 		}
-		sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, branch: branch})
+		for _, repo := range repos {
+			sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, branch: branch})
+		}
 		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, pr := range openTrackedPRs(prs) {
+			repo, ok := repoForTrackedPR(pr, repos)
+			if !ok {
+				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
+				continue
+			}
 			key := prKey(repo, pr.Number)
 			if existing, ok := out[key]; ok {
 				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
@@ -474,6 +485,62 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 		}
 	}
 	return out, sessionRepos, nil
+}
+
+func (o *Observer) projectSCMRepos(ctx context.Context, proj domain.ProjectRecord) ([]ports.SCMRepo, error) {
+	repos := make([]ports.SCMRepo, 0, 1)
+	seen := map[string]bool{}
+	addRepo := func(origin, label string) {
+		if strings.TrimSpace(origin) == "" {
+			return
+		}
+		repo, ok := o.provider.ParseRepository(origin)
+		if !ok {
+			o.logger.Debug("scm observer: unsupported SCM origin", "project", proj.ID, "repo", label, "origin", origin)
+			return
+		}
+		key := prKey(repo, 0)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		repos = append(repos, repo)
+	}
+
+	addRepo(proj.RepoOriginURL, domain.RootWorkspaceRepoName)
+	if proj.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return repos, nil
+	}
+	childRepos, err := o.store.ListWorkspaceRepos(ctx, proj.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, child := range childRepos {
+		addRepo(child.RepoOriginURL, child.Name)
+	}
+	return repos, nil
+}
+
+func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
+	if pr.Provider != "" || pr.Host != "" || pr.Repo != "" {
+		for _, repo := range repos {
+			if strings.EqualFold(pr.Provider, repo.Provider) &&
+				strings.EqualFold(pr.Host, repo.Host) &&
+				strings.EqualFold(pr.Repo, repoFullName(repo)) {
+				return repo, true
+			}
+		}
+		return ports.SCMRepo{}, false
+	}
+	if len(repos) == 1 {
+		return repos[0], true
+	}
+	for _, repo := range repos {
+		if strings.EqualFold(repo.Repo, repos[0].Repo) {
+			return repo, true
+		}
+	}
+	return repos[0], len(repos) > 0
 }
 
 func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
