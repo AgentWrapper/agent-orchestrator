@@ -75,6 +75,18 @@ describe("useBrowserView", () => {
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 
 		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		// Simulate the real IPC flow: after ensure, a navigate call sends a nav
+		// state with a URL so the positioning effect considers the view visible.
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
 		act(() => result.current.slotRef(slot));
 
 		await waitFor(() =>
@@ -111,6 +123,16 @@ describe("useBrowserView", () => {
 
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
 		act(() => result.current.slotRef(slot));
 
 		await waitFor(() =>
@@ -140,6 +162,17 @@ describe("useBrowserView", () => {
 			await act(async () => {
 				await Promise.resolve();
 			});
+			// Simulate a real nav state with URL so the positioning effect shows the view.
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
 			act(() => result.current.slotRef(slot));
 			// Flush the mount measure (immediate frame + settle timer).
 			await act(async () => {

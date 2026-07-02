@@ -27,6 +27,7 @@ type BrowserWebContents = Pick<
 	WebContents,
 	| "canGoBack"
 	| "canGoForward"
+	| "clearHistory"
 	| "getTitle"
 	| "getURL"
 	| "goBack"
@@ -190,7 +191,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	// empty state.
 	const clear = async (viewId: string): Promise<BrowserNavState> => {
 		const entry = ensure(viewId);
+		entry.view.setVisible?.(false);
+		entry.view.setBounds(OFFSCREEN_BOUNDS);
 		await entry.view.webContents.loadURL("about:blank");
+		entry.view.webContents.clearHistory();
 		return pushNavState(options, entry);
 	};
 
