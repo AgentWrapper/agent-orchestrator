@@ -36,7 +36,8 @@ type PRReviewState struct {
 // review runs. It is pure so the trigger path and API list path share exactly
 // the same eligibility/status rules.
 func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
-	latest := latestRunsByPRAndSHA(runs)
+	latestForHead := latestRunsByPRAndSHA(runs)
+	latestForPR := latestRunsByPR(runs)
 	reviews := make([]PRReviewState, 0, len(prs))
 	for _, pr := range prs {
 		review := PRReviewState{
@@ -48,13 +49,13 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 		}
 		if pr.URL == "" || pr.HeadSHA == "" || pr.Draft || pr.Merged || pr.Closed {
 			review.Status = ReviewStateIneligible
-			if run, ok := latest[review.PRURL+"\x00"+review.TargetSHA]; ok {
+			if run, ok := latestForPR[review.PRURL]; ok {
 				review.LatestRun = &run
 			}
 			reviews = append(reviews, review)
 			continue
 		}
-		if run, ok := latest[review.PRURL+"\x00"+review.TargetSHA]; ok {
+		if run, ok := latestForHead[review.PRURL+"\x00"+review.TargetSHA]; ok {
 			review.LatestRun = &run
 			switch {
 			case run.Status == domain.ReviewRunRunning:
@@ -68,6 +69,8 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 			default:
 				review.Status = ReviewStateNeedsReview
 			}
+		} else if run, ok := latestForPR[review.PRURL]; ok {
+			review.LatestRun = &run
 		}
 		reviews = append(reviews, review)
 	}
@@ -78,6 +81,19 @@ func Plan(prs []domain.PullRequest, runs []domain.ReviewRun) []PRReviewState {
 		return reviews[i].PRURL < reviews[j].PRURL
 	})
 	return reviews
+}
+
+func latestRunsByPR(runs []domain.ReviewRun) map[string]domain.ReviewRun {
+	latest := make(map[string]domain.ReviewRun)
+	for _, run := range runs {
+		if run.PRURL == "" {
+			continue
+		}
+		if existing, ok := latest[run.PRURL]; !ok || run.CreatedAt.After(existing.CreatedAt) {
+			latest[run.PRURL] = run
+		}
+	}
+	return latest
 }
 
 func latestRunsByPRAndSHA(runs []domain.ReviewRun) map[string]domain.ReviewRun {

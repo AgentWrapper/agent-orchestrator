@@ -48,6 +48,23 @@ func TestPlanStatuses(t *testing.T) {
 	}
 }
 
+func TestPlanKeepsLatestRunForPRWhenHeadChanges(t *testing.T) {
+	runs := []domain.ReviewRun{
+		{ID: "older", PRURL: "pr1", TargetSHA: "sha0", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: time.Unix(1, 0).UTC()},
+		{ID: "latest", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunDelivered, Verdict: domain.VerdictChangesRequested, CreatedAt: time.Unix(2, 0).UTC()},
+	}
+	got := Plan([]domain.PullRequest{planPR("pr1", 1, "sha2")}, runs)
+	if len(got) != 1 {
+		t.Fatalf("review states = %d, want 1", len(got))
+	}
+	if got[0].Status != ReviewStateNeedsReview {
+		t.Fatalf("status = %s, want %s", got[0].Status, ReviewStateNeedsReview)
+	}
+	if got[0].LatestRun == nil || got[0].LatestRun.ID != "latest" {
+		t.Fatalf("latest run = %+v, want latest", got[0].LatestRun)
+	}
+}
+
 func planPR(url string, n int, sha string) domain.PullRequest {
 	return domain.PullRequest{URL: url, Number: n, HeadSHA: sha}
 }
