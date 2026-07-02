@@ -10,6 +10,7 @@ import {
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import { createNotificationsTransport, type NotificationDTO, unreadNotificationsQueryKey } from "../lib/notifications";
+import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import {
 	DropdownMenu,
@@ -37,11 +38,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		(notification: NotificationDTO) => {
 			const target = notification.target;
 			if (target.kind === "pr" && target.prUrl) {
+				void captureRendererEvent("ao.renderer.notification_opened", { target: "pr" });
 				window.open(target.prUrl, "_blank", "noopener,noreferrer");
 				return;
 			}
 			const sessionId = target.sessionId || notification.sessionId;
 			if (!sessionId) return;
+			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
 			if (notification.projectId) {
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",
@@ -66,6 +69,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 	const markOneRead = async (id: string) => {
 		setActionError(null);
+		void captureRendererEvent("ao.renderer.notification_marked_read", { scope: "single" });
 		try {
 			await markRead.mutateAsync(id);
 		} catch (error) {
@@ -75,6 +79,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 	const markAll = async () => {
 		setActionError(null);
+		void captureRendererEvent("ao.renderer.notification_marked_read", { scope: "all" });
 		try {
 			await markAllRead.mutateAsync();
 		} catch (error) {

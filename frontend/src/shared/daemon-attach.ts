@@ -147,6 +147,7 @@ async function readinessStatus(
 			executablePath: health.executablePath,
 			workingDirectory: health.workingDirectory,
 			message: "An AO daemon is already running, but it is not ready yet.",
+			code: "not_ready",
 		};
 	}
 
@@ -159,6 +160,7 @@ async function readinessStatus(
 			executablePath: ready.executablePath,
 			workingDirectory: ready.workingDirectory,
 			message,
+			code: "identity_mismatch",
 		};
 	}
 

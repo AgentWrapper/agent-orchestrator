@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { captureRendererEvent } from "../lib/telemetry";
 import { isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
 
@@ -21,11 +22,23 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 	const recreate = async () => {
 		setBusy(true);
 		setError(undefined);
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
+			project_id: session.workspaceId,
+			source: "restore_dialog",
+		});
 		try {
 			const id = await spawnOrchestrator(session.workspaceId, true);
+			void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
+				project_id: session.workspaceId,
+				source: "restore_dialog",
+			});
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {
+			void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
+				project_id: session.workspaceId,
+				source: "restore_dialog",
+			});
 			setError(err instanceof Error ? err.message : "Failed to create orchestrator");
 		} finally {
 			setBusy(false);
