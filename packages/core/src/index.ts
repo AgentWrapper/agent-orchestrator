@@ -19,6 +19,9 @@ export {
 } from "./config.js";
 export { isPortfolioEnabled } from "./feature-flags.js";
 
+// Worktree hygiene — keep AO-injected files out of worker diffs/PRs
+export { AO_INJECTED_WORKTREE_EXCLUDES, writeWorktreeGitExclude } from "./worktree-git-exclude.js";
+
 // Plugin registry
 export {
   createPluginRegistry,

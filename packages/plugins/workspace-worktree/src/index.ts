@@ -17,6 +17,7 @@ import {
   getShell,
   isWindows,
   recordActivityEvent,
+  writeWorktreeGitExclude,
   type PluginModule,
   type Workspace,
   type WorkspaceCreateConfig,
@@ -461,6 +462,8 @@ export function create(config?: Record<string, unknown>): Workspace {
         }
       }
 
+      await writeWorktreeGitExclude(worktreePath);
+
       return {
         path: worktreePath,
         branch: cfg.branch,
@@ -661,6 +664,8 @@ export function create(config?: Record<string, unknown>): Workspace {
           );
         }
       }
+
+      await writeWorktreeGitExclude(workspacePath);
 
       return {
         path: workspacePath,
