@@ -13,6 +13,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 type sessionStore interface {
@@ -50,8 +51,11 @@ func WithTelemetry(sink ports.EventSink) Option {
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
-	store         sessionStore
-	messenger     ports.AgentMessenger
+	store sessionStore
+	// guard is the shared pane-write primitive every reaction nudge goes
+	// through (see sessionguard). Nil when no messenger was wired: reaction
+	// nudges become no-ops but the reducer still runs.
+	guard         *sessionguard.Guard
 	notifications notificationSink
 
 	mu        sync.Mutex
@@ -68,7 +72,10 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// `ao session get` showing created in UTC but updated in local time. A
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
-	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	m := &Manager{store: store, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
+	if messenger != nil {
+		m.guard = sessionguard.New(store, messenger, nil)
+	}
 	for _, opt := range opts {
 		opt(m)
 	}

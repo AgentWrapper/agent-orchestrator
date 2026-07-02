@@ -574,6 +574,37 @@ func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
 	}
 }
 
+func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+	// permission dialog stores blocked before sendOnce's just-in-time re-read
+	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
+	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
+	// delivered and the changes-requested feedback re-fires once unblocked.
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	bst := &blockOnNthGetStore{fakeStore: st, id: "mer-1", flipAt: 2}
+	msg := &fakeMessenger{}
+	m := New(bst, msg)
+	result := ReviewResult{
+		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
+	}
+
+	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliveryNoop {
+		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudge pasted into a session that went blocked before send: %v", msg.msgs)
+	}
+	if st.signatures[result.PRURL] != "" {
+		t.Fatal("suppressed nudge must not persist a sendOnce signature (it re-fires next observation)")
+	}
+}
+
 func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = working("mer-1")
@@ -1046,6 +1077,46 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileBlocked(t *testing.T) {
 	}
 	if len(sink.intents) != 0 {
 		t.Fatalf("blocked session emitted ready notification: %+v", sink.intents)
+	}
+}
+
+// blockOnNthGetStore wraps fakeStore and flips a session to ActivityBlocked on
+// the Nth GetSession call, reproducing the reactions TOCTOU: the handler's
+// entry guard (1st read) sees the session working, but a permission hook stores
+// blocked before sendOnce's just-in-time re-read (2nd read).
+type blockOnNthGetStore struct {
+	*fakeStore
+	id     domain.SessionID
+	reads  int
+	flipAt int
+}
+
+func (s *blockOnNthGetStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	s.reads++
+	if s.reads == s.flipAt {
+		if rec, ok := s.fakeStore.sessions[s.id]; ok {
+			rec.Activity.State = domain.ActivityBlocked
+			s.fakeStore.sessions[s.id] = rec
+		}
+	}
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func TestSendOnce_NoNudgeWhenBlockedAppearsBeforeSend(t *testing.T) {
+	// The entry guard in ApplyPRObservation reads the session working (read #1);
+	// a permission dialog then stores blocked before sendOnce's just-in-time
+	// re-read (read #2), which must suppress the paste+Enter into the dialog.
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	bst := &blockOnNthGetStore{fakeStore: st, id: "mer-1", flipAt: 2}
+	msg := &fakeMessenger{}
+	m := New(bst, msg)
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("nudge sent into a session that went blocked before send: %v", msg.msgs)
 	}
 }
 

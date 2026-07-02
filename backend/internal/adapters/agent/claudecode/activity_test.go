@@ -18,6 +18,8 @@ func TestDeriveActivityState(t *testing.T) {
 		{"stop -> idle", "stop", `{}`, domain.ActivityIdle, true},
 		{"notification idle_prompt -> waiting_input", "notification", `{"notification_type":"idle_prompt"}`, domain.ActivityWaitingInput, true},
 		{"notification permission_prompt -> blocked", "notification", `{"notification_type":"permission_prompt"}`, domain.ActivityBlocked, true},
+		{"notification agent_needs_input -> blocked", "notification", `{"notification_type":"agent_needs_input"}`, domain.ActivityBlocked, true},
+		{"notification agent_completed -> idle", "notification", `{"notification_type":"agent_completed"}`, domain.ActivityIdle, true},
 		{"notification auth_success -> no signal", "notification", `{"notification_type":"auth_success"}`, "", false},
 		{"notification empty type -> no signal", "notification", `{}`, "", false},
 		{"notification malformed payload -> no signal", "notification", `not json`, "", false},

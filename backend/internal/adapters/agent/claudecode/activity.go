@@ -36,10 +36,14 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 // notificationState splits the notification types that mean "the agent is
 // paused on the user" by what unblocks them: idle_prompt is an empty prompt
 // awaiting the next instruction (waiting_input — safe for automation to
-// message), while permission_prompt is a pending tool-approval dialog (blocked
-// — a stray Enter could answer it, so automated senders must not inject
-// input). Other types (auth_success, elicitation_*) carry no activity meaning,
-// as does a malformed payload.
+// message), while permission_prompt and agent_needs_input are pending
+// decisions (blocked — a stray Enter could answer the dialog, so automated
+// senders must not inject input; agent_needs_input doesn't say whether the
+// need is free-text or a choice, and ambiguity maps to the conservative
+// state). agent_completed (fired by `claude agents` background sessions,
+// CLI 2.1.198+) means the turn finished — Stop semantics, idle but alive.
+// Other types (auth_success, elicitation_*) carry no activity meaning, as
+// does a malformed payload.
 func notificationState(payload []byte) (domain.ActivityState, bool) {
 	var p struct {
 		NotificationType string `json:"notification_type"`
@@ -48,8 +52,10 @@ func notificationState(payload []byte) (domain.ActivityState, bool) {
 	switch p.NotificationType {
 	case "idle_prompt":
 		return domain.ActivityWaitingInput, true
-	case "permission_prompt":
+	case "permission_prompt", "agent_needs_input":
 		return domain.ActivityBlocked, true
+	case "agent_completed":
+		return domain.ActivityIdle, true
 	default:
 		return "", false
 	}

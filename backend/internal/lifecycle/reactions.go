@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 const reviewMaxNudge = 3
@@ -58,7 +59,7 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
-	if m.messenger == nil {
+	if m.guard == nil {
 		return ReviewDeliveryNoop, nil
 	}
 	sort.Slice(results, func(i, j int) bool {
@@ -88,8 +89,15 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	anchorPR := results[0].PRURL
 	key := "review-batch:" + anchorPR + ":" + batchID
 	sig := strings.Join(sigParts, "\x01")
-	if err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge); err != nil {
+	outcome, err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge)
+	if err != nil {
 		return ReviewDeliveryNoop, err
+	}
+	if outcome == sendOnceSuppressed {
+		// The worker went terminated/needs-input between the entry guard and the
+		// paste: nothing reached it, so do NOT let the caller stamp the run
+		// delivered — it must re-fire once the session is workable again.
+		return ReviewDeliveryNoop, nil
 	}
 	return ReviewDeliverySent, nil
 }
@@ -156,7 +164,8 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					// terminal (the dedup signature stays on the raw bytes).
 					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
-				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				_, err := m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				return err
 			}
 		}
 	}
@@ -169,7 +178,8 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		_, err := m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		return err
 	}
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
@@ -184,7 +194,8 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if blocked {
 			return nil
 		}
-		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		_, err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		return err
 	}
 	return nil
 }
@@ -203,7 +214,7 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
-	if m.messenger == nil {
+	if m.guard == nil {
 		return ReviewDeliveryNoop, nil
 	}
 	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
@@ -217,9 +228,15 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	outcome, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
 	if err != nil {
 		return ReviewDeliveryNoop, err
+	}
+	if outcome == sendOnceSuppressed {
+		// Suppressed by the just-in-time guard (worker went terminated/needs-
+		// input): the review feedback did not reach the worker, so leave the run
+		// undelivered to re-fire on the next observation.
+		return ReviewDeliveryNoop, nil
 	}
 	return ReviewDeliverySent, nil
 }
@@ -469,7 +486,8 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 			// the PR-row signature load/persist is skipped, so the dedup
 			// survives only for the lifetime of this Manager. Cross-restart
 			// persistence ships with #35.
-			return m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			_, err := m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			return err
 		}
 	}
 	return nil
@@ -533,29 +551,63 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
 }
 
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
-	if m.messenger == nil {
-		return nil
+// sendOnceOutcome tells a caller whether a nudge is accounted for (actually
+// sent, or already covered by dedup state) versus suppressed by the just-in-time
+// session guard. It matters for review delivery: a suppressed nudge must NOT be
+// stamped delivered, or the feedback is lost when the session later unblocks.
+type sendOnceOutcome int
+
+const (
+	// sendOnceAccounted: the message was sent, or a prior identical send is
+	// already recorded (dedup hit) or the attempt budget is spent. In every
+	// case the caller may treat the nudge as delivered — nothing more to do.
+	sendOnceAccounted sendOnceOutcome = iota
+	// sendOnceSuppressed: the just-in-time guard skipped the paste because the
+	// session is terminated or awaiting the user (blocked/waiting_input). The
+	// message did NOT reach the worker; the caller must not mark it delivered so
+	// it re-fires on the next observation once the session is workable again.
+	sendOnceSuppressed
+)
+
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (sendOnceOutcome, error) {
+	if m.guard == nil {
+		return sendOnceAccounted, nil
 	}
 	m.react.mu.Lock()
 	defer m.react.mu.Unlock()
 
 	if prURL != "" && !m.react.loaded[prURL] {
 		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return sendOnceAccounted, err
 		}
 		m.react.loaded[prURL] = true
 	}
 
 	if m.react.seen[key] == sig {
-		return nil
+		return sendOnceAccounted, nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		return nil
+		return sendOnceAccounted, nil
 	}
-	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return err
+	// The guard re-reads the session immediately before pasting: the caller's
+	// NeedsInput() entry check ran before this function's dedup/persist I/O, so
+	// a permission hook could have stored blocked (or the session could have
+	// terminated) in the meantime. A suppressed write returns SUPPRESSED (not
+	// accounted), so a review caller won't stamp it delivered and it re-fires
+	// once the session is workable again. A store failure inside the guard also
+	// suppresses (fail closed, nothing was written); a messenger failure means
+	// the write was attempted and stays accounted, matching the pre-guard
+	// behavior.
+	outcome, err := m.guard.Nudge(ctx, id, msg)
+	if err != nil {
+		if outcome != sessionguard.Sent {
+			return sendOnceSuppressed, err
+		}
+		return sendOnceAccounted, err
+	}
+	if outcome != sessionguard.Sent {
+		return sendOnceSuppressed, nil
 	}
 	// Order: Send → in-memory mutation → durable persist. Sending first means a
 	// transient persist failure does NOT swallow a real send (the agent saw the
@@ -567,10 +619,10 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
 		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return sendOnceAccounted, err
 		}
 	}
-	return nil
+	return sendOnceAccounted, nil
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state

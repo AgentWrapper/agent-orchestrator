@@ -58,6 +58,16 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity signals Goose fires a user-prompt-submit hook under AO's
+// launch. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity is false: this harness installs no permission/approval
+// hook, so it can never report ActivityBlocked. confirmActive must not nudge
+// it (an Enter could answer a pending decision it cannot signal). See
+// ports.ActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return false }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
