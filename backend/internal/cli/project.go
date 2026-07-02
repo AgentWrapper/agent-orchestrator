@@ -89,14 +89,17 @@ type roleOverride struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch string            `json:"defaultBranch,omitempty"`
-	SessionPrefix string            `json:"sessionPrefix,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Symlinks      []string          `json:"symlinks,omitempty"`
-	PostCreate    []string          `json:"postCreate,omitempty"`
-	AgentConfig   agentConfig       `json:"agentConfig,omitempty"`
-	Worker        roleOverride      `json:"worker,omitempty"`
-	Orchestrator  roleOverride      `json:"orchestrator,omitempty"`
+	DefaultBranch     string            `json:"defaultBranch,omitempty"`
+	SessionPrefix     string            `json:"sessionPrefix,omitempty"`
+	Env               map[string]string `json:"env,omitempty"`
+	Symlinks          []string          `json:"symlinks,omitempty"`
+	PostCreate        []string          `json:"postCreate,omitempty"`
+	AgentRules        string            `json:"agentRules,omitempty"`
+	AgentRulesFile    string            `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string            `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig       `json:"agentConfig,omitempty"`
+	Worker            roleOverride      `json:"worker,omitempty"`
+	Orchestrator      roleOverride      `json:"orchestrator,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -112,6 +115,9 @@ type projectSetConfigOptions struct {
 	permission        string
 	workerAgent       string
 	orchestratorAgent string
+	agentRules        string
+	agentRulesFile    string
+	orchestratorRules string
 	env               []string
 	symlink           []string
 	postCreate        []string
@@ -259,7 +265,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, agent model/permissions, role overrides). The config " +
+			"symlinks, post-create, rules, agent model/permissions, role overrides). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",
@@ -297,6 +303,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringVar(&opts.agentRules, "agent-rules", "", "Project-specific standing instructions for worker sessions")
+	f.StringVar(&opts.agentRulesFile, "agent-rules-file", "", "Repo-relative file containing worker standing instructions")
+	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
@@ -327,14 +336,17 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return projectConfig{}, err
 	}
 	cfg := projectConfig{
-		DefaultBranch: opts.defaultBranch,
-		SessionPrefix: opts.sessionPrefix,
-		Env:           env,
-		Symlinks:      opts.symlink,
-		PostCreate:    opts.postCreate,
-		AgentConfig:   agentConfig{Model: opts.model, Permissions: opts.permission},
-		Worker:        roleOverride{Agent: opts.workerAgent},
-		Orchestrator:  roleOverride{Agent: opts.orchestratorAgent},
+		DefaultBranch:     opts.defaultBranch,
+		SessionPrefix:     opts.sessionPrefix,
+		Env:               env,
+		Symlinks:          opts.symlink,
+		PostCreate:        opts.postCreate,
+		AgentRules:        opts.agentRules,
+		AgentRulesFile:    opts.agentRulesFile,
+		OrchestratorRules: opts.orchestratorRules,
+		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission},
+		Worker:            roleOverride{Agent: opts.workerAgent},
+		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}

@@ -670,11 +670,14 @@ export interface components {
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
+            agentRules?: string;
+            agentRulesFile?: string;
             defaultBranch?: string;
             env?: {
                 [key: string]: string;
             };
             orchestrator?: components["schemas"]["RoleOverride"];
+            orchestratorRules?: string;
             postCreate?: string[];
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;

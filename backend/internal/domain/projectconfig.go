@@ -13,10 +13,10 @@ import (
 // validated; there is no free-form map.
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
-// PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. Settings whose consumers do not yet
-// exist (tracker/SCM per-project config, prompt rules) are intentionally absent
-// and land in focused follow-up PRs alongside the code that reads them.
+// PostCreate, AgentConfig, prompt rules, and the role overrides are consumed at
+// spawn; SessionPrefix feeds the display prefix. Settings whose consumers do not
+// yet exist (tracker/SCM per-project config) are intentionally absent and land in
+// focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -30,6 +30,15 @@ type ProjectConfig struct {
 	Symlinks []string `json:"symlinks,omitempty"`
 	// PostCreate are shell commands run in the workspace after it is created.
 	PostCreate []string `json:"postCreate,omitempty"`
+
+	// AgentRules are project-specific standing instructions for worker sessions.
+	AgentRules string `json:"agentRules,omitempty"`
+	// AgentRulesFile is a repo-relative Markdown/text file whose contents are
+	// appended to AgentRules for worker sessions.
+	AgentRulesFile string `json:"agentRulesFile,omitempty"`
+	// OrchestratorRules are project-specific standing instructions for
+	// orchestrator sessions.
+	OrchestratorRules string `json:"orchestratorRules,omitempty"`
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
@@ -118,6 +127,9 @@ func (c ProjectConfig) Validate() error {
 		if err := validateRepoRelative(s); err != nil {
 			return fmt.Errorf("symlink %q: %w", s, err)
 		}
+	}
+	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
+		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {

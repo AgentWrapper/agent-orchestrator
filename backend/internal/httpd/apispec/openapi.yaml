@@ -1916,6 +1916,10 @@ components:
       properties:
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
+        agentRules:
+          type: string
+        agentRulesFile:
+          type: string
         defaultBranch:
           type: string
         env:
@@ -1924,6 +1928,8 @@ components:
           type: object
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
+        orchestratorRules:
+          type: string
         postCreate:
           items:
             type: string

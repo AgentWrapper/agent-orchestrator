@@ -147,25 +147,15 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return nil
 	}
 	if o.CI == domain.CIFailing {
-		for _, ch := range o.Checks {
-			if ch.Status == domain.PRCheckFailed {
-				msg := "CI is failing on your PR. Review the output below and push a fix."
-				if ch.LogTail != "" {
-					// LogTail is raw CI job output; sanitize before it reaches the
-					// agent's live pane so embedded escape sequences can't drive the
-					// terminal (the dedup signature stays on the raw bytes).
-					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
-				}
-				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
-			}
+		checks := failedPRChecks(o.Checks)
+		if len(checks) > 0 {
+			return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL, ciFailureSignature(checks), formatCIFailureMessage(checks), 0)
 		}
 	}
 	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
-		comments, sig := reviewContent(o.Comments)
-		msg := "A reviewer left feedback on your PR. Address it and push."
-		if comments != "" {
-			msg += "\n\n" + comments
-		}
+		comments := unresolvedReviewComments(o.Comments)
+		msg := formatReviewCommentsMessage(comments)
+		sig := reviewCommentsSignature(comments)
 		if sig == "" {
 			sig = string(o.Review)
 		}
@@ -413,10 +403,12 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 			}
 			pr.Comments = append(pr.Comments, ports.PRCommentObservation{
 				ID:       c.ID,
+				ThreadID: th.ID,
 				Author:   c.Author,
 				File:     th.Path,
 				Line:     th.Line,
 				Body:     c.Body,
+				URL:      c.URL,
 				Resolved: th.Resolved,
 			})
 		}
@@ -516,21 +508,120 @@ func hasUnresolvedComments(comments []ports.PRCommentObservation) bool {
 	return false
 }
 
-func reviewContent(comments []ports.PRCommentObservation) (string, string) {
-	bodies := make([]string, 0, len(comments))
-	ids := make([]string, 0, len(comments))
+func failedPRChecks(checks []ports.PRCheckObservation) []ports.PRCheckObservation {
+	failed := make([]ports.PRCheckObservation, 0, len(checks))
+	for _, ch := range checks {
+		if ch.Status == domain.PRCheckFailed || ch.Status == domain.PRCheckCancelled {
+			failed = append(failed, ch)
+		}
+	}
+	return failed
+}
+
+func ciFailureSignature(checks []ports.PRCheckObservation) string {
+	parts := make([]string, 0, len(checks))
+	for _, ch := range checks {
+		parts = append(parts, strings.Join([]string{ch.Name, ch.CommitHash, string(ch.Status), ch.URL, ch.LogTail}, "\x00"))
+	}
+	return strings.Join(parts, "\x01")
+}
+
+func formatCIFailureMessage(checks []ports.PRCheckObservation) string {
+	var msg strings.Builder
+	msg.WriteString("CI is failing on your PR.\n")
+	for _, ch := range checks {
+		name := domain.SanitizeControlChars(ch.Name)
+		if strings.TrimSpace(name) == "" {
+			name = "unnamed check"
+		}
+		status := domain.SanitizeControlChars(string(ch.Status))
+		if strings.TrimSpace(status) == "" {
+			status = "failed"
+		}
+		fmt.Fprintf(&msg, "\nFailed: %s (%s)", name, status)
+		if ch.URL != "" {
+			fmt.Fprintf(&msg, "\nFailure URL: %s", domain.SanitizeControlChars(ch.URL))
+		}
+		if ch.LogTail != "" {
+			// LogTail is raw CI job output; sanitize before it reaches the
+			// agent's live pane so embedded escape sequences can't drive the
+			// terminal (the dedup signature stays on the raw bytes).
+			tail := escapeMarkdownCodeFenceClosers(domain.SanitizeControlChars(ch.LogTail))
+			lineCount := len(strings.Split(tail, "\n"))
+			lineLabel := "lines"
+			if lineCount == 1 {
+				lineLabel = "line"
+			}
+			fmt.Fprintf(&msg, "\n\nLog tail (last %d %s):\n```\n%s\n```", lineCount, lineLabel, tail)
+		}
+		msg.WriteString("\n")
+	}
+	msg.WriteString("\nUse the included log tail and failure URL first; fetch full CI logs only if you need additional context. Fix the issues and push again.")
+	return msg.String()
+}
+
+func unresolvedReviewComments(comments []ports.PRCommentObservation) []ports.PRCommentObservation {
+	unresolved := make([]ports.PRCommentObservation, 0, len(comments))
 	for _, c := range comments {
 		if c.Resolved {
 			continue
 		}
+		unresolved = append(unresolved, c)
+	}
+	return unresolved
+}
+
+func reviewCommentsSignature(comments []ports.PRCommentObservation) string {
+	parts := make([]string, 0, len(comments))
+	for _, c := range comments {
+		parts = append(parts, strings.Join([]string{c.ID, c.ThreadID, c.Author, c.File, fmt.Sprint(c.Line), c.Body, c.URL}, "\x00"))
+	}
+	return strings.Join(parts, "\x01")
+}
+
+func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
+	if len(comments) == 0 {
+		return "A reviewer left feedback on your PR. Address it and push. Fetch the review details only if you need additional context beyond what AO has provided here."
+	}
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "The following %d unresolved review comment(s) are on your PR as of just now. You should not need to re-fetch this data unless you need additional context.\n", len(comments))
+	for i, c := range comments {
+		location := "(general)"
+		if c.File != "" {
+			location = domain.SanitizeControlChars(c.File)
+			if c.Line > 0 {
+				location = fmt.Sprintf("%s:%d", location, c.Line)
+			}
+		}
+		author := domain.SanitizeControlChars(c.Author)
+		if strings.TrimSpace(author) == "" {
+			author = "unknown reviewer"
+		}
 		// Comment bodies are attacker-influenced (anyone who can comment on the
 		// PR) and get pasted into the agent's live pane; strip control/escape
-		// chars. The signature is built from comment IDs, not bodies, so dedup is
-		// unaffected.
-		bodies = append(bodies, domain.SanitizeControlChars(c.Body))
-		ids = append(ids, c.ID)
+		// chars before formatting them.
+		body := domain.SanitizeControlChars(c.Body)
+		fmt.Fprintf(&msg, "\n%d. %s (@%s):\n%s", i+1, location, author, body)
+		if c.URL != "" {
+			fmt.Fprintf(&msg, "\n   %s", domain.SanitizeControlChars(c.URL))
+		}
+		if c.ThreadID != "" {
+			fmt.Fprintf(&msg, "\n   Thread ID: %s", domain.SanitizeControlChars(c.ThreadID))
+		}
+		msg.WriteString("\n")
 	}
-	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
+	msg.WriteString("\nAddress each comment and push fixes. Use the thread ID to resolve each thread directly after pushing when available. You should not need to re-fetch review data unless you need additional context beyond what is provided here.")
+	return msg.String()
+}
+
+func escapeMarkdownCodeFenceClosers(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "```") {
+			lines[i] = "\u200b" + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {

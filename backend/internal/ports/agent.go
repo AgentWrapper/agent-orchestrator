@@ -135,7 +135,8 @@ type RestoreConfig struct {
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a
 	// system-prompt flag should re-apply this in their resume command.
-	SystemPrompt string
+	SystemPrompt     string
+	SystemPromptFile string
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

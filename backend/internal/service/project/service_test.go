@@ -370,9 +370,11 @@ func TestManager_SetConfig(t *testing.T) {
 	}
 
 	cfg := domain.ProjectConfig{
-		DefaultBranch: "develop",
-		Env:           map[string]string{"FOO": "bar"},
-		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5"},
+		DefaultBranch:     "develop",
+		Env:               map[string]string{"FOO": "bar"},
+		AgentRules:        "Run focused tests.",
+		OrchestratorRules: "Delegate implementation.",
+		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5"},
 	}
 	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
 	if err != nil {
@@ -392,6 +394,9 @@ func TestManager_SetConfig(t *testing.T) {
 	}
 	if got.Project == nil || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
 		t.Fatalf("Get config = %#v", got.Project)
+	}
+	if got.Project.Config.AgentRules != "Run focused tests." || got.Project.Config.OrchestratorRules != "Delegate implementation." {
+		t.Fatalf("Get rules config = %#v", got.Project.Config)
 	}
 
 	// An invalid permission value is rejected when set.

@@ -332,18 +332,23 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"defaultBranch":"develop"},"surprise":"!"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
-	// PUT a config body with a removed field inside the nested config — the
-	// canonical regression: agentRules / tracker are no longer modelled, so
-	// projects can't sneak them back in.
+	// Prompt rules are now modeled and accepted in project config.
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"agentRules":"x"}}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if status != http.StatusOK {
+		t.Fatalf("agentRules config = %d, want 200; body=%s", status, body)
+	}
+
+	// A still-unknown nested config field is rejected, so misspellings cannot be
+	// silently persisted.
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"tracker":{"plugin":"github"}}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 
 	// POST /projects gets the same gate, so add-time config rides the same rail.
 	otherRepo := gitRepo(t, "rejects-unknown-add")
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(otherRepo)+`,"projectId":"rej2","config":{"orchestratorRules":"x"}}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if status != http.StatusCreated {
+		t.Fatalf("orchestratorRules add config = %d, want 201; body=%s", status, body)
+	}
 }
 
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {

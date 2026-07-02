@@ -128,6 +128,19 @@ flowchart LR
 
 **Output:** Executable command line as argv array
 
+### Session Prompt and Rules Flow
+
+AO splits prompt material into two channels before it reaches an adapter:
+
+- **System prompt** — Derived standing instructions for the session role. This includes AO's hardcoded worker/orchestrator behavior, coordination rules, PR workflow guidance, project-specific `agentRules`/`agentRulesFile` for workers, project-specific `orchestratorRules` for orchestrators, and the confidentiality guard.
+- **Task prompt** — The concrete work request. This includes the user's explicit prompt, issue fallback text, and any pre-fetched issue context. Issue facts are task context, not permanent standing rules.
+
+Generated system prompts are not stored as canonical session state. On spawn and restore, the session manager re-derives them from hardcoded prompt text, project config, and current project/session state, then passes `SystemPrompt` and/or `SystemPromptFile` through `LaunchConfig` or `RestoreConfig`. Any prompt file under `AO_DATA_DIR/prompts/<session-id>/system.md` is a launch artifact only.
+
+The hardcoded AO role and task prompt templates live in `backend/internal/session_manager/prompt.go`; the rest of `backend/internal/session_manager` gathers project/session state and delegates prompt assembly there.
+
+Adapters should map `SystemPrompt`/`SystemPromptFile` to the strongest native system/developer-instruction mechanism they support. Adapter-specific compatibility gaps are handled inside adapters; the session manager owns composition, not per-agent flag details.
+
 #### GetPromptDeliveryStrategy()
 
 Reports how the prompt is delivered to the agent:

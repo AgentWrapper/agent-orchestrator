@@ -210,24 +210,58 @@ func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
 func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{
+		{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "https://ci.example/build", LogTail: "boom"},
+		{Name: "lint", CommitHash: "c1", Status: domain.PRCheckCancelled, URL: "https://ci.example/lint"},
+	}}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
-	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
+	if len(msg.msgs) != 1 {
 		t.Fatalf("want one CI nudge with log tail, got %v", msg.msgs)
+	}
+	for _, want := range []string{
+		"CI is failing on your PR.",
+		"Failed: build (failed)",
+		"Failure URL: https://ci.example/build",
+		"Log tail (last 1 line):",
+		"boom",
+		"Failed: lint (cancelled)",
+		"fetch full CI logs only if you need additional context",
+	} {
+		if !strings.Contains(msg.msgs[0], want) {
+			t.Fatalf("CI nudge missing %q:\n%s", want, msg.msgs[0])
+		}
 	}
 }
 
 func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{
+		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1"},
+		{ID: "2", Author: "bob", Body: "already handled", Resolved: true},
+	}}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
-	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "fix this") {
+	if len(msg.msgs) != 1 {
 		t.Fatalf("want review nudge, got %v", msg.msgs)
+	}
+	for _, want := range []string{
+		"The following 1 unresolved review comment(s)",
+		"foo.go:12 (@alice):",
+		"fix this",
+		"https://github.com/o/r/pull/1#discussion_r1",
+		"Thread ID: T1",
+		"re-fetch review data unless you need additional context",
+	} {
+		if !strings.Contains(msg.msgs[0], want) {
+			t.Fatalf("review nudge missing %q:\n%s", want, msg.msgs[0])
+		}
+	}
+	if strings.Contains(msg.msgs[0], "already handled") {
+		t.Fatalf("review nudge included resolved comment:\n%s", msg.msgs[0])
 	}
 }
 

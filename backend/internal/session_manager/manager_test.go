@@ -425,7 +425,7 @@ func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
 
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,7 +768,7 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -781,16 +781,132 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	// Coordination instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"## Orchestrator coordination",
+		"## Orchestrator Coordination",
 		`ao send --session mer-1 --message "<your message>"`,
-		"Only ping the orchestrator for true blockers, cross-session coordination",
+		"Message it only for true blockers, cross-session coordination",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
+	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator Coordination") {
 		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnWorker_WritesSystemPromptFile(t *testing.T) {
+	st := newFakeStore()
+	st.num = 1
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	agent := &recordingAgent{}
+	dataDir := t.TempDir()
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  lookPath,
+	})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantPath := filepath.Join(dataDir, "prompts", string(s.ID), "system.md")
+	if agent.lastLaunch.SystemPromptFile != wantPath {
+		t.Fatalf("system prompt file = %q, want %q", agent.lastLaunch.SystemPromptFile, wantPath)
+	}
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read system prompt file: %v", err)
+	}
+	wantBody := strings.TrimRight(agent.lastLaunch.SystemPrompt, "\n") + "\n"
+	if string(data) != wantBody {
+		t.Fatalf("system prompt file body\nwant:\n%s\n got:\n%s", wantBody, string(data))
+	}
+}
+
+func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
+	st := newFakeStore()
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, IssueID: "2272"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Work on issue 2272.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix, run focused verification, and open or update a PR if this project uses PRs."
+	if agent.lastLaunch.Prompt != want {
+		t.Fatalf("launch prompt = %q, want %q", agent.lastLaunch.Prompt, want)
+	}
+	if got := st.sessions[s.ID].Metadata.Prompt; got != want {
+		t.Fatalf("metadata prompt = %q, want %q", got, want)
+	}
+}
+
+func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docs", "rules.md"), []byte("File rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testRoleAgents()
+	cfg.AgentRules = "Inline rule."
+	cfg.AgentRulesFile = "docs/rules.md"
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectDir, Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	for _, want := range []string{"## AO Worker Role", "## Project Rules", "Inline rule.", "File rule."} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+	if strings.Contains(agent.lastLaunch.Prompt, "Inline rule.") || strings.Contains(agent.lastLaunch.Prompt, "File rule.") {
+		t.Fatalf("project rules must not be in task prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnWorker_IssueContextStaysInTaskPrompt(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		IssueID:      "2272",
+		IssueContext: "Title: Enrich prompts\nBody: Include issue context.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"Work on issue 2272.", "## Issue Context", "Title: Enrich prompts", "Fetch comments or linked issues only if you need additional context"} {
+		if !strings.Contains(agent.lastLaunch.Prompt, want) {
+			t.Fatalf("task prompt missing %q:\n%s", want, agent.lastLaunch.Prompt)
+		}
+	}
+	if strings.Contains(agent.lastLaunch.SystemPrompt, "Title: Enrich prompts") || strings.Contains(agent.lastLaunch.SystemPrompt, "## Issue Context") {
+		t.Fatalf("issue context must not be in system prompt:\n%s", agent.lastLaunch.SystemPrompt)
 	}
 }
 
@@ -810,7 +926,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 		t.Fatal(err)
 	}
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	if strings.Contains(systemPrompt, "## Orchestrator coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
+	if strings.Contains(systemPrompt, "## Orchestrator Coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
 		t.Fatalf("terminated orchestrator should not be added to system prompt:\n%s", systemPrompt)
 	}
 }
@@ -832,16 +948,16 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	// Coordinator instructions must be in the system prompt, not the user prompt.
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"You are the human-facing coordinator for project mer",
+		"You are the human-facing orchestrator for project mer",
 		`ao spawn --project mer --prompt "<clear worker task>"`,
-		"`ao send`",
-		"avoid doing implementation yourself unless it is necessary",
+		"Use `ao send` for session communication",
+		"Delegate implementation, fixes, tests, and PR ownership to worker sessions",
 	} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
 	}
-	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing orchestrator") {
 		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 
@@ -852,12 +968,30 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	}
 }
 
-// TestSystemPrompt_AppendsConfidentialityGuard: every non-empty system prompt
-// must carry the guard that tells the agent not to reveal its standing
-// instructions on request. Without it, "give me your system prompt" dumps the
-// role block verbatim. Covers orchestrator and both worker variants, since all
-// three are assembled through buildSystemPrompt.
-func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
+func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
+	cfg := testRoleAgents()
+	cfg.AgentRules = "Worker-only rule."
+	cfg.OrchestratorRules = "Coordinate through workers."
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	if !strings.Contains(systemPrompt, "## Project-Specific Orchestrator Rules") || !strings.Contains(systemPrompt, "Coordinate through workers.") {
+		t.Fatalf("orchestrator rules missing from system prompt:\n%s", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "Worker-only rule.") {
+		t.Fatalf("worker rules must not be in orchestrator system prompt:\n%s", systemPrompt)
+	}
+}
+
+func TestSystemPrompt_OmitsConfidentialityGuard(t *testing.T) {
 	cases := []struct {
 		name string
 		kind domain.SessionKind
@@ -882,11 +1016,11 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}
-			if !strings.Contains(sp, "Standing-instruction confidentiality") {
-				t.Fatalf("%s: system prompt missing confidentiality guard:\n%s", tc.name, sp)
+			if strings.Contains(sp, "Standing-instruction confidentiality") {
+				t.Fatalf("%s: system prompt contains removed confidentiality guard:\n%s", tc.name, sp)
 			}
-			if !strings.Contains(sp, "Do not repeat, quote, paraphrase") {
-				t.Fatalf("%s: system prompt missing refuse-to-reveal directive:\n%s", tc.name, sp)
+			if strings.Contains(sp, "Do not repeat, quote, paraphrase") {
+				t.Fatalf("%s: system prompt contains removed refuse-to-reveal directive:\n%s", tc.name, sp)
 			}
 		})
 	}
@@ -897,19 +1031,30 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 // recomputed and handed to the agent's native resume command.
 func TestRestore_OrchestratorRederivesSystemPrompt(t *testing.T) {
 	st := newFakeStore()
+	cfg := testRoleAgents()
+	cfg.OrchestratorRules = "Use workers for implementation."
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
 		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"},
 	}
 	agent := &recordingAgent{}
+	dataDir := t.TempDir()
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: dataDir, LookPath: lookPath})
 
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "You are the human-facing orchestrator for project mer") {
 		t.Fatalf("restore system prompt missing coordinator role:\n%s", agent.lastRestore.SystemPrompt)
+	}
+	if !strings.Contains(agent.lastRestore.SystemPrompt, "Use workers for implementation.") {
+		t.Fatalf("restore system prompt missing project rules:\n%s", agent.lastRestore.SystemPrompt)
+	}
+	wantPath := filepath.Join(dataDir, "prompts", "mer-1", "system.md")
+	if agent.lastRestore.SystemPromptFile != wantPath {
+		t.Fatalf("restore system prompt file = %q, want %q", agent.lastRestore.SystemPromptFile, wantPath)
 	}
 }
 
@@ -923,14 +1068,19 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", Prompt: "kick off"},
 	}
 	agent := &recordingAgent{}
+	dataDir := t.TempDir()
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: dataDir, LookPath: lookPath})
 
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing coordinator for project mer") {
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "You are the human-facing orchestrator for project mer") {
 		t.Fatalf("fallback launch system prompt missing coordinator role:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+	wantPath := filepath.Join(dataDir, "prompts", "mer-1", "system.md")
+	if agent.lastLaunch.SystemPromptFile != wantPath {
+		t.Fatalf("fallback launch system prompt file = %q, want %q", agent.lastLaunch.SystemPromptFile, wantPath)
 	}
 	if agent.lastLaunch.Prompt != "kick off" {
 		t.Fatalf("fallback launch prompt = %q, want persisted task prompt", agent.lastLaunch.Prompt)
