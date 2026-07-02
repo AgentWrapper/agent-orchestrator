@@ -19,28 +19,21 @@ package copilot
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	adapterID = "copilot"
-
-	copilotTitleMetadataKey   = "title"
-	copilotSummaryMetadataKey = "summary"
-)
+const adapterID = "copilot"
 
 // Plugin is the GitHub Copilot CLI agent adapter. It is safe for concurrent use;
 // the binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -66,14 +59,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Copilot exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds the argv to start a new headless Copilot session:
 //
 //	copilot [permission flags] [-p <prompt>]
@@ -95,15 +80,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Copilot receives its prompt in the
-// launch command itself (via `-p`).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Copilot
@@ -141,15 +117,18 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[copilotTitleMetadataKey],
-		Summary:        session.Metadata[copilotSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+var copilotBinarySpec = binaryutil.BinarySpec{
+	Label:           "copilot",
+	Names:           []string{"copilot"},
+	WinNames:        []string{"copilot.cmd", "copilot.exe", "copilot"},
+	UnixPaths:       []string{"/usr/local/bin/copilot", "/opt/homebrew/bin/copilot"},
+	UnixHomePaths:   [][]string{{".copilot", "bin", "copilot"}, {".npm", "bin", "copilot"}, {".local", "bin", "copilot"}},
+	WinAppDataPaths: [][]string{{"npm", "copilot.cmd"}, {"npm", "copilot.exe"}},
+	WinHomePaths:    [][]string{{".copilot", "bin", "copilot.exe"}},
 }
 
 // ResolveCopilotBinary returns the path to the copilot binary on this machine,
@@ -157,68 +136,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // Homebrew). Returns "copilot" as a last-ditch fallback so callers see a clear
 // "command not found" rather than an empty argv.
 func ResolveCopilotBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"copilot.cmd", "copilot.exe", "copilot"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "copilot.cmd"),
-				filepath.Join(appData, "npm", "copilot.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".copilot", "bin", "copilot.exe"))
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("copilot"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/copilot",
-		"/opt/homebrew/bin/copilot",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".copilot", "bin", "copilot"),
-			filepath.Join(home, ".npm", "bin", "copilot"),
-			filepath.Join(home, ".local", "bin", "copilot"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, copilotBinarySpec)
 }
 
 func (p *Plugin) copilotBinary(ctx context.Context) (string, error) {
@@ -240,12 +158,12 @@ func (p *Plugin) copilotBinary(ctx context.Context) (string, error) {
 // appendApprovalFlags maps AO's 4 permission modes onto Copilot CLI approval
 // flags (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference):
 //
-//	default            → no flag (defer to ~/.copilot config / per-tool prompts)
-//	accept-edits       → --allow-tool 'write' (auto-approve file edits only)
-//	auto               → --allow-all-tools (auto-approve every tool, still scoped paths/urls)
-//	bypass-permissions → --allow-all (full bypass: tools, paths, urls)
+//	default            -> no flag (defer to ~/.copilot config / per-tool prompts)
+//	accept-edits       -> --allow-tool 'write' (auto-approve file edits only)
+//	auto               -> --allow-all-tools (auto-approve every tool, still scoped paths/urls)
+//	bypass-permissions -> --allow-all (full bypass: tools, paths, urls)
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's ~/.copilot config / interactive prompts.
 	case ports.PermissionModeAcceptEdits:
@@ -255,21 +173,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--allow-all")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

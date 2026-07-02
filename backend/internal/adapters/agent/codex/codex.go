@@ -17,12 +17,15 @@ import (
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -46,14 +49,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports the agent-specific config keys. Codex exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new Codex session, applying the
@@ -87,15 +82,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Codex receives its prompt in the
-// launch command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Codex
@@ -135,15 +121,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[ports.MetadataKeyTitle],
-		Summary:        session.Metadata[ports.MetadataKeySummary],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,
@@ -179,7 +158,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
 		}
 		for _, candidate := range candidates {
-			if fileExists(candidate) {
+			if hookutil.FileExists(candidate) {
 				return resolveNativeWindowsCodex(candidate), nil
 			}
 			if err := ctx.Err(); err != nil {
@@ -206,7 +185,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if fileExists(candidate) {
+		if hookutil.FileExists(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -222,7 +201,7 @@ func resolveNativeWindowsCodex(path string) string {
 		return path
 	}
 	for _, candidate := range windowsNativeCodexCandidatesForShim(path) {
-		if fileExists(candidate) {
+		if hookutil.FileExists(candidate) {
 			return candidate
 		}
 	}
@@ -301,7 +280,7 @@ func appendTerminalCompatibilityFlags(cmd *[]string) {
 }
 
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// Codex sessions are AO-managed and run headlessly inside a terminal
 		// mux pane; default to no approval prompts unless project settings
@@ -314,21 +293,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

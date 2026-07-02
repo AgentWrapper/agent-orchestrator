@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -221,11 +221,11 @@ func TestUninstallHooksRemovesClineHooks(t *testing.T) {
 	}
 
 	for _, spec := range clineManagedHooks {
-		if fileExists(filepath.Join(hooksDir, spec.Event)) {
+		if hookutil.FileExists(filepath.Join(hooksDir, spec.Event)) {
 			t.Fatalf("%s still present after uninstall", spec.Event)
 		}
 	}
-	if !fileExists(userHook) {
+	if !hookutil.FileExists(userHook) {
 		t.Fatal("user PostToolUse hook was removed by uninstall")
 	}
 }
@@ -301,8 +301,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "session-123",
-			clineTitleMetadataKey:           "Fix login redirect",
-			clineSummaryMetadataKey:         "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -341,29 +341,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
 		t.Fatalf("info = %#v, want zero value", info)
-	}
-}
-
-func TestDeriveActivityState(t *testing.T) {
-	tests := []struct {
-		event  string
-		want   domain.ActivityState
-		wantOK bool
-	}{
-		{"session-start", domain.ActivityActive, true},
-		{"user-prompt-submit", domain.ActivityActive, true},
-		{"stop", domain.ActivityIdle, true},
-		{"permission-request", domain.ActivityWaitingInput, true},
-		{"unknown", "", false},
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.event, func(t *testing.T) {
-			got, ok := DeriveActivityState(tt.event, nil)
-			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)", tt.event, got, ok, tt.want, tt.wantOK)
-			}
-		})
 	}
 }
 

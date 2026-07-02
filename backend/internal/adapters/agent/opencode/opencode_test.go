@@ -324,8 +324,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			opencodeAgentSessionIDMetadataKey: "ses_abc123",
-			opencodeTitleMetadataKey:          "Fix login redirect",
-			opencodeSummaryMetadataKey:        "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:            "Fix login redirect",
+			ports.MetadataKeySummary:          "Updated the auth callback and tests.",
 			"ignored":                         "not returned",
 		},
 	})

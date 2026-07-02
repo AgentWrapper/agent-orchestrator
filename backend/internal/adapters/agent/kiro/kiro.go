@@ -15,31 +15,24 @@
 // captured from a Kiro hook payload.
 //
 // AO-managed sessions derive native session identity and display metadata from
-// Kiro's native hooks (see hooks.go / activity.go) rather than transcript scans.
+// Kiro's native hooks (see hooks.go) rather than transcript scans.
 package kiro
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-)
-
-const (
-	kiroTitleMetadataKey   = "title"
-	kiroSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Kiro agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -65,14 +58,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Kiro exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds the argv to start a new headless Kiro session:
 // `kiro-cli chat --no-interactive [trust flags] -- <prompt>`.
 //
@@ -92,15 +77,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Kiro receives its prompt in the launch
-// command itself.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kiro session:
@@ -133,15 +109,19 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[kiroTitleMetadataKey],
-		Summary:        session.Metadata[kiroSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
+}
+
+var kiroBinarySpec = binaryutil.BinarySpec{
+	Label:                "kiro",
+	Names:                []string{"kiro-cli"},
+	WinNames:             []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"},
+	UnixPaths:            []string{"/usr/local/bin/kiro-cli", "/opt/homebrew/bin/kiro-cli"},
+	UnixHomePaths:        [][]string{{".kiro", "bin", "kiro-cli"}, {".local", "bin", "kiro-cli"}},
+	WinLocalAppDataPaths: [][]string{{"Programs", "kiro", "kiro-cli.exe"}},
+	WinAppDataPaths:      [][]string{{"npm", "kiro-cli.cmd"}, {"npm", "kiro-cli.exe"}},
+	WinHomePaths:         [][]string{{".kiro", "bin", "kiro-cli.exe"}},
 }
 
 // ResolveKiroBinary returns the path to the kiro-cli binary on this machine,
@@ -149,75 +129,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // "kiro-cli" as a last-ditch fallback so callers see a clear "command not
 // found" rather than an empty argv.
 func ResolveKiroBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			candidates = append(candidates,
-				filepath.Join(localAppData, "Programs", "kiro", "kiro-cli.exe"),
-			)
-		}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "kiro-cli.cmd"),
-				filepath.Join(appData, "npm", "kiro-cli.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates,
-				filepath.Join(home, ".kiro", "bin", "kiro-cli.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("kiro-cli"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/kiro-cli",
-		"/opt/homebrew/bin/kiro-cli",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".kiro", "bin", "kiro-cli"),
-			filepath.Join(home, ".local", "bin", "kiro-cli"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, kiroBinarySpec)
 }
 
 func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {
@@ -241,7 +153,7 @@ func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {
 // (the interactive per-tool prompt). accept-edits grants the write-capable
 // built-in tools; auto/bypass grant all tools.
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch normalizePermissionMode(permissions) {
+	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Kiro config / per-tool prompting.
 	case ports.PermissionModeAcceptEdits:
@@ -251,21 +163,4 @@ func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--trust-all-tools")
 	}
-}
-
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		return ports.PermissionModeDefault
-	}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
