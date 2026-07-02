@@ -42,6 +42,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	return (projectsData?.projects ?? []).map((project) => ({
 		id: project.id,
 		name: project.name,
+		kind: project.kind === "workspace" ? "workspace" : "single_repo",
 		path: project.path,
 		sessions: (sessionsData?.sessions ?? [])
 			.filter((session) => session.projectId === project.id)

@@ -132,6 +132,14 @@ export type WorkspaceSession = {
 	displayStatus?: WorkerDisplayStatus;
 };
 
+export type ProjectKind = "single_repo" | "workspace";
+
+export type WorkspaceRepoSummary = {
+	name: string;
+	relativePath: string;
+	repo: string;
+};
+
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =
 	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
@@ -289,7 +297,9 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
+	kind?: ProjectKind;
 	path: string;
+	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	accentColor?: string;
 	diff?: {

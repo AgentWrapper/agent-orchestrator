@@ -26,12 +26,13 @@ import {
 	type UpdateSettings,
 	type UpdateStatus,
 } from "./main/update-settings";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
@@ -87,6 +88,22 @@ let daemonStatus: DaemonStatus = { state: "stopped" };
 let browserViewHost: BrowserViewHost | null = null;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+
+const execFileAsync = promisify(execFile);
+
+type GitRepoScanResult = {
+	name: string;
+	path: string;
+	relativePath: string;
+	branch: string;
+	remote: string;
+	hasRemote: boolean;
+};
+
+type ImportFolderScanResult = {
+	path: string;
+	repos: GitRepoScanResult[];
+};
 
 const isDev = !app.isPackaged;
 
@@ -801,15 +818,90 @@ ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
 );
-ipcMain.handle("app:chooseDirectory", async () => {
+async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
-		title: "Choose a git repository",
+		title,
 	};
 	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
+}
+
+async function gitOutput(cwd: string, args: string[]): Promise<string> {
+	const { stdout } = await execFileAsync("git", args, { cwd, timeout: 5000 });
+	return String(stdout).trim();
+}
+
+async function isGitRepo(repoPath: string): Promise<boolean> {
+	try {
+		await stat(path.join(repoPath, ".git"));
+		await gitOutput(repoPath, ["rev-parse", "--show-toplevel"]);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function resolveDefaultBranch(repoPath: string): Promise<string> {
+	try {
+		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+		if (ref) return ref.replace(/^origin\//, "");
+	} catch {
+		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+	}
+	try {
+		const branch = await gitOutput(repoPath, ["branch", "--show-current"]);
+		if (branch) return branch;
+	} catch {
+		// Detached or unreadable HEAD is represented below.
+	}
+	return "HEAD";
+}
+
+async function scanGitRepo(repoPath: string, rootPath: string): Promise<GitRepoScanResult | null> {
+	if (!(await isGitRepo(repoPath))) return null;
+	const [branchResult, remoteResult] = await Promise.allSettled([
+		resolveDefaultBranch(repoPath),
+		gitOutput(repoPath, ["remote", "get-url", "origin"]),
+	]);
+	const relativePath = repoPath === rootPath ? "." : path.relative(rootPath, repoPath);
+	return {
+		name: path.basename(repoPath),
+		path: repoPath,
+		relativePath,
+		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
+		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
+		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+	};
+}
+
+async function scanImportFolder(rootPath: string, mode: "project" | "workspace"): Promise<ImportFolderScanResult> {
+	if (mode === "project") {
+		const repo = await scanGitRepo(rootPath, rootPath);
+		return { path: rootPath, repos: repo ? [repo] : [] };
+	}
+
+	const entries = await readdir(rootPath, { withFileTypes: true });
+	const repos = await Promise.all(
+		entries
+			.filter((entry) => entry.isDirectory() && entry.name !== ".git")
+			.map((entry) => scanGitRepo(path.join(rootPath, entry.name), rootPath)),
+	);
+	return {
+		path: rootPath,
+		repos: repos
+			.filter((repo): repo is GitRepoScanResult => repo !== null)
+			.sort((a, b) => a.name.localeCompare(b.name)),
+	};
+}
+
+ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
+	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
+});
+ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
+	return scanImportFolder(input.path, input.mode);
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
