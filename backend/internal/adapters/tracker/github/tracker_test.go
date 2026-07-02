@@ -20,9 +20,10 @@ import (
 // recordedReq captures one inbound HTTP request so tests can assert against
 // the exact GitHub API surface the adapter touched.
 type recordedReq struct {
-	Method string
-	Path   string
-	Body   string
+	Method      string
+	Path        string
+	Body        string
+	IfNoneMatch string
 }
 
 // fakeGH is a programmable httptest.Server that matches requests by
@@ -54,7 +55,7 @@ func (f *fakeGH) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	key := r.Method + " " + r.URL.Path
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedReq{Method: r.Method, Path: r.URL.Path, Body: string(body)})
+	f.requests = append(f.requests, recordedReq{Method: r.Method, Path: r.URL.Path, Body: string(body), IfNoneMatch: r.Header.Get("If-None-Match")})
 	h, ok := f.handlers[key]
 	f.mu.Unlock()
 	if !ok {
@@ -514,6 +515,160 @@ func TestList_QueryEncoding(t *testing.T) {
 				t.Fatalf("List: %v", err)
 			}
 		})
+	}
+}
+
+func TestList_ConditionalRevalidationReturns304CachedIssues(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"abc"`)
+			_, _ = w.Write([]byte(`[
+				{"number":1,"title":"first","body":"b1","state":"open","html_url":"https://github.com/o/r/issues/1"},
+				{"number":2,"title":"second","body":"b2","state":"closed","state_reason":"completed","html_url":"https://github.com/o/r/issues/2"}
+			]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != `"abc"` {
+				t.Errorf("second If-None-Match = %q, want \"abc\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("second issues = %#v\nwant %#v", second, first)
+	}
+	reqs := f.calls()
+	if len(reqs) != 2 {
+		t.Fatalf("HTTP calls = %d, want 2", len(reqs))
+	}
+	if got := reqs[1].IfNoneMatch; got != `"abc"` {
+		t.Fatalf("recorded If-None-Match = %q, want \"abc\"", got)
+	}
+}
+
+func TestList_ETagUpdatesWhenIssuesChange(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			w.Header().Set("ETag", `"v1"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"old","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != `"v1"` {
+				t.Errorf("second If-None-Match = %q, want \"v1\"", got)
+			}
+			w.Header().Set("ETag", `"v2"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"new","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		case 3:
+			if got := r.Header.Get("If-None-Match"); got != `"v2"` {
+				t.Errorf("third If-None-Match = %q, want \"v2\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if len(second) != 1 || second[0].ID.Native != "o/r#2" || second[0].Title != "new" {
+		t.Fatalf("second issues = %#v, want new issue", second)
+	}
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("third List: %v", err)
+	}
+}
+
+func TestList_SeparateCacheKeyPerFilter(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"bug-etag"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"bug","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("second If-None-Match = %q, want empty for different filter", got)
+			}
+			w.Header().Set("ETag", `"docs-etag"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"docs","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{Labels: []string{"bug"}})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{Labels: []string{"docs"}})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if len(first) != 1 || first[0].Title != "bug" {
+		t.Fatalf("first issues = %#v, want bug", first)
+	}
+	if len(second) != 1 || second[0].Title != "docs" {
+		t.Fatalf("second issues = %#v, want docs", second)
+	}
+}
+
+func TestList_NoETagHeaderNotCached(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if got := r.Header.Get("If-None-Match"); got != "" {
+			t.Errorf("call #%d If-None-Match = %q, want empty", calls, got)
+		}
+		_, _ = w.Write([]byte(`[{"number":1,"title":"uncached","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if got := len(f.calls()); got != 2 {
+		t.Fatalf("HTTP calls = %d, want 2", got)
 	}
 }
 
