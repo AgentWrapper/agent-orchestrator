@@ -106,8 +106,7 @@ export function IntakeFields({
 		<div className="flex flex-col gap-4">
 			{!compact && (
 				<p className="text-[12px] leading-5 text-muted-foreground">
-					Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
-					sessions; the tracker is not commented on or transitioned.
+					Auto-spawn worker sessions from matching tracker issues.
 				</p>
 			)}
 			<div className="flex items-center gap-2">
@@ -168,12 +167,6 @@ export function IntakeFields({
 					</IntakeField>
 					{!compact && needsRule && (
 						<p className="text-[12px] leading-5 text-error">Enabling intake requires at least one label or assignee.</p>
-					)}
-					{!compact && (
-						<p className="text-[11px] leading-5 text-muted-foreground">
-							Reads credentials from <span className="font-mono">AO_GITHUB_TOKEN, or `gh auth token`</span>. Restart the
-							daemon after setting.
-						</p>
 					)}
 				</>
 			)}
