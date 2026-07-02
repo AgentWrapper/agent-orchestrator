@@ -126,6 +126,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Last `sessions` snapshot id applied — sent on (re)subscribe so the server
+   *  can replay exactly what was missed instead of a full snapshot fetch. */
+  const lastSessionsEventIdRef = useRef<number | undefined>(undefined);
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
   const isDestroyedRef = useRef(false);
 
@@ -164,10 +167,14 @@ export function MuxProvider({ children }: { children: ReactNode }) {
           ws.send(JSON.stringify(openMsg));
         }
 
-        // Always subscribe to sessions
+        // Always subscribe to sessions. On reconnect, pass the last applied
+        // snapshot id so the server can replay exactly what was missed.
         const subMsg: ClientMessage = {
           ch: "subscribe",
           topics: ["sessions", "notifications"],
+          ...(lastSessionsEventIdRef.current !== undefined && {
+            sessionsLastEventId: lastSessionsEventIdRef.current,
+          }),
         };
         ws.send(JSON.stringify(subMsg));
       });
@@ -211,6 +218,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
             }
           } else if (msg.ch === "sessions") {
             if (msg.type === "snapshot") {
+              lastSessionsEventIdRef.current = msg.id;
               setSessions(msg.sessions);
               setLastError(null);
             } else if (msg.type === "error") {

@@ -154,7 +154,7 @@ describe("SessionBroadcaster", () => {
         "http://localhost:3000/api/sessions/patches",
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
-      expect(callback).toHaveBeenCalledWith(patches);
+      expect(callback).toHaveBeenCalledWith(patches, expect.any(Number));
     });
 
     it("starts polling interval on first subscriber", async () => {
@@ -221,6 +221,90 @@ describe("SessionBroadcaster", () => {
     });
   });
 
+  describe("replay-on-reconnect (lastEventId)", () => {
+    it("assigns monotonically increasing ids to each snapshot", async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sessions: [] }) });
+
+      const seen: number[] = [];
+      broadcaster.subscribe((_sessions, id) => seen.push(id));
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(seen).toEqual([...seen].sort((a, b) => a - b));
+      expect(new Set(seen).size).toBe(seen.length);
+    });
+
+    it("replays exactly the missed events for a lastEventId from the middle of the buffer", async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sessions: [] }) });
+
+      // First subscriber drives 4 recorded snapshots: 1 initial + 3 polls.
+      const ids: number[] = [];
+      broadcaster.subscribe((_sessions, id) => ids.push(id));
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(ids).toEqual([1, 2, 3, 4]);
+
+      const replayed: number[] = [];
+      broadcaster.subscribe((_sessions, id) => replayed.push(id), undefined, 2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Only events after id 2 are replayed — no fresh fetch is needed.
+      expect(replayed).toEqual([3, 4]);
+    });
+
+    it("falls back to a full snapshot when lastEventId is older than the buffer", async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sessions: [] }) });
+
+      broadcaster.subscribe(vi.fn());
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3000);
+      const fetchesSoFar = mockFetch.mock.calls.length;
+
+      // -1 predates even the oldest buffered event (id 1) — a genuine gap
+      // (e.g. buffer trimmed or server restarted), not "never connected".
+      const received: number[] = [];
+      broadcaster.subscribe((_sessions, id) => received.push(id), undefined, -1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // A stale/unknown id triggers a fresh fetch, same as no id at all.
+      expect(mockFetch.mock.calls.length).toBe(fetchesSoFar + 1);
+      expect(received).toHaveLength(1);
+    });
+
+    it("behaves like a fresh connect when no lastEventId is given", async () => {
+      const patches = [makePatch("s1")];
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ sessions: patches }) });
+
+      const callback = vi.fn();
+      broadcaster.subscribe(callback);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(patches, expect.any(Number));
+    });
+
+    it("bounds the buffer to SESSION_EVENT_BUFFER_SIZE (200) entries", async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sessions: [] }) });
+
+      broadcaster.subscribe(vi.fn());
+      await vi.advanceTimersByTimeAsync(0);
+      // 250 more polls — well past the 200-entry cap.
+      await vi.advanceTimersByTimeAsync(3000 * 250);
+
+      // The oldest surviving id can be replayed from; anything older cannot.
+      const replayable: number[] = [];
+      broadcaster.subscribe((_sessions, id) => replayable.push(id), undefined, 50);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // id=50 fell out of the buffer long ago, so this subscriber gets a
+      // fresh full snapshot (a single event), not 200+ replayed entries.
+      expect(replayable).toHaveLength(1);
+    });
+  });
+
   describe("broadcast", () => {
     it("delivers patches to all subscribers on each poll", async () => {
       const patches = [makePatch("s1"), makePatch("s2")];
@@ -249,8 +333,8 @@ describe("SessionBroadcaster", () => {
       await vi.advanceTimersByTimeAsync(10);
 
       // Both callbacks should have received initial snapshot
-      expect(cb1).toHaveBeenCalledWith(patches);
-      expect(cb2).toHaveBeenCalledWith(patches);
+      expect(cb1).toHaveBeenCalledWith(patches, expect.any(Number));
+      expect(cb2).toHaveBeenCalledWith(patches, expect.any(Number));
 
       // Advance past poll interval (3s) and add buffer for promise resolution
       await vi.advanceTimersByTimeAsync(3010);
@@ -282,7 +366,7 @@ describe("SessionBroadcaster", () => {
       await vi.advanceTimersByTimeAsync(10);
 
       // goodCb should have received patches despite throwingCb error
-      expect(goodCb).toHaveBeenCalledWith(patches);
+      expect(goodCb).toHaveBeenCalledWith(patches, expect.any(Number));
     });
   });
 

@@ -43,7 +43,12 @@ type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
+  | {
+      ch: "subscribe";
+      topics: Array<"sessions" | "notifications">;
+      /** Last `sessions` snapshot id the client applied — enables replay-on-reconnect. */
+      sessionsLastEventId?: number;
+    };
 
 // ── Server → Client ──
 type ServerMessage =
@@ -51,7 +56,7 @@ type ServerMessage =
   | { ch: "terminal"; id: string; type: "exited"; code: number; projectId?: string }
   | { ch: "terminal"; id: string; type: "opened"; projectId?: string }
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
-  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
+  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[]; id: number }
   | { ch: "sessions"; type: "error"; error: string }
   | {
       ch: "notifications";
@@ -75,12 +80,33 @@ interface SessionPatch {
 }
 
 /**
+ * Max number of past snapshots kept in memory for replay-on-reconnect.
+ * At the 3s poll interval this covers ~10 minutes of history — comfortably
+ * longer than the WebSocket reconnect backoff (caps at 30s in MuxProvider).
+ */
+const SESSION_EVENT_BUFFER_SIZE = 200;
+
+interface BufferedSessionEvent {
+  id: number;
+  sessions: SessionPatch[];
+}
+
+/**
  * Manages polling of session patches from Next.js /api/sessions/patches.
  * Broadcasts to all subscribed callbacks.
  * Lazily starts polling on first subscriber, stops when the last one leaves.
+ *
+ * Each broadcast (and the initial per-subscriber snapshot) is assigned a
+ * monotonic id and kept in a bounded ring buffer. A reconnecting client that
+ * supplies the last id it applied gets exactly the missed events replayed
+ * from the buffer — skipping a redundant /api/sessions/patches round trip —
+ * instead of a fresh full snapshot. If the id falls outside the buffered
+ * range (server restart, buffer overflow, or first-ever connect) we fall
+ * back to the existing full-snapshot fetch, so behavior for old/unaware
+ * clients is unchanged.
  */
 export class SessionBroadcaster {
-  private subscribers = new Set<(sessions: SessionPatch[]) => void>();
+  private subscribers = new Set<(sessions: SessionPatch[], id: number) => void>();
   private errorSubscribers = new Set<(error: string) => void>();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private polling = false;
@@ -88,6 +114,8 @@ export class SessionBroadcaster {
   // the healthy → failing transition (not every 3s during an outage).
   private lastFetchOk = true;
   private readonly baseUrl: string;
+  private nextEventId = 1;
+  private buffer: BufferedSessionEvent[] = [];
 
   constructor(nextPort: string) {
     this.baseUrl = `http://localhost:${nextPort}`;
@@ -95,32 +123,50 @@ export class SessionBroadcaster {
 
   /**
    * Subscribe to session patches and errors. Returns an unsubscribe function.
-   * Sends an immediate snapshot to the new subscriber, then polling updates.
+   *
+   * When `lastEventId` is within the buffered range, replays exactly the
+   * missed events instead of fetching a fresh snapshot. Otherwise (no id,
+   * id too old, or empty buffer) sends an immediate one-off snapshot, same
+   * as before this id/buffer mechanism existed.
    */
   subscribe(
-    callback: (sessions: SessionPatch[]) => void,
+    callback: (sessions: SessionPatch[], id: number) => void,
     onError?: (error: string) => void,
+    lastEventId?: number,
   ): () => void {
     const wasEmpty = this.subscribers.size === 0;
     this.subscribers.add(callback);
     if (onError) this.errorSubscribers.add(onError);
 
-    // Immediately send a one-off snapshot to just this new subscriber
-    void this.fetchSnapshot().then((result) => {
-      if (result.sessions && this.subscribers.has(callback)) {
+    if (lastEventId !== undefined && this.canReplayFrom(lastEventId)) {
+      for (const event of this.buffer) {
+        if (event.id <= lastEventId) continue;
+        if (!this.subscribers.has(callback)) break;
         try {
-          callback(result.sessions);
+          callback(event.sessions, event.id);
         } catch {
           // Isolate subscriber errors so one bad subscriber doesn't break others
         }
-      } else if (result.error && onError && this.errorSubscribers.has(onError)) {
-        try {
-          onError(result.error);
-        } catch {
-          // Isolate subscriber errors
-        }
       }
-    });
+    } else {
+      // Immediately send a one-off snapshot to just this new subscriber
+      void this.fetchSnapshot().then((result) => {
+        if (result.sessions && this.subscribers.has(callback)) {
+          const id = this.recordSnapshot(result.sessions);
+          try {
+            callback(result.sessions, id);
+          } catch {
+            // Isolate subscriber errors so one bad subscriber doesn't break others
+          }
+        } else if (result.error && onError && this.errorSubscribers.has(onError)) {
+          try {
+            onError(result.error);
+          } catch {
+            // Isolate subscriber errors
+          }
+        }
+      });
+    }
 
     // Start polling if this is the first subscriber
     if (wasEmpty) {
@@ -129,8 +175,12 @@ export class SessionBroadcaster {
         this.polling = true;
         void this.fetchSnapshot()
           .then((result) => {
-            if (result.sessions && this.intervalId !== null) this.broadcast(result.sessions);
-            else if (result.error && this.intervalId !== null) this.broadcastError(result.error);
+            if (result.sessions && this.intervalId !== null) {
+              const id = this.recordSnapshot(result.sessions);
+              this.broadcast(result.sessions, id);
+            } else if (result.error && this.intervalId !== null) {
+              this.broadcastError(result.error);
+            }
           })
           .finally(() => {
             this.polling = false;
@@ -147,10 +197,31 @@ export class SessionBroadcaster {
     };
   }
 
-  private broadcast(sessions: SessionPatch[]): void {
+  /**
+   * A `lastEventId` is replayable when the buffer's oldest event picks up
+   * right where the client left off (or overlaps it) — i.e. there is no gap
+   * between what the client last saw and what the buffer still holds.
+   */
+  private canReplayFrom(lastEventId: number): boolean {
+    if (this.buffer.length === 0) return false;
+    const oldestId = this.buffer[0]!.id;
+    return lastEventId >= oldestId - 1 && lastEventId < this.nextEventId;
+  }
+
+  /** Assigns the next monotonic id, appends to the ring buffer, and returns the id. */
+  private recordSnapshot(sessions: SessionPatch[]): number {
+    const id = this.nextEventId++;
+    this.buffer.push({ id, sessions });
+    if (this.buffer.length > SESSION_EVENT_BUFFER_SIZE) {
+      this.buffer.shift();
+    }
+    return id;
+  }
+
+  private broadcast(sessions: SessionPatch[], id: number): void {
     for (const callback of this.subscribers) {
       try {
-        callback(sessions);
+        callback(sessions, id);
       } catch (err) {
         console.error("[MuxServer] Session broadcast subscriber threw:", err);
       }
@@ -1310,13 +1381,13 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
         } else if (msg.ch === "subscribe") {
           if (msg.topics.includes("sessions") && !sessionUnsubscribe) {
             sessionUnsubscribe = broadcaster.subscribe(
-              (sessions) => {
+              (sessions, id) => {
                 if (ws.readyState !== WebSocket.OPEN) return;
                 if (ws.bufferedAmount > WS_BUFFER_HIGH_WATERMARK) {
                   console.warn("[MuxServer] Skipping session snapshot — socket backpressured");
                   return;
                 }
-                const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions };
+                const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions, id };
                 ws.send(JSON.stringify(snapMsg));
               },
               (error) => {
@@ -1324,6 +1395,7 @@ export function createMuxWebSocket(tmuxPath?: string | null): WebSocketServer | 
                 const errMsg: ServerMessage = { ch: "sessions", type: "error", error };
                 ws.send(JSON.stringify(errMsg));
               },
+              msg.sessionsLastEventId,
             );
           }
           if (msg.topics.includes("notifications") && !notificationUnsubscribe) {

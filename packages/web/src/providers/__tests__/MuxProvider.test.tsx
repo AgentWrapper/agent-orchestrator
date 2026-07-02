@@ -169,6 +169,45 @@ describe("MuxProvider connection lifecycle", () => {
     expect(subMsg).toBeDefined();
     expect((JSON.parse(subMsg!) as Record<string, unknown>).topics).toContain("sessions");
     expect((JSON.parse(subMsg!) as Record<string, unknown>).topics).toContain("notifications");
+    // First-ever connect has no prior snapshot — no lastEventId to send.
+    expect((JSON.parse(subMsg!) as Record<string, unknown>).sessionsLastEventId).toBeUndefined();
+  });
+
+  it("sends the last applied sessions snapshot id on reconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useMux(), { wrapper });
+      await flushInit();
+
+      const ws1 = MockWebSocket.instances[0];
+      act(() => ws1.simulateOpen());
+      expect(result.current.status).toBe("connected");
+
+      act(() =>
+        ws1.simulateMessage({
+          ch: "sessions",
+          type: "snapshot",
+          sessions: [],
+          id: 7,
+        }),
+      );
+
+      act(() => ws1.simulateClose());
+      act(() => vi.advanceTimersByTime(1100));
+      await flushInit();
+
+      const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => ws2.simulateOpen());
+
+      const subMsg = ws2.sentMessages.find((m) => {
+        const p = JSON.parse(m) as Record<string, unknown>;
+        return p.ch === "subscribe";
+      });
+      expect(subMsg).toBeDefined();
+      expect((JSON.parse(subMsg!) as Record<string, unknown>).sessionsLastEventId).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("transitions to reconnecting on close", async () => {
@@ -494,6 +533,7 @@ describe("MuxProvider message handling", () => {
       ws.simulateMessage({
         ch: "sessions",
         type: "snapshot",
+        id: 1,
         sessions: [
           {
             id: "s1",

@@ -19,7 +19,12 @@ export type ClientMessage =
   | { ch: "terminal"; id: string; type: "open"; projectId?: string; tmuxName?: string }
   | { ch: "terminal"; id: string; type: "close"; projectId?: string }
   | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: Array<"sessions" | "notifications"> };
+  | {
+      ch: "subscribe";
+      topics: Array<"sessions" | "notifications">;
+      /** Last `sessions` snapshot id the client applied — enables replay-on-reconnect. */
+      sessionsLastEventId?: number;
+    };
 
 // ── Server → Client ──
 
@@ -28,7 +33,7 @@ export type ServerMessage =
   | { ch: "terminal"; id: string; type: "exited"; code: number; projectId?: string }
   | { ch: "terminal"; id: string; type: "opened"; projectId?: string }
   | { ch: "terminal"; id: string; type: "error"; message: string; projectId?: string }
-  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
+  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[]; id: number }
   | { ch: "sessions"; type: "error"; error: string }
   | {
       ch: "notifications";
