@@ -117,10 +117,10 @@ type Manager struct {
 	// guard is the shared pane-write primitive (see sessionguard) every write
 	// into a live session goes through: the initial user message in Send and
 	// the Enter-only nudges in confirmActive.
-	guard *sessionguard.Guard
-	lcm   lifecycleRecorder
-	dataDir   string
-	clock     func() time.Time
+	guard   *sessionguard.Guard
+	lcm     lifecycleRecorder
+	dataDir string
+	clock   func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.

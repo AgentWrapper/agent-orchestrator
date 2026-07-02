@@ -20,6 +20,22 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	switch event {
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
+	case "pre-tool-use", "post-tool-use", "post-tool-use-failure":
+		// The agent is executing tools — active. These signals carry
+		// tool_name/tool_use_id on the wire, and lifecycle applies them under
+		// a precedence rule: they never demote a sticky state, EXCEPT the
+		// post of the exact tool whose permission dialog blocked the session
+		// (approval means the tool ran — the earliest observable "the
+		// decision was resolved" signal, since answering a dialog fires no
+		// hook of its own). Without the rule, parallel-subagent traffic would
+		// clear a live blocked — the failure that reverted the naive mapping
+		// in PR #5's review.
+		return domain.ActivityActive, true
+	case "permission-request":
+		// Fires when a permission dialog appears — earlier and richer than
+		// Notification(permission_prompt): the payload names the blocking
+		// tool, which lifecycle snapshots for the correlated clear above.
+		return domain.ActivityBlocked, true
 	case "stop":
 		// End of a turn: the agent is idle but alive (not exited). A following
 		// Notification(idle_prompt) upgrades this to the sticky waiting_input.
