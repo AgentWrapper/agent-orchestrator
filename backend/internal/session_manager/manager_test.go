@@ -2054,6 +2054,30 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
+func TestRestoreAll_RestoresLegacyShutdownMarkerWithoutState(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("legacy shutdown marker must relaunch once, runtime.Create called %d times", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("legacy shutdown marker session must be live after RestoreAll")
+	}
+}
+
 // TestRestoreAll_SkipsSessionsKilledBeforeShutdown verifies (c): a session
 // the user killed BEFORE shutdown has no session_worktrees row and must NOT
 // be resurrected.

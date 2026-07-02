@@ -950,11 +950,15 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 func restorableWorktreeRows(rows []domain.SessionWorktreeRecord) []domain.SessionWorktreeRecord {
 	out := make([]domain.SessionWorktreeRecord, 0, len(rows))
 	for _, row := range rows {
-		if row.State == "removed" {
+		if row.State == "removed" || legacyRestorableWorktreeRow(row) {
 			out = append(out, row)
 		}
 	}
 	return out
+}
+
+func legacyRestorableWorktreeRow(row domain.SessionWorktreeRecord) bool {
+	return row.State == "" && (row.PreservedRef != "" || row.RepoName == domain.RootWorkspaceRepoName)
 }
 
 func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.SessionWorktreeRecord) error {
