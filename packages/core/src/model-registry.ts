@@ -183,6 +183,20 @@ export const MODEL_REGISTRY: ModelDescriptor[] = [
     auth: { configKey: null, envKey: null },
     defaultFor: "cheap-worker",
   },
+  // Fable 5 uses its CONCRETE model id (not a short SDK alias like opus/sonnet/
+  // haiku): Claude Code has no `fable` launch alias, so the launcher must pass
+  // `claude-fable-5` through verbatim (resolveClaudeLaunchModel leaves it as-is).
+  // `fable` is offered only as a UX alias that resolves back to this descriptor.
+  {
+    id: "claude-fable-5",
+    provider: "anthropic",
+    runtimeDriver: "claude-agent-sdk",
+    label: "Claude Fable 5",
+    section: "Claude",
+    aliases: ["fable"],
+    capabilities: FULL_AGENT_CAPS,
+    auth: { configKey: null, envKey: null },
+  },
 
   // --- ZhipuAI GLM (zhipu → openai-compat chat loop) ---
   ...(["glm-5.2", "glm-4.5-air", "glm-4.5", "glm-4.6", "glm-4.7"].map(

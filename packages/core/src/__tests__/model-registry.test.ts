@@ -17,6 +17,19 @@ describe("model-registry: resolveModel", () => {
     expect(resolveModel("haiku")?.provider).toBe("anthropic");
   });
 
+  it("resolves Claude Fable 5 by concrete id and `fable` alias", () => {
+    // Unlike opus/sonnet/haiku, Fable is registered under its concrete id
+    // (claude-fable-5) because Claude Code has no `fable` launch alias.
+    const byId = resolveModel("claude-fable-5");
+    expect(byId?.provider).toBe("anthropic");
+    expect(byId?.label).toBe("Claude Fable 5");
+    expect(byId?.runtimeDriver).toBe("claude-agent-sdk");
+    expect(byId?.section).toBe("Claude");
+    // UX alias resolves back to the same concrete descriptor (case-insensitive).
+    expect(resolveModel("fable")?.id).toBe("claude-fable-5");
+    expect(resolveModel("FABLE")?.id).toBe("claude-fable-5");
+  });
+
   it("resolves GLM + MiMo ids", () => {
     expect(resolveModel("glm-4.6")?.provider).toBe("zhipu");
     expect(resolveModel("mimo-v2.5")?.provider).toBe("mimo");
@@ -103,6 +116,7 @@ describe("model-registry: resolveDriver (provider ≠ driver)", () => {
 
   it("Claude -> claude-agent-sdk, GLM -> openai-compat", () => {
     expect(resolveDriver("opus")).toBe("claude-agent-sdk");
+    expect(resolveDriver("claude-fable-5")).toBe("claude-agent-sdk");
     expect(resolveDriver("glm-4.6")).toBe("openai-compat");
   });
 
@@ -201,7 +215,7 @@ describe("model-registry: integrity", () => {
   });
 
   it("Claude + MiMo capabilities are full-agent", () => {
-    for (const id of ["opus", "mimo-v2.5"]) {
+    for (const id of ["opus", "claude-fable-5", "mimo-v2.5"]) {
       const caps = resolveModel(id)!.capabilities;
       expect(caps.tools).toBe(true);
       expect(caps.approvals).toBe(true);

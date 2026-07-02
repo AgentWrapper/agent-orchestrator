@@ -65,6 +65,18 @@ describe("ao models list", () => {
     expect(opus.available).toBe(true);
   });
 
+  it("exposes Claude Fable 5 as an ambient, available full-agent Claude model", () => {
+    const fable = entryById(buildModelsListPayload(null, {}).models, "claude-fable-5");
+    expect(fable.displayName).toBe("Claude Fable 5");
+    expect(fable.provider).toBe("anthropic");
+    expect(fable.section).toBe("Claude");
+    expect(fable.runtimeDriver).toBe("claude-agent-sdk");
+    expect(fable.aliases).toContain("fable");
+    expect(fable.auth.needsKey).toBe(false);
+    expect(fable.available).toBe(true);
+    expect(fable.capabilities.tools).toBe(true);
+  });
+
   it("marks keyed providers unconfigured + unavailable with no config or env", () => {
     const glm = entryById(buildModelsListPayload(null, {}).models, "glm-5.2");
     expect(glm.auth.needsKey).toBe(true);
