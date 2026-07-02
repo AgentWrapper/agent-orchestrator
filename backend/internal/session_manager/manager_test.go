@@ -2185,9 +2185,8 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
-func TestRestoreAll_ConsumesMarkersAfterSuccessfulRestore(t *testing.T) {
+func TestRestoreAll_RestoresLegacyShutdownMarkerWithoutState(t *testing.T) {
 	m, st, rt, _ := newLifecycleManager()
-
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID:           "mer-1",
 		ProjectID:    "mer",
@@ -2205,7 +2204,10 @@ func TestRestoreAll_ConsumesMarkersAfterSuccessfulRestore(t *testing.T) {
 		t.Fatalf("RestoreAll err = %v", err)
 	}
 	if rt.created != 1 {
-		t.Fatalf("RestoreAll must relaunch session, runtime.Create called %d times", rt.created)
+		t.Fatalf("legacy shutdown marker must relaunch once, runtime.Create called %d times", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("legacy shutdown marker session must be live after RestoreAll")
 	}
 	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
 		t.Fatalf("consumed restore marker = %+v, want deleted", rows)
