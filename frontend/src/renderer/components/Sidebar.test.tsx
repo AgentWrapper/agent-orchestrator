@@ -183,6 +183,7 @@ describe("Sidebar", () => {
 	it("opens feedback above Settings and copies redacted report drafts", async () => {
 		const user = userEvent.setup();
 		const writeText = vi.fn().mockResolvedValue(undefined);
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		window.ao!.clipboard.writeText = writeText;
 		window.ao!.app.getVersion = vi.fn().mockResolvedValue("9.9.9-test");
 		window.ao!.daemon.getStatus = vi.fn().mockResolvedValue({
@@ -206,7 +207,7 @@ describe("Sidebar", () => {
 		await user.type(screen.getByLabelText("Expected / request"), "Show a clear prerequisite error.");
 
 		expect(screen.getByLabelText("Report preview")).toHaveTextContent("[redacted-local-path]");
-		await user.click(screen.getByRole("button", { name: "Copy GitHub issue" }));
+		await user.click(screen.getByRole("button", { name: "Copy and open GitHub" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		const copied = writeText.mock.calls[0][0] as string;
@@ -217,11 +218,17 @@ describe("Sidebar", () => {
 		expect(copied).toContain("[redacted-local-url]");
 		expect(copied).not.toContain("/Users/alice");
 		expect(copied).not.toContain("local-secret");
+		expect(open).toHaveBeenCalledWith(
+			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
+			"_blank",
+			"noopener,noreferrer",
+		);
 	});
 
 	it("copies Discord and email drafts when daemon diagnostics are unavailable", async () => {
 		const user = userEvent.setup();
 		const writeText = vi.fn().mockResolvedValue(undefined);
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		window.ao!.clipboard.writeText = writeText;
 		window.ao!.app.getVersion = vi.fn().mockRejectedValue(new Error("version unavailable"));
 		window.ao!.daemon.getStatus = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
@@ -231,12 +238,14 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Summary"), "Need help with setup");
 
-		await user.click(screen.getByRole("button", { name: "Copy Discord summary" }));
-		await user.click(screen.getByRole("button", { name: "Copy email draft" }));
+		await user.click(screen.getByRole("button", { name: "Copy and open Discord" }));
+		await user.click(screen.getByRole("button", { name: "Copy and open email" }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
+		expect(open).toHaveBeenNthCalledWith(1, "https://discord.com/invite/UZv7JjxbwG", "_blank", "noopener,noreferrer");
+		expect(open).toHaveBeenNthCalledWith(2, expect.stringMatching(/^mailto:\?/), "_blank", "noopener,noreferrer");
 	});
 
 	it("renames a session inline and persists via the daemon", async () => {

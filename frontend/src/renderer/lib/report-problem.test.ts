@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	collectReportProblemDiagnostics,
 	formatReportProblemDraft,
+	reportProblemDestinationUrl,
 	type ReportProblemDiagnostics,
 	type ReportProblemInput,
 	type ReportProblemOutput,
@@ -80,6 +81,26 @@ describe("report problem drafts", () => {
 		expect(draft).toContain("Feedback");
 		expect(draft).toContain("Not provided");
 		expect(draft).toContain("No diagnostics included");
+	});
+
+	it("builds copy handoff destinations for GitHub, Discord, and email", () => {
+		const github = new URL(reportProblemDestinationUrl(completeInput, diagnostics, "github"));
+		expect(`${github.origin}${github.pathname}`).toBe(
+			"https://github.com/AgentWrapper/agent-orchestrator/issues/new",
+		);
+		expect(github.searchParams.get("title")).toBe("Terminal keeps reconnecting after daemon restart");
+		expect(github.searchParams.get("body")).toContain("[redacted-local-path]");
+		expect(github.searchParams.get("body")).toContain("[redacted-local-url]");
+
+		expect(reportProblemDestinationUrl(completeInput, diagnostics, "discord")).toBe(
+			"https://discord.com/invite/UZv7JjxbwG",
+		);
+
+		const email = reportProblemDestinationUrl(completeInput, diagnostics, "email");
+		const params = new URLSearchParams(email.replace(/^mailto:\?/, ""));
+		expect(params.get("subject")).toBe("AO feedback: Terminal keeps reconnecting after daemon restart");
+		expect(params.get("body")).toContain("[redacted-local-path]");
+		expect(params.get("body")).toContain("[redacted-local-url]");
 	});
 
 	it("derives route surface from the hash-history route", async () => {

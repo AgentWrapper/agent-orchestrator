@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import {
 	collectReportProblemDiagnostics,
 	formatReportProblemDraft,
+	reportProblemDestinationUrl,
 	type ReportProblemDiagnostics,
 	type ReportProblemInput,
 	type ReportProblemOutput,
@@ -87,6 +88,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 		setPreviewOutput(output);
 		try {
 			await aoBridge.clipboard.writeText(formatReportProblemDraft(input, diagnostics, output));
+			window.open(reportProblemDestinationUrl(input, diagnostics, output), "_blank", "noopener,noreferrer");
 			setCopiedOutput(output);
 		} catch (err) {
 			setCopyError(err instanceof Error ? err.message : "Could not copy report draft");
@@ -230,15 +232,15 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					<div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
 						<Button type="button" variant="secondary" onClick={() => void copyDraft("github")}>
 							<Clipboard className="size-3.5" aria-hidden="true" />
-							Copy GitHub issue
+							Copy and open GitHub
 						</Button>
 						<Button type="button" variant="secondary" onClick={() => void copyDraft("discord")}>
 							<Clipboard className="size-3.5" aria-hidden="true" />
-							Copy Discord summary
+							Copy and open Discord
 						</Button>
 						<Button type="button" onClick={() => void copyDraft("email")}>
 							<Clipboard className="size-3.5" aria-hidden="true" />
-							Copy email draft
+							Copy and open email
 						</Button>
 					</div>
 				</Dialog.Content>

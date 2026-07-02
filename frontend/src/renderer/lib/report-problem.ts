@@ -25,6 +25,8 @@ export type ReportProblemDiagnostics = {
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_SECRET = "[redacted-secret]";
+const DISCORD_INVITE_URL = "https://discord.com/invite/UZv7JjxbwG";
+const GITHUB_NEW_ISSUE_URL = "https://github.com/AgentWrapper/agent-orchestrator/issues/new";
 
 const REPORT_TYPE_LABELS: Record<ReportProblemType, string> = {
 	bug: "Bug report",
@@ -138,6 +140,29 @@ export function formatReportProblemDraft(
 	].join("\n");
 }
 
+export function reportProblemDestinationUrl(
+	input: ReportProblemInput,
+	diagnostics: ReportProblemDiagnostics,
+	output: ReportProblemOutput,
+): string {
+	if (output === "discord") return DISCORD_INVITE_URL;
+
+	const title = reportTitle(input);
+	const draft = formatReportProblemDraft(input, diagnostics, output);
+	if (output === "email") {
+		const params = new URLSearchParams({
+			subject: `AO feedback: ${title}`,
+			body: draft.replace(/^Subject:[^\n]*\n\n/, ""),
+		});
+		return `mailto:?${params.toString()}`;
+	}
+
+	const url = new URL(GITHUB_NEW_ISSUE_URL);
+	url.searchParams.set("title", title);
+	url.searchParams.set("body", draft);
+	return url.toString();
+}
+
 function normalizeInput(input: ReportProblemInput) {
 	return {
 		typeLabel: REPORT_TYPE_LABELS[input.type],
@@ -145,6 +170,11 @@ function normalizeInput(input: ReportProblemInput) {
 		details: valueOrPlaceholder(input.details),
 		expected: valueOrPlaceholder(input.expected),
 	};
+}
+
+function reportTitle(input: ReportProblemInput): string {
+	const summary = valueOrPlaceholder(input.summary);
+	return summary === "Not provided" ? REPORT_TYPE_LABELS[input.type] : summary;
 }
 
 function valueOrPlaceholder(value: string): string {
