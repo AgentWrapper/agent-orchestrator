@@ -20,6 +20,7 @@ vi.mock("@aoagents/ao-core", async () => {
   return {
     ...actual,
     recordActivityEvent: recordActivityEventMock,
+    writeWorktreeGitExclude: vi.fn(() => Promise.resolve()),
   };
 });
 

@@ -32,6 +32,7 @@ vi.mock("@aoagents/ao-core", () => ({
   getShell: vi.fn(() => ({ cmd: "sh", args: (c: string) => ["-c", c] })),
   isWindows: vi.fn(() => false),
   recordActivityEvent: recordActivityEventMock,
+  writeWorktreeGitExclude: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("node:os", () => ({
