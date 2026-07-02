@@ -517,6 +517,17 @@ export type {
 
 export { getAoBaseDir, getPortfolioDir, getPreferencesPath, getRegisteredPath } from "./paths.js";
 
+// Retrieval — fusion context assembly (mae-374/375, dormant behind retrieval.fusion)
+export { assembleContextBundle, BUNDLE_MAX } from "./retrieval/index.js";
+export type {
+  ContextBundle,
+  AssembleContextBundleOpts,
+  TaskContext,
+  TokenBudget,
+  RetrievalItem,
+  RetrievalProvider,
+} from "./retrieval/index.js";
+
 export {
   discoverProjects,
   loadRegistered,
