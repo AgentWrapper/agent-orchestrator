@@ -13,7 +13,7 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // UserPromptSubmit / Stop / SessionEnd plus the tool-use events, but has no
 // dedicated permission/approval event yet, so AO does not install a
 // "permission-request" hook today. The case is kept here so that, if a future
-// Goose release adds an approval lifecycle event, mapping it to waiting_input is
+// Goose release adds an approval lifecycle event, mapping it to blocked is
 // a one-line hooks.go change with no deriver edit needed.
 //
 // TODO(goose): ActivityExited is still runtime-observation-owned. Goose has a
@@ -28,7 +28,7 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	case "stop":
 		return domain.ActivityIdle, true
 	case "permission-request":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	default:
 		return "", false
 	}

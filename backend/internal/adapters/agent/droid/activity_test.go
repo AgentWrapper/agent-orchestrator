@@ -16,12 +16,13 @@ func TestDeriveActivityState(t *testing.T) {
 	}{
 		{"user prompt -> active", "user-prompt-submit", `{}`, domain.ActivityActive, true},
 		{"stop -> idle", "stop", `{}`, domain.ActivityIdle, true},
-		// Droid notifications fire only on permission-needed or 60s-idle, both of
-		// which mean the agent is blocked on the user — and the payload carries no
-		// notification_type to discriminate — so every notification is waiting_input.
-		{"notification -> waiting_input", "notification", `{"message":"Droid needs your permission"}`, domain.ActivityWaitingInput, true},
-		{"notification empty payload -> waiting_input", "notification", `{}`, domain.ActivityWaitingInput, true},
-		{"notification malformed payload -> waiting_input", "notification", `not json`, domain.ActivityWaitingInput, true},
+		// Droid notifications fire only on permission-needed or 60s-idle, and the
+		// payload carries no notification_type to discriminate — so every
+		// notification maps to the conservative blocked (an automated Enter must
+		// never answer a pending permission decision).
+		{"notification -> blocked", "notification", `{"message":"Droid needs your permission"}`, domain.ActivityBlocked, true},
+		{"notification empty payload -> blocked", "notification", `{}`, domain.ActivityBlocked, true},
+		{"notification malformed payload -> blocked", "notification", `not json`, domain.ActivityBlocked, true},
 		{"session-end logout -> exited", "session-end", `{"reason":"logout"}`, domain.ActivityExited, true},
 		{"session-end prompt_input_exit -> exited", "session-end", `{"reason":"prompt_input_exit"}`, domain.ActivityExited, true},
 		{"session-end other -> exited", "session-end", `{"reason":"other"}`, domain.ActivityExited, true},

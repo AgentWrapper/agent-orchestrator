@@ -14,7 +14,7 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "permission-request":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	case "stop":
 		return domain.ActivityIdle, true
 	default:

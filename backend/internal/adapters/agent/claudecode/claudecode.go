@@ -58,6 +58,13 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
+// under AO's launch, so Activity.State can flip to active after a prompt is
+// accepted. See ports.ActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 

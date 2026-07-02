@@ -16,7 +16,7 @@ func TestDeriveActivityState(t *testing.T) {
 		{"session start -> active", "session-start", domain.ActivityActive, true},
 		{"user prompt -> active", "user-prompt-submit", domain.ActivityActive, true},
 		{"stop -> idle", "stop", domain.ActivityIdle, true},
-		{"permission request -> waiting input", "permission-request", domain.ActivityWaitingInput, true},
+		{"permission request -> blocked", "permission-request", domain.ActivityBlocked, true},
 		{"unknown event -> no signal", "frobnicate", "", false},
 		{"native event name -> no signal", "beforeShellExecution", "", false},
 	}
