@@ -1,8 +1,15 @@
 import { useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import {
+	type AttentionZone,
+	type WorkspaceSession,
+	attentionZone,
+	newestActiveOrchestrator,
+	orchestratorHealth,
+	workerSessions,
+} from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -12,6 +19,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
+import { useUiStore } from "../stores/ui-store";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -70,12 +78,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
+	const workspace = projectId ? workspaces[0] : undefined;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
-	const orchestrator = projectId
-		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
-		: undefined;
+	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
+	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
+	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -94,7 +106,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		});
 
 	const openOrchestrator = async () => {
-		if (!projectId) return;
+		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -115,6 +127,24 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
+	const restartOrchestrator = async () => {
+		if (!projectId) return;
+		setProjectRestarting(projectId, true);
+		setOrchestratorReplacementError(projectId, null);
+		try {
+			const sessionId = await spawnOrchestrator(projectId, true);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId },
+			});
+		} catch (error) {
+			setOrchestratorReplacementError(projectId, error instanceof Error ? error.message : "Could not replace orchestrator");
+		} finally {
+			setProjectRestarting(projectId, false);
+		}
+	};
+
 	const handleTaskCreated = async (sessionId: string) => {
 		if (!projectId) return;
 		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -129,6 +159,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<button
 				aria-label="New task"
 				className="dashboard-app-header__accent-btn"
+				disabled={isProjectRestarting}
 				onClick={() => setIsNewTaskOpen(true)}
 				type="button"
 			>
@@ -138,12 +169,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			<button
 				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 				className="dashboard-app-header__primary-btn"
-				disabled={isSpawning}
+				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				{isProjectRestarting ? "Restarting..." : isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
 			</button>
 		</>
 	) : undefined;
@@ -157,6 +188,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			/>
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
+				{projectId && health.state !== "ok" ? (
+					<div className="mb-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
+						<AlertTriangle className="size-4 shrink-0 text-warning" aria-hidden="true" />
+						<span className="min-w-0 flex-1">{health.message}</span>
+						{health.state === "restart_needed" || health.state === "duplicates" ? (
+							<button
+								className="dashboard-app-header__primary-btn"
+								disabled={isProjectRestarting}
+								onClick={() => void restartOrchestrator()}
+								type="button"
+							>
+								<RotateCw className="size-3.5" aria-hidden="true" />
+								Restart
+							</button>
+						) : null}
+					</div>
+				) : null}
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
 				) : (

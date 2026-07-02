@@ -94,6 +94,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			Path:          row.Path,
 			Kind:          row.Kind.WithDefault(),
 			SessionPrefix: resolveSessionPrefix(row),
+			Config:        projectConfigPtr(row.Config),
 		})
 	}
 	return out, nil
@@ -374,11 +375,16 @@ func projectFromRow(row domain.ProjectRecord) Project {
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
 	}
-	if !row.Config.IsZero() {
-		cfg := row.Config
-		p.Config = &cfg
-	}
+	p.Config = projectConfigPtr(row.Config)
 	return p
+}
+
+func projectConfigPtr(config domain.ProjectConfig) *domain.ProjectConfig {
+	if config.IsZero() {
+		return nil
+	}
+	cfg := config
+	return &cfg
 }
 
 func displayName(row domain.ProjectRecord) string {

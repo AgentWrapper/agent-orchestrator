@@ -691,6 +691,7 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSummary: {
+            config?: components["schemas"]["ProjectConfig"];
             id: string;
             kind: string;
             name: string;

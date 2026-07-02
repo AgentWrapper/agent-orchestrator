@@ -1968,6 +1968,8 @@ components:
       type: object
     ProjectSummary:
       properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         id:
           type: string
         kind:

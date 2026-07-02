@@ -51,7 +51,16 @@ describe("useWorkspaceQuery", () => {
 	it("maps projects and their sessions, applying provider/status/title fallbacks", async () => {
 		respondWith({
 			projects: {
-				data: { projects: [{ id: "proj-1", name: "my-app", path: "/home/me/my-app" }] },
+				data: {
+					projects: [
+						{
+							id: "proj-1",
+							name: "my-app",
+							path: "/home/me/my-app",
+							config: { orchestrator: { agent: "codex" } },
+						},
+					],
+				},
 				error: undefined,
 			},
 			sessions: {
@@ -90,7 +99,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		const [workspace] = result.current.data ?? [];
-		expect(workspace).toMatchObject({ id: "proj-1", name: "my-app", path: "/home/me/my-app" });
+		expect(workspace).toMatchObject({ id: "proj-1", name: "my-app", path: "/home/me/my-app", orchestratorAgent: "codex" });
 		expect(workspace.sessions).toHaveLength(2);
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",
