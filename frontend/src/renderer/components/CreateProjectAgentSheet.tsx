@@ -98,7 +98,7 @@ export function CreateProjectAgentSheet({
 						</div>
 
 						<div className="border-t border-border pt-4">
-							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} />
+							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />
 						</div>
 
 						{error && (

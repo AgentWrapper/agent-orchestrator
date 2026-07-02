@@ -43,8 +43,8 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
-		// Enabled with no eligibility rule → guard message + disabled submit.
-		expect(screen.getByText("Enabling intake requires at least one label or assignee.")).toBeInTheDocument();
+		// Enabled with no eligibility rule → submit stays disabled (compact sheet
+		// carries no inline guard prose; gating is the disabled button).
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
 
 		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
@@ -58,9 +58,14 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
-	it("does not surface a Repository row in the create sheet (repo is derived server-side)", async () => {
+	it("keeps the create sheet minimal: info tooltip instead of prose, no repo row or credential hint", async () => {
 		renderSheet();
+		// Info affordance is present even before enabling; the descriptive prose is not.
+		expect(screen.getByLabelText("What does enabling issue intake do?")).toBeInTheDocument();
+		expect(screen.queryByText(/Auto-spawn worker sessions from matching tracker issues/)).not.toBeInTheDocument();
+
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
+		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});
 });

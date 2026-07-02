@@ -1,5 +1,7 @@
+import { Info } from "lucide-react";
 import type { components } from "../../api/schema";
 import { Label } from "./ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -90,27 +92,51 @@ export function IntakeFields({
 	form,
 	onChange,
 	repoPreview,
+	compact = false,
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
 	repoPreview?: { value?: string };
+	// compact drops the descriptive/help prose and folds the explanation into an
+	// info-icon tooltip — used by the create-project sheet, which stays minimal.
+	compact?: boolean;
 }) {
 	const needsRule = intakeNeedsRule(form);
 	return (
 		<div className="flex flex-col gap-4">
-			<p className="text-[12px] leading-5 text-muted-foreground">
-				Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
-				sessions; the tracker is not commented on or transitioned.
-			</p>
-			<label className="flex items-center gap-2.5 text-[13px] text-foreground">
-				<input
-					type="checkbox"
-					className="h-4 w-4 accent-accent"
-					checked={form.enabled}
-					onChange={(e) => onChange({ enabled: e.target.checked })}
-				/>
-				Enable issue intake
-			</label>
+			{!compact && (
+				<p className="text-[12px] leading-5 text-muted-foreground">
+					Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
+					sessions; the tracker is not commented on or transitioned.
+				</p>
+			)}
+			<div className="flex items-center gap-2">
+				<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+					<input
+						type="checkbox"
+						className="h-4 w-4 accent-accent"
+						checked={form.enabled}
+						onChange={(e) => onChange({ enabled: e.target.checked })}
+					/>
+					Enable issue intake
+				</label>
+				{compact && (
+					<TooltipProvider delayDuration={0}>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									className="grid size-4 place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
+									aria-label="What does enabling issue intake do?"
+								>
+									<Info className="size-3.5" aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent>Auto-spawns a worker session for each matching GitHub issue.</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
+				)}
+			</div>
 			{form.enabled && (
 				<>
 					{repoPreview && (
@@ -137,16 +163,18 @@ export function IntakeFields({
 							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.assignee}
 							onChange={(e) => onChange({ assignee: e.target.value })}
-							placeholder="github login, or * for any"
+							placeholder="type username or * for any"
 						/>
 					</IntakeField>
-					{needsRule && (
+					{!compact && needsRule && (
 						<p className="text-[12px] leading-5 text-error">Enabling intake requires at least one label or assignee.</p>
 					)}
-					<p className="text-[11px] leading-5 text-muted-foreground">
-						Reads credentials from <span className="font-mono">AO_GITHUB_TOKEN, or `gh auth token`</span>. Restart the
-						daemon after setting.
-					</p>
+					{!compact && (
+						<p className="text-[11px] leading-5 text-muted-foreground">
+							Reads credentials from <span className="font-mono">AO_GITHUB_TOKEN, or `gh auth token`</span>. Restart the
+							daemon after setting.
+						</p>
+					)}
 				</>
 			)}
 		</div>
