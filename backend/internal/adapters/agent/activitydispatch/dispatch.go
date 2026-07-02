@@ -9,6 +9,7 @@
 package activitydispatch
 
 import (
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitystate"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/autohand"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
@@ -17,7 +18,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/goose"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kilocode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
@@ -40,7 +40,7 @@ var Derivers = map[string]DeriveFunc{
 	"copilot":     copilot.DeriveActivityState,
 	"droid":       droid.DeriveActivityState,
 	"agy":         agy.DeriveActivityState,
-	"goose":       goose.DeriveActivityState,
+	"goose":       activitystate.StandardDeriveActivityState,
 	"cline":       cline.DeriveActivityState,
 	"kiro":        kiro.DeriveActivityState,
 	"kilocode":    kilocode.DeriveActivityState,
