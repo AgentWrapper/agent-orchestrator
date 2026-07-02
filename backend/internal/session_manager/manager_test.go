@@ -833,8 +833,11 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the human-facing coordinator for project mer",
-		`ao spawn --project mer --prompt "<clear worker task>"`,
+		`ao spawn --project mer --name "<label, max 20 chars>" --prompt "<clear worker task>"`,
+		"`--agent <name>`",
+		"`ao spawn --help`",
 		"`ao send`",
+		"`ao --help`",
 		"avoid doing implementation yourself unless it is necessary",
 	} {
 		if !strings.Contains(systemPrompt, want) {
