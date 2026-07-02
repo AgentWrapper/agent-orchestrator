@@ -955,6 +955,116 @@ func TestActivity_WaitingInputSameStateDoesNotEmitNotification(t *testing.T) {
 	}
 }
 
+func TestActivity_BlockedTransitionEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1 (blocked is a needs-input entry)", len(sink.intents))
+	}
+	if sink.intents[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("intent type = %q, want needs_input", sink.intents[0].Type)
+	}
+}
+
+func TestActivity_WaitingInputToBlockedDoesNotReNotify(t *testing.T) {
+	// waiting_input -> blocked is an in-family escalation: the user was already
+	// pinged once for this pause, so no second notification and no telemetry
+	// entry/exit pair.
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	tele := &telemetrySink{}
+	m := New(st, nil, WithNotificationSink(sink), WithTelemetry(tele))
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("in-family escalation emitted notification: %+v", sink.intents)
+	}
+	if len(tele.events) != 0 {
+		t.Fatalf("in-family escalation emitted telemetry: %+v", tele.events)
+	}
+}
+
+func TestActivity_BlockedEntryAndExitEmitTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want entered/exited", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v (family events keep the waiting_input_* names)", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[0].Payload["state"]; got != "blocked" {
+		t.Fatalf("entered payload state = %#v, want blocked", got)
+	}
+}
+
+func TestSCMObservation_ReadyToMergeSuppressedWhileBlocked(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	st.sessions["mer-1"] = rec
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("blocked session emitted ready notification: %+v", sink.intents)
+	}
+}
+
+func TestPRObservation_NudgesSuppressedWhileBlocked(t *testing.T) {
+	// A blocked session must not receive automated CI/review nudges: injected
+	// text could interact with the pending permission dialog.
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityBlocked
+	st.sessions["mer-1"] = rec
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("blocked session got nudged: %v", msg.msgs)
+	}
+}
+
 func TestActivity_TerminatedSessionDoesNotEmitNotification(t *testing.T) {
 	st := newFakeStore()
 	sink := &fakeNotificationSink{}

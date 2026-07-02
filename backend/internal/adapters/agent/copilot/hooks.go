@@ -74,7 +74,7 @@ type copilotHookSpec struct {
 // event — the closest signal that AO's permission-request sub-command can
 // piggyback on is preToolUse, which fires before any tool invocation, including
 // the ones that would otherwise prompt the user for approval. This is a
-// many-to-one collapse: every preToolUse currently produces ActivityWaitingInput
+// many-to-one collapse: every preToolUse currently produces ActivityBlocked
 // via the permission-request sub-command. agentStop is the per-turn completion
 // signal and maps to the "stop" sub-command (turn end → idle).
 var copilotManagedHooks = []copilotHookSpec{

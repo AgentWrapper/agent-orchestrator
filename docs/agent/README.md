@@ -503,6 +503,15 @@ stateDiagram-v2
     note right of Waiting
         Hook: WaitingForInput
         activity_state = "waiting_input"
+        (empty prompt, awaiting the next
+        instruction — safe to message)
+    end note
+
+    note right of Waiting
+        Hook: PermissionRequest
+        activity_state = "blocked"
+        (pending permission/approval —
+        automation must not inject input)
     end note
 
     note right of Idle

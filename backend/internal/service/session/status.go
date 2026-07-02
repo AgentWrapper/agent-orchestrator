@@ -32,7 +32,7 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusTerminated
 	}
 
-	if rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.Activity.State.NeedsInput() {
 		return domain.StatusNeedsInput
 	}
 

@@ -15,13 +15,13 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // invocation (including ones that would prompt the user for approval) and is
 // the most reliable signal in CLI pipe mode (-p). AO still installs every event
 // so interactive resume and future modes report activity; the
-// permission-request → waiting_input mapping (driven by preToolUse) is the one
+// permission-request → blocked mapping (driven by preToolUse) is the one
 // that always fires under AO's headless launch.
 //
 // TODO(copilot): ActivityExited is still runtime-observation-owned. If Copilot's
 // sessionEnd/agentStop hook proves reliable in `-p` mode, map a real
 // session-end here. Until then, the lifecycle reaper marks a dead Copilot
-// runtime exited even when the last hook signal was sticky waiting_input.
+// runtime exited even when the last hook signal was sticky blocked.
 func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":
@@ -31,7 +31,7 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	case "stop":
 		return domain.ActivityIdle, true
 	case "permission-request":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	default:
 		return "", false
 	}

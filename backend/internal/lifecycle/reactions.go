@@ -55,7 +55,7 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	if err != nil || !ok {
 		return ReviewDeliveryNoop, err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
 	if m.messenger == nil {
@@ -143,7 +143,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return nil
 	}
 	if o.CI == domain.CIFailing {
@@ -200,7 +200,7 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	if err != nil || !ok {
 		return ReviewDeliveryNoop, err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return ReviewDeliveryNoop, nil
 	}
 	if m.messenger == nil {
@@ -325,7 +325,7 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		base.Type = domain.NotificationPRClosedUnmerged
 		return &base
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput || !scmObservationIsReadyToMerge(o) {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() || !scmObservationIsReadyToMerge(o) {
 		return nil
 	}
 	base.Type = domain.NotificationReadyToMerge
@@ -451,7 +451,7 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	if rec.IsTerminated || rec.Activity.State.NeedsInput() {
 		return nil
 	}
 	if o.Changed.Assignee {

@@ -33,18 +33,23 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	}
 }
 
-// notificationState reports waiting_input only for the notification types that
-// mean "the agent is blocked on the user": a pending tool-permission prompt or
-// an idle prompt awaiting the next instruction. Other types (auth_success,
-// elicitation_*) carry no activity meaning, as does a malformed payload.
+// notificationState splits the notification types that mean "the agent is
+// paused on the user" by what unblocks them: idle_prompt is an empty prompt
+// awaiting the next instruction (waiting_input — safe for automation to
+// message), while permission_prompt is a pending tool-approval dialog (blocked
+// — a stray Enter could answer it, so automated senders must not inject
+// input). Other types (auth_success, elicitation_*) carry no activity meaning,
+// as does a malformed payload.
 func notificationState(payload []byte) (domain.ActivityState, bool) {
 	var p struct {
 		NotificationType string `json:"notification_type"`
 	}
 	_ = json.Unmarshal(payload, &p)
 	switch p.NotificationType {
-	case "idle_prompt", "permission_prompt":
+	case "idle_prompt":
 		return domain.ActivityWaitingInput, true
+	case "permission_prompt":
+		return domain.ActivityBlocked, true
 	default:
 		return "", false
 	}

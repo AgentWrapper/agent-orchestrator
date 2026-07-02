@@ -66,6 +66,19 @@ func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ActivityAcceptsBlocked(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"blocked"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if !rec.gotSignal.Valid || rec.gotSignal.State != domain.ActivityBlocked {
+		t.Fatalf("recorder signal = %#v", rec.gotSignal)
+	}
+}
+
 func TestSessionsAPI_ActivityRejectsUnknownState(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)

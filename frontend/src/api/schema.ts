@@ -857,7 +857,7 @@ export interface components {
              * @description Agent activity state reported by an agent hook.
              * @enum {string}
              */
-            state: "active" | "idle" | "waiting_input" | "exited";
+            state: "active" | "idle" | "waiting_input" | "blocked" | "exited";
         };
         SetActivityResponse: {
             ok: boolean;

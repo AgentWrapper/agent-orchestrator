@@ -112,7 +112,7 @@ func TestHooks_StopReportsIdle(t *testing.T) {
 	}
 }
 
-func TestHooks_CodexPermissionRequestReportsWaitingInput(t *testing.T) {
+func TestHooks_CodexPermissionRequestReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
@@ -125,8 +125,8 @@ func TestHooks_CodexPermissionRequestReportsWaitingInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := capturedState(t, capture); got != "waiting_input" {
-		t.Errorf("state = %q, want waiting_input", got)
+	if got := capturedState(t, capture); got != "blocked" {
+		t.Errorf("state = %q, want blocked", got)
 	}
 }
 

@@ -13,7 +13,7 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // TODO(cursor): ActivityExited is still runtime-observation-owned. If Cursor
 // adds a native session/process-end hook, map that hook to ActivityExited here.
 // Until then, make sure the lifecycle reaper can still mark a dead Cursor
-// runtime as exited even when the last hook signal was sticky waiting_input.
+// runtime as exited even when the last hook signal was sticky blocked.
 func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	switch event {
 	case "session-start":
@@ -23,7 +23,7 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 	case "stop":
 		return domain.ActivityIdle, true
 	case "permission-request":
-		return domain.ActivityWaitingInput, true
+		return domain.ActivityBlocked, true
 	default:
 		return "", false
 	}

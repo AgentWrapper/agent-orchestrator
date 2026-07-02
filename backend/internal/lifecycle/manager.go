@@ -155,7 +155,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return err
 	}
-	if rec.Activity.State != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+	// Transition into the needs-input family (waiting_input or blocked) pings
+	// the user; an in-family escalation (waiting_input -> blocked) does not
+	// re-notify — the user was already pinged once for this pause.
+	if !rec.Activity.State.NeedsInput() && next.Activity.State.NeedsInput() && !next.IsTerminated {
 		intent = &ports.NotificationIntent{
 			Type:               domain.NotificationNeedsInput,
 			SessionID:          next.ID,
@@ -180,7 +183,11 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 	projectID := next.ProjectID
 	sessionID := next.ID
 	var events []ports.TelemetryEvent
-	if prevState != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+	// Entry/exit is measured on the needs-input family boundary (waiting_input
+	// or blocked): the event names stay waiting_input_* for dashboard
+	// continuity, the payload state distinguishes the two, and an in-family
+	// transition emits neither event so dwell covers the whole pause.
+	if !prevState.NeedsInput() && next.Activity.State.NeedsInput() && !next.IsTerminated {
 		events = append(events, ports.TelemetryEvent{
 			Name:       "ao.session.waiting_input_entered",
 			Source:     "lifecycle",
@@ -193,7 +200,7 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 			},
 		})
 	}
-	if prevState == domain.ActivityWaitingInput && next.Activity.State != domain.ActivityWaitingInput {
+	if prevState.NeedsInput() && !next.Activity.State.NeedsInput() {
 		payload := map[string]any{
 			"state":     string(next.Activity.State),
 			"dwell_ms":  now.Sub(prevAt).Milliseconds(),

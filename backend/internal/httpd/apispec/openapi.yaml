@@ -2412,6 +2412,7 @@ components:
           - active
           - idle
           - waiting_input
+          - blocked
           - exited
           type: string
       required:

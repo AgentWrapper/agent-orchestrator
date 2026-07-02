@@ -437,7 +437,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	state := domain.ActivityState(in.State)
 	switch state {
-	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityExited:
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked, domain.ActivityExited:
 	default:
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
 		return
