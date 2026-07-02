@@ -96,12 +96,23 @@ type Tracker struct {
 	baseURL   string
 	userAgent string
 
+	// listCache stores one entry per distinct List request path. The key
+	// space is naturally bounded by intake-enabled repo/filter pairs, so no
+	// eviction is needed here.
+	listCacheMu sync.Mutex
+	listCache   map[string]listCacheEntry
+
 	// preflightOK is the fast-path: once a Preflight succeeds, every
 	// subsequent call short-circuits via atomic.Load without touching the
 	// mutex. preflightMu serializes the one-time network call so concurrent
 	// first-callers don't all fire GET /user against GitHub.
 	preflightOK atomic.Bool
 	preflightMu sync.Mutex
+}
+
+type listCacheEntry struct {
+	etag   string
+	issues []domain.Issue
 }
 
 // New returns a Tracker. It fails fast when no token can be obtained so
@@ -119,6 +130,7 @@ func New(opts Options) (*Tracker, error) {
 		tokens:    src,
 		baseURL:   opts.BaseURL,
 		userAgent: opts.UserAgent,
+		listCache: map[string]listCacheEntry{},
 	}
 	if t.http == nil {
 		t.http = &http.Client{Timeout: 30 * time.Second}
@@ -289,9 +301,36 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 	q.Set("per_page", strconv.Itoa(limit))
 
 	path := fmt.Sprintf("/repos/%s/%s/issues?%s", owner, repoName, q.Encode())
-	resp, err := t.do(ctx, http.MethodGet, path, nil)
+	t.listCacheMu.Lock()
+	cached, hasCached := t.listCache[path]
+	t.listCacheMu.Unlock()
+
+	resp, etag, notModified, err := t.roundTrip(ctx, http.MethodGet, path, nil, cached.etag)
 	if err != nil {
 		return nil, err
+	}
+	if notModified {
+		if hasCached {
+			if etag != "" && etag != cached.etag {
+				t.listCacheMu.Lock()
+				t.listCache[path] = listCacheEntry{etag: etag, issues: cached.issues}
+				t.listCacheMu.Unlock()
+			}
+			// Callers treat issues as read-only; copy the outer slice so
+			// future appends cannot alias the cached backing array.
+			out := make([]domain.Issue, len(cached.issues))
+			copy(out, cached.issues)
+			return out, nil
+		}
+		// A 304 requires a prior validator, but if a server violates that
+		// contract, retry unconditionally rather than returning no data.
+		resp, etag, notModified, err = t.roundTrip(ctx, http.MethodGet, path, nil, "")
+		if err != nil {
+			return nil, err
+		}
+		if notModified {
+			return nil, fmt.Errorf("github tracker: unexpected 304 for uncached list")
+		}
 	}
 	var raw []ghIssue
 	if err := json.Unmarshal(resp, &raw); err != nil {
@@ -303,6 +342,15 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 			continue
 		}
 		out = append(out, issueFromGH(owner, repoName, r))
+	}
+	if etag != "" {
+		t.listCacheMu.Lock()
+		t.listCache[path] = listCacheEntry{etag: etag, issues: out}
+		t.listCacheMu.Unlock()
+	} else if hasCached {
+		t.listCacheMu.Lock()
+		delete(t.listCache, path)
+		t.listCacheMu.Unlock()
 	}
 	return out, nil
 }
@@ -347,43 +395,55 @@ func (t *Tracker) Preflight(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 func (t *Tracker) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	respBody, _, _, err := t.roundTrip(ctx, method, path, body, "")
+	return respBody, err
+}
+
+func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any, ifNoneMatch string) ([]byte, string, bool, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("github tracker: encode body: %w", err)
+			return nil, "", false, fmt.Errorf("github tracker: encode body: %w", err)
 		}
 		rdr = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, rdr)
 	if err != nil {
-		return nil, fmt.Errorf("github tracker: build request: %w", err)
+		return nil, "", false, fmt.Errorf("github tracker: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", t.userAgent)
 	tok, err := t.tokens.Token(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 
 	resp, err := t.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("github tracker: %s %s: %w", method, path, err)
+		return nil, "", false, fmt.Errorf("github tracker: %s %s: %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	etag := resp.Header.Get("ETag")
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, etag, true, nil
+	}
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("github tracker: read response body: %w", readErr)
+		return nil, "", false, fmt.Errorf("github tracker: read response body: %w", readErr)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return respBody, nil
+		return respBody, etag, false, nil
 	}
-	return respBody, classifyError(resp, respBody)
+	return respBody, etag, false, classifyError(resp, respBody)
 }
 
 func classifyError(resp *http.Response, body []byte) error {
