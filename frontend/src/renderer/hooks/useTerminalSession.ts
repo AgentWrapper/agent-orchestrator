@@ -329,13 +329,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const handle = session?.terminalHandleId ?? null;
 		const previousStatus = previousSessionStatusRef.current;
 		previousSessionStatusRef.current = session?.status;
-		if (
-			!handle ||
-			previousStatus !== "terminated" ||
-			session?.status === "terminated" ||
-			r.detached ||
-			!r.terminal
-		) {
+		if (!handle || previousStatus !== "terminated" || session?.status === "terminated" || r.detached || !r.terminal) {
 			return;
 		}
 		if (r.handle !== handle) return;
