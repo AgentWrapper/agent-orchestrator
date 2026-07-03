@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	yaml "gopkg.in/yaml.v3"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // mapPermission maps a legacy AgentPermissionMode to the rewrite PermissionMode
