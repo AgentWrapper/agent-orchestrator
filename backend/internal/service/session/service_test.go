@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,20 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].DisplayName; got != "Fix issue #90" {
 		t.Fatalf("display name = %q, want trimmed rename", got)
+	}
+}
+
+func TestSessionRenameRejectsTooLongDisplayName(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "Original"}
+
+	err := (&Service{store: st}).Rename(context.Background(), "mer-1", strings.Repeat("x", 21))
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "DISPLAY_NAME_TOO_LONG" {
+		t.Fatalf("err = %v, want apierr Invalid DISPLAY_NAME_TOO_LONG", err)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != "Original" {
+		t.Fatalf("display name = %q, want unchanged after rejected rename", got)
 	}
 }
 
