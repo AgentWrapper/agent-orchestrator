@@ -12,9 +12,10 @@ Everything below is reproducible from this repo with one command:
 scripts/dev-setup.sh   # build ao, deploy scripts, generate plists, load jobs
 ```
 
-Idempotent; never restarts an already-loaded job (a daemon restart re-parks
-live sessions). Prereqs it checks but does not install: go, node (nvm), tmux,
-claude, `cd frontend && npm install`. Projects re-register with `ao project add`.
+Idempotent; never restarts an already-loaded job. Prereqs it checks but does
+not install: go, node (nvm), tmux, claude, `cd frontend && npm install`.
+Full path — prereqs, project registration, verification, pitfalls:
+[`skills/machine-setup/SKILL.md`](../skills/machine-setup/SKILL.md).
 
 | File                | What it is                                                                                                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------- |

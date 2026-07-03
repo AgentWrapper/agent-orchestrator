@@ -31,7 +31,7 @@ tail -5 ~/.ao/lan-web.err.log ~/.ao/daemon.err.log
 
 ```sh
 # Fresh machine (or drifted install) — full reproducible setup from the repo:
-scripts/dev-setup.sh                             # idempotent; never restarts loaded jobs
+scripts/dev-setup.sh                             # idempotent; full path: skills/machine-setup/SKILL.md
 
 # UI down / EADDRNOTAVAIL in lan-web.err.log (LAN IP drifted or job unloaded):
 ~/.ao/ao-svc up                                  # or: launchctl kickstart -k "gui/$(id -u)/dev.agent-orchestrator.lan-web"
