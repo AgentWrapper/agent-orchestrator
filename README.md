@@ -16,6 +16,49 @@ An Agentic IDE that supervises parallel AI coding agents in isolated workspaces,
 
 ![Agent Orchestrator Dashboard](ao-dashboard-preview.png)
 
+</div>
+
+---
+
+## What is Agent Orchestrator?
+
+Agent Orchestrator is a meta-harness agent IDE for running AI coding agents in parallel. It gives terminal-based agents like Claude Code, Codex, Cursor, Aider, Goose, and others a shared workspace where their sessions, terminals, branches, pull requests, and feedback loops can be supervised from one place.
+
+The agents still do the coding. AO provides the harness around them: isolated workspaces, live terminal access, session state, PR awareness, and automatic loops that send CI failures, review comments, and merge conflicts back to the right agent. Instead of manually coordinating a pile of agent terminals, AO turns parallel agent work into a managed workflow.
+
+---
+
+## Why Agent Orchestrator?
+
+AI coding agents become much more useful when they can work in parallel, but parallel work gets messy quickly. Branches overlap, terminals get lost, CI failures need follow-up, review comments need replies, and merge conflicts have to reach the right worker.
+
+Agent Orchestrator is built to keep that loop visible and manageable. It helps you:
+
+- Start multiple agents from the same project without mixing their work
+- Keep every session in a separate git worktree
+- See which agents are working, waiting, finished, or blocked
+- Route CI failures, review comments, and merge conflicts back to the right session
+- Use different agent CLIs through one common supervisor
+
+---
+
+## How it works
+
+At a high level, Agent Orchestrator follows a simple loop:
+
+1. Add a project you want agents to work on.
+2. Start one or more sessions from the desktop app or CLI.
+3. AO creates an isolated git worktree for each session.
+4. AO launches the selected coding agent in that session's terminal runtime.
+5. The local daemon watches session state, terminal activity, pull requests, CI, and review feedback.
+6. The desktop app and CLI show the current state and let you send follow-up instructions to the right session.
+
+The result is a local control layer for agentic coding: agents still do the coding, while Agent Orchestrator keeps their workspaces, status, terminals, and feedback loops organized.
+
+---
+
+<div align="center">
+
 ### Witness AO's Journey on X
 
 <table border="1" style="border-collapse: collapse; width: 100%;">
@@ -41,7 +84,7 @@ An Agentic IDE that supervises parallel AI coding agents in isolated workspaces,
 </tr>
 </table>
 
-[Features](#features) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Documentation](#documentation) • [Contributing](#contributing)
+[What is Agent Orchestrator?](#what-is-agent-orchestrator) • [Why Agent Orchestrator?](#why-agent-orchestrator) • [How it works](#how-it-works) • [Features](#features) • [Quick Start](#quick-start) • [Architecture](#architecture) • [Documentation](#documentation) • [Contributing](#contributing)
 
 </div>
 
