@@ -573,9 +573,11 @@ func TestSpawn_ParksRowTerminatedWhenSeedDeleteFails(t *testing.T) {
 
 func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	st := newFakeStore()
+	projectPath := filepath.Join(string(filepath.Separator), "repo", "mer")
+	managedPath := filepath.Join(string(filepath.Separator), "managed", "mer-1")
 	st.projects["mer"] = domain.ProjectRecord{
 		ID:     "mer",
-		Path:   "/repo/mer",
+		Path:   projectPath,
 		Kind:   domain.ProjectKindWorkspace,
 		Config: testRoleAgents(),
 	}
@@ -584,7 +586,7 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 		{Name: "web", RelativePath: "apps/web"},
 	}
 	rt := &fakeRuntime{}
-	ws := &fakeWorkspace{path: "/managed/mer-1"}
+	ws := &fakeWorkspace{path: managedPath}
 	m := New(Deps{
 		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
@@ -595,32 +597,32 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Metadata.WorkspacePath != "/managed/mer-1" {
+	if rec.Metadata.WorkspacePath != managedPath {
 		t.Fatalf("workspace path = %q, want root worktree path", rec.Metadata.WorkspacePath)
 	}
 	if rec.Metadata.Branch != "ao/mer-1" {
 		t.Fatalf("workspace branch = %q, want ao/mer-1", rec.Metadata.Branch)
 	}
-	if got := ws.lastProjectCfg.RootRepoPath; got != "/repo/mer" {
-		t.Fatalf("root repo path = %q, want /repo/mer", got)
+	if got := ws.lastProjectCfg.RootRepoPath; got != projectPath {
+		t.Fatalf("root repo path = %q, want %q", got, projectPath)
 	}
 	if len(ws.lastProjectCfg.Repos) != 2 {
 		t.Fatalf("child repo configs = %d, want 2", len(ws.lastProjectCfg.Repos))
 	}
-	if got := ws.lastProjectCfg.Repos[0].RepoPath; got != "/repo/mer/services/api" {
-		t.Fatalf("api repo path = %q, want /repo/mer/services/api", got)
+	if want := filepath.Join(projectPath, "services", "api"); ws.lastProjectCfg.Repos[0].RepoPath != want {
+		t.Fatalf("api repo path = %q, want %q", ws.lastProjectCfg.Repos[0].RepoPath, want)
 	}
-	if got := ws.lastProjectCfg.Repos[1].RepoPath; got != "/repo/mer/apps/web" {
-		t.Fatalf("web repo path = %q, want /repo/mer/apps/web", got)
+	if want := filepath.Join(projectPath, "apps", "web"); ws.lastProjectCfg.Repos[1].RepoPath != want {
+		t.Fatalf("web repo path = %q, want %q", ws.lastProjectCfg.Repos[1].RepoPath, want)
 	}
 	rows := st.worktrees["mer-1"]
 	if len(rows) != 3 {
 		t.Fatalf("session worktree rows = %d, want 3: %#v", len(rows), rows)
 	}
 	want := map[string]string{
-		domain.RootWorkspaceRepoName: "/managed/mer-1",
-		"api":                        "/managed/mer-1/services/api",
-		"web":                        "/managed/mer-1/apps/web",
+		domain.RootWorkspaceRepoName: managedPath,
+		"api":                        filepath.Join(managedPath, "services", "api"),
+		"web":                        filepath.Join(managedPath, "apps", "web"),
 	}
 	for _, row := range rows {
 		if row.Branch != rec.Metadata.Branch {
