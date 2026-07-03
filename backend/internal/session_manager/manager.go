@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 )
 
 // Sentinel errors returned by the Session Manager; callers match them with
@@ -1000,7 +1001,21 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
-	return base + systemPromptGuard, nil
+	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// aoSkillPointer is appended to every agent system prompt. It points the agent
+// at the using-ao skill the daemon installs under the data dir, rather than
+// inlining the whole CLI catalog. The path is absolute so it resolves from any
+// project's worktree, not just the AO repo (the only place a repo-relative
+// skills/ path would exist). The skill file carries exact flags and examples,
+// so the standing prompt stays a short pointer rather than a command dump.
+func (m *Manager) aoSkillPointer() string {
+	dir := skillassets.Dir(m.dataDir)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	return "\n\n" + "## Using the ao CLI\n\n" +
+		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -1030,10 +1045,15 @@ func orchestratorPrompt(project domain.ProjectID) string {
 You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
 
 Spawn worker sessions for implementation with:
-`+"`ao spawn --project %s --prompt \"<clear worker task>\"`"+`
+`+"`ao spawn --project %s --name \"<label, max 20 chars>\" --prompt \"<clear worker task>\"`"+`
+Both --project and --name are required.
+
+To run a worker on a specific agent, add `+"`--agent <name>`"+` (an alias for `+"`--harness`"+`) — for example `+"`--agent codex`"+` or `+"`--agent claude-code`"+`. If you omit it, the project's default worker agent is used. Run `+"`ao spawn --help`"+` for the full list of agents and every flag.
 
 Message workers with `+"`ao send`"+`, for example:
 `+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
+
+To discover any other AO command, run `+"`ao --help`"+` (and `+"`ao <command> --help`"+` for details on one).
 
 Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
 }

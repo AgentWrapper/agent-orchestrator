@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -59,6 +60,75 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
 	}
+}
+
+func TestAllowlistCoversPromptRequiredPipedCommands(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	if _, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:    "review-w1",
+		WorkspacePath: "/ws/w1",
+		Prompt:        "review it",
+		SystemPrompt:  "you are a reviewer",
+	}); err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+
+	if !contains(agent.got.AllowedTools, "Bash(printf:*)") {
+		t.Fatalf("allowlist missing printf for piped review commands: %#v", agent.got.AllowedTools)
+	}
+
+	for _, cmd := range []string{
+		"printf '%s' '{ \"event\": \"COMMENT\", \"body\": \"x\" }' | gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'",
+		"printf '%s' '{ \"reviews\": [] }' | ao review submit --session sess-1 --reviews -",
+	} {
+		if !compoundCommandCovered(agent.got.AllowedTools, cmd) {
+			t.Fatalf("allowlist does not cover prompt-required command %q with tools %#v", cmd, agent.got.AllowedTools)
+		}
+	}
+
+	disallowed := "printf x | rm -rf /"
+	if compoundCommandCovered(agent.got.AllowedTools, disallowed) {
+		t.Fatalf("allowlist unexpectedly covers disallowed command %q with tools %#v", disallowed, agent.got.AllowedTools)
+	}
+}
+
+func compoundCommandCovered(allowedTools []string, cmd string) bool {
+	for _, segment := range splitPipedCommand(cmd) {
+		if !bashSegmentCovered(allowedTools, segment) {
+			return false
+		}
+	}
+	return true
+}
+
+func splitPipedCommand(cmd string) []string {
+	rawSegments := strings.Split(cmd, "|")
+	segments := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
+		if trimmed := strings.TrimSpace(segment); trimmed != "" {
+			segments = append(segments, trimmed)
+		}
+	}
+	return segments
+}
+
+func bashSegmentCovered(allowedTools []string, segment string) bool {
+	for _, tool := range allowedTools {
+		cmd, ok := strings.CutPrefix(tool, "Bash(")
+		if !ok {
+			continue
+		}
+		cmd, ok = strings.CutSuffix(cmd, ":*)")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(segment, cmd) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(values []string, needle string) bool {

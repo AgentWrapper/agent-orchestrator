@@ -24,8 +24,10 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
 		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
+		{"good codex reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex}}}, false},
+		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
-		{"worker harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessCodex)}}}, true},
+		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 	}
 	for _, tt := range tests {
@@ -80,8 +82,15 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: always use claude-code.
+	// No reviewer configured: always use claude-code, regardless of the worker
+	// harness (see #2241).
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
+		t.Fatalf("default = %q, want reviewer claude-code", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerClaudeCode {
+		t.Fatalf("default = %q, want reviewer claude-code", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerClaudeCode {
 		t.Fatalf("default = %q, want reviewer claude-code", got)
 	}
 

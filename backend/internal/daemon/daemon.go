@@ -24,6 +24,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
@@ -60,6 +61,13 @@ func Run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	// Refresh the embedded using-ao skill into the data dir so worker sessions
+	// in any project can read the ao CLI catalog from a stable absolute path.
+	// Non-fatal: the skill is an enhancement over `ao --help`, not required.
+	if err := skillassets.Install(cfg.DataDir); err != nil {
+		log.Warn("install using-ao skill", "err", err)
+	}
 
 	telemetrySink := newTelemetrySink(cfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
