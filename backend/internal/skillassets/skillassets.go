@@ -51,13 +51,13 @@ func Install(dataDir string) error {
 		}
 		target := filepath.Join(dataDir, "skills", filepath.FromSlash(p))
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o750)
 		}
 		b, err := files.ReadFile(p)
 		if err != nil {
 			return fmt.Errorf("read embedded %q: %w", p, err)
 		}
-		if err := os.WriteFile(target, b, 0o644); err != nil {
+		if err := os.WriteFile(target, b, 0o600); err != nil {
 			return fmt.Errorf("write %q: %w", target, err)
 		}
 		return nil
