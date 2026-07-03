@@ -182,7 +182,6 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 	}
 	issues, err := tracker.List(ctx, repo, domain.ListFilter{
 		State:    domain.ListOpen,
-		Labels:   cfg.Labels,
 		Assignee: cfg.Assignee,
 	})
 	if err != nil {
@@ -220,11 +219,6 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
-	for _, required := range cfg.Labels {
-		if !containsFold(issue.Labels, strings.TrimSpace(required)) {
-			return false
-		}
-	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":

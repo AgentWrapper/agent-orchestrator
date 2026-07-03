@@ -16,7 +16,7 @@ export type CreateProjectAgentSelection = {
 	trackerIntake?: TrackerIntakeConfig;
 };
 
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", labels: "", assignee: "" };
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;

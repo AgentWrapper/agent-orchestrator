@@ -29,14 +29,11 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"worker-only harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessAider)}}}, true},
 		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
-		{"tracker intake label rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}}, false},
 		{"tracker intake assignee rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}, false},
-		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Labels: []string{"agent-ready"}}}, false},
+		{"tracker intake explicit github", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: TrackerProviderGitHub, Assignee: "alice"}}, false},
 		{"tracker intake no rule", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true}}, true},
-		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Labels: []string{"agent-ready"}}}, true},
-		{"tracker intake empty label", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{""}}}, true},
-		{"tracker intake label with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{" agent-ready"}}}, true},
-		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Labels: []string{"agent-ready"}}}, true},
+		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
+		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
 	}
 	for _, tt := range tests {
@@ -83,7 +80,7 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
 	}
 
-	got = (ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}}).WithDefaults()
+	got = (ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}).WithDefaults()
 	if got.TrackerIntake.Provider != TrackerProviderGitHub {
 		t.Fatalf("TrackerIntake.Provider = %q, want %q", got.TrackerIntake.Provider, TrackerProviderGitHub)
 	}

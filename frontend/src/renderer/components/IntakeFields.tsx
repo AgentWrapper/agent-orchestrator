@@ -6,14 +6,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
-// project settings form edit. repo/labels are plumbed but have no input today
-// (labels are temporarily disabled; repo is derived from the git origin
-// server-side) — keeping them in the form means a value set via the CLI
-// (--tracker-label / --tracker-repo) survives a UI save instead of being wiped.
+// project settings form edit. repo has no input today (it's derived from the
+// git origin server-side) but is plumbed so a value set via the CLI
+// (--tracker-repo) survives a UI save instead of being wiped.
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
-	labels: string;
 	assignee: string;
 };
 
@@ -22,30 +20,21 @@ export type IntakeForm = {
 // grows, IntakeFields gains a provider <Select> + per-provider scope fields,
 // and buildIntake switches the scope field it emits.
 
-export function parseLabels(value: string): string[] {
-	return value
-		.split(",")
-		.map((label) => label.trim())
-		.filter((label) => label.length > 0);
-}
-
 // intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
-// enabling intake requires at least one eligibility rule so it cannot drain an
-// entire issue backlog. Labels count even though their input is hidden.
+// enabling intake requires an assignee so it cannot drain an entire issue
+// backlog. v1 intake is assignee-only.
 export function intakeNeedsRule(form: IntakeForm): boolean {
-	return form.enabled && parseLabels(form.labels).length === 0 && form.assignee.trim() === "";
+	return form.enabled && form.assignee.trim() === "";
 }
 
 // buildIntake produces the payload field, scrubbing empties so a disabled or
 // blank intake serializes to `undefined` (omit) rather than an empty object the
 // daemon would persist.
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
-	const labels = parseLabels(form.labels);
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
 		provider: form.enabled ? "github" : undefined,
 		repo: form.repo.trim() || undefined,
-		labels: labels.length ? labels : undefined,
 		assignee: form.assignee.trim() || undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
@@ -166,7 +155,7 @@ export function IntakeFields({
 						/>
 					</IntakeField>
 					{!compact && needsRule && (
-						<p className="text-[12px] leading-5 text-error">Enabling intake requires at least one label or assignee.</p>
+						<p className="text-[12px] leading-5 text-error">Enabling intake requires an assignee.</p>
 					)}
 				</>
 			)}

@@ -80,7 +80,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
-		intakeLabels: (intake.labels ?? []).join(", "),
 		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -94,7 +93,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
-		labels: form.intakeLabels,
 		assignee: form.intakeAssignee,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
@@ -102,7 +100,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
-			intakeLabels: patch.labels ?? f.intakeLabels,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
@@ -150,7 +147,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					return;
 				}
 				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires at least one label or assignee.");
+					setValidationError("Enabling intake requires an assignee.");
 					return;
 				}
 				setValidationError(null);

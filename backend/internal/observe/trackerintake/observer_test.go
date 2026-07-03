@@ -19,8 +19,8 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
 			Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-				Enabled: true,
-				Labels:  []string{"agent-ready"},
+				Enabled:  true,
+				Assignee: "alice",
 			}},
 		}},
 	}
@@ -54,7 +54,7 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	if len(tracker.filters) != 1 {
 		t.Fatalf("tracker filters = %d, want 1", len(tracker.filters))
 	}
-	if got := tracker.filters[0]; got.State != domain.ListOpen || got.Labels[0] != "agent-ready" {
+	if got := tracker.filters[0]; got.State != domain.ListOpen || got.Assignee != "alice" || len(got.Labels) != 0 {
 		t.Fatalf("tracker filter = %+v", got)
 	}
 }
@@ -64,15 +64,15 @@ func TestPollSkipsExistingIssueSessionsAfterRestart(t *testing.T) {
 		projects: []domain.ProjectRecord{{
 			ID:            "demo",
 			RepoOriginURL: "https://github.com/acme/demo.git",
-			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}},
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 		}},
 		sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12"}},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID:     domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
-		Title:  "Already running",
-		State:  domain.IssueOpen,
-		Labels: []string{"agent-ready"},
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Already running",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
 	}}}
 	spawner := &fakeSpawner{}
 
@@ -100,7 +100,7 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 		projects: []domain.ProjectRecord{
 			{ID: "off", RepoOriginURL: "https://github.com/acme/off.git"},
 			{ID: "broad", RepoOriginURL: "https://github.com/acme/broad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true}}},
-			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}}},
+			{ID: "missing-origin", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
 		},
 	}
 	tracker := &fakeTracker{issues: []domain.Issue{{
@@ -123,15 +123,15 @@ func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 
 func TestPollContinuesAfterTrackerAndSpawnFailures(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{
-		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}}},
-		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}}},
+		{ID: "bad", RepoOriginURL: "https://github.com/acme/bad.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
+		{ID: "good", RepoOriginURL: "https://github.com/acme/good.git", Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}},
 	}}
 	tracker := &fakeTracker{
 		failRepos: map[string]error{"acme/bad": errors.New("rate limited")},
 		issuesByRepo: map[string][]domain.Issue{
 			"acme/good": {
-				{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/good#1"}, Title: "first", State: domain.IssueOpen, Labels: []string{"agent-ready"}},
-				{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/good#2"}, Title: "second", State: domain.IssueOpen, Labels: []string{"agent-ready"}},
+				{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/good#1"}, Title: "first", State: domain.IssueOpen, Assignees: []string{"alice"}},
+				{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/good#2"}, Title: "second", State: domain.IssueOpen, Assignees: []string{"alice"}},
 			},
 		},
 	}
@@ -153,7 +153,7 @@ func TestPollBacksOffProjectAfterFailure(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 	}}}
 	tracker := &fakeTracker{failRepos: map[string]error{"acme/demo": errors.New("rate limited")}}
 	observer := New(singleResolver(tracker), store, &fakeSpawner{}, Config{
@@ -189,11 +189,11 @@ func TestPollSkipsNonOpenIssueStates(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "already active", State: domain.IssueInProgress, Labels: []string{"agent-ready"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "ready", State: domain.IssueOpen, Labels: []string{"agent-ready"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "already active", State: domain.IssueInProgress, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "ready", State: domain.IssueOpen, Assignees: []string{"alice"}},
 	}}
 	spawner := &fakeSpawner{}
 
@@ -209,11 +209,11 @@ func TestPollAppliesLocalEligibilityFilter(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/acme/demo.git",
-		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Labels: []string{"agent-ready"}, Assignee: "alice"}},
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 	}}}
 	tracker := &fakeTracker{issues: []domain.Issue{
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "missing label", State: domain.IssueOpen, Assignees: []string{"alice"}},
-		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "wrong assignee", State: domain.IssueOpen, Labels: []string{"agent-ready"}, Assignees: []string{"bob"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "unassigned", State: domain.IssueOpen},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "wrong assignee", State: domain.IssueOpen, Assignees: []string{"bob"}},
 		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#3"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"Agent-Ready"}, Assignees: []string{"Alice"}},
 	}}
 	spawner := &fakeSpawner{}
@@ -269,9 +269,9 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 		ID:            "demo",
 		RepoOriginURL: "https://github.com/wrong/repo.git",
 		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
-			Enabled: true,
-			Repo:    "acme/demo",
-			Labels:  []string{"agent-ready"},
+			Enabled:  true,
+			Repo:     "acme/demo",
+			Assignee: "alice",
 		}},
 	}
 	repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults())

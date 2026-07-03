@@ -2554,10 +2554,6 @@ components:
           type: string
         enabled:
           type: boolean
-        labels:
-          items:
-            type: string
-          type: array
         provider:
           enum:
           - github

@@ -69,8 +69,8 @@ const (
 // ListFilter is the query the Session Manager passes to Tracker.List.
 // Empty / zero values mean "no filter on this dimension".
 //
-// Limit is the requested page size. The adapter applies its own default when
-// zero and caps at the provider's per-page maximum.
+// Limit is an optional total-result cap. Adapters choose their own provider
+// page size.
 type ListFilter struct {
 	State    ListStateFilter `json:"state,omitempty"`
 	Labels   []string        `json:"labels,omitempty"`
@@ -79,7 +79,7 @@ type ListFilter struct {
 }
 
 // TrackerIntakeConfig controls issue-driven worker spawning for a project.
-// Enabled requires at least one explicit eligibility rule so turning intake on
+// Enabled requires an explicit assignee eligibility rule so turning intake on
 // cannot accidentally drain an entire issue backlog.
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
@@ -88,9 +88,6 @@ type TrackerIntakeConfig struct {
 	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
 	// intake loop derives it from the project's repo origin URL. GitHub only.
 	Repo string `json:"repo,omitempty"`
-	// Labels narrows eligible issues. All labels are forwarded to the provider's
-	// list filter; providers decide whether the match is all-of or provider-native.
-	Labels []string `json:"labels,omitempty"`
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
@@ -117,19 +114,11 @@ func (c TrackerIntakeConfig) Validate() error {
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
 		return err
 	}
-	for i, label := range c.Labels {
-		if strings.TrimSpace(label) == "" {
-			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
-		}
-		if strings.TrimSpace(label) != label {
-			return fmt.Errorf("trackerIntake.labels[%d]: must not have leading or trailing whitespace", i)
-		}
-	}
 	if err := validateNoWhitespaceField("trackerIntake.assignee", c.Assignee); err != nil {
 		return err
 	}
-	if len(c.Labels) == 0 && strings.TrimSpace(c.Assignee) == "" {
-		return fmt.Errorf("trackerIntake: at least one of labels or assignee is required when enabled")
+	if strings.TrimSpace(c.Assignee) == "" {
+		return fmt.Errorf("trackerIntake: assignee is required when enabled")
 	}
 	return nil
 }
