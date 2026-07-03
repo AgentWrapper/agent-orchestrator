@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       important:
-        description: 'Mark this nightly as an important update (escalates the in-app restart prompt). Retro-flag an already-published nightly by re-running only the publish-feed job with this input set.'
+        description: "Mark this nightly as an important update (escalates the in-app restart prompt). Retro-flag an already-published nightly by re-running only the publish-feed job with this input set."
         type: boolean
         default: false
 
