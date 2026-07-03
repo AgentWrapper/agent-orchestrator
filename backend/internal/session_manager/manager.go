@@ -495,14 +495,14 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
-		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
-		}
 		handle := runtimeHandle(rec.Metadata)
 		if handle.ID != "" {
 			if err := m.runtime.Destroy(ctx, handle); err != nil {
-				m.logger.Warn("retire replacement: runtime destroy failed", "sessionID", rec.ID, "error", err)
+				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 			}
+		}
+		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 		}
 		return nil
 	}
@@ -517,7 +517,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			m.logger.Warn("retire replacement: runtime destroy failed", "sessionID", rec.ID, "error", err)
+			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 		}
 	}
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {

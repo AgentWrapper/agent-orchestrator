@@ -151,6 +151,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
@@ -170,7 +171,7 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
-	return nil
+	return r.destroyErr
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
 	if r.aliveErr != nil {
@@ -1513,6 +1514,42 @@ func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T
 	}
 	if ws.stashCalls != 1 {
 		t.Fatalf("stash calls = %d, want 1", ws.stashCalls)
+	}
+}
+
+func TestRetireForReplacementRuntimeDestroyFailureBlocksWorkspaceRelease(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	rt.destroyErr = errors.New("tmux transient")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("RetireForReplacement err = %v, want runtime failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when runtime destroy fails")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want one attempt for orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:mer-orch" {
+			t.Fatalf("ForceDestroy must not run after runtime destroy failure; calls=%v", ws.calls)
+		}
 	}
 }
 
