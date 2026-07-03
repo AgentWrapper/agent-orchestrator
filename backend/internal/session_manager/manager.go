@@ -1881,7 +1881,15 @@ func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.Ag
 }
 
 func systemPromptFileRequired(harness domain.AgentHarness) bool {
-	return harness == domain.HarnessAider
+	switch harness {
+	case domain.HarnessAider,
+		domain.HarnessAuggie,
+		domain.HarnessOpenCode,
+		domain.HarnessCopilot:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) systemPromptDir(id domain.SessionID) string {

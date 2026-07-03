@@ -39,6 +39,35 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAddsCustomInstructionsDir(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	t.Setenv(copilotCustomInstructionsEnvVar, "/user/instructions")
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
+		Prompt:           "-fix this",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Dir(promptFile)
+	want := []string{"env", "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=" + dir + ",/user/instructions", "copilot", "--allow-all", "-p", "-fix this"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "follow AO rules\n" {
+		t.Fatalf("AGENTS.md = %q, want inline prompt", data)
+	}
+}
+
 func TestGetLaunchCommandOmitsPromptWhenEmpty(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 
@@ -270,6 +299,39 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	want := []string{"copilot", "--allow-all-tools", "--resume", "uuid-123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandAddsCustomInstructionsDir(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("restore AO rules"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: promptFile,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "uuid-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	dir := filepath.Dir(promptFile)
+	want := []string{"env", "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=" + dir, "copilot", "--resume", "uuid-123"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "restore AO rules\n" {
+		t.Fatalf("AGENTS.md = %q, want file prompt", data)
 	}
 }
 

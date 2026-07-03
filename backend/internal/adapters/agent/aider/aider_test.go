@@ -176,7 +176,7 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandSystemPromptFileUsesRead(t *testing.T) {
+func TestGetLaunchCommandSystemPromptFileUsesReadOnlyContext(t *testing.T) {
 	p := &Plugin{resolvedBinary: "aider"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Prompt:           "do the thing",

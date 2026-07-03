@@ -129,6 +129,76 @@ func TestGetLaunchCommandPromptedOrchestratorCarriesPrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandBuildsCustomAgentForSystemPrompt(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
+		Prompt:           "-fix this",
+		SystemPrompt:     "follow AO rules",
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--trust-all-tools",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	var config map[string]json.RawMessage
+	data, err := os.ReadFile(kiroAgentPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if string(config["name"]) != `"ao"` || string(config["prompt"]) != `"follow AO rules"` {
+		t.Fatalf("agent config = %#v, want generated inline prompt agent", config)
+	}
+}
+
+func TestGetLaunchCommandSystemPromptFileAgent(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: promptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	var config map[string]json.RawMessage
+	data, err := os.ReadFile(kiroAgentPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(config["prompt"]); got != `"`+"file://"+filepath.ToSlash(promptFile)+`"` {
+		t.Fatalf("agent prompt = %q, want file URI", got)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -621,6 +691,46 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt:     "restore AO rules",
+		SystemPromptFile: promptFile,
+		Session: ports.SessionRef{
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "uuid-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"kiro-cli", "chat",
+		"--agent", "ao",
+		"--resume-id", "uuid-123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+	var config map[string]json.RawMessage
+	data, err := os.ReadFile(kiroAgentPath(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if string(config["prompt"]) != `"restore AO rules"` {
+		t.Fatalf("agent config = %#v, want restore prompt", config)
 	}
 }
 

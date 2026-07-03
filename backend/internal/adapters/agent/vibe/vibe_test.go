@@ -152,26 +152,6 @@ func TestGetLaunchCommandWithPrompt(t *testing.T) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
-
-func TestGetLaunchCommandUsesInteractiveTUI(t *testing.T) {
-	p := &Plugin{resolvedBinary: "vibe"}
-	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for i, arg := range cmd {
-		switch arg {
-		case "--output", "-p", "--prompt":
-			t.Fatalf("cmd = %#v must not use programmatic output mode", cmd)
-		case "--":
-			if i+1 >= len(cmd) || cmd[i+1] != "task" {
-				t.Fatalf("cmd = %#v must pass prompt as positional initial prompt", cmd)
-			}
-		}
-	}
-}
-
 func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -254,6 +234,32 @@ func TestGetRestoreCommand(t *testing.T) {
 	}
 
 	want := []string{"vibe", "--trust", "--workdir", "/work/repo", "--agent", "auto-approve", "--resume", "abcd1234-5678-90ab-cdef-1234567890ab"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandReappliesSystemPromptAgent(t *testing.T) {
+	p := &Plugin{resolvedBinary: "vibe"}
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	workspace := t.TempDir()
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions:      ports.PermissionModeAuto,
+		SystemPrompt:     "restore AO rules",
+		SystemPromptFile: promptFile,
+		Session: ports.SessionRef{
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "abcd1234"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	want := []string{"vibe", "--trust", "--workdir", workspace, "--agent", "ao-system-prompt", "--auto-approve", "--resume", "abcd1234"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

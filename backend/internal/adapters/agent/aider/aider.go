@@ -56,14 +56,16 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a headless Aider session:
 //
-//	aider -m <prompt> [permission flags] --no-check-update --no-stream --no-pretty [--read <system prompt file>]
+//	aider -m <prompt> [permission flags] --no-check-update --no-stream --no-pretty [--read <context file>]
 //
 // The prompt is delivered with `-m <prompt>` rather than positionally: Aider
 // treats positional arguments as files to add to the chat, so a positional
 // prompt would be misread. The `-m` pair is only appended when a prompt is set.
 //
-// Aider has no inline system-prompt mechanism; only SystemPromptFile is honored
-// via --read. The --no-check-update --no-stream --no-pretty flags keep Aider
+// Aider has no native system-prompt injection mechanism. AO's prompt file is
+// supplied with --read as read-only context so the agent can see the standing
+// instructions, but this is context fallback rather than system-message
+// replacement. The --no-check-update --no-stream --no-pretty flags keep Aider
 // well-behaved in a non-interactive, captured-output context.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.aiderBinary(ctx)
@@ -80,9 +82,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)
 	}
-	// aider has no inline system-prompt mechanism; only SystemPromptFile is
-	// honored via --read. A cfg.SystemPrompt with no file is intentionally
-	// dropped here rather than written to disk.
+	// aider has no inline system-prompt mechanism. A cfg.SystemPrompt with no
+	// file is intentionally dropped here rather than written to disk.
 	return cmd, nil
 }
 
