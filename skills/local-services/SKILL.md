@@ -43,14 +43,21 @@ cp -f scripts/{ao-svc,ao-daemon.sh,lan-web-server.sh} ~/.ao/
 # Deploy a rebuilt daemon (launchd runs ~/.ao/bin/ao, NOT the PATH install):
 scripts/daemon-build.sh
 cp -f ~/.cache/aoagents/agent-orchestrator/bin/ao ~/.ao/bin/ao
-launchctl kickstart -k "gui/$(id -u)/dev.agent-orchestrator.daemon"   # ⚠ see below
+launchctl kickstart -k "gui/$(id -u)/dev.agent-orchestrator.daemon"   # daemon only — sessions survive
 ```
 
-## ⚠ Before restarting the daemon
+## Daemon restart ≠ agent relaunch (verified 2026-07-02)
 
-`ao session ls` first. A daemon restart tears down every session tmux pane;
-restore-all re-parks each agent at the `claude --resume` menu (pick option 2 to
-keep full context). Don't restart with live workers unless the user agrees.
+`kickstart -k` cycles only the daemon process; tmux panes are independent, so
+the new daemon **reattaches** to live sessions — zero disruption, but running
+agents keep their old argv (new flags/config do NOT apply to them). To actually
+relaunch agents with fresh argv (`ao session ls` first — they re-park at the
+`claude --resume` menu; pick option 2 for full context):
+
+```sh
+ao stop --timeout 30s                            # all: panes torn down; KeepAlive respawns daemon → restore-all
+ao session kill <id> && ao session restore <id>  # one session, surgical
+```
 
 ## Gotchas
 
