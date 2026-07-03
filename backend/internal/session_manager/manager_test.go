@@ -1913,7 +1913,7 @@ func TestReconcile_AdoptAcrossDaemonRestart(t *testing.T) {
 	st.sessions["mer-4"] = domain.SessionRecord{
 		ID: "mer-4", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
 		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
-		Metadata:     domain.SessionMetadata{Branch: "ao/mer-4/root", WorkspacePath: "/ws/mer-4"},
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-4/root", WorkspacePath: "/ws/mer-4"},
 	}
 
 	if err := m.Reconcile(ctx); err != nil {
