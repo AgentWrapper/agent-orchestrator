@@ -114,23 +114,46 @@ func TestKilocodeDBHasAuthorizedAccount(t *testing.T) {
 	}
 }
 
-func TestKilocodeShellEnvAuthStatusAuthorized(t *testing.T) {
-	shellPath := filepath.Join(t.TempDir(), "fake-shell")
+func TestAuthStatusUnknownWhenKeyOnlyComesFromInteractiveShell(t *testing.T) {
+	dir := t.TempDir()
+	shellPath := filepath.Join(dir, "fake-shell")
 	if err := os.WriteFile(shellPath, []byte(`#!/bin/sh
+/usr/bin/touch "$AO_SHELL_PROBE_MARKER"
 if [ "$1" = "-ic" ]; then
 	OPENAI_API_KEY=from-shell /bin/sh -c "$2"
 fi
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SHELL", shellPath)
+	kilocodePath := filepath.Join(dir, "kilocode")
+	if err := os.WriteFile(kilocodePath, []byte(`#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "list" ]; then
+	printf 'auth status unavailable\n'
+	exit 1
+fi
+exit 1
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(dir, "shell-probe-marker")
 
-	status, ok, err := kilocodeShellEnvAuthStatus(context.Background())
+	t.Setenv("SHELL", shellPath)
+	t.Setenv("PATH", dir)
+	t.Setenv("KILO_DATA_DIR", filepath.Join(dir, "missing-kilo-data"))
+	t.Setenv("AO_SHELL_PROBE_MARKER", markerPath)
+	for _, name := range kilocodeAPIKeyEnvVars {
+		t.Setenv(name, "")
+	}
+
+	status, err := (&Plugin{resolvedBinary: kilocodePath}).AuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusUnknown)
+	}
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("interactive shell probe ran; marker stat error = %v", err)
 	}
 }
 

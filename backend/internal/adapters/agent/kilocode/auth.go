@@ -29,11 +29,6 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	if status, ok, err := kilocodeShellEnvAuthStatus(ctx); err != nil {
-		return ports.AgentAuthStatusUnknown, err
-	} else if ok {
-		return status, nil
-	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -183,45 +178,6 @@ func kilocodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized
 		}
 	}
 	return false, known, nil
-}
-
-const kilocodeShellEnvAuthorizedMarker = "__AO_KILOCODE_AUTH_ENV_PRESENT__"
-
-func kilocodeShellEnvAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	shell := strings.TrimSpace(os.Getenv("SHELL"))
-	if shell == "" {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	//nolint:gosec // shell is the user's configured login shell; the script only checks known env var names
-	out, err := exec.CommandContext(probeCtx, shell, "-ic", kilocodeShellEnvProbeScript()).CombinedOutput()
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, false, probeCtx.Err()
-	}
-	if strings.Contains(string(out), kilocodeShellEnvAuthorizedMarker) {
-		return ports.AgentAuthStatusAuthorized, true, nil
-	}
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func kilocodeShellEnvProbeScript() string {
-	return `for name in ` + strings.Join(kilocodeAPIKeyEnvVars, " ") + `; do
-	eval "value=\${$name-}"
-	if [ -n "$value" ]; then
-		printf '%s\n' '` + kilocodeShellEnvAuthorizedMarker + `'
-		exit 0
-	fi
-done
-exit 1`
 }
 
 var kilocodeAuthListCountRE = regexp.MustCompile(`(?m)\b([1-9][0-9]*)\s+(credentials?|environment variables?)\b`)
