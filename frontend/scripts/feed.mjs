@@ -3,6 +3,10 @@
 // ESM (mirrors nightly-version.mjs) so CI runs `node scripts/feed.mjs` directly
 // and vitest unit-tests the pure functions. The only non-stdlib reach is the
 // blockmap wrapper (Task 1).
+// Pass --important to emit `important: true` in each generated yml. An
+// already-published nightly can be retro-flagged by re-running the feed job
+// with --important set (or editing the yml and running
+// `gh release upload TAG nightly*.yml --clobber`).
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeBlockmap } from "./blockmap.mjs";
@@ -34,7 +38,9 @@ export function feedFilename(channel, platform) {
 // buildYml serializes one platform's feed. files is [{ url, sha512, size }];
 // for mac the arm64 entry comes first. The deprecated top-level path/sha512
 // point at files[0]. blockMapSize is never written (forces sidecar differential).
-export function buildYml(version, files, releaseDate) {
+// When important is true, emits `important: true` after releaseDate so the
+// in-app update prompt is escalated.
+export function buildYml(version, files, releaseDate, important = false) {
 	const lines = [`version: ${version}`, "files:"];
 	for (const f of files) {
 		lines.push(`  - url: ${f.url}`);
@@ -44,12 +50,13 @@ export function buildYml(version, files, releaseDate) {
 	lines.push(`path: ${files[0].url}`);
 	lines.push(`sha512: ${files[0].sha512}`);
 	lines.push(`releaseDate: '${releaseDate}'`);
+	if (important) lines.push("important: true");
 	return lines.join("\n") + "\n";
 }
 
 // generateFeeds writes the yml + sidecar blockmaps for every platform present in
 // dir. version may carry +build metadata (nightly); strip it for the yml.
-async function generateFeeds(dir, rawVersion, channel, releaseDate) {
+async function generateFeeds(dir, rawVersion, channel, releaseDate, important = false) {
 	const version = rawVersion.split("+")[0];
 	const sel = selectInstallers(readdirSync(dir), version);
 	const groups = [
@@ -64,18 +71,19 @@ async function generateFeeds(dir, rawVersion, channel, releaseDate) {
 			const { sha512, size } = await writeBlockmap(join(dir, name));
 			files.push({ url: name, sha512, size });
 		}
-		writeFileSync(join(dir, feedFilename(channel, platform)), buildYml(version, files, releaseDate));
+		writeFileSync(join(dir, feedFilename(channel, platform)), buildYml(version, files, releaseDate, important));
 	}
 }
 
-// CLI: node scripts/feed.mjs <dir> <version> <channel>
+// CLI: node scripts/feed.mjs <dir> <version> <channel> [--important]
 if (import.meta.url === `file://${process.argv[1]}`) {
 	const [, , dir, version, channel] = process.argv;
 	if (!dir || !version || !channel) {
 		process.stderr.write("usage: node feed.mjs <dir> <version> <channel>\n");
 		process.exit(2);
 	}
-	generateFeeds(dir, version, channel, new Date().toISOString()).catch((err) => {
+	const important = process.argv.includes("--important");
+	generateFeeds(dir, version, channel, new Date().toISOString(), important).catch((err) => {
 		process.stderr.write(`${err.stack || err}\n`);
 		process.exit(1);
 	});
