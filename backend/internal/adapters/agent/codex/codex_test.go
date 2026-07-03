@@ -430,7 +430,9 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	workspace := canonicalTempDir(t)
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:      ports.PermissionModeAuto,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: filepath.Join("tmp", "restore-system.md"),
 		Session: ports.SessionRef{
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 			WorkspacePath: workspace,
@@ -457,6 +459,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
+		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {

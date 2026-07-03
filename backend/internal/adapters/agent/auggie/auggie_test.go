@@ -134,7 +134,9 @@ func TestGetRestoreCommand(t *testing.T) {
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-abc123"},
 		},
-		Permissions: ports.PermissionModeBypassPermissions,
+		Permissions:      ports.PermissionModeBypassPermissions,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: "/tmp/system.md",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +145,7 @@ func TestGetRestoreCommand(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 
-	want := []string{"auggie", "--print", "--resume", "sess-abc123"}
+	want := []string{"auggie", "--print", "--instruction", "restore inline wins", "--resume", "sess-abc123"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

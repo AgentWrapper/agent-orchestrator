@@ -160,7 +160,9 @@ func TestGetRestoreCommand(t *testing.T) {
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "T-abc123"},
 		},
-		Permissions: ports.PermissionModeBypassPermissions,
+		Permissions:      ports.PermissionModeBypassPermissions,
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: "/tmp/system.md",
 	})
 	if err != nil {
 		t.Fatal(err)

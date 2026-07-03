@@ -126,7 +126,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "run", "--resume", "--session-id", agentSessionID)
+	cmd = append(gooseModeEnvPrefix(cfg.Permissions), binary, "run")
+	systemPrompt, err := restoreSystemPromptText(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--system", systemPrompt)
+	}
+	cmd = append(cmd, "--resume", "--session-id", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -144,17 +152,26 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 // flag takes inline text only (no file variant), so a system-prompt file is read
 // from disk only when inline instructions are unavailable.
 func systemPromptText(cfg ports.LaunchConfig) (string, error) {
-	if cfg.SystemPrompt != "" {
-		return cfg.SystemPrompt, nil
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func restoreSystemPromptText(cfg ports.RestoreConfig) (string, error) {
+	return systemPromptTextFrom(cfg.SystemPrompt, cfg.SystemPromptFile)
+}
+
+func systemPromptTextFrom(inline, file string) (string, error) {
+	if inline != "" {
+		return inline, nil
 	}
-	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", cfg.SystemPromptFile, err)
-		}
-		if text := strings.TrimSpace(string(data)); text != "" {
-			return text, nil
-		}
+	if file == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(file) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	if text := strings.TrimSpace(string(data)); text != "" {
+		return text, nil
 	}
 	return "", nil
 }

@@ -153,7 +153,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "autohand"}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Permissions: ports.PermissionModeAuto,
+		Permissions:  ports.PermissionModeAuto,
+		SystemPrompt: "restore instructions ignored by resume",
 		Session: ports.SessionRef{
 			WorkspacePath: "/work/space",
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "sess-123"},

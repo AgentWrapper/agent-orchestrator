@@ -141,6 +141,8 @@ func TestGetLaunchCommandSystemPrompt(t *testing.T) {
 func TestGetRestoreCommand(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "droid"}
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPrompt:     "restore inline wins",
+		SystemPromptFile: "/tmp/system.md",
 		Session: ports.SessionRef{
 			ID: "mer-4",
 			Metadata: map[string]string{
@@ -154,7 +156,7 @@ func TestGetRestoreCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("ok=false, want true")
 	}
-	want := []string{"droid", "-r", "droid-ses-1"}
+	want := []string{"droid", "--append-system-prompt", "restore inline wins", "-r", "droid-ses-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

@@ -126,7 +126,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary, "--print", "--resume", agentSessionID}
+	cmd = []string{binary, "--print"}
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "--instruction", cfg.SystemPrompt)
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "--instruction-file", cfg.SystemPromptFile)
+	}
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
 
