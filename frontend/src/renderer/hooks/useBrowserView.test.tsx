@@ -349,4 +349,27 @@ describe("useBrowserView", () => {
 		expect(bridge.navigate).not.toHaveBeenCalled();
 		expect(bridge.clear).not.toHaveBeenCalled();
 	});
+
+	it("clears the view when the session is terminated, even with an active preview URL", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ terminated }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					terminated,
+					previewUrl: "http://localhost:5173/",
+					previewRevision: 1,
+				}),
+			{ initialProps: { terminated: false } },
+		);
+		// The preview drives a navigate on mount.
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+
+		// Terminate the session – the view must be cleared and no re-navigate.
+		rerender({ terminated: true });
+		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
 });

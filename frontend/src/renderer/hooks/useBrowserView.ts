@@ -8,6 +8,12 @@ type UseBrowserViewOptions = {
 	active: boolean;
 	poppedOut: boolean;
 	/**
+	 * When true, the view is cleared and the daemon-driven preview is suppressed.
+	 * Use when the session is terminated: the old preview content should not
+	 * remain visible even if the DB still carries a preview_url.
+	 */
+	terminated?: boolean;
+	/**
 	 * Preview target driven by the daemon (via `ao preview`, streamed over CDC).
 	 * When set, the view navigates here automatically; an empty value clears it.
 	 */
@@ -68,6 +74,7 @@ export function useBrowserView({
 	sessionId,
 	active,
 	poppedOut,
+	terminated,
 	previewUrl,
 	previewRevision,
 }: UseBrowserViewOptions): BrowserViewModel {
@@ -228,11 +235,18 @@ export function useBrowserView({
 
 	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
 
+	// When the session is terminated, clear the view and stop reacting to
+	// daemon-driven preview changes so stale content does not remain visible.
+	useEffect(() => {
+		if (!terminated) return;
+		void clear();
+	}, [clear, terminated]);
+
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
 	useEffect(() => {
-		if (!viewId) return;
+		if (!viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
 		const revision = typeof previewRevision === "number" ? previewRevision : null;
 		const previous = previewTriggerRef.current;
