@@ -917,7 +917,8 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			continue
 		}
 		var ws ports.WorkspaceInfo
-		if project.Kind.WithDefault() == domain.ProjectKindWorkspace && len(rows) > 1 {
+		restoredWorkspaceProject := project.Kind.WithDefault() == domain.ProjectKindWorkspace && len(rows) > 1
+		if restoredWorkspaceProject {
 			projectRows, rowErr := m.sessionWorktreeRowsToRepoInfos(ctx, project, rec, rows)
 			if rowErr != nil {
 				m.logger.Error("restore-all: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
@@ -992,8 +993,13 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		if err := m.markSessionWorktreesActive(ctx, rows); err != nil {
 			m.logger.Warn("restore-all: marking worktrees active failed", "sessionID", rec.ID, "error", err)
 		}
-		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-			m.logger.Error("restore-all: delete consumed worktree marker failed", "sessionID", rec.ID, "error", err)
+
+		// One-shot: drop the consumed marker so it never outlives one restart
+		// (#2319). A still-live session re-acquires it at the next quit.
+		if !restoredWorkspaceProject {
+			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+				m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
+			}
 		}
 	}
 	return nil

@@ -2457,6 +2457,23 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
 	}
+	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("workspace project rows after RestoreAll = %v, want root and child inventory", rows)
+	}
+	states := map[string]string{}
+	for _, row := range rows {
+		states[row.RepoName] = row.State
+		if row.PreservedRef != "" {
+			t.Fatalf("row %s preserved_ref = %q, want consumed", row.RepoName, row.PreservedRef)
+		}
+	}
+	if states[domain.RootWorkspaceRepoName] != "active" || states["api"] != "active" {
+		t.Fatalf("workspace project row states = %v, want active inventory", states)
+	}
 }
 
 func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
