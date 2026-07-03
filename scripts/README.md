@@ -18,7 +18,7 @@ claude, `cd frontend && npm install`. Projects re-register with `ao project add`
 
 | File                | What it is                                                                                                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `dev-setup.sh`      | one-shot machine setup: builds + deploys all of the below, generates the plists, loads the jobs             |
+| `dev-setup.sh`      | one-shot machine setup: builds + deploys all of the below, generates the plists, loads the jobs            |
 | `ao-daemon.sh`      | launchd wrapper for the AO daemon (`~/.ao/bin/ao daemon`); pins `AO_ALLOWED_ORIGINS` to the current LAN IP |
 | `lan-web-server.sh` | launchd wrapper for the LAN web UI — Vite renderer dev server on `0.0.0.0:3000`                            |
 | `ao-svc`            | `up/down/status` for the **lan-web job only** (the daemon has its own plist, managed via raw `launchctl`)  |
