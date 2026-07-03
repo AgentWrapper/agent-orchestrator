@@ -489,6 +489,33 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+  /api/v1/projects/{id}/collisions:
+    get:
+      operationId: listProjectCollisions
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListProjectCollisionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List the project's current cross-session edit collisions
+      tags:
+      - projects
   /api/v1/projects/{id}/config:
     put:
       operationId: setProjectConfig
@@ -1548,6 +1575,56 @@ components:
       - sessionId
       - reason
       type: object
+    Collision:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/CollisionFile'
+          type: array
+        firstSeenAt:
+          format: date-time
+          type: string
+        sessionA:
+          type: string
+        sessionB:
+          type: string
+        severity:
+          enum:
+          - soft
+          - hot
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - sessionA
+      - sessionB
+      - severity
+      - files
+      - firstSeenAt
+      - updatedAt
+      type: object
+    CollisionFile:
+      properties:
+        path:
+          type: string
+        ranges:
+          items:
+            $ref: '#/components/schemas/CollisionRange'
+          type: array
+      required:
+      - path
+      type: object
+    CollisionRange:
+      properties:
+        end:
+          type: integer
+        start:
+          type: integer
+      required:
+      - start
+      - end
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -1703,6 +1780,15 @@ components:
           type: array
       required:
       - notifications
+      type: object
+    ListProjectCollisionsResponse:
+      properties:
+        collisions:
+          items:
+            $ref: '#/components/schemas/Collision'
+          type: array
+      required:
+      - collisions
       type: object
     ListProjectsResponse:
       properties:

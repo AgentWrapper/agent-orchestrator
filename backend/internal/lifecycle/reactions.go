@@ -189,6 +189,58 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	return nil
 }
 
+// collisionMaxNudge caps how many times each agent is told about one evolving
+// cross-session collision so a churning overlap cannot spam its pane.
+const collisionMaxNudge = 3
+
+// ApplyCollision reacts to a hot cross-session edit collision detected by the
+// convergence observer (two live sessions changing overlapping code before
+// either opens a PR). It sends each live participant a coordinating nudge naming
+// the peer session and the overlapping files so the agents can diverge before
+// the overlap becomes a merge conflict. Dedup is keyed on recipient+peer and the
+// collision signature: a steady overlap is announced once and only re-announced
+// when its content changes. Unlike PR nudges, the dedup is in-memory only
+// (prURL is empty), so the worst case after a daemon restart is one repeat — the
+// same trade-off the PR-nudge path documents.
+func (m *Manager) ApplyCollision(ctx context.Context, c domain.CollisionWithNames) error {
+	if m.messenger == nil || c.Severity != domain.CollisionHot {
+		return nil
+	}
+	if err := m.nudgeCollision(ctx, c.SessionA, c.SessionB, c.NameB, c.Signature, c.Files); err != nil {
+		return err
+	}
+	return m.nudgeCollision(ctx, c.SessionB, c.SessionA, c.NameA, c.Signature, c.Files)
+}
+
+func (m *Manager) nudgeCollision(ctx context.Context, recipient, peer domain.SessionID, peerName, sig string, files []domain.CollisionFile) error {
+	rec, ok, err := m.store.GetSession(ctx, recipient)
+	if err != nil || !ok {
+		return err
+	}
+	if rec.IsTerminated {
+		return nil
+	}
+	key := "collision:" + string(recipient) + ":" + string(peer)
+	return m.sendOnce(ctx, recipient, "", key, sig, collisionMessage(peerName, files), collisionMaxNudge)
+}
+
+func collisionMessage(peerName string, files []domain.CollisionFile) string {
+	const maxList = 5
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, domain.SanitizeControlChars(f.Path))
+	}
+	list := strings.Join(paths[:min(len(paths), maxList)], ", ")
+	if len(paths) > maxList {
+		list += fmt.Sprintf(", and %d more", len(paths)-maxList)
+	}
+	name := domain.SanitizeControlChars(peerName)
+	if strings.TrimSpace(name) == "" {
+		name = "another session"
+	}
+	return fmt.Sprintf("Heads up: another agent session (%s) is concurrently editing overlapping code in this repository: %s. Coordinate or diverge now to avoid a merge conflict before you both open PRs.", name, list)
+}
+
 // ApplyReviewResult reacts to a completed AO-internal review pass after the
 // review service has persisted the run result. It mirrors ApplyPRObservation:
 // no change_log reads, no review_run writes, only lifecycle side effects.

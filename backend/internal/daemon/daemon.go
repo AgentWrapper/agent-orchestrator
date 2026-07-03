@@ -114,6 +114,7 @@ func Run() error {
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.convergenceDone = startConvergenceObserver(ctx, cfg, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, a gitworktree workspace, the per-session agent resolver

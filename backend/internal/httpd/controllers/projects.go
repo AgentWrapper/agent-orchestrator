@@ -27,6 +27,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
 	r.Get("/projects/{id}", c.get)
+	r.Get("/projects/{id}/collisions", c.collisions)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
@@ -81,6 +82,22 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (c *ProjectsController) collisions(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/projects/{id}/collisions")
+		return
+	}
+	got, err := c.Mgr.Collisions(r.Context(), projectID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if got == nil {
+		got = []projectsvc.Collision{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListProjectCollisionsResponse{Collisions: got})
 }
 
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {

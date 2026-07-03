@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +36,10 @@ type Manager interface {
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+
+	// Collisions returns the project's current cross-session edit collisions
+	// (the convergence observer's durable facts), newest activity first.
+	Collisions(ctx context.Context, id domain.ProjectID) ([]Collision, error)
 }
 
 // SessionTeardowner is the narrow session-service surface project removal
@@ -452,6 +457,41 @@ func validateProjectID(id domain.ProjectID) error {
 		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil
+}
+
+// Collisions returns the project's current cross-session edit collisions as
+// wire read-models, ordered by most-recently-updated first so the freshest
+// overlaps surface at the top of the dashboard.
+func (m *Service) Collisions(ctx context.Context, id domain.ProjectID) ([]Collision, error) {
+	rows, err := m.store.ListCollisionsByProject(ctx, id)
+	if err != nil {
+		return nil, apierr.Internal("PROJECT_COLLISIONS_FAILED", "Failed to load collisions")
+	}
+	out := make([]Collision, 0, len(rows))
+	for _, c := range rows {
+		out = append(out, collisionToWire(c))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out, nil
+}
+
+func collisionToWire(c domain.SessionCollision) Collision {
+	files := make([]CollisionFile, 0, len(c.Files))
+	for _, f := range c.Files {
+		ranges := make([]CollisionRange, 0, len(f.Ranges))
+		for _, r := range f.Ranges {
+			ranges = append(ranges, CollisionRange{Start: r[0], End: r[1]})
+		}
+		files = append(files, CollisionFile{Path: f.Path, Ranges: ranges})
+	}
+	return Collision{
+		SessionA:    c.SessionA,
+		SessionB:    c.SessionB,
+		Severity:    string(c.Severity),
+		Files:       files,
+		FirstSeenAt: c.FirstSeenAt,
+		UpdatedAt:   c.UpdatedAt,
+	}
 }
 
 // resolveSessionPrefix prefers an explicit per-project SessionPrefix and falls
