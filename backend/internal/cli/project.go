@@ -85,18 +85,29 @@ type roleOverride struct {
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
 }
 
+// trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+type trackerIntakeConfig struct {
+	Enabled  bool     `json:"enabled,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	Repo     string   `json:"repo,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
+	Assignee string   `json:"assignee,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+}
+
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch string            `json:"defaultBranch,omitempty"`
-	SessionPrefix string            `json:"sessionPrefix,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Symlinks      []string          `json:"symlinks,omitempty"`
-	PostCreate    []string          `json:"postCreate,omitempty"`
-	AgentConfig   agentConfig       `json:"agentConfig,omitempty"`
-	Worker        roleOverride      `json:"worker,omitempty"`
-	Orchestrator  roleOverride      `json:"orchestrator,omitempty"`
+	DefaultBranch string              `json:"defaultBranch,omitempty"`
+	SessionPrefix string              `json:"sessionPrefix,omitempty"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Symlinks      []string            `json:"symlinks,omitempty"`
+	PostCreate    []string            `json:"postCreate,omitempty"`
+	AgentConfig   agentConfig         `json:"agentConfig,omitempty"`
+	Worker        roleOverride        `json:"worker,omitempty"`
+	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
+	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -259,7 +270,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, agent model/permissions, role overrides). The config " +
+			"symlinks, post-create, agent model/permissions, role overrides, tracker intake). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",

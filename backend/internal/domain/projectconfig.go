@@ -14,9 +14,8 @@ import (
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. Settings whose consumers do not yet
-// exist (tracker/SCM per-project config, prompt rules) are intentionally absent
-// and land in focused follow-up PRs alongside the code that reads them.
+// SessionPrefix feeds the display prefix. TrackerIntake feeds the background
+// issue-intake loop.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -41,6 +40,43 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+
+	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
+	// read-only toward the tracker in v1: matching issues spawn sessions, but the
+	// tracker is not commented on or transitioned.
+	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+}
+
+// TrackerIntakeConfig controls the first issue-intake slice for a project.
+// Enabled requires at least one explicit eligibility rule so turning intake on
+// cannot accidentally drain an entire issue backlog.
+//
+// Scope fields are provider-specific: only the field set that matches Provider
+// is used; the others must be empty. Validate enforces this so a stale field
+// from a prior provider does not silently survive a provider switch.
+type TrackerIntakeConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Provider defaults to github when Enabled is true.
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,linear,jira"`
+	// Repo is the GitHub-native repository key ("owner/repo"). When empty, the
+	// intake loop derives it from the project's repo origin URL. GitHub only.
+	Repo string `json:"repo,omitempty"`
+	// Team is the Linear team key (e.g. "ENG"). Linear only.
+	Team string `json:"team,omitempty"`
+	// BaseURL is the Jira Cloud site URL (e.g. "acme.atlassian.net" or a full
+	// https URL). Jira only.
+	BaseURL string `json:"baseURL,omitempty"`
+	// ProjectKey is the Jira project key (e.g. "ENG"). Jira only.
+	ProjectKey string `json:"projectKey,omitempty"`
+	// Labels narrows eligible issues. All labels are forwarded to the provider's
+	// list filter; providers decide whether the match is all-of or provider-native.
+	Labels []string `json:"labels,omitempty"`
+	// Assignee narrows eligible issues to one assignee. Provider-specific values
+	// such as "*" are passed through unchanged.
+	Assignee string `json:"assignee,omitempty"`
+	// Limit caps the number of issues fetched per poll. Zero lets the adapter use
+	// its default.
+	Limit int `json:"limit,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -88,6 +124,7 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
 	}
+	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
 }
 
@@ -123,6 +160,116 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	if err := c.TrackerIntake.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// WithDefaults fills the provider only when intake is enabled. Disabled intake
+// leaves the zero value untouched so empty project configs still store as NULL.
+func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
+	if c.Enabled && c.Provider == "" {
+		c.Provider = TrackerProviderGitHub
+	}
+	return c
+}
+
+// Validate rejects accidental broad intake, unknown providers, and
+// cross-provider field bleed (e.g. a Linear "team" left set after switching to
+// GitHub).
+func (c TrackerIntakeConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	c = c.WithDefaults()
+	switch c.Provider {
+	case TrackerProviderGitHub:
+		if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.team", c.Team, "linear"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.baseURL", c.BaseURL, "jira"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.projectKey", c.ProjectKey, "jira"); err != nil {
+			return err
+		}
+	case TrackerProviderLinear:
+		team := strings.TrimSpace(c.Team)
+		if team == "" || team != c.Team {
+			return fmt.Errorf("trackerIntake.team: must be a non-empty Linear team key without surrounding whitespace")
+		}
+		if err := mustBeEmpty("trackerIntake.repo", c.Repo, "github"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.baseURL", c.BaseURL, "jira"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.projectKey", c.ProjectKey, "jira"); err != nil {
+			return err
+		}
+	case TrackerProviderJira:
+		base := strings.TrimSpace(c.BaseURL)
+		if base == "" || base != c.BaseURL {
+			return fmt.Errorf("trackerIntake.baseURL: must be a non-empty Jira site URL without surrounding whitespace")
+		}
+		if strings.HasSuffix(c.BaseURL, "/") {
+			return fmt.Errorf("trackerIntake.baseURL: must not have a trailing slash")
+		}
+		projectKey := strings.TrimSpace(c.ProjectKey)
+		if projectKey == "" || projectKey != c.ProjectKey {
+			return fmt.Errorf("trackerIntake.projectKey: must be a non-empty Jira project key without surrounding whitespace")
+		}
+		if err := mustBeEmpty("trackerIntake.repo", c.Repo, "github"); err != nil {
+			return err
+		}
+		if err := mustBeEmpty("trackerIntake.team", c.Team, "linear"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("trackerIntake.provider: unknown provider %q", c.Provider)
+	}
+	hasLabel := false
+	for i, label := range c.Labels {
+		trimmed := strings.TrimSpace(label)
+		if trimmed == "" {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
+		}
+		if trimmed != label {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not contain surrounding whitespace", i)
+		}
+		hasLabel = true
+	}
+	assignee := strings.TrimSpace(c.Assignee)
+	if assignee != c.Assignee {
+		return fmt.Errorf("trackerIntake.assignee: must not contain surrounding whitespace")
+	}
+	if !hasLabel && assignee == "" {
+		return fmt.Errorf("trackerIntake: enabled intake requires at least one label or assignee rule")
+	}
+	if c.Limit < 0 {
+		return fmt.Errorf("trackerIntake.limit: must be non-negative")
+	}
+	return nil
+}
+
+func mustBeEmpty(field, value, owningProvider string) error {
+	if strings.TrimSpace(value) != "" {
+		return fmt.Errorf("%s: only valid for provider %q", field, owningProvider)
+	}
+	return nil
+}
+
+func validateNoWhitespaceField(field, value string) error {
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s: must not contain surrounding whitespace", field)
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return fmt.Errorf("%s: must not contain whitespace", field)
 	}
 	return nil
 }

@@ -86,6 +86,7 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 		PostCreate:    []string{"echo hi"},
 		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
 		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+		TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Provider: domain.TrackerProviderGitHub, Repo: "acme/cfg", Labels: []string{"agent-ready"}, Assignee: "alice", Limit: 10},
 	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,
