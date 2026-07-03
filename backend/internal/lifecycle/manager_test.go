@@ -861,6 +861,21 @@ func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
 	}
 }
 
+func TestPRObservation_MergeConflictNudgesWhileWaitingInput(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("waiting-input conflict should nudge once, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("nudge should mention merge conflicts, got %q", msg.msgs[0])
+	}
+}
+
 func TestActivity_FirstSignalStampsReceipt(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
@@ -981,6 +996,11 @@ func TestSCMObservation_Notifications(t *testing.T) {
 			want: domain.NotificationReadyToMerge,
 		},
 		{
+			name: "conflicting",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/4", Number: 4, Title: "checkout"}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeConflicting)}},
+			want: domain.NotificationPRConflicting,
+		},
+		{
 			name: "merged",
 			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/2", Number: 2, Merged: true}},
 			want: domain.NotificationPRMerged,
@@ -1006,6 +1026,51 @@ func TestSCMObservation_Notifications(t *testing.T) {
 				t.Fatalf("intent = %+v, want type %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSCMObservation_ConflictingNotSuppressedWhileWaitingInput(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	st.sessions["mer-1"] = rec
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeConflicting)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	if got := sink.intents[0]; got.Type != domain.NotificationPRConflicting {
+		t.Fatalf("intent = %+v, want conflicting", got)
+	}
+}
+
+func TestSCMObservation_ConflictingNotificationSurvivesNudgeFailure(t *testing.T) {
+	st := newFakeStore()
+	msg := &fakeMessenger{err: errors.New("pane unavailable")}
+	sink := &fakeNotificationSink{}
+	m := New(st, msg, WithNotificationSink(sink))
+	st.sessions["mer-1"] = working("mer-1")
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeConflicting)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err == nil {
+		t.Fatal("want nudge delivery error returned")
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("conflict notification should survive nudge failure, got %+v", sink.intents)
+	}
+	if got := sink.intents[0]; got.Type != domain.NotificationPRConflicting {
+		t.Fatalf("intent = %+v, want conflicting", got)
 	}
 }
 

@@ -29,6 +29,18 @@ const notifications: NotificationDTO[] = [
 		createdAt: "2026-06-16T11:00:00Z",
 		target: { kind: "session", sessionId: "sess-2" },
 	},
+	{
+		id: "ntf_3",
+		sessionId: "sess-3",
+		projectId: "proj-1",
+		prUrl: "https://github.com/o/r/pull/3",
+		type: "pr_conflicting",
+		title: "PR #3 has merge conflicts",
+		body: "",
+		status: "unread",
+		createdAt: "2026-06-16T12:00:00Z",
+		target: { kind: "session", sessionId: "sess-3" },
+	},
 ];
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
@@ -57,9 +69,9 @@ describe("NotificationCenter", () => {
 	it("renders a filled bell with a text-only yellow unread count", () => {
 		renderNotificationCenter();
 
-		const trigger = screen.getByRole("button", { name: "2 unread notifications" });
+		const trigger = screen.getByRole("button", { name: "3 unread notifications" });
 		const bell = trigger.querySelector("svg");
-		const count = screen.getByText("2");
+		const count = screen.getByText("3");
 
 		expect(bell).toHaveClass("fill-current");
 		expect(count).toHaveClass("text-[11px]");

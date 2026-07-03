@@ -42,7 +42,9 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		{"terminated", statusRec(domain.ActivityExited, true), nil, false, domain.StatusTerminated},
 		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
 		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
+		{"waiting-input-conflicting-pr", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{Mergeability: domain.MergeConflicting}), false, domain.StatusConflicting},
 		{"ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusCIFailed},
+		{"conflicting", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewApproved, CI: domain.CIPassing, Mergeability: domain.MergeConflicting}), false, domain.StatusConflicting},
 		{"draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), false, domain.StatusDraft},
 		{"changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), false, domain.StatusChangesRequested},
 		{"mergeable", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusMergeable},
@@ -96,6 +98,7 @@ func TestAggregateStackedChildSignals(t *testing.T) {
 		want domain.SessionStatus
 	}{
 		{"blocked-child-ci-failing-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{CI: domain.CIFailing})}, domain.StatusCIFailed},
+		{"blocked-child-conflicting-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Mergeability: domain.MergeConflicting})}, domain.StatusConflicting},
 		{"blocked-child-draft-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Draft: true})}, domain.StatusDraft},
 		{"blocked-child-changes-requested-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewChangesRequest})}, domain.StatusChangesRequested},
 		{"blocked-child-unresolved-comments-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{ReviewComments: true})}, domain.StatusChangesRequested},

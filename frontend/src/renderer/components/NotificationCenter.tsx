@@ -159,6 +159,7 @@ function NotificationItem({
 					"mt-0.5 grid h-6 w-6 place-items-center rounded-md border",
 					notification.type === "needs_input" && "border-warning/40 text-warning",
 					notification.type === "ready_to_merge" && "border-success/40 text-success",
+					notification.type === "pr_conflicting" && "border-error/40 text-error",
 					notification.type === "pr_merged" && "border-accent-dim text-accent",
 					notification.type === "pr_closed_unmerged" && "border-error/40 text-error",
 				)}
@@ -205,6 +206,8 @@ function notificationIcon(type: string) {
 			return CircleAlert;
 		case "ready_to_merge":
 			return GitPullRequest;
+		case "pr_conflicting":
+			return CircleAlert;
 		case "pr_merged":
 			return GitMerge;
 		case "pr_closed_unmerged":

@@ -360,6 +360,8 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 			return { label: "No signal", className: "text-passive" };
 		case "ci_failed":
 			return { label: "CI failed", className: "text-error" };
+		case "conflicting":
+			return { label: "Conflicts", className: "text-error" };
 		case "changes_requested":
 			return { label: "Changes requested", className: "text-warning" };
 		case "review_pending":

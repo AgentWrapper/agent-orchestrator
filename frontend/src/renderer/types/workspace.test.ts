@@ -75,6 +75,7 @@ describe("workerDisplayStatus", () => {
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
 		["ci_failed", "ci_failed"],
+		["conflicting", "conflicting"],
 		["no_signal", "no_signal"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
@@ -132,7 +133,7 @@ describe("findProjectOrchestrator", () => {
 });
 
 describe("sessionNeedsAttention", () => {
-	it.each(["needs_input", "no_signal", "changes_requested", "review_pending", "ci_failed"] as const)(
+	it.each(["needs_input", "no_signal", "changes_requested", "review_pending", "ci_failed", "conflicting"] as const)(
 		"is true for %s",
 		(status) => {
 			expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
@@ -154,6 +155,7 @@ describe("workerStatusPulses", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
 		expect(workerStatusPulses("mergeable")).toBe(false);
+		expect(workerStatusPulses("conflicting")).toBe(false);
 		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);
 		expect(workerStatusPulses("unknown")).toBe(false);
@@ -213,6 +215,7 @@ describe("attentionZone", () => {
 		["needs_input", "action"],
 		["no_signal", "action"],
 		["ci_failed", "action"],
+		["conflicting", "action"],
 		["changes_requested", "action"],
 		["review_pending", "pending"],
 		["pr_open", "pending"],
