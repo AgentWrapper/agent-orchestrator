@@ -55,6 +55,13 @@ function setupBridge() {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		}),
+		renderMarkdown: vi.fn(async () => ({
+			documentId: "md://test-session/1",
+			url: "app://md-preview/md://test-session/1",
+			title: "Test",
+			revision: 1,
+		})),
+		onMarkdownFileChanged: vi.fn(() => () => undefined),
 		emit(state: BrowserNavState) {
 			listeners.forEach((listener) => listener(state));
 		},

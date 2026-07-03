@@ -86,8 +86,8 @@ describe("normalizeBrowserURL", () => {
 	});
 
 	it("rejects privileged or unsupported schemes", () => {
-		expect(() => normalizeBrowserURL("app://renderer/index.html")).toThrow(/unsupported/i);
 		expect(() => normalizeBrowserURL("javascript:alert(1)")).toThrow(/unsupported/i);
+		expect(() => normalizeBrowserURL("chrome://settings")).toThrow(/unsupported/i);
 	});
 });
 
@@ -98,6 +98,10 @@ describe("isAllowedBrowserURL", () => {
 
 	it("still blocks the renderer's own http origin", () => {
 		expect(isAllowedBrowserURL("http://localhost:5173/", "http://localhost:5173")).toBe(false);
+	});
+
+	it("allows app://md-preview URLs as valid browser targets", () => {
+		expect(isAllowedBrowserURL("app://md-preview/md://sess/1")).toBe(true);
 	});
 });
 

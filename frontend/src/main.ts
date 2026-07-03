@@ -47,6 +47,7 @@ import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shel
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { MarkdownHost } from "./main/markdown-host";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
@@ -94,6 +95,8 @@ const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
 
+const MD_PREVIEW_HOST = "md-preview";
+
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
 // trust (every sandboxed iframe on any website also presents "null"), so its
@@ -109,26 +112,27 @@ protocol.registerSchemesAsPrivileged([
 	},
 ]);
 
-// Maps app://renderer/<path> to the built renderer in dist/. Paths without a
-// file extension are client-side routes and fall back to index.html (SPA).
-function registerRendererProtocol(): void {
+let markdownHost: MarkdownHost | null = null;
+
+// Renderer protocol handler body. Maps app://renderer/<path> to the built
+// SPA in dist/. Paths without a file extension fall back to index.html.
+// Used directly by the consolidated app:// protocol handler below.
+function registerRendererProtocolInner(request: Request): Promise<Response> | Response {
+	const url = new URL(request.url);
+	if (url.host !== RENDERER_HOST) {
+		return new Response("Not found", { status: 404 });
+	}
 	const distRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
-	protocol.handle(RENDERER_SCHEME, async (request) => {
-		const url = new URL(request.url);
-		if (url.host !== RENDERER_HOST) {
-			return new Response("Not found", { status: 404 });
-		}
-		const resolved = path.resolve(path.join(distRoot, decodeURIComponent(url.pathname)));
-		if (resolved !== distRoot && !resolved.startsWith(distRoot + path.sep)) {
-			return new Response("Forbidden", { status: 403 });
-		}
-		const target = path.extname(resolved) === "" ? path.join(distRoot, "index.html") : resolved;
-		try {
-			return await net.fetch(pathToFileURL(target).toString());
-		} catch {
-			return new Response("Not found", { status: 404 });
-		}
-	});
+	const resolved = path.resolve(path.join(distRoot, decodeURIComponent(url.pathname)));
+	if (resolved !== distRoot && !resolved.startsWith(distRoot + path.sep)) {
+		return new Response("Forbidden", { status: 403 });
+	}
+	const target = path.extname(resolved) === "" ? path.join(distRoot, "index.html") : resolved;
+	try {
+		return net.fetch(pathToFileURL(target).toString());
+	} catch {
+		return new Response("Not found", { status: 404 });
+	}
 }
 
 function rendererUrl(): string {
@@ -222,6 +226,13 @@ function createWindow(): void {
 		rendererOrigin: RENDERER_ORIGIN,
 	});
 
+	markdownHost?.dispose();
+	markdownHost = new MarkdownHost(mainWindow);
+
+	ipcMain.handle("browser:renderMarkdown", async (_event, request) => {
+		return await markdownHost!.render(request);
+	});
+
 	void mainWindow.loadURL(rendererUrl());
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
@@ -233,6 +244,8 @@ function createWindow(): void {
 	mainWindow.on("closed", () => {
 		browserViewHost?.dispose();
 		browserViewHost = null;
+		markdownHost?.dispose();
+		markdownHost = null;
 		mainWindow = null;
 	});
 }
@@ -962,7 +975,30 @@ app.whenReady().then(async () => {
 		console.error("failed to write app-state marker:", err);
 	}
 
-	registerRendererProtocol();
+	// Single protocol handler for the app:// scheme.
+	// Routes app://renderer/* to the built SPA and app://md-preview/*
+	// to cached markdown preview HTML from MarkdownHost.
+	protocol.handle("app", (request) => {
+		const url = new URL(request.url);
+		if (url.host === MD_PREVIEW_HOST) {
+			const documentId = decodeURIComponent(url.pathname.replace(/^\//, ""));
+			const html = markdownHost?.getCachedHtml(documentId);
+			if (!html) {
+				return new Response("Markdown preview not found", { status: 404 });
+			}
+		return new Response(html, {
+			status: 200,
+			headers: {
+				"Content-Type": "text/html; charset=utf-8",
+				"Cache-Control": "no-cache, no-store, must-revalidate",
+				"Pragma": "no-cache",
+				"Expires": "0",
+			},
+		});
+		}
+		// All other app:// hosts fall through to the renderer (SPA) handler.
+		return registerRendererProtocolInner(request);
+	});
 	applyRuntimeAppIcon();
 	createWindow();
 	void startDaemon();
@@ -982,6 +1018,8 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
+	markdownHost?.dispose();
+	markdownHost = null;
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected

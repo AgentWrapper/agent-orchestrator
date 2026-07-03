@@ -132,6 +132,13 @@ if (typeof window !== "undefined") {
 			}),
 			destroy: () => undefined,
 			onNavState: () => () => undefined,
+			renderMarkdown: async () => ({
+				documentId: "md://test-session/1",
+				url: "app://md-preview/md://test-session/1",
+				title: "Test Markdown",
+				revision: 1,
+			}),
+			onMarkdownFileChanged: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

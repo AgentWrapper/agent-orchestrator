@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
+import { MARKDOWN_FILE_RE } from "../../shared/markdown-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -45,8 +46,16 @@ export function BrowserPanelView({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		const nextURL = urlInput.trim();
-		if (nextURL) void navigate(nextURL);
+		const raw = urlInput.trim();
+		if (!raw) return;
+		// Normalise bare absolute paths to file:// so that MarkdownHost can
+		// detect them as local files and set up file watching.
+		const nextURL = raw.startsWith("/") ? `file://${raw}` : raw;
+		if (MARKDOWN_FILE_RE.test(nextURL)) {
+			void browserView.renderMarkdown({ kind: "url", url: nextURL });
+		} else {
+			void navigate(nextURL);
+		}
 	};
 
 	return (

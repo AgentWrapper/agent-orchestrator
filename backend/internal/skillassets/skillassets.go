@@ -1,11 +1,11 @@
-// Package skillassets embeds the using-ao skill (the ao CLI catalog) and
-// installs it into the AO data dir at daemon boot. Worker sessions run in a
-// worktree of whatever project they were spawned in, so a repo-relative
-// skills/ path only resolves when that project happens to be the AO repo
-// itself. Installing under the data dir gives every session, in any project, a
-// stable absolute path to read.
+// Package skillassets embeds skills (the ao CLI catalog, markdown preview,
+// etc.) and installs them into the AO data dir at daemon boot. Worker sessions
+// run in a worktree of whatever project they were spawned in, so a
+// repo-relative skills/ path only resolves when that project happens to be the
+// AO repo itself. Installing under the data dir gives every session, in any
+// project, a stable absolute path to read.
 //
-// The embedded copy is the single source of truth. Install clobbers the
+// Each embedded copy is the single source of truth. Install clobbers the
 // on-disk copy on every boot, so a new daemon build always refreshes it and the
 // two can never drift; there is no version marker or hash to keep in sync
 // because the daemon binary already is the version.
@@ -20,36 +20,48 @@ import (
 	"embed"
 )
 
-//go:embed using-ao
+//go:embed using-ao markdown-preview
 var files embed.FS
 
-// SkillName is the installed skill's directory name under <dataDir>/skills.
-const SkillName = "using-ao"
+// Skill directory names under <dataDir>/skills.
+const (
+	UsingAoName          = "using-ao"
+	MarkdownPreviewName  = "markdown-preview"
+)
 
-// Dir returns the absolute directory the skill installs into for a given data
-// dir. Callers building prompts use this so the path they cite always matches
-// where Install writes.
+// Dir returns the absolute directory for the using-ao skill. It is a
+// convenience wrapper around DirFor.
 func Dir(dataDir string) string {
-	return filepath.Join(dataDir, "skills", SkillName)
+	return DirFor(dataDir, UsingAoName)
 }
 
-// Install writes the embedded using-ao skill into <dataDir>/skills/using-ao,
+// DirFor returns the absolute directory a named skill installs into for a
+// given data dir. Callers building prompts use this so the path they cite
+// always matches where Install writes.
+func DirFor(dataDir string, skillName string) string {
+	return filepath.Join(dataDir, "skills", skillName)
+}
+
+// Install writes every embedded skill into <dataDir>/skills/<skill-name>,
 // replacing any existing copy. It runs once at daemon boot, before any session
 // spawns, so a plain clobber-and-write needs no locking: there are no
 // concurrent readers yet. A failure is returned but is non-fatal to boot (the
-// skill enhances `ao --help`, it is not load-bearing).
+// skills enhance `ao --help` and session output; they are not load-bearing).
 func Install(dataDir string) error {
-	dest := Dir(dataDir)
-	if err := os.RemoveAll(dest); err != nil {
-		return fmt.Errorf("clear skill dir %q: %w", dest, err)
+	skillsDir := filepath.Join(dataDir, "skills")
+	if err := os.RemoveAll(skillsDir); err != nil {
+		return fmt.Errorf("clear skills dir %q: %w", skillsDir, err)
 	}
-	// embed.FS always uses forward-slash paths rooted at "using-ao"; map each
-	// onto <dataDir>/skills/<same path> with the platform separator.
-	return fs.WalkDir(files, SkillName, func(p string, d fs.DirEntry, err error) error {
+	// embed.FS always uses forward-slash paths; map each entry onto
+	// <dataDir>/skills/<same path> with the platform separator.
+	return fs.WalkDir(files, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dataDir, "skills", filepath.FromSlash(p))
+		if p == "." {
+			return nil // skip root
+		}
+		target := filepath.Join(skillsDir, filepath.FromSlash(p))
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o750)
 		}

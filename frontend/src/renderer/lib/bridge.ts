@@ -87,6 +87,13 @@ export const aoBridge: AoBridge =
 			}),
 			destroy: () => undefined,
 			onNavState: () => () => undefined,
+			renderMarkdown: async () => ({
+				documentId: "md://preview/1",
+				url: "app://md-preview/md://preview/1",
+				title: "Preview",
+				revision: 1,
+			}),
+			onMarkdownFileChanged: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,
