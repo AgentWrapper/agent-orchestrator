@@ -13,13 +13,13 @@ skill (`skills/local-services/SKILL.md`).
 
 ## 1. Prerequisites (install once, not scripted)
 
-| Tool          | Why                                                | Check               |
-| ------------- | -------------------------------------------------- | ------------------- |
-| go            | builds the `ao` daemon/CLI                         | `go version`        |
-| node via nvm  | lan-web resolves node from `~/.nvm` explicitly     | `nvm ls`            |
-| tmux          | session runtime — spawn fails fast without it      | `tmux -V`           |
-| claude        | default agent harness                              | `claude --version`  |
-| gh (logged in)| git credential for HTTPS remotes + PR tooling      | `gh auth status`    |
+| Tool           | Why                                            | Check              |
+| -------------- | ---------------------------------------------- | ------------------ |
+| go             | builds the `ao` daemon/CLI                     | `go version`       |
+| node via nvm   | lan-web resolves node from `~/.nvm` explicitly | `nvm ls`           |
+| tmux           | session runtime — spawn fails fast without it  | `tmux -V`          |
+| claude         | default agent harness                          | `claude --version` |
+| gh (logged in) | git credential for HTTPS remotes + PR tooling  | `gh auth status`   |
 
 ## 2. Bootstrap
 
