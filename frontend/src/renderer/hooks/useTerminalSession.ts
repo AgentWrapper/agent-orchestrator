@@ -80,6 +80,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
+	const previousSessionStatusRef = useRef(session?.status);
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
 	const stateRef = useRef<TerminalSessionState>(state);
@@ -326,7 +327,17 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	useEffect(() => {
 		const r = runtime.current;
 		const handle = session?.terminalHandleId ?? null;
-		if (!handle || session?.status === "terminated" || r.detached || !r.terminal) return;
+		const previousStatus = previousSessionStatusRef.current;
+		previousSessionStatusRef.current = session?.status;
+		if (
+			!handle ||
+			previousStatus !== "terminated" ||
+			session?.status === "terminated" ||
+			r.detached ||
+			!r.terminal
+		) {
+			return;
+		}
 		if (r.handle !== handle) return;
 		if (stateRef.current !== "exited" && stateRef.current !== "error") return;
 		if (optionsRef.current.daemonReady) {
@@ -335,7 +346,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		} else {
 			transition("reattaching");
 		}
-	}, [connect, session?.status, session?.terminalHandleId, session?.updatedAt, transition]);
+	}, [connect, session?.status, session?.terminalHandleId, transition]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.

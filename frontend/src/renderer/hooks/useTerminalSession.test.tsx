@@ -300,6 +300,35 @@ describe("useTerminalSession", () => {
 		expect(muxes[1].inputs).toEqual([["handle-1", "echo ok\r"]]);
 	});
 
+	it("does not reconnect a broken live pane on ordinary session updates", () => {
+		const muxes: FakeMux[] = [];
+		const createMux = () => {
+			const fake = createFakeMux();
+			muxes.push(fake);
+			return fake.mux;
+		};
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const view = renderHook(
+			({ attachedSession }) => useTerminalSession(attachedSession, { daemonReady: true, createMux }),
+			{ initialProps: { attachedSession: session }, wrapper },
+		);
+		const terminal = createFakeTerminal();
+		act(() => {
+			view.result.current.attach(terminal);
+		});
+		act(() => muxes[0].emitError("handle-1", "no such pane"));
+		expect(view.result.current.state).toBe("error");
+
+		view.rerender({ attachedSession: { ...session, status: "idle", updatedAt: "tick-1" } });
+		view.rerender({ attachedSession: { ...session, status: "working", updatedAt: "tick-2" } });
+
+		expect(view.result.current.state).toBe("error");
+		expect(muxes).toHaveLength(1);
+	});
+
 	it("surfaces pane errors and refetches, with no automatic retry", () => {
 		const { view, muxes, invalidateSpy } = setup();
 		act(() => muxes[0].emitError("handle-1", "no such pane"));
