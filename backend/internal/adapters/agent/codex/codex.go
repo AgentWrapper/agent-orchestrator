@@ -13,8 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -34,6 +36,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -146,10 +149,37 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, true, nil
 }
 
+// AuthStatus checks Codex's local login state without making a model call.
+func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	binary, err := p.codexBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, probeCtx.Err()
+	}
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	if strings.Contains(text, "logged in") {
+		return ports.AgentAuthStatusAuthorized, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
+}
+
 // ResolveCodexBinary returns the path to the codex binary on this machine,
 // searching PATH then a handful of well-known install locations
-// (Homebrew, Cargo, npm global). Returns "codex" as a last-ditch fallback
-// so callers see a clear "command not found" rather than an empty argv.
+// (Homebrew, Cargo, npm global, NVM). Returns "codex" as a last-ditch
+// fallback so callers see a clear "command not found" rather than an empty
+// argv.
 func ResolveCodexBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -203,6 +233,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 			filepath.Join(home, ".cargo", "bin", "codex"),
 			filepath.Join(home, ".npm", "bin", "codex"),
 		)
+		candidates = append(candidates, nvmNodeBinCandidates(home, "codex")...)
 	}
 
 	for _, candidate := range candidates {
@@ -217,6 +248,14 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
 }
 
+func nvmNodeBinCandidates(home, binary string) []string {
+	matches, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binary))
+	if err != nil || len(matches) == 0 {
+		return nil
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+	return matches
+}
 func resolveNativeWindowsCodex(path string) string {
 	if runtime.GOOS != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
 		return path
@@ -328,7 +367,7 @@ func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 	}
 }
 
-func fileExists(path string) bool {
+var fileExists = func(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }

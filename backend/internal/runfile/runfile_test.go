@@ -20,6 +20,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("Read returned nil for an existing file")
+		return
 	}
 	if got.PID != want.PID || got.Port != want.Port || !got.StartedAt.Equal(want.StartedAt) {
 		t.Errorf("round trip mismatch: got %+v, want %+v", *got, want)
@@ -44,6 +45,7 @@ func TestWriteReadRoundTripOwner(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("Read returned nil for an existing file")
+		return
 	}
 	if got.Owner != "app" {
 		t.Errorf("Owner round trip: got %q, want %q", got.Owner, "app")
@@ -60,6 +62,7 @@ func TestWriteReadRoundTripOwner(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("Read returned nil for headless file")
+		return
 	}
 	if got.Owner != "" {
 		t.Errorf("headless Owner round trip: got %q, want %q", got.Owner, "")
@@ -164,6 +167,7 @@ func TestCheckStaleLivePID(t *testing.T) {
 	}
 	if live == nil {
 		t.Fatal("CheckStale on live PID = nil, want the live Info")
+		return
 	}
 	if live.PID != os.Getpid() {
 		t.Errorf("live.PID = %d, want %d", live.PID, os.Getpid())

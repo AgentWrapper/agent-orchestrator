@@ -111,6 +111,7 @@
 	--green-strong: #74b98a;
 	--amber: #e8c14a;
 	--red: #ef6b6b;
+	--purple: #a78bfa;
 	/* Terminal — dark palette (light override below). */
 	--term-bg: #15171b;
 	--term-fg: #d7d7d2;
@@ -148,6 +149,7 @@
 	--green-strong: #1a7f37;
 	--amber: #9a6b00;
 	--red: #c0392b;
+	--purple: #7c3aed;
 	--interactive-hover: rgb(0 0 0 / 0.04);
 	--interactive-active: rgb(0 0 0 / 0.07);
 	--kanban-column-bg: rgb(0 0 0 / 0.02);

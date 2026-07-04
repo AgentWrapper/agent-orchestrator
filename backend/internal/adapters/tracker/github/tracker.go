@@ -33,10 +33,12 @@ const (
 	stateClosedGH = "closed"
 	reasonNotPlan = "not_planned"
 
-	// List pagination — GitHub's per_page maxes at 100. We default to 30
-	// (matching the legacy gh CLI default) when the caller passes 0.
-	defaultListLimit = 30
-	maxListLimit     = 100
+	// List pagination — GitHub's per_page maxes at 100. ListFilter.Limit is
+	// an optional total-result cap; page size stays at the provider max.
+	listPageSize = 100
+	// Guard against a pathological Link cycle. At GitHub's max page size this
+	// still permits a 5k-issue intake sweep before failing loud.
+	maxListPages = 50
 )
 
 // Sentinel errors. Adapter-level callers should match on these via
@@ -96,12 +98,24 @@ type Tracker struct {
 	baseURL   string
 	userAgent string
 
+	// listCache stores one entry per distinct List request path. The key
+	// space is naturally bounded by intake-enabled repo/filter pairs, so no
+	// eviction is needed here.
+	listCacheMu sync.Mutex
+	listCache   map[string]listCacheEntry
+
 	// preflightOK is the fast-path: once a Preflight succeeds, every
 	// subsequent call short-circuits via atomic.Load without touching the
 	// mutex. preflightMu serializes the one-time network call so concurrent
 	// first-callers don't all fire GET /user against GitHub.
 	preflightOK atomic.Bool
 	preflightMu sync.Mutex
+}
+
+type listCacheEntry struct {
+	etag     string
+	issues   []domain.Issue
+	nextPath string
 }
 
 // New returns a Tracker. It fails fast when no token can be obtained so
@@ -119,6 +133,7 @@ func New(opts Options) (*Tracker, error) {
 		tokens:    src,
 		baseURL:   opts.BaseURL,
 		userAgent: opts.UserAgent,
+		listCache: map[string]listCacheEntry{},
 	}
 	if t.http == nil {
 		t.http = &http.Client{Timeout: 30 * time.Second}
@@ -253,8 +268,8 @@ func mapStateFromGitHub(state, reason string, labels []string) domain.Normalized
 
 // List returns issues for a repo, filtered by state/labels/assignee. PRs
 // that GitHub's /issues endpoint conflates into the response are filtered
-// out client-side. Pagination is intentionally NOT implemented in v1 —
-// callers get one page bounded by ListFilter.Limit (default 30, max 100).
+// out client-side. GitHub pagination is followed until no next link remains;
+// ListFilter.Limit, when set, caps the total accumulated issue count.
 func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter domain.ListFilter) ([]domain.Issue, error) {
 	if repo.Provider != domain.TrackerProviderGitHub {
 		return nil, fmt.Errorf("%w: provider=%q", ErrWrongProvider, repo.Provider)
@@ -279,32 +294,99 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 	if filter.Assignee != "" {
 		q.Set("assignee", filter.Assignee)
 	}
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = defaultListLimit
-	}
-	if limit > maxListLimit {
-		limit = maxListLimit
-	}
-	q.Set("per_page", strconv.Itoa(limit))
+	q.Set("per_page", strconv.Itoa(listPageSize))
 
 	path := fmt.Sprintf("/repos/%s/%s/issues?%s", owner, repoName, q.Encode())
-	resp, err := t.do(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
+	out := make([]domain.Issue, 0)
+	if filter.Limit > 0 {
+		out = make([]domain.Issue, 0, filter.Limit)
 	}
-	var raw []ghIssue
-	if err := json.Unmarshal(resp, &raw); err != nil {
-		return nil, fmt.Errorf("github tracker: decode list: %w", err)
-	}
-	out := make([]domain.Issue, 0, len(raw))
-	for _, r := range raw {
-		if r.PullRequest != nil {
-			continue
+	for page := 0; path != ""; page++ {
+		if page >= maxListPages {
+			return nil, fmt.Errorf("github tracker: list pagination exceeded %d pages", maxListPages)
 		}
-		out = append(out, issueFromGH(owner, repoName, r))
+		t.listCacheMu.Lock()
+		cached, hasCached := t.listCache[path]
+		t.listCacheMu.Unlock()
+
+		resp, etag, nextPath, notModified, err := t.roundTrip(ctx, http.MethodGet, path, nil, cached.etag)
+		if err != nil {
+			return nil, err
+		}
+		if notModified {
+			if hasCached {
+				if etag != "" && etag != cached.etag {
+					t.listCacheMu.Lock()
+					t.listCache[path] = listCacheEntry{etag: etag, issues: cached.issues, nextPath: cached.nextPath}
+					t.listCacheMu.Unlock()
+				}
+				var done bool
+				out, done = appendIssuesWithLimit(out, cloneIssues(cached.issues), filter.Limit)
+				if done {
+					break
+				}
+				path = cached.nextPath
+				continue
+			}
+			// A 304 requires a prior validator, but if a server violates that
+			// contract, retry unconditionally rather than returning no data.
+			resp, etag, nextPath, notModified, err = t.roundTrip(ctx, http.MethodGet, path, nil, "")
+			if err != nil {
+				return nil, err
+			}
+			if notModified {
+				return nil, fmt.Errorf("github tracker: unexpected 304 for uncached list")
+			}
+		}
+		var raw []ghIssue
+		if err := json.Unmarshal(resp, &raw); err != nil {
+			return nil, fmt.Errorf("github tracker: decode list: %w", err)
+		}
+		pageIssues := make([]domain.Issue, 0, len(raw))
+		for _, r := range raw {
+			if r.PullRequest != nil {
+				continue
+			}
+			pageIssues = append(pageIssues, issueFromGH(owner, repoName, r))
+		}
+		if etag != "" {
+			t.listCacheMu.Lock()
+			t.listCache[path] = listCacheEntry{etag: etag, issues: cloneIssues(pageIssues), nextPath: nextPath}
+			t.listCacheMu.Unlock()
+		} else if hasCached {
+			t.listCacheMu.Lock()
+			delete(t.listCache, path)
+			t.listCacheMu.Unlock()
+		}
+		var done bool
+		out, done = appendIssuesWithLimit(out, pageIssues, filter.Limit)
+		if done {
+			break
+		}
+		path = nextPath
 	}
 	return out, nil
+}
+
+func appendIssuesWithLimit(dst, src []domain.Issue, limit int) ([]domain.Issue, bool) {
+	if limit <= 0 {
+		return append(dst, src...), false
+	}
+	remaining := limit - len(dst)
+	if remaining <= 0 {
+		return dst, true
+	}
+	if len(src) > remaining {
+		return append(dst, src[:remaining]...), true
+	}
+	dst = append(dst, src...)
+	return dst, len(dst) >= limit
+}
+
+func cloneIssues(in []domain.Issue) []domain.Issue {
+	out := make([]domain.Issue, len(in))
+	copy(out, in)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -347,43 +429,116 @@ func (t *Tracker) Preflight(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 func (t *Tracker) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	respBody, _, _, _, err := t.roundTrip(ctx, method, path, body, "")
+	return respBody, err
+}
+
+func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any, ifNoneMatch string) ([]byte, string, string, bool, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("github tracker: encode body: %w", err)
+			return nil, "", "", false, fmt.Errorf("github tracker: encode body: %w", err)
 		}
 		rdr = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, rdr)
 	if err != nil {
-		return nil, fmt.Errorf("github tracker: build request: %w", err)
+		return nil, "", "", false, fmt.Errorf("github tracker: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", t.userAgent)
 	tok, err := t.tokens.Token(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", "", false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 
 	resp, err := t.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("github tracker: %s %s: %w", method, path, err)
+		return nil, "", "", false, fmt.Errorf("github tracker: %s %s: %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	etag := resp.Header.Get("ETag")
+	nextPath := parseLinkNext(resp.Header.Get("Link"), t.baseURL)
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, etag, nextPath, true, nil
+	}
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("github tracker: read response body: %w", readErr)
+		return nil, "", "", false, fmt.Errorf("github tracker: read response body: %w", readErr)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return respBody, nil
+		return respBody, etag, nextPath, false, nil
 	}
-	return respBody, classifyError(resp, respBody)
+	return respBody, etag, nextPath, false, classifyError(resp, respBody)
+}
+
+func parseLinkNext(linkHeader, baseURL string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || !strings.HasPrefix(part, "<") {
+			continue
+		}
+		urlEnd := strings.Index(part, ">")
+		if urlEnd < 0 {
+			continue
+		}
+		rawURL := part[1:urlEnd]
+		if !linkHasRelNext(part[urlEnd+1:]) {
+			continue
+		}
+		return relativePathForLink(rawURL, baseURL)
+	}
+	return ""
+}
+
+func linkHasRelNext(params string) bool {
+	for _, param := range strings.Split(params, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+		if !ok || !strings.EqualFold(name, "rel") {
+			continue
+		}
+		value = strings.Trim(value, `"`)
+		for _, rel := range strings.Fields(value) {
+			if strings.EqualFold(rel, "next") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func relativePathForLink(rawLink, baseURL string) string {
+	if strings.HasPrefix(rawLink, "/") {
+		return rawLink
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	u, err := url.Parse(rawLink)
+	if err != nil {
+		return ""
+	}
+	if !u.IsAbs() {
+		u = base.ResolveReference(u)
+	}
+	if u.Path == "" {
+		return ""
+	}
+	path := u.EscapedPath()
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
+	}
+	return path
 }
 
 func classifyError(resp *http.Response, body []byte) error {

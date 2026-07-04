@@ -6,6 +6,7 @@ import {
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
+	toSessionActivity,
 	toSessionStatus,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -43,6 +44,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		id: project.id,
 		name: project.name,
 		path: project.path,
+		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
 		sessions: (sessionsData?.sessions ?? [])
 			.filter((session) => session.projectId === project.id)
 			.map((session) => ({
@@ -51,12 +53,14 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				workspaceId: project.id,
 				workspaceName: project.name,
 				title: session.displayName ?? session.issueId ?? session.id,
+				issueId: session.issueId,
 				provider: toAgentProvider(session.harness),
 				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 				branch: session.branch ?? `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				activity: toSessionActivity(session.activity),
 				previewUrl: session.previewUrl,
 				previewRevision: session.previewRevision,
 				prs: (session.prs ?? []).map(toPullRequestFacts),

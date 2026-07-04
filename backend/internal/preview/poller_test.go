@@ -118,6 +118,47 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	}
 }
 
+func TestPollerRediscoverEntryAfterDeleteAndRecreate(t *testing.T) {
+	workspace := t.TempDir()
+	entry := filepath.Join(workspace, "index.html")
+	writeFile(t, entry, "<main>v1</main>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	// First poll discovers the entry and sets the preview.
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll: %v", err)
+	}
+	wantURL := "http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/index.html"
+	assertSets(t, svc.sets, previewSet{id: "ao-1", url: wantURL})
+
+	// Delete the entry — poller must clear the preview and mark the session cleared.
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove index.html: %v", err)
+	}
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll (delete): %v", err)
+	}
+	if len(svc.sets) != 2 {
+		t.Fatalf("sets after delete = %#v, want clear + set", svc.sets)
+	}
+	if svc.sets[1].url != "" {
+		t.Fatalf("second set.url = %q, want empty (clear)", svc.sets[1].url)
+	}
+
+	// Recreate the entry — poller must re-discover.
+	writeFile(t, entry, "<main>v2</main>")
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("third Poll (recreate): %v", err)
+	}
+	if len(svc.sets) != 3 {
+		t.Fatalf("sets after recreate = %#v, want 3 sets (discover + clear + rediscover)", svc.sets)
+	}
+	if svc.sets[2].url != wantURL {
+		t.Fatalf("third set.url = %q, want %q", svc.sets[2].url, wantURL)
+	}
+}
+
 func TestPollerDoesNotRestoreClearedPreviewAfterRestart(t *testing.T) {
 	workspace := t.TempDir()
 	writeFile(t, filepath.Join(workspace, "index.html"), "<main>hello</main>")
