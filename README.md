@@ -126,6 +126,11 @@ spawns, see the [CLI Guide](docs/cli/README.md).
 | Git         | Any     | Latest      |
 | pnpm        | Any     | Latest      |
 
+The Electron frontend is currently developed and packaged on Node 20.x. Run
+`nvm use 20 || nvm install 20` before installing `frontend/` dependencies; its
+preinstall check rejects unsupported runtimes before they can leave Electron
+partially installed.
+
 **Optional:**
 
 - `tmux` (Darwin/Linux) - For Unix runtime

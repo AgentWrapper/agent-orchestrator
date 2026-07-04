@@ -6,6 +6,9 @@
 	"description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
 	"author": "Agent Orchestrator",
 	"license": "MIT",
+	"engines": {
+		"node": "20.x"
+	},
 	"homepage": "https://github.com/aoagents/agent-orchestrator",
 	"main": ".vite/build/main.js",
 	"repository": {
@@ -13,6 +16,7 @@
 		"url": "https://github.com/aoagents/agent-orchestrator"
 	},
 	"scripts": {
+		"preinstall": "node ./scripts/check-node-version.mjs",
 		"build:daemon": "node ./scripts/build-daemon.mjs",
 		"dev": "electron-forge start",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
