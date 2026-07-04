@@ -131,7 +131,15 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 // Allowed `source` enum for the orchestrator-spawn triad. Kept as a literal set
 // here (rather than imported from spawn-orchestrator.ts, which imports this
 // module) to avoid a cycle; keep in sync with OrchestratorSpawnSource.
-const ORCHESTRATOR_SPAWN_SOURCES = new Set(["board", "restore_dialog", "topbar", "sidebar", "project_add"]);
+const ORCHESTRATOR_SPAWN_SOURCES = new Set([
+	"board",
+	"restore_dialog",
+	"topbar",
+	"sidebar",
+	"project_add",
+	"settings",
+	"restart",
+]);
 
 export async function sanitizeRendererProperties(
 	event: string,

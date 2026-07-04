@@ -75,6 +75,18 @@ describe("useBrowserView", () => {
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 
 		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		// Simulate the real IPC flow: after ensure, a navigate call sends a nav
+		// state with a URL so the positioning effect considers the view visible.
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
 		act(() => result.current.slotRef(slot));
 
 		await waitFor(() =>
@@ -111,6 +123,16 @@ describe("useBrowserView", () => {
 
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
 		act(() => result.current.slotRef(slot));
 
 		await waitFor(() =>
@@ -140,6 +162,17 @@ describe("useBrowserView", () => {
 			await act(async () => {
 				await Promise.resolve();
 			});
+			// Simulate a real nav state with URL so the positioning effect shows the view.
+			act(() =>
+				bridge.emit({
+					viewId: "42:sess-1",
+					url: "http://localhost:3000/",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
 			act(() => result.current.slotRef(slot));
 			// Flush the mount measure (immediate frame + settle timer).
 			await act(async () => {
@@ -315,5 +348,28 @@ describe("useBrowserView", () => {
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
 		expect(bridge.navigate).not.toHaveBeenCalled();
 		expect(bridge.clear).not.toHaveBeenCalled();
+	});
+
+	it("clears the view when the session is terminated, even with an active preview URL", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ terminated }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					terminated,
+					previewUrl: "http://localhost:5173/",
+					previewRevision: 1,
+				}),
+			{ initialProps: { terminated: false } },
+		);
+		// The preview drives a navigate on mount.
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+
+		// Terminate the session – the view must be cleared and no re-navigate.
+		rerender({ terminated: true });
+		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 	});
 });

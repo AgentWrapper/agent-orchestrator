@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
+	apiErrorMessage,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
@@ -283,5 +284,22 @@ describe("api error telemetry", () => {
 		vi.setSystemTime(clock + 31_000);
 		await apiClient.GET("/api/v1/projects");
 		expect(captureMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("apiErrorMessage", () => {
+	it("preserves daemon error codes next to human messages", () => {
+		expect(apiErrorMessage({ code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" })).toBe(
+			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
+		);
+	});
+
+	it("does not duplicate a code that is already present in the message", () => {
+		expect(
+			apiErrorMessage({
+				code: "RUNTIME_PREREQUISITE_MISSING",
+				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
+			}),
+		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
 	});
 });

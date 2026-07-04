@@ -44,6 +44,10 @@ type entryState struct {
 	path    string
 	modUnix int64
 	size    int64
+	// cleared is set when the poller itself cleared the preview URL because the
+	// workspace entry was missing. When the file reappears, shouldRefresh uses
+	// this to re-discover even though the revision was bumped by the clear.
+	cleared bool
 }
 
 // NewPoller constructs a preview poller over the supplied session source and setter.
@@ -112,6 +116,13 @@ func (p *Poller) Poll(ctx context.Context) error {
 		}
 		entry, ok := DiscoverEntry(sess.Metadata.WorkspacePath)
 		if !ok {
+			if isWorkspacePreviewURL(sess.Metadata.PreviewURL, sess.ID) {
+				if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
+					p.logger.Error("preview poller: failed to clear stale preview",
+						"session", sess.ID, "err", err)
+				}
+				p.seen[sess.ID] = entryState{cleared: true}
+			}
 			continue
 		}
 		state := stateFor(entry)
@@ -140,7 +151,11 @@ func (p *Poller) Poll(ctx context.Context) error {
 func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore bool) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
-		return !seenBefore && sess.Metadata.PreviewRevision == 0
+		if !seenBefore {
+			return sess.Metadata.PreviewRevision == 0
+		}
+		previous := p.seen[sess.ID]
+		return previous.cleared
 	}
 	if current == target || isWorkspacePreviewURL(current, sess.ID) {
 		return true

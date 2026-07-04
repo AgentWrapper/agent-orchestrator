@@ -2,6 +2,8 @@ package opencode
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +12,279 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestOpenCodeLocalAuthStatusAuthorizedWithEnv(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusAuthorizedWithAuthFile(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	writeOpenCodeAuthFile(t, `{
+		"anthropic": {
+			"type": "api",
+			"key": "sk-ant-test"
+		}
+	}`)
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	writeOpenCodeAuthFile(t, `{}`)
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusAuthorizedWithActiveDBAccount(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	dataDir := writeOpenCodeDB(t, func(db *sql.DB) {
+		if _, err := db.Exec(`
+			CREATE TABLE account (
+				id text PRIMARY KEY,
+				email text NOT NULL,
+				url text NOT NULL,
+				access_token text NOT NULL,
+				refresh_token text NOT NULL,
+				token_expiry integer,
+				time_created integer NOT NULL,
+				time_updated integer NOT NULL
+			);
+			CREATE TABLE account_state (
+				id integer PRIMARY KEY NOT NULL,
+				active_account_id text,
+				active_org_id text
+			);
+			INSERT INTO account (id, email, url, access_token, refresh_token, time_created, time_updated)
+			VALUES ('acct_1', 'user@example.com', 'https://opencode.ai', 'token', 'refresh', 1, 1);
+			INSERT INTO account_state (id, active_account_id) VALUES (1, 'acct_1');
+		`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Setenv("OPENCODE_DATA_DIR", dataDir)
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusDBAccountOverridesEmptyAuthFile(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	dataDir := writeOpenCodeDB(t, func(db *sql.DB) {
+		if _, err := db.Exec(`
+			CREATE TABLE account (
+				id text PRIMARY KEY,
+				email text NOT NULL,
+				url text NOT NULL,
+				access_token text NOT NULL,
+				refresh_token text NOT NULL,
+				token_expiry integer,
+				time_created integer NOT NULL,
+				time_updated integer NOT NULL
+			);
+			INSERT INTO account (id, email, url, access_token, refresh_token, time_created, time_updated)
+			VALUES ('acct_1', 'user@example.com', 'https://opencode.ai', 'token', 'refresh', 1, 1);
+		`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Setenv("OPENCODE_DATA_DIR", dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, "auth.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusAuthorizedWithControlDBAccount(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	dataHome := t.TempDir()
+	dataDir := filepath.Join(dataHome, "opencode")
+	writeOpenCodeDBAt(t, dataDir, func(db *sql.DB) {
+		if _, err := db.Exec(`
+			CREATE TABLE control_account (
+				email text NOT NULL,
+				url text NOT NULL,
+				access_token text NOT NULL,
+				refresh_token text NOT NULL,
+				token_expiry integer,
+				active integer NOT NULL,
+				time_created integer NOT NULL,
+				time_updated integer NOT NULL,
+				PRIMARY KEY(email, url)
+			);
+			INSERT INTO control_account (email, url, access_token, refresh_token, active, time_created, time_updated)
+			VALUES ('user@example.com', 'https://opencode.ai', 'token', 'refresh', 1, 1, 1);
+		`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusUnauthorizedWithEmptyDBAccounts(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	dataDir := writeOpenCodeDB(t, func(db *sql.DB) {
+		if _, err := db.Exec(`
+			CREATE TABLE account (
+				id text PRIMARY KEY,
+				email text NOT NULL,
+				url text NOT NULL,
+				access_token text NOT NULL,
+				refresh_token text NOT NULL,
+				token_expiry integer,
+				time_created integer NOT NULL,
+				time_updated integer NOT NULL
+			);
+			CREATE TABLE account_state (
+				id integer PRIMARY KEY NOT NULL,
+				active_account_id text,
+				active_org_id text
+			);
+			CREATE TABLE control_account (
+				email text NOT NULL,
+				url text NOT NULL,
+				access_token text NOT NULL,
+				refresh_token text NOT NULL,
+				token_expiry integer,
+				active integer NOT NULL,
+				time_created integer NOT NULL,
+				time_updated integer NOT NULL,
+				PRIMARY KEY(email, url)
+			);
+		`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Setenv("OPENCODE_DATA_DIR", dataDir)
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func TestOpenCodeLocalAuthStatusUnknownWhenMissing(t *testing.T) {
+	clearOpenCodeAuthEnv(t)
+	t.Setenv("HOME", t.TempDir())
+
+	status, ok, err := opencodeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
+func writeOpenCodeDB(t *testing.T, setup func(*sql.DB)) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".local", "share", "opencode")
+	writeOpenCodeDBAt(t, dataDir, setup)
+	return dataDir
+}
+
+func writeOpenCodeDBAt(t *testing.T, dataDir string, setup func(*sql.DB)) {
+	t.Helper()
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dataDir, "opencode.db"))+"?mode=rwc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	setup(db)
+}
+
+func writeOpenCodeAuthFile(t *testing.T, content string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	authDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func clearOpenCodeAuthEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range opencodeAPIKeyEnvVars {
+		t.Setenv(name, "")
+	}
+	t.Setenv("OPENCODE_DATA_DIR", "")
+	t.Setenv("XDG_DATA_HOME", "")
+}
+
+func TestResolveOpenCodeBinaryFallback(t *testing.T) {
+	bin, err := ResolveOpenCodeBinary(context.Background())
+	if err != nil {
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
+	}
+	if bin == "" {
+		t.Fatal("ResolveOpenCodeBinary returned empty path with no error")
+	}
+}
+
+func TestResolveOpenCodeBinaryContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := ResolveOpenCodeBinary(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ResolveOpenCodeBinary err = %v, want context.Canceled", err)
+	}
+}
 
 func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "opencode"}

@@ -5,6 +5,14 @@ import { captureRendererEvent } from "./telemetry";
 
 vi.mock("./api-client", () => ({
 	apiClient: { POST: vi.fn() },
+	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
+		if (typeof error === "object" && error !== null && "message" in error) {
+			const body = error as { code?: unknown; message: unknown };
+			const message = String(body.message);
+			return typeof body.code === "string" && body.code !== "" ? `${message} (${body.code})` : message;
+		}
+		return fallback;
+	},
 }));
 
 vi.mock("./telemetry", () => ({
@@ -70,5 +78,17 @@ describe("spawnOrchestrator", () => {
 			source: "topbar",
 		});
 		expect(captureMock).not.toHaveBeenCalledWith("ao.renderer.orchestrator_spawn_succeeded", expect.anything());
+	});
+
+	it("surfaces daemon spawn error messages and codes", async () => {
+		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
+			data: undefined,
+			error: { code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" },
+			response: { status: 400 },
+		});
+
+		await expect(spawnOrchestrator("proj", "board")).rejects.toThrow(
+			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
+		);
 	});
 });
