@@ -45,47 +45,116 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
 <style>
-  body {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  /* --- CSS-only theme toggle (no JS, respects script-src 'none') --- */
+  .theme-toggle {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+  .theme-toggle-label {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    background: rgba(128, 128, 128, 0.1);
+    backdrop-filter: blur(6px);
+    transition: background 0.2s, transform 0.2s;
+    user-select: none;
+  }
+  .theme-toggle-label:hover {
+    background: rgba(128, 128, 128, 0.25);
+    transform: scale(1.1);
+  }
+  .theme-toggle-label::after { content: "\\263E"; }  /* ☾ dark symbol shown in light mode = click to go dark */
+  #theme-toggle:checked + .theme-toggle-label::after { content: "\\2600"; }  /* ☀ light symbol shown in dark mode = click to go light */
+
+  /* --- Theme background on <body> (fixes white border from .content's max-width) --- */
+  body:has(#theme-toggle:not(:checked)) { background: #ffffff; }
+  body:has(#theme-toggle:checked) { background: #1a1a1a; }
+  body { transition: background 0.25s; }
+
+  /* --- Light theme (checked = false) --- */
+  #theme-toggle:not(:checked) ~ .content {
+    color: #1a1a1a;
+  }
+  #theme-toggle:not(:checked) ~ .content a { color: #0969da; }
+  #theme-toggle:not(:checked) ~ .content code,
+  #theme-toggle:not(:checked) ~ .content pre { background: #f6f8fa; }
+  #theme-toggle:not(:checked) ~ .content pre { border-color: #e1e4e8; }
+  #theme-toggle:not(:checked) ~ .content blockquote {
+    color: #656d76;
+    border-left-color: #d0d7de;
+  }
+  #theme-toggle:not(:checked) ~ .content th,
+  #theme-toggle:not(:checked) ~ .content td { border-color: #d0d7de; }
+  #theme-toggle:not(:checked) ~ .content th { background: #f6f8fa; }
+  #theme-toggle:not(:checked) ~ .content h1,
+  #theme-toggle:not(:checked) ~ .content h2 { border-bottom-color: #e1e4e8; }
+
+  /* --- Dark theme (checked = true) --- */
+  #theme-toggle:checked ~ .content {
+    color: #e4e4e4;
+  }
+  #theme-toggle:checked ~ .content a { color: #58a6ff; }
+  #theme-toggle:checked ~ .content code,
+  #theme-toggle:checked ~ .content pre { background: #2d2d2d; }
+  #theme-toggle:checked ~ .content pre { border-color: #404040; }
+  #theme-toggle:checked ~ .content img { opacity: 0.85; }
+  #theme-toggle:checked ~ .content blockquote {
+    color: #8b949e;
+    border-left-color: #30363d;
+  }
+  #theme-toggle:checked ~ .content th,
+  #theme-toggle:checked ~ .content td { border-color: #404040; }
+  #theme-toggle:checked ~ .content th { background: #2d2d2d; }
+  #theme-toggle:checked ~ .content h1,
+  #theme-toggle:checked ~ .content h2 { border-bottom-color: #30363d; }
+
+  /* --- Shared content layout --- */
+  .content {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
       Helvetica, Arial, sans-serif;
     line-height: 1.6;
-    color: #1a1a1a;
     max-width: 920px;
     margin: 0 auto;
     padding: 16px 24px;
     word-wrap: break-word;
+    min-height: 100vh;
+    transition: color 0.25s;
   }
-  @media (prefers-color-scheme: dark) {
-    body {
-      color: #e4e4e4;
-      background: #1a1a1a;
-    }
-    a { color: #58a6ff; }
-    code, pre { background: #2d2d2d; }
-    pre { border-color: #404040; }
-    img { opacity: 0.85; }
+  .content h1, .content h2, .content h3, .content h4, .content h5, .content h6 {
+    margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25;
   }
-  h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
-  h1 { font-size: 2em; border-bottom: 1px solid #e1e4e8; padding-bottom: 0.3em; }
-  h2 { font-size: 1.5em; border-bottom: 1px solid #e1e4e8; padding-bottom: 0.3em; }
-  code { padding: 0.2em 0.4em; border-radius: 3px; font-size: 85%; }
-  pre { padding: 16px; border-radius: 6px; border: 1px solid #e1e4e8; overflow-x: auto; }
-  pre code { padding: 0; border-radius: 0; font-size: 100%; }
-  blockquote { margin: 0; padding: 0 1em; color: #656d76; border-left: 0.25em solid #d0d7de; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #d0d7de; padding: 6px 13px; text-align: left; }
-  th { background: #f6f8fa; }
-  @media (prefers-color-scheme: dark) {
-    th { background: #2d2d2d; }
-    th, td { border-color: #404040; }
-    blockquote { color: #8b949e; border-left-color: #30363d; }
-    h1, h2 { border-bottom-color: #30363d; }
-  }
-  img { max-width: 100%; }
+  .content h1 { font-size: 2em; border-bottom: 1px solid; padding-bottom: 0.3em; }
+  .content h2 { font-size: 1.5em; border-bottom: 1px solid; padding-bottom: 0.3em; }
+  .content code { padding: 0.2em 0.4em; border-radius: 3px; font-size: 85%; }
+  .content pre { padding: 16px; border-radius: 6px; border: 1px solid; overflow-x: auto; }
+  .content pre code { padding: 0; border-radius: 0; font-size: 100%; background: transparent; }
+  .content blockquote { margin: 0; padding: 0 1em; border-left: 0.25em solid; }
+  .content table { border-collapse: collapse; width: 100%; }
+  .content th, .content td { border: 1px solid; padding: 6px 13px; text-align: left; }
+  .content img { max-width: 100%; transition: opacity 0.25s; }
 </style>
 </head>
 <body>
+<input type="checkbox" id="theme-toggle" class="theme-toggle">
+<label for="theme-toggle" class="theme-toggle-label" title="Toggle dark/light theme"></label>
+<div class="content">
 {{BODY}}
+</div>
 </body>
 </html>`;
 
