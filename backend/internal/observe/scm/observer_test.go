@@ -245,6 +245,29 @@ func knownPR(num int) domain.PullRequest {
 	return pr
 }
 
+func TestMergeabilityFromProviderFactsUnstableNotDowngraded(t *testing.T) {
+	// UNSTABLE means the PR is mergeable but has a failing/pending NON-required
+	// check. It must outrank the CI-failing and changes-requested blockers rather
+	// than being downgraded to blocked, matching the documented priority and the
+	// github provider's mergeabilityFromGraphQL.
+	cases := []struct {
+		name   string
+		ci     string
+		review string
+	}{
+		{name: "failing CI", ci: string(domain.CIFailing), review: string(domain.ReviewApproved)},
+		{name: "changes requested", ci: string(domain.CIPassing), review: string(domain.ReviewChangesRequest)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeabilityFromProviderFacts("MERGEABLE", "UNSTABLE", tc.ci, tc.review, false)
+			if got.State != string(domain.MergeUnstable) {
+				t.Fatalf("state = %+v, want unstable (UNSTABLE must outrank CI/review blockers)", got)
+			}
+		})
+	}
+}
+
 func TestStartAsyncPerformsImmediatePollAndStopsOnCancel(t *testing.T) {
 	store := testStoreWithSession()
 	store.listEntered = make(chan struct{})
