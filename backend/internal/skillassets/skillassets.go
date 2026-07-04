@@ -25,8 +25,8 @@ var files embed.FS
 
 // Skill directory names under <dataDir>/skills.
 const (
-	UsingAoName          = "using-ao"
-	MarkdownPreviewName  = "markdown-preview"
+	UsingAoName         = "using-ao"
+	MarkdownPreviewName = "markdown-preview"
 )
 
 // Dir returns the absolute directory for the using-ao skill. It is a
@@ -38,7 +38,7 @@ func Dir(dataDir string) string {
 // DirFor returns the absolute directory a named skill installs into for a
 // given data dir. Callers building prompts use this so the path they cite
 // always matches where Install writes.
-func DirFor(dataDir string, skillName string) string {
+func DirFor(dataDir, skillName string) string {
 	return filepath.Join(dataDir, "skills", skillName)
 }
 
