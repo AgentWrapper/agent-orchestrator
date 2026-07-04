@@ -105,6 +105,12 @@ export type WorkspaceSession = {
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
 	/**
+	 * Session worktree directory (e.g. ~/.ao/worktrees/<projectId>/<sessionId>).
+	 * The markdown preview system uses this to resolve daemon-proxied file URLs
+	 * to local paths for file watching and live refresh.
+	 */
+	workspacePath?: string;
+	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.
 	 */

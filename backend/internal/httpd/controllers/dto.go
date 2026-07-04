@@ -121,6 +121,11 @@ type CleanupSessionsQuery struct {
 type SessionView struct {
 	domain.Session
 	Branch string `json:"branch,omitempty"`
+	// WorkspacePath is the session's git worktree directory (e.g.
+	// ~/.ao/worktrees/<projectId>/<sessionId>). The frontend needs this to
+	// resolve daemon-proxied preview file URLs to local paths for file watching.
+	// Pulled from the json:"-" domain Metadata.
+	WorkspacePath string `json:"workspacePath,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
 	// no preview has been requested. Pulled from the json:"-" domain Metadata.

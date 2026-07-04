@@ -27,6 +27,8 @@ type UseBrowserViewOptions = {
 	 * unrelated session update, which leave it unchanged, are ignored).
 	 */
 	previewRevision?: number;
+	/** Session worktree path, used to resolve daemon-proxied markdown URLs to local files for watcher setup. */
+	workspacePath?: string;
 };
 
 export type BrowserViewModel = {
@@ -81,6 +83,7 @@ export function useBrowserView({
 	terminated,
 	previewUrl,
 	previewRevision,
+	workspacePath,
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
@@ -243,7 +246,7 @@ export function useBrowserView({
 
 	const renderMarkdown = useCallback(
 		async (source: MarkdownSource): Promise<RenderMarkdownResponse> => {
-			const result = await window.ao!.browser.renderMarkdown(sessionId, source);
+			const result = await window.ao!.browser.renderMarkdown(sessionId, source, workspacePath);
 			currentDocIdRef.current = result.documentId;
 			await window.ao!.browser.navigate({ viewId: viewIdRef.current, url: result.url });
 			return result;

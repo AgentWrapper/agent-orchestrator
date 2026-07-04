@@ -52,7 +52,7 @@ export class MarkdownHost {
     }
 
     if (source.kind === "url") {
-      const localPath = resolveLocalPath(source.url);
+      const localPath = resolveLocalPath(source.url, request.workspacePath);
       if (localPath) {
         const content = await readFile(localPath, "utf-8");
         const doc = await this.createDocument(request.sessionId, { kind: "file", path: localPath }, content);
@@ -266,12 +266,30 @@ function hashCode(s: string): string {
   return h.toString(36);
 }
 
-function resolveLocalPath(url: string): string | null {
+const DAEMON_PROXY_RE = /\/api\/v1\/sessions\/[^/]+\/preview\/files\/(.+)$/i;
+
+function parseDaemonProxyEntry(url: string): string | null {
+  const m = DAEMON_PROXY_RE.exec(url);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
+
+function resolveLocalPath(url: string, workspacePath?: string): string | null {
   let p: string;
   if (url.startsWith("file://")) {
     p = fileURLToPath(url);
   } else if (url.startsWith("/")) {
     p = url;
+  } else if (workspacePath) {
+    const entry = parseDaemonProxyEntry(url);
+    if (!entry) return null;
+    p = path.join(workspacePath, entry);
+    // Prevent directory traversal outside the workspace path.
+    if (!p.startsWith(workspacePath + path.sep) && p !== workspacePath) return null;
   } else {
     return null;
   }

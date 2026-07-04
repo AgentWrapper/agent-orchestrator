@@ -20,6 +20,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
+		workspacePath: session.workspacePath,
 	});
 	return (
 		<BrowserPanelView

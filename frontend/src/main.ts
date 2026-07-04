@@ -230,7 +230,7 @@ function createWindow(): void {
 	markdownHost = new MarkdownHost(mainWindow);
 
 	ipcMain.handle("browser:renderMarkdown", async (_event, request) => {
-		return await markdownHost!.render(request);
+		return await markdownHost!.render(request satisfies import("./shared/markdown-types").RenderMarkdownRequest);
 	});
 
 	void mainWindow.loadURL(rendererUrl());

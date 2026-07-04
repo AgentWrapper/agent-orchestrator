@@ -60,10 +60,11 @@ const api = {
 				ipcRenderer.off("browser:navState", wrapped);
 			};
 		},
-		renderMarkdown: (sessionId: string, source: MarkdownSource) =>
+		renderMarkdown: (sessionId: string, source: MarkdownSource, workspacePath?: string) =>
 			ipcRenderer.invoke("browser:renderMarkdown", {
 				sessionId,
 				source,
+				workspacePath,
 			} satisfies RenderMarkdownRequest) as Promise<RenderMarkdownResponse>,
 		onMarkdownFileChanged: (listener: (event: MarkdownUpdateEvent) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, event: MarkdownUpdateEvent) => listener(event);

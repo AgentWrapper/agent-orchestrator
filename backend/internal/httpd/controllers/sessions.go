@@ -664,7 +664,7 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, WorkspacePath: s.Metadata.WorkspacePath, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

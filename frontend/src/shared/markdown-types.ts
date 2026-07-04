@@ -20,6 +20,7 @@ export interface MarkdownDocument {
 export interface RenderMarkdownRequest {
   sessionId: string;
   source: MarkdownSource;
+  workspacePath?: string;
 }
 
 export interface RenderMarkdownResponse {
