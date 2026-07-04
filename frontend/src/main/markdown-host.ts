@@ -59,6 +59,21 @@ export class MarkdownHost {
         this.ensureWatcher(doc);
         return docToResponse(doc);
       }
+      // Fallback: try the URL as a direct filesystem path.
+      // Catches edge cases like UNC paths on platforms where fileURLToPath
+      // produces a path that existsSync rejects, or paths the BrowserPanel
+      // normalizer didn't convert to file://.
+      const fsPath = tryLocalFile(source.url);
+      if (fsPath) {
+        const content = await readFile(fsPath, "utf-8");
+        const doc = await this.createDocument(request.sessionId, { kind: "file", path: fsPath }, content);
+        this.ensureWatcher(doc);
+        return docToResponse(doc);
+      }
+      // Don't let file:// URLs reach fetch — it only supports http:/https:.
+      if (source.url.startsWith("file://")) {
+        throw new Error(`File not found: ${source.url}`);
+      }
       const response = await fetch(source.url);
       if (!response.ok) {
         throw new Error(`Failed to fetch markdown from ${source.url}: ${response.status}`);
@@ -276,6 +291,15 @@ function parseDaemonProxyEntry(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+function tryLocalFile(url: string): string | null {
+  // Skip network URLs — let the fetch path handle those.
+  if (/^https?:\/\//i.test(url)) return null;
+  // Normalize backslashes to forward slashes and strip any file:// prefix.
+  const normalized = url.replace(/\\/g, "/").replace(/^file:\/\//i, "");
+  if (existsSync(normalized)) return normalized;
+  return null;
 }
 
 function resolveLocalPath(url: string, workspacePath?: string): string | null {

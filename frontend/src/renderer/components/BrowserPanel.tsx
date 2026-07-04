@@ -49,9 +49,19 @@ export function BrowserPanelView({
 		event.preventDefault();
 		const raw = urlInput.trim();
 		if (!raw) return;
-		// Normalise bare absolute paths to file:// so that MarkdownHost can
+		// Normalise bare filesystem paths to file:// so that MarkdownHost can
 		// detect them as local files and set up file watching.
-		const nextURL = raw.startsWith("/") ? `file://${raw}` : raw;
+		let nextURL = raw;
+		if (raw.startsWith("\\\\") || raw.startsWith("//")) {
+			// UNC path: \\host\share\path → file:////host/share/path
+			nextURL = `file://${raw.replace(/\\/g, "/")}`;
+		} else if (raw.startsWith("/") || raw.startsWith("\\")) {
+			// Unix absolute or backslash-prefixed: /path → file:///path
+			nextURL = `file://${raw.replace(/\\/g, "/")}`;
+		} else if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+			// Windows drive letter: C:\path → file:///C:/path
+			nextURL = `file:///${raw.replace(/\\/g, "/")}`;
+		}
 		if (MARKDOWN_FILE_RE.test(nextURL)) {
 			void browserView.renderMarkdown({ kind: "url", url: nextURL });
 		} else {
