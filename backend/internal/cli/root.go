@@ -257,6 +257,13 @@ func noArgs(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func atMostOneArg(cmd *cobra.Command, args []string) error {
+	if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	return nil
+}
+
 func newDaemonCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "daemon",

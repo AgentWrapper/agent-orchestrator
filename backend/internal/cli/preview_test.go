@@ -172,6 +172,28 @@ func TestPreview_HelpIncludesExamples(t *testing.T) {
 	}
 }
 
+func TestPreview_TooManyArgsIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, Deps{}, "preview", "http://localhost:5173", "extra")
+	if err == nil {
+		t.Fatal("expected too many args to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
+func TestPreviewClear_TooManyArgsIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, Deps{}, "preview", "clear", "extra")
+	if err == nil {
+		t.Fatal("expected too many args to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestPreview_BlankSessionIDIsUsageError(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", " \t ")
 	cfg := setConfigEnv(t)

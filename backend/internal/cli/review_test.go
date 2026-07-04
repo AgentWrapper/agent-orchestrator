@@ -166,3 +166,14 @@ func TestReviewSubmitMissingRunIsUsageError(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
 }
+
+func TestReviewSubmitTooManyArgsIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "mer-2")
+	if err == nil {
+		t.Fatal("expected too many args to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
