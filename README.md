@@ -186,6 +186,7 @@ For detailed architecture diagrams, data flows, and load-bearing rules, see [arc
 | -------------------------------------------------------- | ------------------------------------------------------- |
 | [Architecture](docs/architecture.md)                     | System architecture, data flows, and load-bearing rules |
 | [Backend Code Structure](docs/backend-code-structure.md) | Package-by-package ownership and dependency rules       |
+| [CLI Guide](docs/cli/README.md)                          | Direct `ao` CLI usage, command routes, and smoke tests  |
 | [AGENTS.md](AGENTS.md)                                   | Contributor and worker-agent contract                   |
 
 ---
