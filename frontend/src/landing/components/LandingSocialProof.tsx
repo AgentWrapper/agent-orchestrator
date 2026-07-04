@@ -173,7 +173,7 @@ export function LandingSocialProof() {
 							</h2>
 						</div>
 						<div className="lg:col-span-5">
-							<p className="landing-body-compact">
+							<p className="landing-body-compact pb-17">
 								Real posts from builders, researchers, and early users - pulled straight from X.
 							</p>
 						</div>

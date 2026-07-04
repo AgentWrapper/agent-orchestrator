@@ -33,14 +33,14 @@ export function LandingAgentsBar() {
 			data-testid="agents-marquee"
 			className="landing-reveal relative overflow-hidden border-y border-white/[0.04] bg-[color:var(--bg)]"
 		>
-			<div className="container-page pt-14 pb-10">
+			<div className="container-page pt-14 pb-15">
 				<div className="mx-auto max-w-[1180px]">
 					<div className="flex flex-wrap items-end justify-between gap-6">
 						<div>
 							<span className="landing-eyebrow">Coverage</span>
 							<h2 className="mt-4 max-w-[720px] text-[28px] font-semibold leading-[1.1] text-[color:var(--fg)] sm:text-[40px]">
 								Use the agent you already trust.
-								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same.</span>
+								<span className="block text-[color:var(--fg-muted)]">AO keeps the workflow the same</span>
 							</h2>
 						</div>
 					</div>
