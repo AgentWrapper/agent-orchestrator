@@ -88,7 +88,7 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	anchorPR := results[0].PRURL
 	key := "review-batch:" + anchorPR + ":" + batchID
 	sig := strings.Join(sigParts, "\x01")
-	if err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge); err != nil {
+	if _, err := m.sendOnce(ctx, workerID, anchorPR, key, sig, msg.String(), reviewMaxNudge); err != nil {
 		return ReviewDeliveryNoop, err
 	}
 	return ReviewDeliverySent, nil
@@ -146,6 +146,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
 		return nil
 	}
+	// The CI-failure, review-feedback, and merge-conflict lanes are independent
+	// actionable signals with their own dedup keys. Each lane returns only when it
+	// actually delivered a nudge; a dedup no-op (e.g. CI still red on the same
+	// commit) falls through so a lower lane's fresh feedback is not starved.
 	if o.CI == domain.CIFailing {
 		for _, ch := range o.Checks {
 			if ch.Status == domain.PRCheckFailed {
@@ -156,7 +160,13 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					// terminal (the dedup signature stays on the raw bytes).
 					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
-				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				sent, err := m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				if err != nil {
+					return err
+				}
+				if sent {
+					return nil
+				}
 			}
 		}
 	}
@@ -169,7 +179,13 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		sent, err := m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		if err != nil {
+			return err
+		}
+		if sent {
+			return nil
+		}
 	}
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
@@ -184,7 +200,8 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if blocked {
 			return nil
 		}
-		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		_, err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		return err
 	}
 	return nil
 }
@@ -217,7 +234,7 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	_, err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
 	if err != nil {
 		return ReviewDeliveryNoop, err
 	}
@@ -469,7 +486,8 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 			// the PR-row signature load/persist is skipped, so the dedup
 			// survives only for the lifetime of this Manager. Cross-restart
 			// persistence ships with #35.
-			return m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			_, err := m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			return err
 		}
 	}
 	return nil
@@ -533,29 +551,33 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
 }
 
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
+// sendOnce delivers a one-shot, deduped nudge and reports whether a message was
+// actually sent. sent=false with a nil error means a dedup or attempt-cap no-op,
+// not a failure — callers use it to fall through to other independent nudge lanes
+// instead of treating a suppressed higher-priority nudge as if it had fired.
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (bool, error) {
 	if m.messenger == nil {
-		return nil
+		return false, nil
 	}
 	m.react.mu.Lock()
 	defer m.react.mu.Unlock()
 
 	if prURL != "" && !m.react.loaded[prURL] {
 		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return false, err
 		}
 		m.react.loaded[prURL] = true
 	}
 
 	if m.react.seen[key] == sig {
-		return nil
+		return false, nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		return nil
+		return false, nil
 	}
 	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return err
+		return false, err
 	}
 	// Order: Send → in-memory mutation → durable persist. Sending first means a
 	// transient persist failure does NOT swallow a real send (the agent saw the
@@ -567,10 +589,10 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
 		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return true, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state
