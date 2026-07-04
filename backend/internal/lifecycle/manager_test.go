@@ -103,6 +103,61 @@ func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 	}
 }
 
+// A session mid agent-switch has no live runtime by design; the reaper's "dead"
+// fact must not terminate it while BeginSwitch is in effect.
+func TestRuntimeObservation_SwitchingSuppressesTermination(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute) // otherwise-clearly-dead
+	st.sessions["mer-1"] = rec
+
+	m.BeginSwitch("mer-1")
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatal("switching session was terminated by the reaper; guard failed")
+	}
+
+	// After the switch ends, the guard no longer applies.
+	m.EndSwitch("mer-1")
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatal("post-switch dead probe should terminate")
+	}
+}
+
+func TestMarkSwitched_ChangesHarnessAndClearsAgentSessionID(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Harness: domain.HarnessClaudeCode,
+		FirstSignalAt: time.Now(),
+		Metadata:      domain.SessionMetadata{RuntimeHandleID: "old", AgentSessionID: "old-native", Prompt: "p", Branch: "b", WorkspacePath: "/ws"},
+	}
+	if err := m.MarkSwitched(ctx, "mer-1", domain.HarnessCodex, "new-handle"); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want codex", got.Harness)
+	}
+	if got.Metadata.AgentSessionID != "" {
+		t.Fatalf("AgentSessionID = %q, want cleared", got.Metadata.AgentSessionID)
+	}
+	if got.Metadata.RuntimeHandleID != "new-handle" {
+		t.Fatalf("RuntimeHandleID = %q, want new-handle", got.Metadata.RuntimeHandleID)
+	}
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatal("FirstSignalAt should reset so the new agent re-proves its hooks")
+	}
+	// Preserved facts survive the switch.
+	if got.Metadata.Prompt != "p" || got.Metadata.Branch != "b" || got.Metadata.WorkspacePath != "/ws" {
+		t.Fatalf("preserved metadata lost: %+v", got.Metadata)
+	}
+}
+
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")

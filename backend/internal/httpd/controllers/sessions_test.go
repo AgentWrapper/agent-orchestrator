@@ -111,6 +111,15 @@ func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (do
 	return s, nil
 }
 
+func (f *fakeSessionService) SwitchHarness(_ context.Context, id domain.SessionID, harness domain.AgentHarness, _ string) (domain.Session, error) {
+	s := f.sessions[id]
+	s.Harness = harness
+	s.IsTerminated = false
+	s.Status = domain.StatusIdle
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	s := f.sessions[id]
 	s.IsTerminated = true

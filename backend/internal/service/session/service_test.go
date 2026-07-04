@@ -220,6 +220,9 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
 }
+func (f *fakeCommander) SwitchHarness(context.Context, domain.SessionID, domain.AgentHarness, string) (domain.SessionRecord, error) {
+	return domain.SessionRecord{}, nil
+}
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
 		return false, f.killErr
