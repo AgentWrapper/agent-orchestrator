@@ -31,6 +31,8 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
 | `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
 | `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
+| `ao agent ls`                       | `GET /api/v1/agents`                           |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                  |
 | `ao spawn`                          | `POST /api/v1/sessions`                        |
 | `ao session ls`                     | `GET /api/v1/sessions`                         |
 | `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
@@ -43,6 +45,17 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+
+`ao agent ls` prints the daemon-supported agent catalog with local install/auth
+readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
+print the raw inventory response.
+
+`ao spawn` resolves project context in this order: explicit `--project`,
+`AO_PROJECT_ID`, then the current working directory matched against registered
+project paths. If `--agent` / `--harness` is omitted, it uses the resolved
+project's `worker.agent` config. Before spawning, the CLI checks the cached
+agent catalog, refreshes once if the chosen agent is not confidently authorized,
+blocks unauthorized agents, and warns-but-continues when auth remains unknown.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it
