@@ -292,7 +292,9 @@ describe("prSummaryParts", () => {
 	});
 
 	it("puts draft readiness under Review", () => {
-		const parts = prSummaryParts(summary({ state: "draft", review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] } }));
+		const parts = prSummaryParts(
+			summary({ state: "draft", review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] } }),
+		);
 
 		expect(parts.find((part) => part.key === "review")).toMatchObject({
 			status: "None",

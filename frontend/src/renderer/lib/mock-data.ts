@@ -286,11 +286,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 	},
 ];
 
-const prSummary = (
-	sessionId: string,
-	number: number,
-	overrides: Partial<SessionPRSummary> = {},
-): SessionPRSummary => {
+const prSummary = (sessionId: string, number: number, overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => {
 	const session = mockWorkspaces.flatMap((workspace) => workspace.sessions).find((item) => item.id === sessionId);
 	const facts = session?.prs.find((item) => item.number === number);
 	const url = facts?.url ?? `https://github.com/me/${session?.workspaceName ?? "preview"}/pull/${number}`;

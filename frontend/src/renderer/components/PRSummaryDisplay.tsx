@@ -113,8 +113,8 @@ export function PRSummaryParts({
 							</div>
 						) : null}
 					</div>
-					);
-				})}
+				);
+			})}
 		</div>
 	);
 }

@@ -22,7 +22,8 @@ export function sessionScmSummaryQueryOptions(sessionId: string) {
 	return {
 		queryKey: sessionScmSummaryQueryKey(sessionId),
 		enabled: Boolean(sessionId),
-		queryFn: () => (usePreviewData ? Promise.resolve(mockSessionScmSummaries[sessionId] ?? []) : fetchSessionScmSummary(sessionId)),
+		queryFn: () =>
+			usePreviewData ? Promise.resolve(mockSessionScmSummaries[sessionId] ?? []) : fetchSessionScmSummary(sessionId),
 		retry: 1,
 	};
 }

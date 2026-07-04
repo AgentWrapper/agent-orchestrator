@@ -374,10 +374,7 @@ function formatLineDelta(additions: number, deletions: number): string | undefin
 	return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-function mergeAttentionLinks(
-	pr: SessionPRSummary,
-	kind: "merge_conflict" | "merge_blocked",
-): PRSummaryLink[] {
+function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "merge_blocked"): PRSummaryLink[] {
 	const href =
 		kind === "merge_conflict" ? mergeConflictUrl(pr) : pr.mergeability.prUrl || pr.htmlUrl || pr.url || undefined;
 	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
