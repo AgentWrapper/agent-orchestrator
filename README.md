@@ -108,6 +108,9 @@ The result is a local control layer for agentic coding: agents still do the codi
 
 Works with 23+ CLI-based coding agents including Claude Code, OpenAI Codex, Cursor, OpenCode, Aider, Amp, Goose, GitHub Copilot, Grok, Qwen Code, Kimi Code, Crush, Cline, Droid, Devin, Auggie, Continue, Kiro, and Kilo Code.
 
+For direct CLI usage, including agent readiness checks and context-aware session
+spawns, see the [CLI Guide](docs/cli/README.md).
+
 **If it runs in a terminal, it runs on Agent Orchestrator.**
 
 ---
@@ -172,6 +175,7 @@ For detailed architecture diagrams, data flows, and load-bearing rules, see [arc
 | -------------------------------------------------------- | ------------------------------------------------------- |
 | [Architecture](docs/architecture.md)                     | System architecture, data flows, and load-bearing rules |
 | [Backend Code Structure](docs/backend-code-structure.md) | Package-by-package ownership and dependency rules       |
+| [CLI Guide](docs/cli/README.md)                          | Direct `ao` CLI usage, command routes, and smoke tests  |
 | [AGENTS.md](AGENTS.md)                                   | Contributor and worker-agent contract                   |
 
 ---
