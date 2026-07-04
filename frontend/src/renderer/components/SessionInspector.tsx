@@ -125,7 +125,15 @@ export function SessionInspector({
 				))}
 			</div>
 
-			<div className="session-inspector__body">
+			<div
+				className={cn(
+					"session-inspector__body",
+					// The Browser tab renders its own bordered panel edge-to-edge, so
+					// drop the body padding for it (except when popped out, where the
+					// body only holds the "return to panel" empty state).
+					view === "browser" && !browserPoppedOut && "session-inspector__body--browser",
+				)}
+			>
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 				{view === "browser" ? (
