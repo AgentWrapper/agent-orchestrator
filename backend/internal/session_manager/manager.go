@@ -69,12 +69,12 @@ type lifecycleRecorder interface {
 	// MarkSwitched re-points a live session at a new harness + runtime handle
 	// and clears the harness-specific native resume id (AgentSessionID).
 	MarkSwitched(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, runtimeHandleID string) error
-	// BeginSwitch/EndSwitch bracket the runtime gap during a switch so the
-	// reaper does not terminate the session while it has no live runtime.
-	BeginSwitch(id domain.SessionID)
+	// TryBeginSwitch atomically claims the switch guard for the session: false
+	// means a switch is already in flight. Rejecting a concurrent switch and
+	// suppressing the reaper during the runtime gap are the same claim. Pair a
+	// true result with EndSwitch (defer it).
+	TryBeginSwitch(id domain.SessionID) bool
 	EndSwitch(id domain.SessionID)
-	// IsSwitching reports whether a switch is already in flight for the session.
-	IsSwitching(id domain.SessionID) bool
 }
 
 type runtimeController interface {
@@ -588,9 +588,14 @@ func (m *Manager) SwitchHarness(ctx context.Context, id domain.SessionID, newHar
 	if meta.WorkspacePath == "" || meta.Branch == "" {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrIncompleteHandle)
 	}
-	if m.lcm.IsSwitching(id) {
+	// Atomically claim the guard for BOTH paths: this rejects a concurrent
+	// switch (the check-and-set is one critical section, so two requests cannot
+	// both pass) and, for a live session, tells the reaper to ignore the coming
+	// runtime gap. Released on every return via defer.
+	if !m.lcm.TryBeginSwitch(id) {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrSwitchInProgress)
 	}
+	defer m.lcm.EndSwitch(id)
 
 	// ---- validate the new agent BEFORE touching anything ----
 	if !newHarness.IsKnown() {
@@ -652,10 +657,8 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
 
-	// ---- commit: guarded so the reaper ignores the runtime gap ----
-	m.lcm.BeginSwitch(id)
-	defer m.lcm.EndSwitch(id)
-
+	// The switch guard is already held by SwitchHarness (which defers EndSwitch),
+	// so the reaper ignores the runtime gap opened by the destroy/create below.
 	if err := m.prepareWorkspace(ctx, agent, id, meta.WorkspacePath); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, err)
 	}
@@ -691,6 +694,13 @@ func (m *Manager) switchLiveHarness(ctx context.Context, rec domain.SessionRecor
 func (m *Manager) relaunchTerminatedWithHarness(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, newHarness domain.AgentHarness, systemPrompt string, agentConfig ports.AgentConfig) (domain.SessionRecord, error) {
 	id := rec.ID
 	meta := rec.Metadata
+	// Mirror restoreArgv's guard: the new harness cannot native-resume the old
+	// agent's session, so a terminated WORKER with no saved prompt has nothing to
+	// launch from and would blank-relaunch. Restore deliberately refuses this, so
+	// switch-relaunch must too. Orchestrators are promptless by design.
+	if meta.Prompt == "" && rec.Kind != domain.KindOrchestrator {
+		return domain.SessionRecord{}, fmt.Errorf("switch %s: %w", id, ErrNotResumable)
+	}
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
 		ProjectID:     rec.ProjectID,
 		SessionID:     id,

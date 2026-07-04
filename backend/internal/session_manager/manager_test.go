@@ -155,11 +155,15 @@ func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness d
 	l.store.sessions[id] = rec
 	return nil
 }
-func (l *fakeLCM) BeginSwitch(id domain.SessionID) {
+func (l *fakeLCM) TryBeginSwitch(id domain.SessionID) bool {
 	if l.switching == nil {
 		l.switching = map[domain.SessionID]bool{}
 	}
+	if l.switching[id] {
+		return false
+	}
 	l.switching[id] = true
+	return true
 }
 func (l *fakeLCM) EndSwitch(id domain.SessionID) { delete(l.switching, id) }
 func (l *fakeLCM) IsSwitching(id domain.SessionID) bool {
@@ -435,6 +439,43 @@ func TestSwitchHarness_TerminatedRelaunchesUnderNewAgent(t *testing.T) {
 	}
 	if rec.Metadata.AgentSessionID != "" {
 		t.Fatalf("AgentSessionID = %q, want cleared", rec.Metadata.AgentSessionID)
+	}
+}
+
+func TestSwitchHarness_RejectsConcurrentSwitch(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = mkSwitchable(id)
+
+	// Simulate a switch already in flight by claiming the guard first.
+	lcm := m.lcm.(*fakeLCM)
+	if !lcm.TryBeginSwitch(id) {
+		t.Fatal("precondition: could not claim guard")
+	}
+	_, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "")
+	if !errors.Is(err, ErrSwitchInProgress) {
+		t.Fatalf("err = %v, want ErrSwitchInProgress", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("runtime touched despite in-progress guard: created=%d destroyed=%d", rt.created, rt.destroyed)
+	}
+}
+
+func TestSwitchHarness_TerminatedPromptlessWorkerRejected(t *testing.T) {
+	m, st, rt, ws := newManager()
+	id := domain.SessionID("ao-1")
+	// Terminated worker with no saved prompt: nothing to launch a fresh agent from.
+	seedTerminal(st, id, domain.SessionMetadata{Branch: "b/ao-1", WorkspacePath: "/ws/ao-1"})
+	rec := st.sessions[id]
+	rec.Kind = domain.KindWorker
+	st.sessions[id] = rec
+
+	_, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "")
+	if !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("err = %v, want ErrNotResumable", err)
+	}
+	if rt.created != 0 || ws.lastCfg.Branch != "" {
+		t.Fatalf("relaunched a promptless worker: created=%d restoreBranch=%q", rt.created, ws.lastCfg.Branch)
 	}
 }
 
