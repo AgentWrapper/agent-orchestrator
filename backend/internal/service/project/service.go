@@ -395,11 +395,11 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 	return p
 }
 
-func projectConfigPtr(config domain.ProjectConfig) *domain.ProjectConfig {
-	if config.IsZero() {
+func projectConfigPtr(projectConfig domain.ProjectConfig) *domain.ProjectConfig {
+	if projectConfig.IsZero() {
 		return nil
 	}
-	cfg := config
+	cfg := projectConfig
 	return &cfg
 }
 
