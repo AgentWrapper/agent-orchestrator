@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -183,8 +184,8 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config struct {
-		Hooks       map[string][]claudeMatcherGroup `json:"hooks"`
-		Permissions json.RawMessage                 `json:"permissions"`
+		Hooks       map[string][]hooksjson.MatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                     `json:"permissions"`
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
@@ -260,8 +261,8 @@ func TestUninstallHooksRemovesClaudeHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config struct {
-		Hooks       map[string][]claudeMatcherGroup `json:"hooks"`
-		Permissions json.RawMessage                 `json:"permissions"`
+		Hooks       map[string][]hooksjson.MatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                     `json:"permissions"`
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
@@ -343,7 +344,7 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 
 // countClaudeHookCommand counts how many hook entries under one event register
 // the given command — used to prove no duplicate AO hooks.
-func countClaudeHookCommand(groups []claudeMatcherGroup, command string) int {
+func countClaudeHookCommand(groups []hooksjson.MatcherGroup, command string) int {
 	count := 0
 	for _, group := range groups {
 		for _, hook := range group.Hooks {
@@ -357,7 +358,7 @@ func countClaudeHookCommand(groups []claudeMatcherGroup, command string) int {
 
 // matcherForCommand returns the matcher on the group that registers the given
 // command (nil if the group has no matcher).
-func matcherForCommand(groups []claudeMatcherGroup, command string) *string {
+func matcherForCommand(groups []hooksjson.MatcherGroup, command string) *string {
 	for _, group := range groups {
 		for _, hook := range group.Hooks {
 			if hook.Command == command {

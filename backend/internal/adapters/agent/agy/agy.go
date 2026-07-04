@@ -5,30 +5,34 @@ package agy
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	adapterID = "agy"
+const adapterID = "agy"
 
-	// Normalized session-metadata keys. Shared vocabulary with the Codex and Claude Code
-	// adapters so the dashboard treats every agent uniformly.
-	agyTitleMetadataKey   = "title"
-	agySummaryMetadataKey = "summary"
-)
+var agyBinarySpec = binaryutil.BinarySpec{
+	Label:         "agy",
+	Names:         []string{"agy"},
+	WinNames:      []string{"agy.cmd", "agy.exe", "agy"},
+	UnixPaths:     []string{"/usr/local/bin/agy", "/opt/homebrew/bin/agy"},
+	UnixHomePaths: [][]string{{".local", "bin", "agy"}, {".cargo", "bin", "agy"}, {".npm", "bin", "agy"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "agy.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "agy.exe"}},
+		{Base: binaryutil.WinHome, Parts: []string{".cargo", "bin", "agy.exe"}},
+	},
+}
 
 // Plugin is the Agy agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.RWMutex
 	resolvedBinary string
 }
@@ -52,14 +56,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
-}
-
-// GetConfigSpec reports the agent-specific config keys. Agy exposes none yet.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start an interactive Agy session.
@@ -87,15 +83,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Agy receives its prompt in the
-// launch command itself via --prompt-interactive.
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Agy session:
@@ -134,84 +121,15 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[agyTitleMetadataKey],
-		Summary:        session.Metadata[agySummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // ResolveAgyBinary returns the path to the agy binary on this machine,
-// searching PATH then a handful of well-known install locations.
-// Returns "agy" as a last-ditch fallback.
+// searching PATH then a handful of well-known install locations. It returns a
+// wrapped ports.ErrAgentBinaryNotFound when agy is absent.
 func ResolveAgyBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"agy.cmd", "agy.exe", "agy"} {
-			path, err := exec.LookPath(name)
-			if err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "agy.cmd"),
-				filepath.Join(appData, "npm", "agy.exe"),
-			)
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "agy.exe"))
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-
-		return "", fmt.Errorf("agy: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("agy"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/agy",
-		"/opt/homebrew/bin/agy",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "agy"),
-			filepath.Join(home, ".cargo", "bin", "agy"),
-			filepath.Join(home, ".npm", "bin", "agy"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("agy: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, agyBinarySpec)
 }
 
 func (p *Plugin) agyBinary(ctx context.Context) (string, error) {
@@ -237,9 +155,4 @@ func (p *Plugin) agyBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

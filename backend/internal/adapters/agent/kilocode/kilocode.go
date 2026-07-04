@@ -24,15 +24,12 @@ package kilocode
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -40,18 +37,12 @@ const (
 	// adapterID is the registry id and the value users pass to
 	// `ao spawn --agent`. It matches domain.HarnessKilocode.
 	adapterID = "kilocode"
-
-	// Normalized session-metadata keys the Kilo plugin persists into the AO
-	// session store and SessionInfo reads back. Shared vocabulary with the Codex
-	// and opencode adapters so the dashboard treats every agent uniformly. The
-	// agent-session-id key is the shared ports.MetadataKeyAgentSessionID.
-	kilocodeTitleMetadataKey   = "title"
-	kilocodeSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Kilo Code agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
+	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
@@ -77,16 +68,6 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Kilo Code exposes none
-// yet: model and agent selection are read from Kilo's own config
-// (kilo.json / ~/.config/kilo), exactly as a normal launch.
-func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{}, nil
-}
-
 // GetLaunchCommand builds the argv to start a new interactive Kilo Code session.
 // Shape:
 //
@@ -110,15 +91,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--prompt", cfg.Prompt)
 	}
 	return cmd, nil
-}
-
-// GetPromptDeliveryStrategy reports that Kilo Code receives its prompt in the
-// launch command itself (via --prompt).
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Kilo Code
@@ -152,15 +124,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
 	}
-	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
-		Title:          session.Metadata[kilocodeTitleMetadataKey],
-		Summary:        session.Metadata[kilocodeSummaryMetadataKey],
-	}
-	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return ports.SessionInfo{}, false, nil
-	}
-	return info, true, nil
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 // kilocodePermissionEnvVar is the env var Kilo deep-merges as the
@@ -176,15 +141,15 @@ const kilocodePermissionEnvVar = "KILO_CONFIG_CONTENT"
 // config (tool -> action, values "ask"/"allow"/"deny", verified via
 // `kilocode config check`). Tools left unset fall back to Kilo's own default
 // action ("ask"), so each mode only names the tools it relaxes:
-//   - default            → nil: no env; Kilo's config decides every prompt.
-//   - accept-edits       → edits ("write"/"edit"/"patch" gate on the "edit"
+//   - default            -> nil: no env; Kilo's config decides every prompt.
+//   - accept-edits       -> edits ("write"/"edit"/"patch" gate on the "edit"
 //     key) auto-approved; bash and everything else still prompt.
-//   - auto               → edits + bash auto-approved; network/other still prompt.
+//   - auto               -> edits + bash auto-approved; network/other still prompt.
 //     Kilo has no classifier/reviewer gate (unlike Claude Code's "auto"), so
 //     this is the closest analog its flat allow/ask/deny config can express.
-//   - bypass-permissions → "*" wildcard-allows every tool: nothing prompts.
+//   - bypass-permissions -> "*" wildcard-allows every tool: nothing prompts.
 func kilocodePermissionConfig(mode ports.PermissionMode) map[string]string {
-	switch normalizePermissionMode(mode) {
+	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits:
 		return map[string]string{"edit": "allow"}
 	case ports.PermissionModeAuto:
@@ -224,81 +189,22 @@ func kilocodePermissionEnvPrefix(mode ports.PermissionMode) []string {
 	return []string{"env", kilocodePermissionEnvVar + "=" + string(blob)}
 }
 
-func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
-	switch mode {
-	case ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions:
-		return mode
-	default:
-		// Empty or unrecognized: defer to Kilo's own config (no flag).
-		return ports.PermissionModeDefault
-	}
+var kilocodeBinarySpec = binaryutil.BinarySpec{
+	Label:         "kilocode",
+	Names:         []string{"kilocode"},
+	WinNames:      []string{"kilocode.cmd", "kilocode.exe", "kilocode"},
+	UnixPaths:     []string{"/usr/local/bin/kilocode", "/opt/homebrew/bin/kilocode"},
+	UnixHomePaths: [][]string{{".npm-global", "bin", "kilocode"}, {".npm", "bin", "kilocode"}, {".local", "bin", "kilocode"}},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kilocode.exe"}},
+	},
 }
 
-// ResolveKilocodeBinary returns the path to the kilocode binary on this machine,
-// searching PATH then a handful of well-known install locations (npm global
-// bin, Homebrew). Returns "kilocode" as a last-ditch fallback so callers see a
-// clear "command not found" rather than an empty argv.
+// ResolveKilocodeBinary returns the path to the kilocode binary, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveKilocodeBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"kilocode.cmd", "kilocode.exe", "kilocode"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "kilocode.cmd"),
-				filepath.Join(appData, "npm", "kilocode.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("kilocode: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("kilocode"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/kilocode",
-		"/opt/homebrew/bin/kilocode",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".npm-global", "bin", "kilocode"),
-			filepath.Join(home, ".npm", "bin", "kilocode"),
-			filepath.Join(home, ".local", "bin", "kilocode"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("kilocode: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, kilocodeBinarySpec)
 }
 
 func (p *Plugin) kilocodeBinary(ctx context.Context) (string, error) {
@@ -315,9 +221,4 @@ func (p *Plugin) kilocodeBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

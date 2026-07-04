@@ -217,7 +217,7 @@ func TestGetLaunchCommandInlineSystemPromptIsDropped(t *testing.T) {
 }
 
 func TestGetRestoreCommandAlwaysFalse(t *testing.T) {
-	p := &Plugin{resolvedBinary: "aider"}
+	p := &Plugin{}
 	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "abc123"},

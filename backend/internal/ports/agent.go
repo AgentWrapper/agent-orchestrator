@@ -196,6 +196,22 @@ const (
 	PermissionModeBypassPermissions = domain.PermissionModeBypassPermissions
 )
 
+// NormalizePermissionMode collapses an empty or unrecognized mode to
+// PermissionModeDefault, leaving the four known modes unchanged. Adapters call
+// it so a stored value they don't recognize defers to the agent's own config
+// (usually by emitting no flag) rather than mapping onto a bogus one.
+func NormalizePermissionMode(mode PermissionMode) PermissionMode {
+	switch mode {
+	case PermissionModeDefault,
+		PermissionModeAcceptEdits,
+		PermissionModeAuto,
+		PermissionModeBypassPermissions:
+		return mode
+	default:
+		return PermissionModeDefault
+	}
+}
+
 // PromptDeliveryStrategy describes how AO should deliver the initial prompt.
 type PromptDeliveryStrategy string
 

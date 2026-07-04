@@ -11,7 +11,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -114,7 +113,7 @@ func TestGetLaunchCommandCtxCancelled(t *testing.T) {
 }
 
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	plugin := &Plugin{}
 
 	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
@@ -126,7 +125,7 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
@@ -357,8 +356,8 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "uuid-123",
-			kiroTitleMetadataKey:            "Fix login redirect",
-			kiroSummaryMetadataKey:          "Updated the auth callback and tests.",
+			ports.MetadataKeyTitle:          "Fix login redirect",
+			ports.MetadataKeySummary:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
 		},
 	})
@@ -397,29 +396,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
 		t.Fatalf("info = %#v, want zero value", info)
-	}
-}
-
-func TestDeriveActivityState(t *testing.T) {
-	tests := []struct {
-		event     string
-		wantState domain.ActivityState
-		wantOK    bool
-	}{
-		{"session-start", domain.ActivityActive, true},
-		{"user-prompt-submit", domain.ActivityActive, true},
-		{"stop", domain.ActivityIdle, true},
-		{"permission-request", domain.ActivityWaitingInput, true},
-		{"unknown", "", false},
-		{"", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.event, func(t *testing.T) {
-			state, ok := DeriveActivityState(tt.event, nil)
-			if state != tt.wantState || ok != tt.wantOK {
-				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)", tt.event, state, ok, tt.wantState, tt.wantOK)
-			}
-		})
 	}
 }
 
