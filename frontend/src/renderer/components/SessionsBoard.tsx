@@ -169,7 +169,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				type="button"
 			>
 				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-				{isProjectRestarting ? "Restarting..." : isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				{isProjectRestarting
+					? "Restarting..."
+					: isSpawning
+						? "Spawning..."
+						: orchestrator
+							? "Orchestrator"
+							: "Spawn Orchestrator"}
 			</button>
 		</>
 	) : undefined;

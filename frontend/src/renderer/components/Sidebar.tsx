@@ -557,7 +557,13 @@ function ProjectItem({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
-						{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+						{isProjectRestarting
+							? "Restarting…"
+							: isSpawning
+								? "Spawning…"
+								: orchestrator
+									? "Orchestrator"
+									: "Spawn orchestrator"}
 					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>

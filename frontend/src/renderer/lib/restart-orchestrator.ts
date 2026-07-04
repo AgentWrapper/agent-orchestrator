@@ -44,7 +44,10 @@ export async function restartProjectOrchestrator({
 		});
 	} catch (error) {
 		await refreshWorkspaceState(queryClient);
-		setOrchestratorReplacementError(projectId, error instanceof Error ? error.message : "Could not replace orchestrator");
+		setOrchestratorReplacementError(
+			projectId,
+			error instanceof Error ? error.message : "Could not replace orchestrator",
+		);
 		onError?.(error);
 	} finally {
 		setProjectRestarting(projectId, false);

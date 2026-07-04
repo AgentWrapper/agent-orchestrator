@@ -95,7 +95,11 @@ beforeEach(() => {
 	putMock.mockReset();
 	postMock.mockReset();
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
-	postMock.mockResolvedValue({ data: { orchestrator: { id: "proj-1-orch-2" } }, error: undefined, response: { status: 200 } });
+	postMock.mockResolvedValue({
+		data: { orchestrator: { id: "proj-1-orch-2" } },
+		error: undefined,
+		response: { status: 200 },
+	});
 });
 
 describe("ProjectSettingsForm", () => {
