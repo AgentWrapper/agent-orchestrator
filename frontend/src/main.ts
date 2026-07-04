@@ -698,6 +698,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		portConfirmed = true;
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
+		markdownHost?.setDaemonPort(port);
 
 		// Establish the OS-native liveness link unconditionally: this callback fires
 		// only on the spawn path (we own this daemon). Holding the connection keeps

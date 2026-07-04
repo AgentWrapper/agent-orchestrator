@@ -19,7 +19,7 @@ The AO Electron supervisor can render markdown (`--output.format markdown` / `.m
 2. **Auto-preview immediately:** After creating the file, run `ao preview <path-to-file>.md` to push it to the browser panel so the user sees it without extra steps.
 3. **Multiple files:** If your task produces several `.md` files in one go (e.g., a report per issue), only auto-preview the **last** one — the panel can only show one at a time, and previous targets are immediately replaced.
 4. **Live editing:** When the file is local and the user saves edits, the preview auto-refreshes.
-5. **File deletion:** If the previewed file is deleted, the browser panel shows a "File deleted" notice automatically.
+5. **File deletion:** If the previewed file is deleted, the browser panel reverts to `index.html` (the default workspace entry point) or clears to blank if none exists — no error page is shown.
 
 ## `ao preview`
 

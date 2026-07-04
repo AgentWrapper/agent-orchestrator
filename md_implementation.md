@@ -557,11 +557,11 @@ chokidar.watch(filePath)
 ```
 
 The `onFileDeleted` method:
-- Re-renders the document with a "File deleted" message rendered as markdown blockquote
-- Sends a `md:fileChanged` IPC event so the renderer reloads the view
-- Closes the chokidar watcher for that path (the file is gone; a new preview requires re-opening)
+- Removes all documents referencing the deleted path from the cache (so `getCachedHtml` returns `null`)
+- Closes the chokidar watcher for that path
+- Makes an HTTP `DELETE /api/v1/sessions/{id}/preview` call to the daemon
 
-The rendered deletion page carries the same strict CSP as any other markdown page — no JavaScript, safely sanitised.
+The daemon's `clearPreview` handler (DELETE endpoint) was updated to autodetect `index.html` in the workspace before clearing. If `index.html` exists, the preview reverts to it. If not, the preview URL is cleared and the browser panel shows its blank initial state. No error page or deletion notice is shown.
 
 ### Agent auto-preview instructions
 
@@ -578,5 +578,8 @@ The agent's system prompt already had the `aoMarkdownPreviewPointer()` appended 
 
 | File | Change | Motivation |
 |---|---|---|
-| `frontend/src/main/markdown-host.ts` | Added `unlink` handler + `onFileDeleted()` method | Browser panel now shows a "File deleted" notice instead of stale content |
-| `backend/internal/skillassets/markdown-preview/SKILL.md` | Expanded with auto-preview steps; added file deletion documentation | Agents can proactively push previews without manual user action |
+| `frontend/src/main/markdown-host.ts` | Added `unlink` handler + `onFileDeleted()` method that deletes the cached doc and calls daemon to revert | Browser panel reverts to `index.html` or blank — no stale content, no error page |
+| `frontend/src/main/markdown-host.ts` | Added `setDaemonPort()` method | MarkdownHost needs the daemon port to make DELETE calls |
+| `frontend/src/main.ts` | Calls `markdownHost.setDaemonPort(port)` from `reportBoundPort` | Wires the daemon port into MarkdownHost when it's confirmed |
+| `backend/internal/httpd/controllers/sessions.go` | Updated `clearPreview` (DELETE) to autodetect `index.html` before clearing | When a file-backed preview is deleted, the daemon reverts to the default entry point instead of showing stale content |
+| `backend/internal/skillassets/markdown-preview/SKILL.md` | Expanded with auto-preview steps; documented file deletion behavior | Agents can proactively push previews without manual user action |
