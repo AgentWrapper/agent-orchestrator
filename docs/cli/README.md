@@ -63,11 +63,17 @@ readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
 print the raw inventory response.
 
 `ao spawn` resolves project context in this order: explicit `--project`,
-`AO_PROJECT_ID`, then the current working directory matched against registered
-project paths. If `--agent` / `--harness` is omitted, it uses the resolved
-project's `worker.agent` config. Before spawning, the CLI checks the cached
-agent catalog, refreshes once if the chosen agent is not confidently authorized,
-blocks unauthorized agents, and warns-but-continues when auth remains unknown.
+`AO_PROJECT_ID`, `AO_SESSION_ID` (by fetching the current session from the
+daemon), then the current working directory matched against registered project
+paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
+`--project` explicitly.
+
+If `--agent` / `--harness` is omitted, `ao spawn` uses the resolved project's
+`worker.agent` config. Before spawning, the CLI refreshes the advisory agent
+catalog and fails early when the selected agent is unsupported, not installed,
+or unauthorized. It warns-but-continues when auth remains unknown because daemon
+spawn remains the authoritative runtime validation point. Use
+`--skip-agent-check` to bypass only this CLI-side preflight.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it
