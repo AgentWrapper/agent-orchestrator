@@ -570,9 +570,7 @@ func (o *Observer) workspaceSCMRepos(ctx context.Context, proj domain.ProjectRec
 func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
 	if pr.Provider != "" || pr.Host != "" || pr.Repo != "" {
 		for _, repo := range repos {
-			if strings.EqualFold(pr.Provider, repo.Provider) &&
-				strings.EqualFold(pr.Host, repo.Host) &&
-				strings.EqualFold(pr.Repo, repoFullName(repo)) {
+			if matchesTrackedPRRepo(pr, repo) {
 				return repo, true
 			}
 		}
@@ -587,6 +585,19 @@ func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRe
 		}
 	}
 	return repos[0], len(repos) > 0
+}
+
+func matchesTrackedPRRepo(pr domain.PullRequest, repo ports.SCMRepo) bool {
+	if pr.Provider != "" && !strings.EqualFold(pr.Provider, repo.Provider) {
+		return false
+	}
+	if pr.Host != "" && !strings.EqualFold(pr.Host, repo.Host) {
+		return false
+	}
+	if pr.Repo != "" && !strings.EqualFold(pr.Repo, repoFullName(repo)) {
+		return false
+	}
+	return true
 }
 
 func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {

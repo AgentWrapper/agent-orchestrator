@@ -255,6 +255,20 @@ func knownPR(num int) domain.PullRequest {
 	return pr
 }
 
+func TestRepoForTrackedPRMatchesLegacyRepoOnlyRows(t *testing.T) {
+	pr := knownPR(1)
+	pr.Provider = ""
+	pr.Host = ""
+	pr.Repo = "o/r"
+	repo, ok := repoForTrackedPR(pr, []ports.SCMRepo{testRepo})
+	if !ok {
+		t.Fatal("legacy repo-only row should match candidate repo")
+	}
+	if repoFullName(repo) != "o/r" {
+		t.Fatalf("matched repo = %q, want o/r", repoFullName(repo))
+	}
+}
+
 func TestStartAsyncPerformsImmediatePollAndStopsOnCancel(t *testing.T) {
 	store := testStoreWithSession()
 	store.listEntered = make(chan struct{})

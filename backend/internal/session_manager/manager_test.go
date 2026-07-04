@@ -905,6 +905,42 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 		t.Fatal("restore should relaunch")
 	}
 }
+
+func TestRestore_WorkspaceProjectRestoresChildrenAndRecordsInventory(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "services/api"}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := []string{"Restore:__root__", "Restore:api"}
+	if got := strings.Join(ws.calls, ","); got != strings.Join(wantCalls, ",") {
+		t.Fatalf("restore calls = %v, want %v", ws.calls, wantCalls)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
+	}
+	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("workspace rows = %v, want root and child inventory", rows)
+	}
+	byRepo := map[string]domain.SessionWorktreeRecord{}
+	for _, row := range rows {
+		byRepo[row.RepoName] = row
+	}
+	if byRepo[domain.RootWorkspaceRepoName].State != "active" || byRepo["api"].State != "active" {
+		t.Fatalf("row states = root:%q api:%q, want active inventory", byRepo[domain.RootWorkspaceRepoName].State, byRepo["api"].State)
+	}
+	if got := byRepo["api"].WorktreePath; got != filepath.Join("/ws/mer-1", "services", "api") {
+		t.Fatalf("api worktree path = %q", got)
+	}
+}
+
 func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "restore-model"}}}

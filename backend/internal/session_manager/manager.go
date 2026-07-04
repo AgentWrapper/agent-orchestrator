@@ -637,50 +637,48 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
-	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
-		ProjectID:     rec.ProjectID,
-		SessionID:     id,
-		Kind:          rec.Kind,
-		SessionPrefix: sessionPrefix(project),
-		Branch:        meta.Branch,
-	})
+	ws, err := m.restoreSessionWorkspace(ctx, project, rec)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
+	return m.relaunchRestoredSession(ctx, rec, project, ws)
+}
+
+func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (domain.SessionRecord, error) {
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", rec.ID, rec.Harness)
 	}
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt: %w", rec.ID, err)
 	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
+	argv, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config), rec.Kind)
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", rec.ID, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
-		SessionID:     id,
+		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
 	})
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
-	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
 	}
-	return m.getRecord(ctx, id)
+	return m.getRecord(ctx, rec.ID)
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -978,8 +976,8 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			}
 		}
 
-		// Step 3: relaunch via the existing single-session Restore method.
-		if _, err := m.Restore(ctx, rec.ID); err != nil {
+		// Step 3: relaunch the agent in the restored workspace.
+		if _, err := m.relaunchRestoredSession(ctx, rec, project, ws); err != nil {
 			// A promptless, unresumable worker is intentionally left terminated
 			// (ErrNotResumable): expected, not an operational failure, so log it
 			// quietly rather than as an error.
@@ -1028,6 +1026,66 @@ func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.
 		}
 	}
 	return nil
+}
+
+func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) (ports.WorkspaceInfo, error) {
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
+			ProjectID:     rec.ProjectID,
+			SessionID:     rec.ID,
+			Kind:          rec.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        rec.Metadata.Branch,
+		})
+	}
+	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
+	if err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	root, err := m.restoreWorkspaceProjectRows(ctx, rows)
+	if err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	for _, row := range rows {
+		if err := m.upsertWorkspaceProjectRowState(ctx, row, "active", ""); err != nil {
+			return ports.WorkspaceInfo{}, fmt.Errorf("mark repo %s active: %w", row.RepoName, err)
+		}
+	}
+	return workspaceInfoFromRepoInfo(root), nil
+}
+
+func (m *Manager) workspaceProjectRestoreRows(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) ([]ports.WorkspaceRepoInfo, error) {
+	rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 1 {
+		return m.sessionWorktreeRowsToRepoInfos(ctx, project, rec, rows)
+	}
+	childRepos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := []ports.WorkspaceRepoInfo{{
+		RepoName:  domain.RootWorkspaceRepoName,
+		RepoPath:  project.Path,
+		Path:      rec.Metadata.WorkspacePath,
+		Branch:    rec.Metadata.Branch,
+		SessionID: rec.ID,
+		ProjectID: rec.ProjectID,
+	}}
+	for _, repo := range childRepos {
+		out = append(out, ports.WorkspaceRepoInfo{
+			RepoName:     repo.Name,
+			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
+			Path:         filepath.Join(rec.Metadata.WorkspacePath, filepath.FromSlash(repo.RelativePath)),
+			Branch:       rec.Metadata.Branch,
+			SessionID:    rec.ID,
+			ProjectID:    rec.ProjectID,
+			RelativePath: repo.RelativePath,
+		})
+	}
+	return out, nil
 }
 
 func (m *Manager) workspaceProjectRows(ctx context.Context, rec domain.SessionRecord) ([]ports.WorkspaceRepoInfo, bool, error) {
