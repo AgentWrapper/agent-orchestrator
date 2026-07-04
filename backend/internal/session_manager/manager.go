@@ -2292,16 +2292,37 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 // lookPath (exec.LookPath in prod) before any runtime work happens. Adapters
 // that can't resolve their binary now return ports.ErrAgentBinaryNotFound from
 // GetLaunchCommand directly; this guard is a defense-in-depth for adapters
-// that return an argv[0] like "claude" without verifying.
+// that return an argv[0] like "claude" without verifying. Some adapters prefix
+// their command with `env KEY=value`; in that case validate the first real
+// executable after the environment assignments.
 func (m *Manager) validateAgentBinary(argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("agent: empty launch argv: %w", ports.ErrAgentBinaryNotFound)
 	}
-	bin := argv[0]
+	bin, ok := launchBinary(argv)
+	if !ok {
+		return fmt.Errorf("agent: launch argv missing binary: %w", ports.ErrAgentBinaryNotFound)
+	}
 	if _, err := m.lookPath(bin); err != nil {
 		return fmt.Errorf("agent binary %q: %w", bin, ports.ErrAgentBinaryNotFound)
 	}
 	return nil
+}
+
+func launchBinary(argv []string) (string, bool) {
+	if len(argv) == 0 {
+		return "", false
+	}
+	if filepath.Base(argv[0]) != "env" {
+		return argv[0], true
+	}
+	for _, arg := range argv[1:] {
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		return arg, true
+	}
+	return "", false
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {

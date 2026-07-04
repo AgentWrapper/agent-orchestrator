@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -226,6 +227,15 @@ func (fakeAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) (
 }
 func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
+}
+
+type launchArgvAgent struct {
+	fakeAgent
+	argv []string
+}
+
+func (a launchArgvAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return a.argv, nil
 }
 
 // fakeAgents resolves every harness to the same fakeAgent.
@@ -2347,6 +2357,103 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
 	}
 	requireNoPromptDir(t, dataDir, "mer-1")
+}
+
+func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookedUp := []string{}
+	lookPath := func(name string) (string, error) {
+		lookedUp = append(lookedUp, name)
+		switch name {
+		case "tmux":
+			return "/bin/tmux", nil
+		case "opencode":
+			return "/usr/local/bin/opencode", nil
+		default:
+			return "", fmt.Errorf("exec: %q: not found", name)
+		}
+	}
+	agent := launchArgvAgent{argv: []string{"env", "OPENCODE_CONFIG=/tmp/ao/opencode.json", "opencode", "--agent", "ao-mer-1"}}
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
+		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
+	}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, agent.argv) {
+		t.Fatalf("runtime argv = %#v, want original argv %#v", rt.lastCfg.Argv, agent.argv)
+	}
+}
+
+func TestSpawn_RejectsMissingBinaryAfterEnvPrefix(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookedUp := []string{}
+	lookPath := func(name string) (string, error) {
+		lookedUp = append(lookedUp, name)
+		if name == "tmux" {
+			return "/bin/tmux", nil
+		}
+		return "", fmt.Errorf("exec: %q: not found", name)
+	}
+	agent := launchArgvAgent{argv: []string{"env", "OPENCODE_CONFIG=/tmp/ao/opencode.json", "opencode", "--agent", "ao-mer-1"}}
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+	}
+	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
+		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime.Create must NOT run when the env-prefixed agent binary is missing")
+	}
+	if ws.destroyed != 1 {
+		t.Fatal("workspace must be torn down when the pre-launch binary check fails")
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted before a runtime handle is live, got %+v", rec)
+	}
+}
+
+func TestSpawn_RejectsEnvPrefixWithoutBinary(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	agent := launchArgvAgent{argv: []string{"env", "OPENCODE_CONFIG=/tmp/ao/opencode.json"}}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(name string) (string, error) {
+			if name == "tmux" {
+				return "/bin/tmux", nil
+			}
+			return "/bin/" + name, nil
+		},
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime.Create must NOT run when env-prefixed argv has no binary")
+	}
+	if ws.destroyed != 1 {
+		t.Fatal("workspace must be torn down when env-prefixed argv has no binary")
+	}
 }
 
 func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
