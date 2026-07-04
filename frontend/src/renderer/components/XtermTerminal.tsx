@@ -37,6 +37,13 @@ export type XtermTerminalProps = {
 	className?: string;
 	fontSize?: number;
 	theme: Theme;
+	/**
+	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
+	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
+	 * tracking but never scrolls on wheel reports. Routes the wheel to page keys
+	 * on every platform (see the wheel handler), fixing it under a mux too.
+	 */
+	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/**
@@ -174,6 +181,16 @@ const SGR_WHEEL_DOWN = 65;
 
 function sgrWheelReport(button: number, count: number): string {
 	return `\x1b[<${button};1;1M`.repeat(count);
+}
+
+// PageUp (CSI 5~) / PageDown (CSI 6~) for pane apps that scroll their transcript
+// by keyboard rather than mouse reports. One page key per wheel notch: a page
+// already scrolls a full screen, so scaling by line count would over-scroll.
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
+
+function pageKeyReport(lines: number): string {
+	return lines < 0 ? PAGE_UP : PAGE_DOWN;
 }
 
 function forceSelectionMode(term: Terminal): void {
@@ -486,6 +503,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
+			// The SGR wheel path exists to drive tmux/zellij copy-mode on
+			// macOS/Linux. It cannot scroll a full-screen TUI that keeps its own
+			// transcript and only scrolls on PageUp/PageDown (opencode): the report
+			// is either consumed by the mux or handed to an app that ignores it.
+			// Send page keys for such apps (paneScrollsByKeyboard), on Windows
+			// (conpty has no mux, so SGR reaches the app and is ignored), and for
+			// any pane app with mouse tracking fully off.
+			if (
+				callbacksRef.current.paneScrollsByKeyboard ||
+				isWindowsPlatform() ||
+				term.modes.mouseTrackingMode === "none"
+			) {
+				emitUserInput(pageKeyReport(lines), "wheel");
+				return false;
+			}
 			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
 			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
 			return false;

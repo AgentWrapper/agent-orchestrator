@@ -52,6 +52,11 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	);
 }
 
+// Agents whose full-screen TUI keeps its own transcript and scrolls it only by
+// keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
+// PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode"]);
+
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
 	if (state === "reattaching") return "Terminal disconnected — reattaching…";
 	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
@@ -74,6 +79,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const queryClient = useQueryClient();
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
+	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
 
@@ -154,6 +160,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					fontSize={fontSize}
 					onError={handleInitError}
 					onReady={handleReady}
+					paneScrollsByKeyboard={provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false}
 					theme={theme}
 				/>
 				{showEmptyState && (

@@ -70,6 +70,14 @@ process.stderr.on("error", ignoreStdStreamError);
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Windows shows native toasts only when the app declares an AppUserModelID that
+// matches its installer shortcut (the NSIS maker's appId). Without it,
+// Notification.isSupported() still returns true but show() silently drops the
+// toast, so notifications never appear. No-op on macOS/Linux.
+if (process.platform === "win32") {
+	app.setAppUserModelId("dev.agent-orchestrator.desktop");
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
