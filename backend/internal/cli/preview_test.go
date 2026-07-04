@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,6 +93,68 @@ func TestPreview_NoArgPostsEmptyURL(t *testing.T) {
 	}
 }
 
+func TestPreview_RelativePathResolvedToAbsolute(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "bb-12")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.md")
+	if err := os.WriteFile(tmpFile, []byte("# hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "test.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req struct {
+		Url string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	if req.Url != tmpFile {
+		t.Errorf("captured url = %q, want %q", req.Url, tmpFile)
+	}
+}
+
+func TestPreview_RelativePathNonExistentPassedThrough(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "cc-34")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "nonexistent.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req struct {
+		Url string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	// Should pass through verbatim when the file doesn't exist.
+	if req.Url != "nonexistent.md" {
+		t.Errorf("captured url = %q, want %q", req.Url, "nonexistent.md")
+	}
+}
+
 func TestPreviewClear_DeletesSessionPreview(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "aa-47")
 	cfg := setConfigEnv(t)
@@ -163,12 +227,9 @@ func TestPreview_HelpIncludesExamples(t *testing.T) {
 	if !strings.Contains(out, "EXAMPLES") && !strings.Contains(out, "Examples") {
 		t.Errorf("help output missing Examples section:\n%s", out)
 	}
-	// file:// URL example (not a relative path).
-	if !strings.Contains(out, "file://$(pwd)/index.html") {
-		t.Errorf("help output missing file:// example:\n%s", out)
-	}
-	if strings.Contains(out, "./dist/index.html") {
-		t.Errorf("help output still references relative ./dist/index.html:\n%s", out)
+	// Relative path example present.
+	if !strings.Contains(out, "README.md") {
+		t.Errorf("help output missing README.md example:\n%s", out)
 	}
 }
 
