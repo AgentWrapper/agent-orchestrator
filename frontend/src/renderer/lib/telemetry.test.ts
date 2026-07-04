@@ -142,6 +142,12 @@ describe("telemetry sanitizers", () => {
 		expect(Object.keys(props).sort()).toEqual(["project_id_hash", "source"]);
 		expect(props.source).toBe("board");
 
+		const projectAdd = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_succeeded", {
+			project_id: "demo-project",
+			source: "project_add",
+		});
+		expect(projectAdd.source).toBe("project_add");
+
 		const badSource = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_failed", {
 			project_id: "demo-project",
 			source: "/Users/alice/private",
@@ -154,12 +160,18 @@ describe("telemetry sanitizers", () => {
 			target: "pr",
 		});
 		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "http://x" })).toEqual({});
-		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "all" })).toEqual({
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "all" })).toEqual({
 			scope: "all",
 		});
-		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "everything" })).toEqual(
-			{},
-		);
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_succeeded", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_mark_read_failed", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(
+			await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "everything" }),
+		).toEqual({});
 	});
 
 	it("whitelists coarse daemon failure fields and drops messages", async () => {

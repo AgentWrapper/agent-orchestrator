@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -133,6 +134,44 @@ func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
 	}
 	if len(spec.Fields) != 0 {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestAuthStatusUsesKiroWhoami(t *testing.T) {
+	restore := stubKiroAuthRunner(t, func(_ context.Context, name string, arg ...string) ([]byte, error) {
+		if name != "kiro-cli" {
+			t.Fatalf("binary = %q, want kiro-cli", name)
+		}
+		if !reflect.DeepEqual(arg, []string{"whoami"}) {
+			t.Fatalf("args = %#v, want [whoami]", arg)
+		}
+		return []byte("Logged in with Google\nEmail: nicachale456@gmail.com\n"), nil
+	})
+	defer restore()
+
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestAuthStatusUnauthorizedFromKiroWhoami(t *testing.T) {
+	restore := stubKiroAuthRunner(t, func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte("Not logged in\n"), nil
+	})
+	defer restore()
+
+	plugin := &Plugin{resolvedBinary: "kiro-cli"}
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusUnauthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusUnauthorized)
 	}
 }
 
@@ -439,6 +478,13 @@ func containsSubsequence(values []string, needle []string) bool {
 	}
 
 	return false
+}
+
+func stubKiroAuthRunner(t *testing.T, runner func(context.Context, string, ...string) ([]byte, error)) func() {
+	t.Helper()
+	previous := authprobe.CmdRunner
+	authprobe.CmdRunner = runner
+	return func() { authprobe.CmdRunner = previous }
 }
 
 func countKiroHookCommand(entries []kiroHookEntry, command string) int {

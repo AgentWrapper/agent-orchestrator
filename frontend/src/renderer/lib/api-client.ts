@@ -43,7 +43,7 @@ export function setApiBaseUrl(nextBaseUrl: string | null): void {
 // Resource collections whose next path segment is an identifier. Operation
 // strings sent to telemetry must never contain raw IDs (project IDs are
 // user-chosen strings), so normalize before reporting.
-const RESOURCE_SEGMENTS = new Set(["projects", "sessions", "notifications", "workspaces", "prs"]);
+const RESOURCE_SEGMENTS = new Set(["projects", "sessions", "notifications", "workspaces", "prs", "orchestrators"]);
 
 export function normalizeApiOperation(method: string, pathname: string): string {
 	const segments = pathname.split("/");
@@ -151,8 +151,11 @@ export function apiErrorMessage(error: unknown, fallback = "Request failed"): st
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;
 	if (typeof error === "object" && error !== null) {
-		const body = error as { message?: unknown; error?: unknown };
-		if (typeof body.message === "string" && body.message !== "") return body.message;
+		const body = error as { code?: unknown; message?: unknown; error?: unknown };
+		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
+		if (typeof body.message === "string" && body.message !== "") {
+			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;
+		}
 		if (typeof body.error === "string" && body.error !== "") return body.error;
 	}
 	return fallback;

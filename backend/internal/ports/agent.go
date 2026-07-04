@@ -14,6 +14,22 @@ import (
 // for a live session.
 var ErrAgentBinaryNotFound = errors.New("agent: binary not found on PATH")
 
+// AgentAuthStatus describes the result of a short local auth probe for an
+// installed agent. It is advisory only: credentials, quota, selected model
+// availability, or CLI state can still fail at session spawn/model-call time.
+type AgentAuthStatus string
+
+const (
+	// AgentAuthStatusAuthorized means the local auth probe recently passed.
+	// It does not guarantee that a later spawn or model call will succeed.
+	AgentAuthStatusAuthorized AgentAuthStatus = "authorized"
+	// AgentAuthStatusUnauthorized means the agent is installed but its local
+	// auth probe reported missing or invalid authentication.
+	AgentAuthStatusUnauthorized AgentAuthStatus = "unauthorized"
+	// AgentAuthStatusUnknown means the daemon could not determine auth status.
+	AgentAuthStatusUnknown AgentAuthStatus = "unknown"
+)
+
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session
 // Manager needs to launch, restore, and read back a native agent session.
@@ -40,6 +56,18 @@ type Agent interface {
 	// SessionInfo reads agent-owned session metadata such as native session id,
 	// display title, or summary. ok=false means no info is available.
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
+}
+
+// AgentAuthChecker is the optional capability for adapters whose native CLI has
+// a cheap local authentication status probe.
+type AgentAuthChecker interface {
+	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
+}
+
+// AgentBinaryResolver is the optional capability adapters expose when their
+// binary can be checked without constructing a real session launch command.
+type AgentBinaryResolver interface {
+	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
 // AgentResolver maps a session's harness onto the Agent adapter that drives it,

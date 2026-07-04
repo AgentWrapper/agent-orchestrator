@@ -166,7 +166,11 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.orchestrator_spawn_failed": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
-			if (properties?.source === "board" || properties?.source === "restore_dialog") {
+			if (
+				properties?.source === "board" ||
+				properties?.source === "restore_dialog" ||
+				properties?.source === "project_add"
+			) {
 				safe.source = properties.source;
 			}
 			break;
@@ -174,7 +178,9 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.notification_opened":
 			if (properties?.target === "pr" || properties?.target === "session") safe.target = properties.target;
 			break;
-		case "ao.renderer.notification_marked_read":
+		case "ao.renderer.notification_mark_read_requested":
+		case "ao.renderer.notification_mark_read_succeeded":
+		case "ao.renderer.notification_mark_read_failed":
 			if (properties?.scope === "single" || properties?.scope === "all") safe.scope = properties.scope;
 			break;
 		case "ao.renderer.daemon_failure":

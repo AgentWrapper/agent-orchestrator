@@ -44,6 +44,45 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
+const agentCatalogResponse = {
+	data: {
+		supported: [
+			{ id: "claude-code", label: "Claude Code" },
+			{ id: "codex", label: "Codex" },
+			{ id: "goose", label: "Goose" },
+			{ id: "kiro", label: "Kiro" },
+			{ id: "opencode", label: "OpenCode" },
+		],
+		installed: [
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+		],
+		authorized: [
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+		],
+	},
+	error: undefined,
+};
+
+function mockProject(project: Record<string, unknown>) {
+	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents") return agentCatalogResponse;
+		return {
+			data: {
+				status: "ok",
+				project,
+			},
+			error: undefined,
+		};
+	});
+}
+
 beforeEach(() => {
 	getMock.mockReset();
 	putMock.mockReset();
@@ -52,36 +91,30 @@ beforeEach(() => {
 
 describe("ProjectSettingsForm", () => {
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						defaultBranch: "develop",
-						sessionPrefix: "po",
-						env: { FOO: "bar" },
-						symlinks: [".env"],
-						postCreate: ["npm install"],
-						worker: {
-							agent: "codex",
-							agentConfig: { model: "worker-model" },
-						},
-						orchestrator: { agent: "claude-code" },
-						agentConfig: {
-							model: "claude-opus-4-5",
-							permissions: "auto",
-						},
-						reviewers: [{ harness: "claude-code" }],
-					},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				defaultBranch: "develop",
+				sessionPrefix: "po",
+				env: { FOO: "bar" },
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				worker: {
+					agent: "codex",
+					agentConfig: { model: "worker-model" },
 				},
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					model: "claude-opus-4-5",
+					permissions: "auto",
+				},
+				reviewers: [{ harness: "claude-code" }],
 			},
-			error: undefined,
 		});
 
 		renderSettings();
@@ -106,8 +139,8 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
 		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
-		await chooseOption(workerAgent, "opencode");
-		await chooseOption(orchestratorAgent, "goose");
+		await chooseOption(workerAgent, "OpenCode");
+		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -139,23 +172,17 @@ describe("ProjectSettingsForm", () => {
 	}, 20_000);
 
 	it("shows the daemon validation message when save fails", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
 			},
-			error: undefined,
 		});
 		putMock.mockResolvedValue({
 			data: undefined,
@@ -170,7 +197,62 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
 	});
 
-	it("offers every supported reviewer harness", async () => {
+	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent(
+			"Select orchestrator agent",
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
+		await userEvent.click(workerAgent);
+		const options = await screen.findAllByRole("option");
+		expect(options.map((option) => option.textContent)).toEqual([
+			"Claude Code",
+			"Codex",
+			"Goose",
+			"OpenCode",
+			"KiroAuth unknown",
+		]);
+		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
 		getMock.mockResolvedValue({
 			data: {
 				status: "ok",
@@ -179,7 +261,7 @@ describe("ProjectSettingsForm", () => {
 					name: "Project One",
 					kind: "single_repo",
 					path: "/repo/project-one",
-					repo: "",
+					repo: "git@github.com:acme/project-one.git",
 					defaultBranch: "main",
 					config: {
 						worker: { agent: "codex" },
@@ -192,14 +274,28 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const reviewerAgent = await screen.findByRole("combobox", { name: "Default reviewer agent" });
-		await userEvent.click(reviewerAgent);
-		for (const option of ["claude-code (default)", "claude-code", "codex", "opencode"]) {
-			expect(await screen.findByRole("option", { name: option })).toBeInTheDocument();
-		}
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+
+		// Repository is display-only, derived from the project's own git origin — no input to
+		// fill. Assignee is the only eligibility rule in v1.
+		expect(screen.getByRole("link", { name: "acme/project-one" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/project-one",
+		);
+		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			assignee: "octocat",
+		});
 	});
 
-	it("defaults worker and orchestrator to claude-code for projects missing role config", async () => {
+	it("blocks save when intake is enabled with no assignee", async () => {
 		getMock.mockResolvedValue({
 			data: {
 				status: "ok",
@@ -208,9 +304,12 @@ describe("ProjectSettingsForm", () => {
 					name: "Project One",
 					kind: "single_repo",
 					path: "/repo/project-one",
-					repo: "",
+					repo: "git@github.com:acme/project-one.git",
 					defaultBranch: "main",
-					config: {},
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
 				},
 			},
 			error: undefined,
@@ -218,25 +317,10 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const workerAgent = await screen.findByRole("combobox", { name: "Default worker agent" });
-		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
-		expect(workerAgent).toHaveTextContent("claude-code");
-		expect(orchestratorAgent).toHaveTextContent("claude-code");
-		expect(screen.queryByText("Worker and orchestrator agents are required.")).not.toBeInTheDocument();
-
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
-			params: { path: { id: "proj-1" } },
-			body: {
-				config: {
-					defaultBranch: "main",
-					worker: { agent: "claude-code" },
-					orchestrator: { agent: "claude-code" },
-				},
-			},
-		});
-		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
 	});
 });

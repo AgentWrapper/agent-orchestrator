@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
@@ -81,7 +81,7 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+	onCreateProject: (input: { path: string } & CreateProjectAgentSelection) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -151,7 +151,17 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// agent-orchestrator's sidebar resize: drag the right edge (200–420px,
+	// Fetch the running app version to derive the build channel. Channel is
+	// identity: derived from the version string, not the update-channel setting
+	// (the setting can be changed mid-session; the binary cannot).
+	const { data: appVersion } = useQuery({
+		queryKey: ["app-version"],
+		queryFn: () => aoBridge.app.getVersion(),
+		staleTime: Infinity,
+	});
+	const isNightly = typeof appVersion === "string" && appVersion.includes("-nightly.");
+
+	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
 	// which the provider forwards into shadcn's --sidebar-width.
 	const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
@@ -199,6 +209,17 @@ export function Sidebar({
 					<span className="min-w-0 flex-1 truncate text-[14px] font-bold tracking-[-0.015em] text-foreground group-data-[collapsible=icon]:hidden">
 						Agent Orchestrator
 					</span>
+					{isNightly && (
+						<span
+							className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none group-data-[collapsible=icon]:hidden"
+							style={{
+								color: "var(--purple)",
+								background: "color-mix(in srgb, var(--purple) 12%, transparent)",
+							}}
+						>
+							nightly
+						</span>
+					)}
 					{/* On macOS the toggle lives in the titlebar cluster instead. */}
 					{!isMac && (
 						<Tooltip>

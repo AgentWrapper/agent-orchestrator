@@ -3,10 +3,11 @@ import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import { DEFAULT_PROJECT_AGENT } from "../lib/agent-options";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -14,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -68,16 +70,47 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
+	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
-		workerAgent: config.worker?.agent || DEFAULT_PROJECT_AGENT,
-		orchestratorAgent: config.orchestrator?.agent || DEFAULT_PROJECT_AGENT,
+		workerAgent: config.worker?.agent ?? "",
+		orchestratorAgent: config.orchestrator?.agent ?? "",
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		intakeEnabled: intake.enabled ?? false,
+		intakeRepo: intake.repo ?? "",
+		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [validationError, setValidationError] = useState<string | null>(null);
+	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentCatalog = agentsQuery.data;
+	const refreshAgentsMutation = useMutation({
+		mutationFn: refreshAgents,
+		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
+	});
+
+	// The Electron app only registers git projects today, so the daemon always has a usable
+	// git origin to derive owner/repo from (trackerRepo() in observer.go) when
+	// trackerIntake.repo is unset — there's no manual override input here. This mirrors that
+	// same derivation client-side purely for display (a link to the repo being polled).
+	const intakeForm: IntakeForm = {
+		enabled: form.intakeEnabled,
+		repo: form.intakeRepo,
+		assignee: form.intakeAssignee,
+	};
+	const patchIntake = (patch: Partial<IntakeForm>) =>
+		setForm((f) => ({
+			...f,
+			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeRepo: patch.repo ?? f.intakeRepo,
+			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+		}));
+	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
+	const intakeIncomplete = intakeNeedsRule(intakeForm);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -96,6 +129,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				trackerIntake: buildIntake(intakeForm),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -106,6 +140,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		onSuccess: () => {
 			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
 			setSavedAt(Date.now());
+			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
 		},
@@ -120,6 +155,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			onSubmit={(event) => {
 				event.preventDefault();
 				setSavedAt(null);
+				if (missingRequiredAgent) {
+					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (intakeIncomplete) {
+					setValidationError("Enabling intake requires an assignee.");
+					return;
+				}
+				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
@@ -170,6 +214,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.workerAgent}
 						placeholder="Select worker agent"
 						label="Default worker agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
+						invalid={validationError !== null && form.workerAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 					/>
 					<RequiredAgentField
@@ -177,8 +226,34 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.orchestratorAgent}
 						placeholder="Select orchestrator agent"
 						label="Default orchestrator agent"
+						authorized={agentCatalog?.authorized}
+						installed={agentCatalog?.installed}
+						supported={agentCatalog?.supported}
+						disabled={agentsQuery.isFetching && agentCatalog === undefined}
+						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
+					<div className="flex items-center justify-between gap-3 text-[12px] leading-5 text-muted-foreground">
+						<span>Agent availability is cached.</span>
+						<button
+							type="button"
+							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							disabled={refreshAgentsMutation.isPending}
+							onClick={() => refreshAgentsMutation.mutate()}
+						>
+							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
+						</button>
+					</div>
+					{refreshAgentsMutation.isError && (
+						<p className="text-[12px] leading-5 text-error">
+							{refreshAgentsMutation.error instanceof Error
+								? refreshAgentsMutation.error.message
+								: "Could not refresh agent catalog."}
+						</p>
+					)}
+					{missingRequiredAgent && (
+						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
+					)}
 					<Field label="Model override" htmlFor="model">
 						<input
 							id="model"
@@ -213,10 +288,20 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
+				</CardContent>
+			</Card>
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
+				{validationError && <span className="text-[12px] text-error">{validationError}</span>}
 				{mutation.isError && (
 					<span className="text-[12px] text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
@@ -263,7 +348,7 @@ function ReviewerSelect({ id, value, onChange }: { id: string; value: string; on
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">claude-code (default)</SelectItem>
+				<SelectItem value="__default__">Project default</SelectItem>
 				{REVIEWER_OPTIONS.map((reviewer) => (
 					<SelectItem key={reviewer} value={reviewer}>
 						{reviewer}

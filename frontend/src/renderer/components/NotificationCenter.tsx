@@ -69,20 +69,24 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 	const markOneRead = async (id: string) => {
 		setActionError(null);
-		void captureRendererEvent("ao.renderer.notification_marked_read", { scope: "single" });
+		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "single" });
 		try {
 			await markRead.mutateAsync(id);
+			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "single" });
 		} catch (error) {
+			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "single" });
 			setActionError(error instanceof Error ? error.message : "Could not mark notification read");
 		}
 	};
 
 	const markAll = async () => {
 		setActionError(null);
-		void captureRendererEvent("ao.renderer.notification_marked_read", { scope: "all" });
+		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
 		try {
 			await markAllRead.mutateAsync();
+			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" });
 		} catch (error) {
+			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
 			setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
 		}
 	};

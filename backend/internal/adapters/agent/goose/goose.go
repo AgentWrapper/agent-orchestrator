@@ -84,12 +84,15 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv to start a new headless Goose session:
 //
-//	[env GOOSE_MODE=<mode>] goose run [--system <text>] [-t <prompt>]
+//	[env GOOSE_MODE=<mode>] goose run [--system <text>] -t <prompt>
 //
 // The prompt is delivered in-command via `-t`. A non-default permission mode is
 // rendered as an `env GOOSE_MODE=<mode>` prefix because Goose reads its approval
 // mode from the environment, not from a flag. System instructions, when present,
-// are passed via `--system`.
+// are passed via `--system`. Goose requires one of --instructions, --text, or
+// --recipe even when AO intentionally starts a promptless orchestrator, so empty
+// prompts are delivered as `-t "" --interactive` to land in an input-ready
+// terminal without inventing an initial task.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.gooseBinary(ctx)
 	if err != nil {
@@ -106,8 +109,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--system", systemPrompt)
 	}
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "-t", cfg.Prompt)
+	cmd = append(cmd, "-t", cfg.Prompt)
+	if cfg.Prompt == "" {
+		cmd = append(cmd, "--interactive")
 	}
 
 	return cmd, nil

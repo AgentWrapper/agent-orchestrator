@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
+	canonicalTrackerIssueId,
 	findProjectOrchestrator,
 	sessionIsActive,
 	sessionNeedsAttention,
@@ -19,6 +20,14 @@ import {
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "./workspace";
+
+describe("canonicalTrackerIssueId", () => {
+	it("keeps provider-prefixed intake ids and rejects manual task titles", () => {
+		expect(canonicalTrackerIssueId("github:acme/project#42")).toBe("github:acme/project#42");
+		expect(canonicalTrackerIssueId("Fix fallback renderer")).toBeUndefined();
+		expect(canonicalTrackerIssueId(undefined)).toBeUndefined();
+	});
+});
 
 function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 	return {
@@ -113,6 +122,12 @@ describe("findProjectOrchestrator", () => {
 		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "needs_input" });
 		const worker = sessionWith({ id: "skills-6", kind: "worker", status: "working" });
 		expect(findProjectOrchestrator([workspaceWith([dead, live, worker])], "skills")).toBe(live);
+	});
+
+	it("prefers the newest live orchestrator when multiple replacements overlap", () => {
+		const older = sessionWith({ id: "skills-4", kind: "orchestrator", status: "idle", provider: "claude-code" });
+		const newer = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working", provider: "codex" });
+		expect(findProjectOrchestrator([workspaceWith([older, newer])], "skills")).toBe(newer);
 	});
 
 	it("returns undefined when every orchestrator is terminated", () => {
