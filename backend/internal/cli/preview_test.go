@@ -114,6 +114,14 @@ func TestPreview_RelativePathResolvedToAbsolute(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
+	// Compute the expected path the same way the function does
+	// (filepath.Abs) so the comparison isn't sensitive to OS-level
+	// path differences (macOS /var→/private/var, Windows short names).
+	want, err := filepath.Abs("test.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	_, errOut, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
 	}, "preview", "test.md")
@@ -125,13 +133,6 @@ func TestPreview_RelativePathResolvedToAbsolute(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
-	}
-	// Normalize via EvalSymlinks so the test passes on macOS where /var
-	// is a symlink to /private/var (filepath.Abs resolves through Chdir
-	// and the kernel tracks the real path).
-	want := tmpFile
-	if resolved, err := filepath.EvalSymlinks(tmpFile); err == nil {
-		want = resolved
 	}
 	if req.Url != want {
 		t.Errorf("captured url = %q, want %q", req.Url, want)
