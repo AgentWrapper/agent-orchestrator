@@ -22,14 +22,15 @@ import (
 const maxDisplayNameLen = 20
 
 type spawnOptions struct {
-	project    string
-	harness    string
-	branch     string
-	prompt     string
-	issue      string
-	name       string
-	claimPR    string
-	noTakeover bool
+	project        string
+	harness        string
+	branch         string
+	prompt         string
+	issue          string
+	name           string
+	claimPR        string
+	noTakeover     bool
+	skipAgentCheck bool
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -80,8 +81,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			opts.harness = harness
 
 			name := resolveSpawnDisplayName(opts.name, opts.prompt)
-			if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
-				return err
+			if !opts.skipAgentCheck {
+				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
+					return err
+				}
 			}
 			claimRef := ""
 			if opts.claimPR != "" {
@@ -153,6 +156,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (default: derived from --prompt, max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
+	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
 	return cmd
 }
 
@@ -177,6 +181,13 @@ func (c *commandContext) resolveSpawnProject(ctx context.Context, explicit strin
 	if id := strings.TrimSpace(os.Getenv("AO_PROJECT_ID")); id != "" {
 		return c.fetchProjectDetails(ctx, id)
 	}
+	if sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID")); sessionID != "" {
+		project, err := c.resolveProjectFromSession(ctx, sessionID)
+		if err != nil {
+			return projectDetails{}, err
+		}
+		return project, nil
+	}
 	project, ok, err := c.resolveProjectFromCWD(ctx)
 	if err != nil {
 		return projectDetails{}, err
@@ -185,6 +196,17 @@ func (c *commandContext) resolveSpawnProject(ctx context.Context, explicit strin
 		return project, nil
 	}
 	return projectDetails{}, usageError{fmt.Errorf("project could not be resolved; pass --project or run `ao project add --path <repo-path> --worker-agent <agent>`")}
+}
+
+func (c *commandContext) resolveProjectFromSession(ctx context.Context, sessionID string) (projectDetails, error) {
+	sess, err := c.fetchScopedSession(ctx, sessionID, "")
+	if err != nil {
+		return projectDetails{}, usageError{fmt.Errorf("project could not be resolved from AO_SESSION_ID %q; pass --project", sessionID)}
+	}
+	if strings.TrimSpace(sess.ProjectID) == "" {
+		return projectDetails{}, usageError{fmt.Errorf("project could not be resolved from AO_SESSION_ID %q; pass --project", sessionID)}
+	}
+	return c.fetchProjectDetails(ctx, sess.ProjectID)
 }
 
 func (c *commandContext) resolveProjectFromCWD(ctx context.Context) (projectDetails, bool, error) {
@@ -306,56 +328,59 @@ func deriveDisplayNameFromPrompt(prompt string) string {
 }
 
 func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {
-	state, ok := agentCatalogStateFor(cachedAgentInventory(ctx, c), agentID)
-	if ok && state.authorized {
-		return nil
-	}
-
 	inv, err := c.fetchAgentInventory(ctx, true)
 	if err != nil {
 		return err
 	}
-	state, ok = agentCatalogStateFor(inv, agentID)
-	if ok && state.authorized {
+	state := agentCatalogStateFor(inv, agentID)
+	if !state.supported {
+		return fmt.Errorf("agent %q is not supported by this daemon; pass a supported --agent or run `ao agent ls`", agentID)
+	}
+	if !state.installed {
+		return fmt.Errorf("agent %q needs install; install the agent CLI or pass --skip-agent-check to let spawn validate it", agentID)
+	}
+	if state.authorized {
 		return nil
 	}
-	if ok && state.authStatus == "unauthorized" {
+	if state.authStatus == "unauthorized" {
 		return fmt.Errorf("agent %q needs auth; run the agent's login command, then `ao agent ls --refresh`", agentID)
 	}
 	_, err = fmt.Fprintf(cmd.ErrOrStderr(), "warning: agent %q auth status is unknown; continuing and letting spawn validate runtime readiness\n", agentID)
 	return err
 }
 
-func cachedAgentInventory(ctx context.Context, c *commandContext) agentInventory {
-	inv, err := c.fetchAgentInventory(ctx, false)
-	if err != nil {
-		return agentInventory{}
-	}
-	return inv
-}
-
 type agentCatalogState struct {
+	supported  bool
+	installed  bool
 	authorized bool
 	authStatus string
 }
 
-func agentCatalogStateFor(inv agentInventory, agentID string) (agentCatalogState, bool) {
+func agentCatalogStateFor(inv agentInventory, agentID string) agentCatalogState {
+	state := agentCatalogState{}
+	for _, info := range inv.Supported {
+		if info.ID == agentID {
+			state.supported = true
+			break
+		}
+	}
 	for _, info := range inv.Authorized {
 		if info.ID == agentID {
-			return agentCatalogState{authorized: true, authStatus: "authorized"}, true
+			state.installed = true
+			state.authorized = true
+			state.authStatus = "authorized"
+			return state
 		}
 	}
 	for _, info := range inv.Installed {
 		if info.ID == agentID {
-			return agentCatalogState{authorized: info.AuthStatus == "authorized", authStatus: info.AuthStatus}, true
+			state.installed = true
+			state.authorized = info.AuthStatus == "authorized"
+			state.authStatus = info.AuthStatus
+			return state
 		}
 	}
-	for _, info := range inv.Supported {
-		if info.ID == agentID {
-			return agentCatalogState{}, true
-		}
-	}
-	return agentCatalogState{}, false
+	return state
 }
 
 // rollbackSpawnedSession reverses a partial `spawn` whose out-of-band follow-up

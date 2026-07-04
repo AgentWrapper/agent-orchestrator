@@ -71,7 +71,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			_, _ = io.WriteString(w, `{"session":{"id":"demo-9","status":"idle"}}`)
@@ -96,7 +96,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 	if !strings.Contains(out, "claimed https://github.com/aoagents/agent-orchestrator/pull/142") {
 		t.Fatalf("output missing claimed label: %s", out)
 	}
-	want := []string{"GET /api/v1/projects/demo", "GET /api/v1/agents", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-9/pr/claim"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-9/pr/claim"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -112,7 +112,7 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			sessions["demo-10"] = true
@@ -144,7 +144,7 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 	if sessions["demo-10"] {
 		t.Fatalf("spawned session still present after claim rollback: %#v", sessions)
 	}
-	want := []string{"GET /api/v1/projects/demo", "GET /api/v1/agents", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-10/pr/claim", "POST /api/v1/sessions/demo-10/rollback"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-10/pr/claim", "POST /api/v1/sessions/demo-10/rollback"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -176,7 +176,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -201,7 +201,75 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "Fix failing tests in" {
 		t.Fatalf("spawn request = %#v", req)
 	}
-	want := []string{"GET /api/v1/projects/demo", "GET /api/v1/agents", "POST /api/v1/sessions"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-15","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("AO_SESSION_ID", "demo-1")
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix tests")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.ProjectID != "demo" || req.Harness != "codex" {
+		t.Fatalf("spawn request = %#v", req)
+	}
+	want := []string{"GET /api/v1/sessions/demo-1", "GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnAOSessionIDFailureRequiresProject(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/missing":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"not_found","code":"SESSION_NOT_FOUND","message":"Session not found"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("AO_SESSION_ID", "missing")
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--agent", "codex")
+	if err == nil || !strings.Contains(err.Error(), `project could not be resolved from AO_SESSION_ID "missing"; pass --project`) {
+		t.Fatalf("err=%v, want AO_SESSION_ID project error", err)
+	}
+	want := []string{"GET /api/v1/sessions/missing"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -231,7 +299,7 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 			_, _ = io.WriteString(w, `{"projects":[{"id":"demo","name":"Demo"}]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":`+jsonQuote(repo)+`,"config":{"worker":{"agent":"codex"}}}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -263,8 +331,6 @@ func TestSpawnUnauthorizedAgentRefreshesThenBlocks(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[{"id":"codex","label":"Codex","authStatus":"unknown"}],"authorized":[]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[{"id":"codex","label":"Codex","authStatus":"unauthorized"}],"authorized":[]}`)
 		default:
@@ -278,7 +344,98 @@ func TestSpawnUnauthorizedAgentRefreshesThenBlocks(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "agent \"codex\" needs auth") {
 		t.Fatalf("err=%v, want needs auth", err)
 	}
-	want := []string{"GET /api/v1/projects/demo", "GET /api/v1/agents", "POST /api/v1/agents/refresh"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnUnsupportedAgentRefreshesThenBlocks(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[],"authorized":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unknown")
+	if err == nil || !strings.Contains(err.Error(), "agent \"unknown\" is not supported") {
+		t.Fatalf("err=%v, want unsupported", err)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnNotInstalledAgentRefreshesThenBlocks(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[],"authorized":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex")
+	if err == nil || !strings.Contains(err.Error(), "agent \"codex\" needs install") {
+		t.Fatalf("err=%v, want needs install", err)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-14","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "unsupported", "--skip-agent-check")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.ProjectID != "demo" || req.Harness != "unsupported" {
+		t.Fatalf("spawn request = %#v", req)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -292,8 +449,6 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[{"id":"codex","label":"Codex","authStatus":"unknown"}],"authorized":[]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
 			_, _ = io.WriteString(w, `{"supported":[{"id":"codex","label":"Codex"}],"installed":[{"id":"codex","label":"Codex","authStatus":"unknown"}],"authorized":[]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
