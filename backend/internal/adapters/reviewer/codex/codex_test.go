@@ -66,12 +66,12 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 	}
 }
 
-func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
+func TestReviewMessageReturnsEmpty(t *testing.T) {
 	got, err := (&Reviewer{}).ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "next review"})
 	if err != nil {
 		t.Fatalf("ReviewMessage: %v", err)
 	}
-	if got != "next review" {
-		t.Fatalf("message = %q", got)
+	if got != "" {
+		t.Fatalf("ReviewMessage should return empty; got %q", got)
 	}
 }

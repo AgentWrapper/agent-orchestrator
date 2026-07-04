@@ -103,5 +103,12 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 // ReviewMessage is the text injected into an already-running reviewer pane to
 // review a new commit — AO's central review prompt.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
-	return inv.Prompt, nil
+	// Do not return the prompt here. ReviewMessage is called when re-notifying an
+	// already-running reviewer pane about a new commit in the queue.
+	// The reviewer already has the full prompt (including task instructions and run IDs)
+	// from the initial launch via ReviewCommand -> GetLaunchCommand.
+	// Returning it again would just duplicate the instructions in the terminal.
+	// Instead, return empty so the terminal stays clean, the agent has all the context
+	// it needs from the original prompt at launch time.
+	return "", nil
 }

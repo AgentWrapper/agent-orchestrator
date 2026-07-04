@@ -62,7 +62,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
-	return inv.Prompt, nil
+	return "", nil
 }
 
 func insertBeforePrompt(argv []string, extra ...string) []string {
