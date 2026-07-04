@@ -126,8 +126,15 @@ func TestPreview_RelativePathResolvedToAbsolute(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
-	if req.Url != tmpFile {
-		t.Errorf("captured url = %q, want %q", req.Url, tmpFile)
+	// Normalize via EvalSymlinks so the test passes on macOS where /var
+	// is a symlink to /private/var (filepath.Abs resolves through Chdir
+	// and the kernel tracks the real path).
+	want := tmpFile
+	if resolved, err := filepath.EvalSymlinks(tmpFile); err == nil {
+		want = resolved
+	}
+	if req.Url != want {
+		t.Errorf("captured url = %q, want %q", req.Url, want)
 	}
 }
 
