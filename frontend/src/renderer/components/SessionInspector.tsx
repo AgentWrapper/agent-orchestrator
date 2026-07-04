@@ -774,7 +774,10 @@ function AgentRow({ session }: { session: WorkspaceSession }) {
 									if (agent !== current) switchAgent.mutate(agent);
 								}}
 							>
-								<Check className={cn("h-3.5 w-3.5", agent === current ? "opacity-100" : "opacity-0")} aria-hidden="true" />
+								<Check
+									className={cn("h-3.5 w-3.5", agent === current ? "opacity-100" : "opacity-0")}
+									aria-hidden="true"
+								/>
 								<span className="font-mono text-[12px]">{agent}</span>
 							</DropdownMenuItem>
 						))}
