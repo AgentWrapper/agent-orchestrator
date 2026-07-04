@@ -111,7 +111,12 @@ func TestRuntimeObservation_SwitchingSuppressesTermination(t *testing.T) {
 	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute) // otherwise-clearly-dead
 	st.sessions["mer-1"] = rec
 
-	m.BeginSwitch("mer-1")
+	if !m.TryBeginSwitch("mer-1") {
+		t.Fatal("TryBeginSwitch should succeed on a session not already switching")
+	}
+	if m.TryBeginSwitch("mer-1") {
+		t.Fatal("TryBeginSwitch should fail while a switch is already in flight")
+	}
 	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
 		t.Fatal(err)
 	}

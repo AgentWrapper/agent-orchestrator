@@ -273,14 +273,21 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	})
 }
 
-// BeginSwitch marks a session as mid agent-switch so ApplyRuntimeObservation
-// ignores the reaper's "dead" fact during the window where the old runtime is
-// gone and the new one is not yet live. Pair every BeginSwitch with EndSwitch
-// (defer it). Idempotent.
-func (m *Manager) BeginSwitch(id domain.SessionID) {
+// TryBeginSwitch atomically claims the switch guard for id: it returns true and
+// marks the session mid-switch, or false if a switch is already in flight. The
+// check-and-set is a single critical section so two concurrent switches cannot
+// both proceed and race two teardown/relaunch cycles over one worktree. While
+// the guard is held, ApplyRuntimeObservation ignores the reaper's "dead" fact
+// (the window where the old runtime is gone and the new one is not yet live).
+// Pair a true result with EndSwitch (defer it).
+func (m *Manager) TryBeginSwitch(id domain.SessionID) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.switching[id]; ok {
+		return false
+	}
 	m.switching[id] = struct{}{}
+	return true
 }
 
 // EndSwitch clears the mid-switch guard set by BeginSwitch. Idempotent.
