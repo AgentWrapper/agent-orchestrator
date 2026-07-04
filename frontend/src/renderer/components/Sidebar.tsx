@@ -81,7 +81,7 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+	onCreateProject: (input: { path: string } & CreateProjectAgentSelection) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 

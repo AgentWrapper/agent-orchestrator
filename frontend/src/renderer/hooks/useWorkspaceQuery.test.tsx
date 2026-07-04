@@ -62,10 +62,12 @@ describe("useWorkspaceQuery", () => {
 							projectId: "proj-1",
 							terminalHandleId: "term-1",
 							displayName: "fix-bug",
+							issueId: "github:acme/project-one#42",
 							harness: "claude-code",
 							branch: "qa/modal-worker",
 							status: "mergeable",
 							isTerminated: false,
+							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
 						{
@@ -96,9 +98,11 @@ describe("useWorkspaceQuery", () => {
 			id: "sess-1",
 			terminalHandleId: "term-1",
 			title: "fix-bug",
+			issueId: "github:acme/project-one#42",
 			provider: "claude-code",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",

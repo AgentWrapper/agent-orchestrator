@@ -14,6 +14,7 @@ import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
+import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -54,7 +55,12 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: { path: string; workerAgent: string; orchestratorAgent: string }) => {
+		async (input: {
+			path: string;
+			workerAgent: string;
+			orchestratorAgent: string;
+			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		}) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",
@@ -67,6 +73,7 @@ function ShellLayout() {
 					config: {
 						worker: { agent: input.workerAgent },
 						orchestrator: { agent: input.orchestratorAgent },
+						trackerIntake: input.trackerIntake,
 					},
 				},
 			});

@@ -2,14 +2,21 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import { AGENT_OPTIONS, DEFAULT_PROJECT_AGENT } from "../lib/agent-options";
+import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import type { components } from "../../api/schema";
+
+type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
+	trackerIntake?: TrackerIntakeConfig;
 };
+
+const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
@@ -30,12 +37,15 @@ export function CreateProjectAgentSheet({
 }: CreateProjectAgentSheetProps) {
 	const [workerAgent, setWorkerAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
 	const [orchestratorAgent, setOrchestratorAgent] = useState<string>(DEFAULT_PROJECT_AGENT);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !isCreating;
+	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
+	const intakeIncomplete = intakeNeedsRule(intake);
+	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isCreating;
 
 	useEffect(() => {
 		if (!open) {
 			setWorkerAgent(DEFAULT_PROJECT_AGENT);
 			setOrchestratorAgent(DEFAULT_PROJECT_AGENT);
+			setIntake(EMPTY_INTAKE);
 		}
 	}, [open, path]);
 
@@ -67,7 +77,7 @@ export function CreateProjectAgentSheet({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent });
+							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
@@ -85,6 +95,10 @@ export function CreateProjectAgentSheet({
 								value={orchestratorAgent}
 								onChange={setOrchestratorAgent}
 							/>
+						</div>
+
+						<div className="border-t border-border pt-4">
+							<IntakeFields form={intake} onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))} compact />
 						</div>
 
 						{error && (

@@ -680,6 +680,7 @@ export interface components {
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];
+            trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
         };
         ProjectGetResponse: {
@@ -911,6 +912,13 @@ export interface components {
             runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
+        };
+        TrackerIntakeConfig: {
+            assignee?: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            provider?: "github";
+            repo?: string;
         };
         TriggerReviewResponse: {
             reviewerHandleId: string;

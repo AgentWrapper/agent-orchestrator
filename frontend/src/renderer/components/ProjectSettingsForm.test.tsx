@@ -239,4 +239,76 @@ describe("ProjectSettingsForm", () => {
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	});
+
+	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+
+		// Repository is display-only, derived from the project's own git origin — no input to
+		// fill. Assignee is the only eligibility rule in v1.
+		expect(screen.getByRole("link", { name: "acme/project-one" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/project-one",
+		);
+		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			assignee: "octocat",
+		});
+	});
+
+	it("blocks save when intake is enabled with no assignee", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
+	});
 });
