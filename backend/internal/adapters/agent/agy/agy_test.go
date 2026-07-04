@@ -200,3 +200,15 @@ func TestHooksLifecycle(t *testing.T) {
 		t.Fatal("expected hooks to be uninstalled after UninstallHooks")
 	}
 }
+
+func TestAuthStatus(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "agy"}
+
+	status, err := plugin.AuthStatus(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Errorf("AuthStatus() = %v, want AgentAuthStatusAuthorized", status)
+	}
+}

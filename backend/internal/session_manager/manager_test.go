@@ -114,6 +114,9 @@ func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID)
 	return f.worktrees[id], nil
 }
 func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionID) error {
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "DeleteSessionWorktrees:"+string(id))
+	}
 	delete(f.worktrees, id)
 	return nil
 }
@@ -148,6 +151,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
@@ -167,7 +171,7 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
-	return nil
+	return r.destroyErr
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
 	if r.aliveErr != nil {
@@ -564,6 +568,25 @@ func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
 	}
 }
 
+func TestKill_DeletesStaleRestoreMarker(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/tmp/wt"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("Kill freed = false, want true")
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("stale restore marker = %+v, want deleted", rows)
+	}
+}
+
 // TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
 // success-with-preserved-workspace; any other teardown failure keeps erroring.
 func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
@@ -572,29 +595,6 @@ func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
 	ws.destroyErr = errors.New("disk on fire")
 	if _, err := m.Kill(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "disk on fire") {
 		t.Fatalf("kill err = %v, want workspace error surfaced", err)
-	}
-}
-
-// TestKill_DeletesRestoreMarker covers issue #2319 (a): a user kill is explicit
-// terminal intent and must delete the session_worktrees "shutdown-saved" marker.
-// A session that carried a marker (e.g. it survived a prior reopen cycle) and is
-// then killed must not keep that marker, or the next boot's RestoreAll would
-// resurrect it.
-func TestKill_DeletesRestoreMarker(t *testing.T) {
-	m, st, _, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	// The session carries a leftover shutdown-saved marker from a prior cycle.
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("kill must delete the restore marker, got %d rows", len(rows))
 	}
 }
 func TestRestore_ReopensTerminal(t *testing.T) {
@@ -1431,6 +1431,130 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	}
 }
 
+func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	if rows := st.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Fatalf("replacement retirement must not write restore markers, got %#v", rows)
+	}
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("retired orchestrator must be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+
+	stashIdx, deleteIdx, forceIdx := -1, -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "StashUncommitted:mer-orch":
+			stashIdx = i
+		case "DeleteSessionWorktrees:mer-orch":
+			deleteIdx = i
+		case "ForceDestroy:mer-orch":
+			forceIdx = i
+		}
+	}
+	if stashIdx == -1 || deleteIdx == -1 || forceIdx == -1 {
+		t.Fatalf("missing expected calls in shared log: %v", sharedLog)
+	}
+	if stashIdx >= deleteIdx || deleteIdx >= forceIdx {
+		t.Fatalf("replacement retire must capture, clear restore marker, then force release; log=%v", sharedLog)
+	}
+}
+
+func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	ws.forceDestroyErr = errors.New("worktree still registered")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "force destroy") {
+		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active so retry can retire it again")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed = %d, want 1 before workspace release", rt.destroyed)
+	}
+	if ws.stashCalls != 1 {
+		t.Fatalf("stash calls = %d, want 1", ws.stashCalls)
+	}
+}
+
+func TestRetireForReplacementRuntimeDestroyFailureBlocksWorkspaceRelease(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	rt.destroyErr = errors.New("tmux transient")
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		PreservedRef: "refs/ao/preserved/old",
+	}}
+
+	err := m.RetireForReplacement(ctx, "mer-orch")
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("RetireForReplacement err = %v, want runtime failure", err)
+	}
+	if st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must remain active when runtime destroy fails")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want one attempt for orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:mer-orch" {
+			t.Fatalf("ForceDestroy must not run after runtime destroy failure; calls=%v", ws.calls)
+		}
+	}
+}
+
 // TestSaveAndTeardownAll_CleanWorktreeWritesEmptyRef verifies that a clean
 // worktree (StashUncommitted returns "") still writes a worktree row (with
 // empty preserved_ref). The row's presence is the shutdown-saved marker.
@@ -1580,6 +1704,33 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
+func TestRestoreAll_ConsumesMarkersAfterSuccessfulRestore(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/mer-1"},
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll must relaunch session, runtime.Create called %d times", rt.created)
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("consumed restore marker = %+v, want deleted", rows)
+	}
+}
+
 // TestRestoreAll_SkipsSessionsKilledBeforeShutdown verifies (c): a session
 // the user killed BEFORE shutdown has no session_worktrees row and must NOT
 // be resurrected.
@@ -1608,81 +1759,6 @@ func TestRestoreAll_SkipsSessionsKilledBeforeShutdown(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Error("user-killed session must remain terminated")
-	}
-}
-
-// TestRestoreAll_DeletesMarkerAfterRelaunch covers issue #2319 (b): the
-// shutdown-saved marker is one-shot. After RestoreAll relaunches a session, its
-// session_worktrees marker is deleted, so a second RestoreAll (with no fresh
-// marker) does NOT relaunch it again.
-func TestRestoreAll_DeletesMarkerAfterRelaunch(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("RestoreAll must delete the one-shot marker, got %d rows", len(rows))
-	}
-}
-
-// TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot covers issue #2319 (c),
-// the killed-session-resurrection scenario. A terminated session WITH a marker
-// is relaunched exactly once; on a second RestoreAll (no new marker) it stays
-// terminated and is not relaunched again.
-func TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	// First boot: marker present, session relaunches once.
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("first RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-
-	// Simulate the user killing the relaunched session before the next quit, so
-	// it has no fresh marker, then a second boot.
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("second RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("killed session must NOT be resurrected on second boot, runtime.Create total = %d, want 1", rt.created)
-	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Error("killed session must remain terminated after second RestoreAll")
 	}
 }
 

@@ -68,12 +68,14 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetLaunchCommand builds the argv to start a new non-interactive Vibe session:
 //
-//	vibe --trust --output text [--agent <profile>] -p <prompt>
+//	vibe --trust --output text [--workdir <path>] [--agent <profile>] -p <prompt>
 //
 // The prompt is delivered through `-p` (programmatic mode), so AO uses
 // in-command delivery. `--trust` skips the trust prompt for automation and
-// `--output text` pins the output format. Vibe exposes no CLI system-prompt
-// flag (system prompts are config-driven), so SystemPrompt is not forwarded.
+// `--output text` pins the output format. `--workdir` is passed explicitly
+// because Vibe validates its own working directory in addition to the process
+// cwd AO sets through the runtime. Vibe exposes no CLI system-prompt flag
+// (system prompts are config-driven), so SystemPrompt is not forwarded.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -84,6 +86,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary, "--trust", "--output", "text"}
+	appendWorkdirFlag(&cmd, cfg.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "-p", cfg.Prompt)
@@ -109,9 +112,18 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = make([]string, 0, 8)
 	cmd = append(cmd, binary, "--trust", "--output", "text")
+	appendWorkdirFlag(&cmd, cfg.Session.WorkspacePath)
 	appendAgentFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
+}
+
+// appendWorkdirFlag adds Vibe's explicit `--workdir` flag. Vibe validates its
+// own working directory in addition to the process cwd AO sets.
+func appendWorkdirFlag(cmd *[]string, workspacePath string) {
+	if workspacePath != "" {
+		*cmd = append(*cmd, "--workdir", workspacePath)
+	}
 }
 
 // appendAgentFlags maps AO permission modes onto Vibe's builtin `--agent`

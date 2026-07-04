@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "30 13 * * *" # 13:30 UTC = 19:00 IST daily
   workflow_dispatch:
+    inputs:
+      important:
+        description: 'Mark this nightly as an important update (escalates the in-app restart prompt). Retro-flag an already-published nightly by re-running only the publish-feed job with this input set.'
+        type: boolean
+        default: false
 
 jobs:
   guard:
@@ -201,6 +206,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NIGHTLY_VERSION: ${{ needs.guard.outputs.version }}
+          NIGHTLY_IMPORTANT: ${{ inputs.important || 'false' }}
         run: |
           # Forge stamps package.json to VERSION without +build metadata and
           # publishes to v<that>. Match it.
@@ -208,7 +214,9 @@ jobs:
           tag="v$version"
           mkdir -p dist
           gh release download "$tag" --dir dist --clobber
-          node scripts/feed.mjs dist "$version" nightly
+          important_flag=""
+          [ "$NIGHTLY_IMPORTANT" = "true" ] && important_flag="--important"
+          node scripts/feed.mjs dist "$version" nightly $important_flag
           shopt -s nullglob
           assets=(dist/nightly*.yml dist/*.blockmap)
           if [ ${#assets[@]} -eq 0 ]; then echo "no feed assets generated" >&2; exit 1; fi

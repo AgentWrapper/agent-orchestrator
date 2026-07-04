@@ -43,6 +43,7 @@ func TestWaitForStoppedKeepsRunFileFromConcurrentStart(t *testing.T) {
 	}
 	if info == nil {
 		t.Fatal("new daemon's run-file was deleted by stop of a different PID")
+		return
 	}
 	if info.PID != newPID {
 		t.Fatalf("run-file PID = %d, want %d (new daemon)", info.PID, newPID)

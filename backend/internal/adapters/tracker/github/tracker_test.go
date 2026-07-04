@@ -20,9 +20,10 @@ import (
 // recordedReq captures one inbound HTTP request so tests can assert against
 // the exact GitHub API surface the adapter touched.
 type recordedReq struct {
-	Method string
-	Path   string
-	Body   string
+	Method      string
+	Path        string
+	Body        string
+	IfNoneMatch string
 }
 
 // fakeGH is a programmable httptest.Server that matches requests by
@@ -54,7 +55,7 @@ func (f *fakeGH) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	key := r.Method + " " + r.URL.Path
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedReq{Method: r.Method, Path: r.URL.Path, Body: string(body)})
+	f.requests = append(f.requests, recordedReq{Method: r.Method, Path: r.URL.Path, Body: string(body), IfNoneMatch: r.Header.Get("If-None-Match")})
 	h, ok := f.handlers[key]
 	f.mu.Unlock()
 	if !ok {
@@ -427,8 +428,8 @@ func TestList_HappyPathAndDefaults(t *testing.T) {
 		if got := q.Get("state"); got != "all" {
 			t.Errorf("state = %q, want all (default)", got)
 		}
-		if got := q.Get("per_page"); got != "30" {
-			t.Errorf("per_page = %q, want 30 (default)", got)
+		if got := q.Get("per_page"); got != "100" {
+			t.Errorf("per_page = %q, want 100 (default)", got)
 		}
 		_, _ = w.Write([]byte(`[
 			{"number":1,"title":"first","body":"b1","state":"open","html_url":"https://github.com/o/r/issues/1","labels":[{"name":"bug"}],"assignees":[]},
@@ -484,15 +485,15 @@ func TestList_QueryEncoding(t *testing.T) {
 		{
 			name:   "open + labels + assignee + limit",
 			filter: domain.ListFilter{State: domain.ListOpen, Labels: []string{"bug", "help wanted"}, Assignee: "alice", Limit: 50},
-			wantQ:  map[string]string{"state": "open", "labels": "bug,help wanted", "assignee": "alice", "per_page": "50"},
+			wantQ:  map[string]string{"state": "open", "labels": "bug,help wanted", "assignee": "alice", "per_page": "100"},
 		},
 		{
 			name:   "closed only",
 			filter: domain.ListFilter{State: domain.ListClosed},
-			wantQ:  map[string]string{"state": "closed", "per_page": "30"},
+			wantQ:  map[string]string{"state": "closed", "per_page": "100"},
 		},
 		{
-			name:   "limit capped at 100",
+			name:   "large total limit still uses max page size",
 			filter: domain.ListFilter{Limit: 9999},
 			wantQ:  map[string]string{"state": "all", "per_page": "100"},
 		},
@@ -514,6 +515,324 @@ func TestList_QueryEncoding(t *testing.T) {
 				t.Fatalf("List: %v", err)
 			}
 		})
+	}
+}
+
+func TestList_PaginatesAcrossLinkNext(t *testing.T) {
+	f := newFakeGH(t)
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("page") {
+		case "":
+			w.Header().Set("Link", `<`+f.server.URL+`/repos/o/r/issues?state=all&per_page=100&page=2>; rel="next"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"first","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case "2":
+			_, _ = w.Write([]byte(`[{"number":2,"title":"second","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		default:
+			t.Fatalf("unexpected page %q", r.URL.Query().Get("page"))
+		}
+	})
+	tr := newTrackerForTest(t, f)
+
+	issues, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(issues) != 2 || issues[0].ID.Native != "o/r#1" || issues[1].ID.Native != "o/r#2" {
+		t.Fatalf("issues = %#v, want both pages in order", issues)
+	}
+}
+
+func TestList_ConditionalRevalidationContinuesCachedPageChain(t *testing.T) {
+	f := newFakeGH(t)
+	pageCalls := map[string]int{}
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pageCalls[page]++
+		switch {
+		case page == "" && pageCalls[page] == 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first page1 If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"e1"`)
+			w.Header().Set("Link", `<`+f.server.URL+`/repos/o/r/issues?state=all&per_page=100&page=2>; rel="next"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"first","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case page == "2" && pageCalls[page] == 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first page2 If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"e2"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"second","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		case page == "" && pageCalls[page] == 2:
+			if got := r.Header.Get("If-None-Match"); got != `"e1"` {
+				t.Errorf("second page1 If-None-Match = %q, want \"e1\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		case page == "2" && pageCalls[page] == 2:
+			if got := r.Header.Get("If-None-Match"); got != `"e2"` {
+				t.Errorf("second page2 If-None-Match = %q, want \"e2\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			t.Fatalf("unexpected page=%q call=%d", page, pageCalls[page])
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("second issues = %#v\nwant %#v", second, first)
+	}
+	if len(second) != 2 {
+		t.Fatalf("second len = %d, want both cached pages", len(second))
+	}
+}
+
+func TestList_PageCountShrinkIgnoresOrphanedCachedPage(t *testing.T) {
+	f := newFakeGH(t)
+	var page1Calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "2" {
+			w.Header().Set("ETag", `"old-page-2"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"old second","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+			return
+		}
+		page1Calls++
+		switch page1Calls {
+		case 1:
+			w.Header().Set("ETag", `"old-page-1"`)
+			w.Header().Set("Link", `<`+f.server.URL+`/repos/o/r/issues?state=all&per_page=100&page=2>; rel="next"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"old first","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != `"old-page-1"` {
+				t.Errorf("second page1 If-None-Match = %q, want \"old-page-1\"", got)
+			}
+			w.Header().Set("ETag", `"new-page-1"`)
+			_, _ = w.Write([]byte(`[{"number":3,"title":"only remaining","state":"open","html_url":"https://github.com/o/r/issues/3"}]`))
+		default:
+			t.Fatalf("unexpected page1 call #%d", page1Calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("first len = %d, want two cached pages", len(first))
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if len(second) != 1 || second[0].ID.Native != "o/r#3" {
+		t.Fatalf("second issues = %#v, want only refreshed page 1", second)
+	}
+}
+
+func TestParseLinkNext(t *testing.T) {
+	baseURL := "https://api.github.com"
+	cases := []struct {
+		name string
+		link string
+		want string
+	}{
+		{
+			name: "quoted next strips absolute host",
+			link: `<https://api.github.com/repos/o/r/issues?state=all&per_page=100&page=2>; rel="next"`,
+			want: "/repos/o/r/issues?state=all&per_page=100&page=2",
+		},
+		{
+			name: "unquoted next among multiple links",
+			link: `<https://api.github.com/repos/o/r/issues?page=1>; rel=prev, <https://api.github.com/repos/o/r/issues?page=3>; rel=next`,
+			want: "/repos/o/r/issues?page=3",
+		},
+		{
+			name: "multiple rel values",
+			link: `<https://example.test/repos/o/r/issues?page=4>; rel="last next"`,
+			want: "/repos/o/r/issues?page=4",
+		},
+		{
+			name: "relative path",
+			link: `</repos/o/r/issues?page=2>; rel="next"`,
+			want: "/repos/o/r/issues?page=2",
+		},
+		{
+			name: "no next",
+			link: `<https://api.github.com/repos/o/r/issues?page=1>; rel="prev"`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseLinkNext(tc.link, baseURL); got != tc.want {
+				t.Fatalf("parseLinkNext() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestList_ConditionalRevalidationReturns304CachedIssues(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"abc"`)
+			_, _ = w.Write([]byte(`[
+				{"number":1,"title":"first","body":"b1","state":"open","html_url":"https://github.com/o/r/issues/1"},
+				{"number":2,"title":"second","body":"b2","state":"closed","state_reason":"completed","html_url":"https://github.com/o/r/issues/2"}
+			]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != `"abc"` {
+				t.Errorf("second If-None-Match = %q, want \"abc\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("second issues = %#v\nwant %#v", second, first)
+	}
+	reqs := f.calls()
+	if len(reqs) != 2 {
+		t.Fatalf("HTTP calls = %d, want 2", len(reqs))
+	}
+	if got := reqs[1].IfNoneMatch; got != `"abc"` {
+		t.Fatalf("recorded If-None-Match = %q, want \"abc\"", got)
+	}
+}
+
+func TestList_ETagUpdatesWhenIssuesChange(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			w.Header().Set("ETag", `"v1"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"old","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != `"v1"` {
+				t.Errorf("second If-None-Match = %q, want \"v1\"", got)
+			}
+			w.Header().Set("ETag", `"v2"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"new","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		case 3:
+			if got := r.Header.Get("If-None-Match"); got != `"v2"` {
+				t.Errorf("third If-None-Match = %q, want \"v2\"", got)
+			}
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if len(second) != 1 || second[0].ID.Native != "o/r#2" || second[0].Title != "new" {
+		t.Fatalf("second issues = %#v, want new issue", second)
+	}
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("third List: %v", err)
+	}
+}
+
+func TestList_SeparateCacheKeyPerFilter(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("first If-None-Match = %q, want empty", got)
+			}
+			w.Header().Set("ETag", `"bug-etag"`)
+			_, _ = w.Write([]byte(`[{"number":1,"title":"bug","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+		case 2:
+			if got := r.Header.Get("If-None-Match"); got != "" {
+				t.Errorf("second If-None-Match = %q, want empty for different filter", got)
+			}
+			w.Header().Set("ETag", `"docs-etag"`)
+			_, _ = w.Write([]byte(`[{"number":2,"title":"docs","state":"open","html_url":"https://github.com/o/r/issues/2"}]`))
+		default:
+			t.Fatalf("unexpected List call #%d", calls)
+		}
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	first, err := tr.List(ctx(), repo, domain.ListFilter{Labels: []string{"bug"}})
+	if err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	second, err := tr.List(ctx(), repo, domain.ListFilter{Labels: []string{"docs"}})
+	if err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if len(first) != 1 || first[0].Title != "bug" {
+		t.Fatalf("first issues = %#v, want bug", first)
+	}
+	if len(second) != 1 || second[0].Title != "docs" {
+		t.Fatalf("second issues = %#v, want docs", second)
+	}
+}
+
+func TestList_NoETagHeaderNotCached(t *testing.T) {
+	f := newFakeGH(t)
+	var calls int
+	f.on("GET", "/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if got := r.Header.Get("If-None-Match"); got != "" {
+			t.Errorf("call #%d If-None-Match = %q, want empty", calls, got)
+		}
+		_, _ = w.Write([]byte(`[{"number":1,"title":"uncached","state":"open","html_url":"https://github.com/o/r/issues/1"}]`))
+	})
+	tr := newTrackerForTest(t, f)
+	repo := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "o/r"}
+
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("first List: %v", err)
+	}
+	if _, err := tr.List(ctx(), repo, domain.ListFilter{}); err != nil {
+		t.Fatalf("second List: %v", err)
+	}
+	if got := len(f.calls()); got != 2 {
+		t.Fatalf("HTTP calls = %d, want 2", got)
 	}
 }
 

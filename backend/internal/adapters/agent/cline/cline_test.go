@@ -36,6 +36,30 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandOmitsJSONForPromptlessInteractiveLaunch(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:  ports.PermissionModeBypassPermissions,
+		SystemPrompt: "coordinate the project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"cline",
+		"--yolo",
+		"-s", "coordinate the project",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if contains(cmd, "--json") {
+		t.Fatalf("promptless Cline launch must not use --json: %#v", cmd)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -254,7 +278,6 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want := []string{
 		"cline",
-		"--json",
 		"--auto-approve", "true",
 		"--id", "session-123",
 	}
