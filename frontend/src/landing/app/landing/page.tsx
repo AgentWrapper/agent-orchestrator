@@ -2,10 +2,11 @@ import { LandingNav } from "../../components/LandingNav";
 import { LandingHero } from "../../components/LandingHero";
 import { LandingAgentsBar } from "../../components/LandingAgentsBar";
 import { LandingVideo } from "../../components/LandingVideo";
-import { LandingFeatures } from "../../components/LandingFeatures";
+// import { LandingFeatures } from "../../components/LandingFeatures";
 import { LandingSocialProof } from "../../components/LandingSocialProof";
 import { LandingFooter } from "../../components/LandingFooter";
 import { ScrollRevealProvider } from "../../components/ScrollRevealProvider";
+import { LandingFeaturesScroll } from "@/components/LandingFeaturesScroll";
 
 export default function LandingPage() {
 	return (
@@ -15,7 +16,8 @@ export default function LandingPage() {
 				<LandingHero />
 				<LandingAgentsBar />
 				<LandingVideo />
-				<LandingFeatures />
+				{/* <LandingFeatures /> */}
+				<LandingFeaturesScroll />
 				<LandingSocialProof />
 				<LandingFooter />
 			</div>

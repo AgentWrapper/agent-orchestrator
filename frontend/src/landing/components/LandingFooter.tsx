@@ -1,3 +1,4 @@
+// NOT IN USE
 const LOGO_URL = "/ao-logo-transparent.png";
 
 const columns = [
