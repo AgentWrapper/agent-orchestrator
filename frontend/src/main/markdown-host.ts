@@ -188,6 +188,7 @@ export class MarkdownHost {
     });
 
     watcher.on("change", () => this.onFileChanged(filePath));
+    watcher.on("unlink", () => this.onFileDeleted(filePath));
     watcher.on("error", (err: unknown) => {
       console.error(`[md-host] Watcher error for ${filePath}:`, err);
     });
@@ -227,6 +228,45 @@ export class MarkdownHost {
         } catch (err) {
           console.error(`[md-host] Failed to re-render ${filePath}:`, err);
         }
+      }
+    }, 300);
+
+    this.debounceTimers.set(filePath, timer);
+  }
+
+  private onFileDeleted(filePath: string): void {
+    const existing = this.debounceTimers.get(filePath);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(filePath);
+
+      for (const [docId, files] of this.docFiles) {
+        if (!files.has(filePath)) continue;
+
+        const doc = this.documents.get(docId);
+        if (!doc) continue;
+
+        const deletedHtml = renderMarkdown(
+          `> **File deleted** — \`${path.basename(filePath)}\` was removed from disk.\n>\n> The browser panel will not update again for this document.`,
+        );
+        doc.renderedHtml = deletedHtml;
+        doc.revision++;
+        doc.updatedAt = Date.now();
+        this.documents.set(docId, doc);
+
+        this.mainWindow.webContents.send(MarkdownIpcChannels.fileChanged, {
+          documentId: docId,
+          revision: doc.revision,
+          needsReload: true,
+          title: `(removed) ${path.basename(filePath)}`,
+        } satisfies MarkdownUpdateEvent);
+      }
+
+      const watcher = this.watchers.get(filePath);
+      if (watcher) {
+        watcher.close();
+        this.watchers.delete(filePath);
       }
     }, 300);
 

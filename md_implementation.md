@@ -533,3 +533,50 @@ The toggle relies on three features that the strict CSP already allows:
 | `:has()` parent selector | CSS, no CSP restriction | ✅ `style-src 'unsafe-inline'` |
 
 No changes to the CSP policy were needed.
+
+---
+
+## Post-PR Feature: File Deletion Handling & Agent Auto-Preview Instructions
+
+After the initial markdown preview implementation, two gaps were identified in the user workflow:
+
+1. **File deletion left stale content**: When a watched `.md` file was deleted from disk, the chokidar watcher fired an `unlink` event that was not handled. The browser panel continued displaying the old rendered HTML with no indication the file was gone.
+
+2. **Agent workflow required manual `ao preview`**: The SKILL.md instructed agents to "tell the user the path", requiring the user to manually open the file. Agents could not proactively push the preview to the panel.
+
+### File deletion handling
+
+**`frontend/src/main/markdown-host.ts`** — The chokidar watcher already handled `change` and `error` events, but `unlink` (file deletion) was unhandled. A new `onFileDeleted()` method was added:
+
+```
+chokidar.watch(filePath)
+    │
+    ├── "change"  → onFileChanged()   → re-read + re-render + IPC
+    ├── "unlink"  → onFileDeleted()   → render deletion notice + IPC + close watcher
+    └── "error"   → console.error
+```
+
+The `onFileDeleted` method:
+- Re-renders the document with a "File deleted" message rendered as markdown blockquote
+- Sends a `md:fileChanged` IPC event so the renderer reloads the view
+- Closes the chokidar watcher for that path (the file is gone; a new preview requires re-opening)
+
+The rendered deletion page carries the same strict CSP as any other markdown page — no JavaScript, safely sanitised.
+
+### Agent auto-preview instructions
+
+**`backend/internal/skillassets/markdown-preview/SKILL.md`** — The "Using from a session" section was expanded with new steps:
+
+| Step | Instruction | Rationale |
+|---|---|---|
+| 2 | After creating a `.md` file, run `ao preview <path>` immediately | The user sees rendered output without manual steps |
+| 3 | If producing multiple `.md` files, only auto-preview the **last** one | The panel can show only one at a time; previous targets are replaced instantly |
+
+The agent's system prompt already had the `aoMarkdownPreviewPointer()` appended (from the earlier multi-skill work), which tells agents to read this SKILL.md file. No changes to `session_manager/manager.go` were needed.
+
+### Changes
+
+| File | Change | Motivation |
+|---|---|---|
+| `frontend/src/main/markdown-host.ts` | Added `unlink` handler + `onFileDeleted()` method | Browser panel now shows a "File deleted" notice instead of stale content |
+| `backend/internal/skillassets/markdown-preview/SKILL.md` | Expanded with auto-preview steps; added file deletion documentation | Agents can proactively push previews without manual user action |
