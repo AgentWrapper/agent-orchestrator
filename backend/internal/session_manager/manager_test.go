@@ -126,6 +126,9 @@ type fakeLCM struct {
 	completed int
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	// switched counts MarkSwitched calls; switching tracks the in-flight guard.
+	switched  int
+	switching map[domain.SessionID]bool
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -147,6 +150,27 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
 	return nil
+}
+func (l *fakeLCM) MarkSwitched(_ context.Context, id domain.SessionID, harness domain.AgentHarness, runtimeHandleID string) error {
+	l.switched++
+	rec := l.store.sessions[id]
+	rec.Harness = harness
+	rec.IsTerminated = false
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.Metadata.RuntimeHandleID = runtimeHandleID
+	rec.Metadata.AgentSessionID = ""
+	l.store.sessions[id] = rec
+	return nil
+}
+func (l *fakeLCM) BeginSwitch(id domain.SessionID) {
+	if l.switching == nil {
+		l.switching = map[domain.SessionID]bool{}
+	}
+	l.switching[id] = true
+}
+func (l *fakeLCM) EndSwitch(id domain.SessionID) { delete(l.switching, id) }
+func (l *fakeLCM) IsSwitching(id domain.SessionID) bool {
+	return l.switching[id]
 }
 
 type fakeRuntime struct {
@@ -342,6 +366,105 @@ func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadat
 }
 func mkLive(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}
+}
+
+func mkSwitchable(id domain.SessionID) domain.SessionRecord {
+	return domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "b/" + string(id), WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1", AgentSessionID: "old-native", Prompt: "do it"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+}
+
+func TestSwitchHarness_Success(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = mkSwitchable(id)
+
+	rec, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "glm-4")
+	if err != nil {
+		t.Fatalf("SwitchHarness: %v", err)
+	}
+	// Old agent stopped, new one created — exactly once each.
+	if rt.destroyed != 1 || rt.created != 1 {
+		t.Fatalf("runtime destroyed=%d created=%d, want 1/1", rt.destroyed, rt.created)
+	}
+	if len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "h1" {
+		t.Fatalf("destroyed old handle = %v, want [h1]", rt.destroyedIDs)
+	}
+	if rec.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want codex", rec.Harness)
+	}
+	if rec.Metadata.AgentSessionID != "" {
+		t.Fatalf("AgentSessionID = %q, want cleared", rec.Metadata.AgentSessionID)
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if lcm.switched != 1 {
+		t.Fatalf("MarkSwitched calls = %d, want 1", lcm.switched)
+	}
+	if lcm.IsSwitching(id) {
+		t.Fatal("switch guard not cleared after a successful switch")
+	}
+}
+
+func TestSwitchHarness_UnknownHarnessLeavesAgentRunning(t *testing.T) {
+	m, st, rt, _ := newManager()
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = mkSwitchable(id)
+
+	_, err := m.SwitchHarness(ctx, id, domain.AgentHarness("bogus"), "")
+	if !errors.Is(err, ErrUnknownHarness) {
+		t.Fatalf("err = %v, want ErrUnknownHarness", err)
+	}
+	// Validation fails before the running agent is touched.
+	if rt.destroyed != 0 || rt.created != 0 {
+		t.Fatalf("runtime touched on validation failure: destroyed=%d created=%d", rt.destroyed, rt.created)
+	}
+}
+
+func TestSwitchHarness_TerminatedRelaunchesUnderNewAgent(t *testing.T) {
+	m, st, rt, ws := newManager()
+	id := domain.SessionID("ao-1")
+	seedTerminal(st, id, domain.SessionMetadata{Branch: "b/ao-1", WorkspacePath: "/ws/ao-1", AgentSessionID: "old-native", Prompt: "do it"})
+
+	rec, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, "")
+	if err != nil {
+		t.Fatalf("SwitchHarness on terminated: %v", err)
+	}
+	// Relaunch-as: worktree restored (by branch), new runtime created, nothing to stop.
+	if ws.lastCfg.Branch != "b/ao-1" {
+		t.Fatalf("worktree restore branch = %q, want b/ao-1", ws.lastCfg.Branch)
+	}
+	if rt.created != 1 || rt.destroyed != 0 {
+		t.Fatalf("runtime created=%d destroyed=%d, want 1/0 (nothing to tear down)", rt.created, rt.destroyed)
+	}
+	if rec.Harness != domain.HarnessCodex || rec.IsTerminated {
+		t.Fatalf("record after relaunch = %+v, want codex + live", rec)
+	}
+	if rec.Metadata.AgentSessionID != "" {
+		t.Fatalf("AgentSessionID = %q, want cleared", rec.Metadata.AgentSessionID)
+	}
+}
+
+func TestSwitchHarness_CreateFailureTerminates(t *testing.T) {
+	m, st, rt, _ := newManager()
+	rt.createErr = errors.New("boom")
+	id := domain.SessionID("ao-1")
+	st.sessions[id] = mkSwitchable(id)
+
+	if _, err := m.SwitchHarness(ctx, id, domain.HarnessCodex, ""); err == nil {
+		t.Fatal("expected error when the new runtime fails to launch")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroyed=%d, want 1 (old agent stopped before the failed launch)", rt.destroyed)
+	}
+	lcm := m.lcm.(*fakeLCM)
+	if lcm.terminated[id] != 1 {
+		t.Fatalf("MarkTerminated=%d, want 1 (no live-session-with-dead-handle)", lcm.terminated[id])
+	}
+	if lcm.IsSwitching(id) {
+		t.Fatal("switch guard not cleared after a failed switch")
+	}
 }
 
 func TestSpawn_ResolvesProjectConfig(t *testing.T) {

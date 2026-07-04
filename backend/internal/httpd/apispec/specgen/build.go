@@ -150,6 +150,8 @@ var schemaNames = map[string]string{
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
+	"ControllersSwitchAgentRequest":               "SwitchAgentRequest",
+	"ControllersSwitchAgentResponse":              "SwitchAgentResponse",
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
 	"ControllersKillSessionResponse":              "KillSessionResponse",
@@ -662,6 +664,19 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RestoreSessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/switch", id: "switchSessionAgent", tag: "sessions",
+			summary:    "Switch a live session's agent harness (and optionally model) in place",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SwitchAgentRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SwitchAgentResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
