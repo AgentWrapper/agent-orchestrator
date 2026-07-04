@@ -131,9 +131,8 @@ var clineBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveClineBinary returns the path to the cline binary on this machine,
-// searching PATH then a handful of well-known install locations
-// (Homebrew, npm global). Returns "cline" as a last-ditch fallback so callers
-// see a clear "command not found" rather than an empty argv.
+// searching PATH then a handful of well-known install locations (Homebrew, npm
+// global). It returns a wrapped ports.ErrAgentBinaryNotFound when cline is absent.
 func ResolveClineBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, clineBinarySpec)
 }

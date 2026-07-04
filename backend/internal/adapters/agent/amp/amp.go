@@ -125,8 +125,7 @@ var ampBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveAmpBinary finds the `amp` binary, searching PATH then common install
-// locations. It returns "amp" as a last resort so callers get the shell's normal
-// command-not-found behavior if Amp is absent.
+// locations. It returns a wrapped ports.ErrAgentBinaryNotFound when Amp is absent.
 func ResolveAmpBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, ampBinarySpec)
 }

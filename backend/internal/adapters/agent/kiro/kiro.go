@@ -130,9 +130,8 @@ var kiroBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveKiroBinary returns the path to the kiro-cli binary on this machine,
-// searching PATH then a handful of well-known install locations. Returns
-// "kiro-cli" as a last-ditch fallback so callers see a clear "command not
-// found" rather than an empty argv.
+// searching PATH then a handful of well-known install locations. It returns a
+// wrapped ports.ErrAgentBinaryNotFound when kiro-cli is absent.
 func ResolveKiroBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, kiroBinarySpec)
 }

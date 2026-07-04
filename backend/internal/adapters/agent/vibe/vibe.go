@@ -153,8 +153,7 @@ var vibeBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveVibeBinary finds the `vibe` binary, searching PATH then common install
-// locations. It returns "vibe" as a last resort so callers get the shell's
-// normal command-not-found behavior if Vibe is absent.
+// locations. It returns a wrapped ports.ErrAgentBinaryNotFound when Vibe is absent.
 func ResolveVibeBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, vibeBinarySpec)
 }

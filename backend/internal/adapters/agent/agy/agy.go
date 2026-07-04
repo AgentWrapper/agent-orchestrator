@@ -126,8 +126,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 }
 
 // ResolveAgyBinary returns the path to the agy binary on this machine,
-// searching PATH then a handful of well-known install locations.
-// Returns "agy" as a last-ditch fallback.
+// searching PATH then a handful of well-known install locations. It returns a
+// wrapped ports.ErrAgentBinaryNotFound when agy is absent.
 func ResolveAgyBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, agyBinarySpec)
 }

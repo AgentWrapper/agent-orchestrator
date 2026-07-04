@@ -138,8 +138,8 @@ var crushBinarySpec = binaryutil.BinarySpec{
 }
 
 // ResolveCrushBinary returns the path to the crush binary on this machine,
-// searching PATH then a handful of well-known install locations.
-// Returns "crush" as a last-ditch fallback.
+// searching PATH then a handful of well-known install locations. It returns a
+// wrapped ports.ErrAgentBinaryNotFound when crush is absent.
 func ResolveCrushBinary(ctx context.Context) (string, error) {
 	return binaryutil.ResolveBinary(ctx, crushBinarySpec)
 }
