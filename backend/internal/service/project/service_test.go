@@ -272,6 +272,9 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	if got.Project.DefaultBranch != domain.DefaultBranchName {
 		t.Fatalf("default branch = %q, want %q", got.Project.DefaultBranch, domain.DefaultBranchName)
 	}
+	if got.Project.Agent != "claude-code" {
+		t.Fatalf("default agent = %q, want claude-code", got.Project.Agent)
+	}
 	if got.Project.Config != nil {
 		t.Fatalf("unconfigured project should omit config, got %#v", got.Project.Config)
 	}
@@ -282,6 +285,32 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 	if list[0].SessionPrefix != "ao" {
 		t.Fatalf("default session prefix = %q, want derived 'ao'", list[0].SessionPrefix)
+	}
+}
+
+func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.NewWithDeps(project.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil {
+		t.Fatalf("Get returned no project: %#v", got)
+	}
+	if got.Project.Agent != "codex" {
+		t.Fatalf("default agent = %q, want codex", got.Project.Agent)
 	}
 }
 

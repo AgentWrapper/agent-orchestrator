@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiClient, getApiBaseUrl, hasTrustedApiBaseUrl, setApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import {
+	apiClient,
+	apiErrorMessage,
+	getApiBaseUrl,
+	hasTrustedApiBaseUrl,
+	setApiBaseUrl,
+	subscribeApiBaseUrl,
+} from "./api-client";
 
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
@@ -152,5 +159,22 @@ describe("subscribeApiBaseUrl", () => {
 		setApiBaseUrl("http://127.0.0.1:4555");
 
 		expect(listener).not.toHaveBeenCalled();
+	});
+});
+
+describe("apiErrorMessage", () => {
+	it("preserves daemon error codes next to human messages", () => {
+		expect(apiErrorMessage({ code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" })).toBe(
+			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
+		);
+	});
+
+	it("does not duplicate a code that is already present in the message", () => {
+		expect(
+			apiErrorMessage({
+				code: "RUNTIME_PREREQUISITE_MISSING",
+				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
+			}),
+		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
 	});
 });

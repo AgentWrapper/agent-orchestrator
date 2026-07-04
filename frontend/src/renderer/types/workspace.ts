@@ -35,6 +35,28 @@ export function toSessionStatus(status?: string, isTerminated = false): SessionS
 	return isTerminated ? "terminated" : "unknown";
 }
 
+export type SessionActivityState = "active" | "idle" | "waiting_input" | "exited" | "unknown";
+
+const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "exited"]);
+
+export type SessionActivity = {
+	state: SessionActivityState;
+	lastActivityAt: string;
+};
+
+export function toSessionActivity(
+	activity?: { state?: string; lastActivityAt?: string } | null,
+): SessionActivity | undefined {
+	if (!activity) return undefined;
+	const state = sessionActivityStates.has(activity.state as SessionActivityState)
+		? (activity.state as SessionActivityState)
+		: "unknown";
+	return {
+		state,
+		lastActivityAt: activity.lastActivityAt ?? "",
+	};
+}
+
 export type AgentProvider =
 	| "codex"
 	| "claude-code"
@@ -96,6 +118,8 @@ export type WorkspaceSession = {
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
+	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
+	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
 	branch: string;
@@ -104,6 +128,8 @@ export type WorkspaceSession = {
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	/** Raw agent lifecycle activity from the daemon. */
+	activity?: SessionActivity;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.
@@ -131,6 +157,22 @@ export type WorkspaceSession = {
 	 */
 	displayStatus?: WorkerDisplayStatus;
 };
+
+// Tracker providers whose ids the intake daemon stamps sessions with, in
+// "<provider>:<native>" form. Adding a provider (Linear, Jira, ...) later is
+// just another prefix in this list — no caller of canonicalTrackerIssueId
+// needs to change.
+const TRACKER_PROVIDER_PREFIXES = ["github:"] as const;
+
+/**
+ * The provider-prefixed issue id if `issueId` came from tracker intake, or
+ * undefined for manually created sessions (whose issueId, if any, is a plain
+ * task title with no provider prefix).
+ */
+export function canonicalTrackerIssueId(issueId?: string): string | undefined {
+	if (!issueId) return undefined;
+	return TRACKER_PROVIDER_PREFIXES.some((prefix) => issueId.startsWith(prefix)) ? issueId : undefined;
+}
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
 export type WorkerDisplayStatus =

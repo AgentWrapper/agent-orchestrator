@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
 
@@ -25,7 +25,7 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
-const pr = (n: number, state: PRState): PullRequestFacts => ({
+const pr = (n: number, state: PRState, overrides: Partial<PullRequestFacts> = {}): PullRequestFacts => ({
 	url: `https://example.com/pr/${n}`,
 	number: n,
 	state,
@@ -34,9 +34,10 @@ const pr = (n: number, state: PRState): PullRequestFacts => ({
 	mergeability: "mergeable",
 	reviewComments: false,
 	updatedAt: "2026-06-15T00:00:00Z",
+	...overrides,
 });
 
-const session = (prs: PullRequestFacts[]): WorkspaceSession => ({
+const session = (prs: PullRequestFacts[], overrides: Partial<WorkspaceSession> = {}): WorkspaceSession => ({
 	id: "sess-1",
 	workspaceId: "ws-1",
 	workspaceName: "my-app",
@@ -47,6 +48,7 @@ const session = (prs: PullRequestFacts[]): WorkspaceSession => ({
 	status: "review_pending",
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs,
+	...overrides,
 });
 
 const sessionWithProvider = (prs: PullRequestFacts[], provider: WorkspaceSession["provider"]): WorkspaceSession => ({
@@ -124,9 +126,12 @@ beforeEach(() => {
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 });
 
+afterEach(() => {
+	vi.useRealTimers();
+});
+
 describe("SessionInspector PR section", () => {
-	// Scope assertions to the PR section: the activity timeline also renders
-	// "Opened PR #n", so an unscoped query matches both the card and the event.
+	// Scope assertions to the PR section so the card order is explicit.
 	const prSection = (title: string) =>
 		within(screen.getByText(title).closest("section.inspector-section") as HTMLElement);
 
@@ -166,11 +171,186 @@ describe("SessionInspector PR section", () => {
 	});
 });
 
+describe("SessionInspector Activity section", () => {
+	const activitySection = () =>
+		within(screen.getByText("Activity").closest("section.inspector-section") as HTMLElement);
+
+	it.each([
+		["idle", "Idle"],
+		["active", "Working"],
+		["waiting_input", "Input Needed"],
+		["exited", "Exited"],
+	] as const)("renders %s from raw session activity", (state, label) => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open")], {
+					status: "review_pending",
+					activity: { state, lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(activitySection().getByText(label)).toBeInTheDocument();
+	});
+
+	it("renders unknown activity as unavailable instead of leaking the internal enum", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "working",
+					activity: { state: "unknown", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
+		expect(activitySection().queryByText("Unknown")).not.toBeInTheDocument();
+	});
+
+	it("falls back to unavailable when no activity has been reported", () => {
+		renderWithQuery(<SessionInspector session={session([], { status: "working" })} />);
+
+		expect(activitySection().getByText("Activity Unavailable")).toBeInTheDocument();
+	});
+
+	it("keeps the last known activity visible when the daemon reports no signal", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "no_signal",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		expect(within(activityRow).getByText("No Signal")).toBeInTheDocument();
+	});
+
+	it("does not derive the Activity label from PR-oriented session status", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "review_pending",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(activitySection().getByText("Idle")).toBeInTheDocument();
+		expect(activitySection().queryByText("Input Needed")).not.toBeInTheDocument();
+	});
+
+	it.each([
+		["ci_failed", "CI Failed"],
+		["changes_requested", "Changes Requested"],
+	] as const)("renders %s as an SCM state in the current Activity row", (status, label) => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status,
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		expect(within(activityRow).getByText(label)).toBeInTheDocument();
+	});
+
+	it("renders PR conflicts as an SCM state in the current Activity row", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open", { mergeability: "conflicting" })], {
+					status: "working",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
+	});
+
+	it("uses activity.lastActivityAt for the Activity timestamp", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "working",
+					updatedAt: "2026-06-15T11:55:00Z",
+					activity: { state: "active", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection().getByText("Working").closest(".inspector-timeline__ev") as HTMLElement;
+		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
+	});
+
+	it("keeps worktree, PR, and SCM context rows in the Activity timeline", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open", { ci: "failing", review: "changes_requested" })], {
+					status: "ci_failed",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		expect(activitySection().getByText(/Created worktree/)).toBeInTheDocument();
+		expect(activitySection().getByText("Opened")).toBeInTheDocument();
+		expect(activitySection().getByText("PR #7")).toBeInTheDocument();
+		const activityRow = activitySection().getByText("Idle").closest(".inspector-timeline__ev") as HTMLElement;
+		expect(within(activityRow).getByText("CI Failed")).toBeInTheDocument();
+		expect(within(activityRow).getByText("Changes Requested")).toBeInTheDocument();
+	});
+
+	it("orders timeline milestones around the combined current state row", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
+					status: "merged",
+					createdAt: "2026-06-15T09:00:00Z",
+					updatedAt: "2026-06-15T11:55:00Z",
+					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const section = screen.getByText("Activity").closest("section.inspector-section") as HTMLElement;
+		const rows = Array.from(section.querySelectorAll(".inspector-timeline__ev"), (row) =>
+			row.textContent?.replace(/\s+/g, " ").trim(),
+		);
+		expect(rows).toEqual([
+			"Created worktree & branch3h ago",
+			"Draft PR #42",
+			"Opened PR #41",
+			"Opened PR #40",
+			"Idle2h ago",
+			"Merged PR #40",
+			"Done5m ago",
+		]);
+	});
+});
+
 describe("SessionInspector tabs", () => {
 	it("exposes Summary, Reviews, and Browser as the three inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
+	});
+
+	it("shows the intake issue id in the summary overview when present", () => {
+		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
+
+		expect(screen.getByText("Issue")).toBeInTheDocument();
+		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
 	});
 });
 

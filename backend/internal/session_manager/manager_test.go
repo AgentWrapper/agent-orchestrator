@@ -568,6 +568,25 @@ func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
 	}
 }
 
+func TestKill_DeletesStaleRestoreMarker(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/tmp/wt"},
+	}
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !freed {
+		t.Fatal("Kill freed = false, want true")
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("stale restore marker = %+v, want deleted", rows)
+	}
+}
+
 // TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
 // success-with-preserved-workspace; any other teardown failure keeps erroring.
 func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
@@ -576,29 +595,6 @@ func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
 	ws.destroyErr = errors.New("disk on fire")
 	if _, err := m.Kill(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "disk on fire") {
 		t.Fatalf("kill err = %v, want workspace error surfaced", err)
-	}
-}
-
-// TestKill_DeletesRestoreMarker covers issue #2319 (a): a user kill is explicit
-// terminal intent and must delete the session_worktrees "shutdown-saved" marker.
-// A session that carried a marker (e.g. it survived a prior reopen cycle) and is
-// then killed must not keep that marker, or the next boot's RestoreAll would
-// resurrect it.
-func TestKill_DeletesRestoreMarker(t *testing.T) {
-	m, st, _, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	// The session carries a leftover shutdown-saved marker from a prior cycle.
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("kill must delete the restore marker, got %d rows", len(rows))
 	}
 }
 func TestRestore_ReopensTerminal(t *testing.T) {
@@ -894,6 +890,9 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			}
 			if !strings.Contains(sp, "Do not repeat, quote, paraphrase") {
 				t.Fatalf("%s: system prompt missing refuse-to-reveal directive:\n%s", tc.name, sp)
+			}
+			if !strings.Contains(sp, "skills/using-ao/SKILL.md") {
+				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
 			}
 		})
 	}
@@ -1705,6 +1704,33 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
+func TestRestoreAll_ConsumesMarkersAfterSuccessfulRestore(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: "/ws/mer-1"},
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll must relaunch session, runtime.Create called %d times", rt.created)
+	}
+	if rows := st.worktrees["mer-1"]; len(rows) != 0 {
+		t.Fatalf("consumed restore marker = %+v, want deleted", rows)
+	}
+}
+
 // TestRestoreAll_SkipsSessionsKilledBeforeShutdown verifies (c): a session
 // the user killed BEFORE shutdown has no session_worktrees row and must NOT
 // be resurrected.
@@ -1733,81 +1759,6 @@ func TestRestoreAll_SkipsSessionsKilledBeforeShutdown(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Error("user-killed session must remain terminated")
-	}
-}
-
-// TestRestoreAll_DeletesMarkerAfterRelaunch covers issue #2319 (b): the
-// shutdown-saved marker is one-shot. After RestoreAll relaunches a session, its
-// session_worktrees marker is deleted, so a second RestoreAll (with no fresh
-// marker) does NOT relaunch it again.
-func TestRestoreAll_DeletesMarkerAfterRelaunch(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-	rows, err := st.ListSessionWorktrees(ctx, "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("RestoreAll must delete the one-shot marker, got %d rows", len(rows))
-	}
-}
-
-// TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot covers issue #2319 (c),
-// the killed-session-resurrection scenario. A terminated session WITH a marker
-// is relaunched exactly once; on a second RestoreAll (no new marker) it stays
-// terminated and is not relaunched again.
-func TestRestoreAll_KilledSessionNotResurrectedOnSecondBoot(t *testing.T) {
-	m, st, rt, _ := newLifecycleManager()
-
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:           "mer-1",
-		ProjectID:    "mer",
-		Kind:         domain.KindWorker,
-		Harness:      domain.HarnessClaudeCode,
-		IsTerminated: true,
-		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
-		Activity:     domain.Activity{State: domain.ActivityExited},
-	}
-	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__"}}
-
-	// First boot: marker present, session relaunches once.
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("first RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("first RestoreAll must relaunch once, runtime.Create called %d times", rt.created)
-	}
-
-	// Simulate the user killing the relaunched session before the next quit, so
-	// it has no fresh marker, then a second boot.
-	if _, err := m.Kill(ctx, "mer-1"); err != nil {
-		t.Fatalf("kill err = %v", err)
-	}
-	if err := m.RestoreAll(ctx); err != nil {
-		t.Fatalf("second RestoreAll err = %v", err)
-	}
-	if rt.created != 1 {
-		t.Fatalf("killed session must NOT be resurrected on second boot, runtime.Create total = %d, want 1", rt.created)
-	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Error("killed session must remain terminated after second RestoreAll")
 	}
 }
 
@@ -1989,6 +1940,94 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (probe error is not death)", rt.destroyed)
+	}
+}
+
+// TestReconcile_AdoptAcrossDaemonRestart is the end-to-end durability proof for
+// #2335: it drives the full boot-time Reconcile pass over the exact mix of
+// session states a daemon restart/upgrade leaves behind and asserts agent
+// sessions are decoupled from the daemon's lifetime:
+//
+//   - an alive orchestrator is ADOPTED in place: same id, still live, its runtime
+//     never torn down, and NO new session minted (the id-increment regression
+//     guard: adoption failure used to mint a fresh orchestrator id 14->15->16).
+//   - an alive worker is adopted as a no-op.
+//   - a worker whose runtime died with the daemon has its work captured (stashed
+//     into a preserve ref, restore marker written) and is relaunched on this same
+//     boot under its ORIGINAL id.
+//   - a truly-dead session with no restore marker is NOT resurrected.
+func TestReconcile_AdoptAcrossDaemonRestart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{
+		"orch":    true, // orchestrator runtime survived the daemon exit
+		"w-alive": true, // worker runtime survived the daemon exit
+		// "w-dead" is absent -> that worker's runtime died with the daemon.
+	}}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/mer-3"}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	// Alive orchestrator: the promptless session whose adoption failure used to
+	// mint a fresh orchestrator id. It must be adopted in place.
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1", RuntimeHandleID: "orch"},
+	}
+	// Alive worker: adopted as a no-op.
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-2/root", WorkspacePath: "/ws/mer-2", RuntimeHandleID: "w-alive", AgentSessionID: "agent-2"},
+	}
+	// Dead worker: its runtime died with the daemon; capture + relaunch under same id.
+	st.sessions["mer-3"] = domain.SessionRecord{
+		ID: "mer-3", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-3/root", WorkspacePath: "/ws/mer-3", RuntimeHandleID: "w-dead", AgentSessionID: "agent-3"},
+	}
+	// Truly-dead session the user killed before restart (terminated, no marker).
+	st.sessions["mer-4"] = domain.SessionRecord{
+		ID: "mer-4", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{Branch: "ao/mer-4/root", WorkspacePath: "/ws/mer-4"},
+	}
+
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Alive orchestrator + worker adopted in place: same id, still live.
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("alive orchestrator must be adopted in place, not terminated")
+	}
+	if st.sessions["mer-2"].IsTerminated {
+		t.Fatal("alive worker must be adopted in place, not terminated")
+	}
+	// No id increment: Reconcile must never mint a new session row.
+	if st.num != 0 {
+		t.Fatalf("Reconcile minted %d new session(s); adoption must reuse existing ids", st.num)
+	}
+	// Adopted runtimes were never torn down.
+	if rt.destroyed != 0 {
+		t.Fatalf("adopted sessions must not be destroyed; Destroy called %d times", rt.destroyed)
+	}
+	// Dead worker captured, then relaunched under its original id on this same boot.
+	if lcm.terminated["mer-3"] != 1 {
+		t.Fatalf("dead worker must be marked terminated once before relaunch; got %d", lcm.terminated["mer-3"])
+	}
+	if st.sessions["mer-3"].IsTerminated {
+		t.Fatal("dead worker must be relaunched (not terminated) after Reconcile")
+	}
+	if rt.created != 1 {
+		t.Fatalf("exactly one runtime relaunch expected (the dead worker); got %d", rt.created)
+	}
+	// One-shot restore marker consumed so it never outlives one restart (#2319).
+	if rows := st.worktrees["mer-3"]; len(rows) != 0 {
+		t.Fatalf("restore marker for mer-3 must be deleted after relaunch; got %+v", rows)
+	}
+	// Truly-dead, unmarked session is NOT resurrected.
+	if !st.sessions["mer-4"].IsTerminated {
+		t.Fatal("terminated session with no restore marker must stay terminated")
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 )
 
 // Sentinel errors returned by the Session Manager; callers match them with
@@ -96,7 +97,9 @@ type Store interface {
 	// presence of any row is the marker; preserved_ref may be empty for clean
 	// worktrees.
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
-	// DeleteSessionWorktrees clears the "shutdown-saved" restore marker.
+	// DeleteSessionWorktrees consumes stale shutdown-restore markers. Explicit
+	// Kill and successful RestoreAll must remove these rows to prevent
+	// resurrecting sessions the user intentionally terminated.
 	DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error
 }
 
@@ -449,11 +452,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-
-	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
-	// killed session (#2319). Best-effort: teardown below still matters.
 	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+		return false, fmt.Errorf("kill %s: delete restore marker: %w", id, err)
 	}
 
 	// Only tear down what exists. A session may have lost its handle after a
@@ -901,12 +901,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			} else {
 				m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
 			}
+			continue
 		}
-
-		// One-shot: drop the consumed marker so it never outlives one restart
-		// (#2319). A still-live session re-acquires it at the next quit.
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-			m.logger.Warn("restore-all: delete restore marker failed", "sessionID", rec.ID, "error", err)
+			m.logger.Error("restore-all: delete consumed worktree marker failed", "sessionID", rec.ID, "error", err)
 		}
 	}
 	return nil
@@ -1053,7 +1051,21 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	if base == "" {
 		return "", nil
 	}
-	return base + systemPromptGuard, nil
+	return base + m.aoSkillPointer() + systemPromptGuard, nil
+}
+
+// aoSkillPointer is appended to every agent system prompt. It points the agent
+// at the using-ao skill the daemon installs under the data dir, rather than
+// inlining the whole CLI catalog. The path is absolute so it resolves from any
+// project's worktree, not just the AO repo (the only place a repo-relative
+// skills/ path would exist). The skill file carries exact flags and examples,
+// so the standing prompt stays a short pointer rather than a command dump.
+func (m *Manager) aoSkillPointer() string {
+	dir := skillassets.Dir(m.dataDir)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	commandsGlob := filepath.Join(dir, "commands", "*.md")
+	return "\n\n" + "## Using the ao CLI\n\n" +
+		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {

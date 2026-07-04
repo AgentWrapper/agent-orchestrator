@@ -90,6 +90,38 @@ func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 	}
 }
 
+func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("NVM install discovery is Unix-specific")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".nvm", "versions", "node", "v20.19.4", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "")
+	origFileExists := fileExists
+	fileExists = func(path string) bool {
+		return strings.HasPrefix(path, home+string(os.PathSeparator)) && origFileExists(path)
+	}
+	t.Cleanup(func() {
+		fileExists = origFileExists
+	})
+
+	got, err := ResolveCodexBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveCodexBinary: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveCodexBinary = %q, want %q", got, want)
+	}
+}
+
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
